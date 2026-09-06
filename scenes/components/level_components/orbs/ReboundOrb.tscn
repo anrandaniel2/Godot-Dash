@@ -1,0 +1,65 @@
+[gd_scene format=3 uid="uid://ckkbbbslsv0pg"]
+
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_s7suh"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="2_ndx7n"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="3_nh7pj"]
+[ext_resource type="Script" uid="uid://3bx52cwl061u" path="res://src/interactables/private_components/rebound/ReboundOrbSprite.gd" id="5_7g4ia"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="7_17vtt"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="7_w8f0u"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="8_ivhwd"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="8_xmpji"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="9_oogus"]
+[ext_resource type="Script" uid="uid://uatxmfuua4wq" path="res://src/interactables/public_components/TextureRotateComponent.gd" id="10_5vhii"]
+[ext_resource type="Script" uid="uid://bprbt31kxjc76" path="res://src/interactables/public_components/ReboundComponent.gd" id="11_03fns"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[node name="ReboundOrb" type="Area2D" unique_id=1183691049]
+collision_layer = 8
+script = ExtResource("1_s7suh")
+
+[node name="ParticleEmitter" parent="." unique_id=815062171 instance=ExtResource("2_ndx7n")]
+modulate = Color(0.5137255, 0.9607843, 0.49803922, 1)
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=543437842]
+script = ExtResource("3_nh7pj")
+
+[node name="ReboundSprite" type="Node2D" parent="." unique_id=47434393 node_paths=PackedStringArray("particle_emitter")]
+script = ExtResource("5_7g4ia")
+particle_emitter = NodePath("../ParticleEmitter")
+
+[node name="MusicScale" type="Node" parent="ReboundSprite" unique_id=2092211750]
+script = ExtResource("3_nh7pj")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=699497946]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=528471658]
+script = ExtResource("7_17vtt")
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=1255857046]
+script = ExtResource("8_xmpji")
+
+[node name="PulseScale" type="Node" parent="." unique_id=1172432257 node_paths=PackedStringArray("sprite")]
+script = ExtResource("7_w8f0u")
+sprite = NodePath("../ReboundSprite")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="ReboundComponent" type="Node" parent="." unique_id=670224891 node_paths=PackedStringArray("_sprite")]
+script = ExtResource("11_03fns")
+_sprite = NodePath("../ReboundSprite")
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=2064621836]
+script = ExtResource("8_ivhwd")
+
+[node name="TextureRotateComponent" type="Node" parent="." unique_id=1856801569 node_paths=PackedStringArray("_sprite")]
+script = ExtResource("10_5vhii")
+_sprite = NodePath("../ReboundSprite")
+rotation_rate = 60.0
+metadata/_custom_type_script = "uid://uatxmfuua4wq"
+
+[node name="EditorSelectionCollider" parent="." unique_id=439141407 instance=ExtResource("9_oogus")]
+type = 8

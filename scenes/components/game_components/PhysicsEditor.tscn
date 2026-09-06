@@ -1,0 +1,104 @@
+[gd_scene format=3 uid="uid://cjssnbui7kx8w"]
+
+[ext_resource type="Script" uid="uid://cvj1a1dockiqv" path="res://src/editor/editor_panels/PhysicsEditor.gd" id="1_slfon"]
+[ext_resource type="Script" uid="uid://bss8ppxnt7gio" path="res://src/gui/properties/types/BoolProperty.gd" id="3_7vg66"]
+[ext_resource type="Script" uid="uid://dd75trm1kaaiu" path="res://src/gui/properties/types/FloatProperty.gd" id="4_wfid3"]
+
+[node name="PhysicsEditor" type="VBoxContainer" unique_id=1710893437 node_paths=PackedStringArray("physics_object_property", "mass_property", "friction_property", "rough_property", "bounce_property", "absorbent_property", "gravity_scale_property", "pushable_by_player_property")]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_slfon")
+physics_object_property = NodePath("Physics Object")
+mass_property = NodePath("Mass")
+friction_property = NodePath("Friction")
+rough_property = NodePath("Rough")
+bounce_property = NodePath("Bounce")
+absorbent_property = NodePath("Absorbent")
+gravity_scale_property = NodePath("Gravity Scale")
+pushable_by_player_property = NodePath("Pushable by Player")
+
+[node name="Physics Object" type="BoxContainer" parent="." unique_id=1375404304]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("3_7vg66")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[node name="Mass" type="BoxContainer" parent="." unique_id=1611107562]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("4_wfid3")
+default = 1.0
+min_value = 0.001
+max_value = 1000.0
+step = 0.1
+allow_greater = true
+suffix = "kg"
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Friction" type="BoxContainer" parent="." unique_id=742581150]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("4_wfid3")
+default = 1.0
+max_value = 1.0
+step = 0.1
+allow_greater = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Rough" type="BoxContainer" parent="." unique_id=1583454435]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("3_7vg66")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[node name="Bounce" type="BoxContainer" parent="." unique_id=233007351]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("4_wfid3")
+max_value = 1.0
+step = 0.1
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Absorbent" type="BoxContainer" parent="." unique_id=1146922773]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("3_7vg66")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[node name="Gravity Scale" type="BoxContainer" parent="." unique_id=9657397]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("4_wfid3")
+min_value = -8.0
+max_value = 8.0
+step = 0.1
+allow_lesser = true
+allow_greater = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Pushable by Player" type="BoxContainer" parent="." unique_id=1232529438]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("3_7vg66")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[connection signal="value_changed" from="Physics Object" to="." method="_on_physics_object_value_changed"]
+[connection signal="value_changed" from="Mass" to="." method="_on_mass_value_changed"]
+[connection signal="value_changed" from="Friction" to="." method="_on_friction_value_changed"]
+[connection signal="value_changed" from="Rough" to="." method="_on_rough_value_changed"]
+[connection signal="value_changed" from="Bounce" to="." method="_on_bounce_value_changed"]
+[connection signal="value_changed" from="Absorbent" to="." method="_on_absorbent_value_changed"]
+[connection signal="value_changed" from="Gravity Scale" to="." method="_on_gravity_scale_value_changed"]
+[connection signal="value_changed" from="Pushable by Player" to="." method="_on_pushable_by_player_value_changed"]

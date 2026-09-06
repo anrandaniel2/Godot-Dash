@@ -1,0 +1,44 @@
+[gd_scene format=3 uid="uid://bkym7bd812awu"]
+
+[ext_resource type="Script" uid="uid://c13bd47nn7q63" path="res://src/interactables/Interactable.gd" id="1_x0b3l"]
+[ext_resource type="Script" uid="uid://b72wbrtgs1sem" path="res://src/interactables/public_components/TextComponent.gd" id="2_02egi"]
+[ext_resource type="LabelSettings" uid="uid://cwxr4wnehp2wc" path="res://resources/DefaultTextSettings.tres" id="2_4odos"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="3_t3fxq"]
+[ext_resource type="Script" uid="uid://47xeeg7uqvmj" path="res://src/interactables/public_components/HideMarkersComponent.gd" id="5_4odos"]
+
+[node name="Text" type="Area2D" unique_id=997030784]
+script = ExtResource("1_x0b3l")
+metadata/_custom_type_script = "uid://c13bd47nn7q63"
+
+[node name="Label" type="Label" parent="." unique_id=469627546]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -10.5
+offset_top = -10.0
+offset_right = 10.5
+offset_bottom = 10.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 4
+text = "Aa"
+label_settings = ExtResource("2_4odos")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TextComponent" type="Node" parent="." unique_id=1920409401 node_paths=PackedStringArray("_label", "_selection_collider")]
+script = ExtResource("2_02egi")
+horizontal_alignment = 1
+vertical_alignment = 1
+_label = NodePath("../Label")
+_selection_collider = NodePath("../EditorSelectionCollider")
+metadata/_custom_type_script = "uid://b72wbrtgs1sem"
+
+[node name="EditorSelectionCollider" parent="." unique_id=1380255239 instance=ExtResource("3_t3fxq")]
+type = 8
+
+[node name="HideMarkersComponent" type="Node" parent="." unique_id=744881325]
+script = ExtResource("5_4odos")
+metadata/_custom_type_script = "uid://47xeeg7uqvmj"

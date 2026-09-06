@@ -1,0 +1,28 @@
+[gd_scene format=3 uid="uid://bbf7hpkeoo678"]
+
+[ext_resource type="Texture2D" uid="uid://g7enss6gpbo8" path="res://assets/textures/solids/fill_blocks/FillBlock01.svg" id="1_ll2k6"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="3_btrs8"]
+[ext_resource type="Script" uid="uid://co07p647ncgri" path="res://src/SolidObject.gd" id="3_ll2k6"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_s4sak"]
+size = Vector2(130, 130)
+
+[node name="DefaultCube" type="RigidBody2D" unique_id=423126645]
+collision_layer = 2
+freeze = true
+freeze_mode = 1
+script = ExtResource("3_ll2k6")
+metadata/physics = true
+
+[node name="Detail" type="Sprite2D" parent="." unique_id=1641580820]
+
+[node name="Base" type="Sprite2D" parent="." unique_id=1471672276]
+texture_filter = 3
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("1_ll2k6")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1573841314]
+shape = SubResource("RectangleShape2D_s4sak")
+debug_color = Color(0, 0.071, 0.702, 0.25)
+
+[node name="EditorSelectionCollider" parent="." unique_id=1938096550 instance=ExtResource("3_btrs8")]

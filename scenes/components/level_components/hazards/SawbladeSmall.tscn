@@ -1,0 +1,41 @@
+[gd_scene format=3 uid="uid://cwuamvvlwaodm"]
+
+[ext_resource type="Texture2D" uid="uid://bc3mwmxfrxugt" path="res://assets/textures/hazards/sawblade/small/RegularSawbladeSmall.svg" id="1_5457p"]
+[ext_resource type="Script" uid="uid://c13bd47nn7q63" path="res://src/interactables/Interactable.gd" id="1_tof8v"]
+[ext_resource type="Shader" uid="uid://c8fmb7haov3m7" path="res://resources/shaders/Sawblade.gdshader" id="2_cgbsa"]
+[ext_resource type="Material" uid="uid://dr6386rtmro6e" path="res://resources/FadeEnterEffectCanvasGroup.tres" id="2_goltc"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="2_i8mmv"]
+[ext_resource type="Script" uid="uid://uatxmfuua4wq" path="res://src/interactables/public_components/TextureRotateComponent.gd" id="4_cgbsa"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_goltc"]
+shader = ExtResource("2_cgbsa")
+shader_parameter/gradient_start = 0.0
+shader_parameter/gradient_end = 0.249999994412
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_i8mmv"]
+radius = 64.0
+
+[node name="SawbladeSmall" type="Area2D" unique_id=1345060201]
+collision_layer = 2048
+script = ExtResource("1_tof8v")
+metadata/_custom_type_script = "uid://c13bd47nn7q63"
+
+[node name="EnterEffectLayer" type="CanvasGroup" parent="." unique_id=2099299305]
+material = ExtResource("2_goltc")
+
+[node name="RegularSawbladeSmall" type="Sprite2D" parent="EnterEffectLayer" unique_id=1057351061]
+material = SubResource("ShaderMaterial_goltc")
+texture = ExtResource("1_5457p")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1483220065]
+shape = SubResource("CircleShape2D_i8mmv")
+debug_color = Color(0.960784, 0, 0, 0)
+
+[node name="EditorSelectionCollider" parent="." unique_id=1070686354 instance=ExtResource("2_i8mmv")]
+type = 4
+
+[node name="TextureRotateComponent" type="Node" parent="." unique_id=759231788 node_paths=PackedStringArray("_sprite")]
+script = ExtResource("4_cgbsa")
+_sprite = NodePath("../EnterEffectLayer/RegularSawbladeSmall")
+rotation_rate = -180.0
+metadata/_custom_type_script = "uid://uatxmfuua4wq"

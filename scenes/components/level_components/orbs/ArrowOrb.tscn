@@ -1,0 +1,89 @@
+[gd_scene format=3 uid="uid://dcyugaojg3ps2"]
+
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_4ej1d"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="2_wdw3w"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="3_nlpri"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="4_jtsfa"]
+[ext_resource type="Texture2D" uid="uid://cwjvxw6w83ew2" path="res://assets/textures/orbs/ArrowOrb.svg" id="5_4ej1d"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="6_1iri4"]
+[ext_resource type="Script" uid="uid://cns0c8rj5yp7o" path="res://src/interactables/private_components/ArrowOrbTextureFlip.gd" id="6_wdw3w"]
+[ext_resource type="Script" uid="uid://cd3jqi4il3x2p" path="res://src/interactables/public_components/TextureRotationPinComponent.gd" id="7_jtsfa"]
+[ext_resource type="Texture2D" uid="uid://c0hk8qwb5cfdk" path="res://assets/textures/orbs/ArrowOrbDirectionIndicator.svg" id="7_nlpri"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="7_y3ytb"]
+[ext_resource type="Script" uid="uid://bc0koikb5w121" path="res://src/interactables/public_components/SpiderDashComponent.gd" id="8_l1cqj"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="9_4tc0m"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="10_3j7g6"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="10_jlgng"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[node name="ArrowOrb" type="Area2D" unique_id=1746374702]
+collision_layer = 8
+script = ExtResource("1_4ej1d")
+
+[node name="ParticleEmitter" parent="." unique_id=513963022 instance=ExtResource("2_wdw3w")]
+modulate = Color(0.5137255, 0.5921569, 1, 1)
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=1874468710]
+script = ExtResource("3_nlpri")
+
+[node name="PathPreview" type="Line2D" parent="." unique_id=1431081197]
+points = PackedVector2Array(0, -64, 0, -1152)
+width = 4.0
+default_color = Color(0.5137255, 0.5921569, 1, 1)
+end_cap_mode = 2
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="PathPreview" unique_id=969756888]
+script = ExtResource("4_jtsfa")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="Sprite" type="Sprite2D" parent="." unique_id=554710165]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("5_4ej1d")
+
+[node name="Indicator" type="Sprite2D" parent="Sprite" unique_id=1481971971]
+use_parent_material = true
+texture = ExtResource("7_nlpri")
+
+[node name="ArrowOrbTextureFlip" type="Node" parent="Sprite/Indicator" unique_id=1237665405]
+script = ExtResource("6_wdw3w")
+
+[node name="MusicScale" type="Node" parent="Sprite" unique_id=287320056]
+script = ExtResource("3_nlpri")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=103753765]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=277444675]
+script = ExtResource("6_1iri4")
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=1398901236]
+script = ExtResource("7_y3ytb")
+
+[node name="PulseScale" type="Node" parent="." unique_id=801613409 node_paths=PackedStringArray("sprite")]
+script = ExtResource("10_jlgng")
+sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="SpiderDashComponent" type="Node" parent="." unique_id=661361330]
+script = ExtResource("8_l1cqj")
+_change_gameplay_rotation = true
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=870633218]
+script = ExtResource("9_4tc0m")
+
+[node name="TextureRotationPinComponent" type="Node" parent="." unique_id=331642185 node_paths=PackedStringArray("pinned")]
+script = ExtResource("7_jtsfa")
+pinned = NodePath("../Sprite/Indicator")
+pin_to_gameplay_rotation = true
+pin_scale = false
+sprite_scale = Vector2(0.25, 0.25)
+metadata/_custom_type_script = "uid://cd3jqi4il3x2p"
+
+[node name="EditorSelectionCollider" parent="." unique_id=402740760 instance=ExtResource("10_3j7g6")]
+type = 8
+
+[connection signal="direction_changed" from="DirectionChangerComponent" to="Sprite/Indicator/ArrowOrbTextureFlip" method="_on_direction_changed"]

@@ -1,0 +1,26 @@
+[gd_scene format=3 uid="uid://c2qj8et4qeuk7"]
+
+[ext_resource type="Script" uid="uid://c13bd47nn7q63" path="res://src/interactables/Interactable.gd" id="1_pp7em"]
+[ext_resource type="Script" uid="uid://47xeeg7uqvmj" path="res://src/interactables/public_components/HideMarkersComponent.gd" id="3_hjiie"]
+[ext_resource type="Script" uid="uid://7uus2yi6f0mu" path="res://src/interactables/public_components/DefaultPlayerDataComponent.gd" id="3_jeq4q"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_pp7em"]
+size = Vector2(128, 128)
+
+[node name="EditorPlayerSelectionCollider" type="Area2D" unique_id=708498667]
+collision_layer = 8
+script = ExtResource("1_pp7em")
+metadata/_custom_type_script = "uid://c13bd47nn7q63"
+metadata/EditorPlayerSelectionCollider = true
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1817059772]
+shape = SubResource("RectangleShape2D_pp7em")
+debug_color = Color(0.6431373, 0, 0.69803923, 0.05490196)
+
+[node name="DefaultPlayerDataComponent" type="Node" parent="." unique_id=2077139532]
+script = ExtResource("3_jeq4q")
+metadata/_custom_type_script = "uid://7uus2yi6f0mu"
+
+[node name="HideMarkersComponent" type="Node" parent="." unique_id=254663996]
+script = ExtResource("3_hjiie")
+metadata/_custom_type_script = "uid://47xeeg7uqvmj"

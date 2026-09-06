@@ -1,6 +1,0 @@
-[gd_resource type="ShaderMaterial" format=3 uid="uid://cyloqg6fpa44t"]
-
-[ext_resource type="Shader" uid="uid://dv8lubuw3y565" path="res://resources/shaders/Icon.gdshader" id="1_fwl31"]
-
-[resource]
-shader = ExtResource("1_fwl31")

@@ -1,0 +1,44 @@
+[gd_scene format=3 uid="uid://ccy88idi6rrkp"]
+
+[ext_resource type="Script" uid="uid://bcfxiueixkkwq" path="res://src/gui/properties/types/ResourceProperty.gd" id="1_do8kg"]
+[ext_resource type="Script" uid="uid://s3yc0qgg4nal" path="res://src/resources/SpawnedTrigger.gd" id="2_lxw1a"]
+[ext_resource type="Script" uid="uid://bm3bhys0ur0ns" path="res://src/gui/properties/types/NodeProperty.gd" id="3_thtdk"]
+[ext_resource type="Script" uid="uid://c13bd47nn7q63" path="res://src/interactables/Interactable.gd" id="4_e0a4s"]
+[ext_resource type="Script" uid="uid://dd75trm1kaaiu" path="res://src/gui/properties/types/FloatProperty.gd" id="4_kxtx3"]
+[ext_resource type="Script" uid="uid://cilw18c36fh6" path="res://src/interactables/public_components/TriggerHitboxComponent.gd" id="5_wgvi2"]
+
+[sub_resource type="Resource" id="Resource_do8kg"]
+resource_local_to_scene = true
+script = ExtResource("2_lxw1a")
+
+[node name="SpawnedTriggerProperty" type="BoxContainer" unique_id=1303565888]
+custom_minimum_size = Vector2(0, 32)
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+vertical = true
+script = ExtResource("1_do8kg")
+default = SubResource("Resource_do8kg")
+metadata/_custom_type_script = "uid://bcfxiueixkkwq"
+
+[node name="Path" type="BoxContainer" parent="." unique_id=1674288539]
+visible = false
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("3_thtdk")
+type = ExtResource("4_e0a4s")
+component_filter = Array[Script]([ExtResource("5_wgvi2")])
+metadata/_custom_type_script = "uid://bm3bhys0ur0ns"
+
+[node name="Time" type="BoxContainer" parent="." unique_id=144697914]
+visible = false
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("4_kxtx3")
+allow_greater = true
+suffix = "s"
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"

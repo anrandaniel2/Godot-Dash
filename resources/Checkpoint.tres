@@ -1,0 +1,6 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://djc5r0qac4mro"]
+
+[ext_resource type="Shader" uid="uid://bhof3sr5bb6ij" path="res://resources/shaders/Checkpoint.gdshader" id="1_88ydb"]
+
+[resource]
+shader = ExtResource("1_88ydb")

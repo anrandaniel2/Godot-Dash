@@ -1,0 +1,100 @@
+[gd_scene format=3 uid="uid://cbwxrl50we7e3"]
+
+[ext_resource type="Script" uid="uid://ccktucjw1vhvh" path="res://src/ReplayPanel.gd" id="1_jsun4"]
+[ext_resource type="Theme" uid="uid://cntfsyilhn2ic" path="res://resources/Theme.tres" id="3_y4k4b"]
+[ext_resource type="Texture2D" uid="uid://w3rxkgn0estq" path="res://assets/textures/icons/godot/Remove.svg" id="7_85fxc"]
+
+[sub_resource type="FontVariation" id="FontVariation_810tx"]
+variation_opentype = {
+1869640570: 14,
+2003265652: 600
+}
+
+[sub_resource type="LabelSettings" id="LabelSettings_q1nc0"]
+font = SubResource("FontVariation_810tx")
+font_size = 30
+
+[node name="Control" type="Control" unique_id=1191992704 node_paths=PackedStringArray("title", "start_button", "remove_button")]
+custom_minimum_size = Vector2(750, 70)
+layout_mode = 3
+anchors_preset = 0
+offset_bottom = 60.0
+script = ExtResource("1_jsun4")
+title = NodePath("Start/HBoxContainer/VBoxContainer/Title")
+start_button = NodePath("Start")
+remove_button = NodePath("HBoxContainer/Remove")
+
+[node name="Start" type="Button" parent="." unique_id=541082571]
+custom_minimum_size = Vector2(500, 60)
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+theme_type_variation = &"LevelPanel"
+autowrap_mode = 3
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Start" unique_id=1237067221]
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 15.0
+offset_right = -208.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Start/HBoxContainer" unique_id=1824245988]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 0
+
+[node name="Title" type="Label" parent="Start/HBoxContainer/VBoxContainer" unique_id=1329197613]
+layout_mode = 2
+theme = ExtResource("3_y4k4b")
+text = "Replay"
+label_settings = SubResource("LabelSettings_q1nc0")
+text_overrun_behavior = 3
+
+[node name="HBoxContainer" type="HBoxContainer" parent="." unique_id=175597223]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -114.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 60.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+alignment = 2
+
+[node name="Remove" type="Button" parent="HBoxContainer" unique_id=326030155]
+custom_minimum_size = Vector2(50, 0)
+layout_mode = 2
+theme_type_variation = &"LevelPanelSmallButton"
+icon_alignment = 1
+expand_icon = true
+
+[node name="TextureRect" type="TextureRect" parent="HBoxContainer/Remove" unique_id=1168137663]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -12.5
+offset_top = -12.5
+offset_right = 12.5
+offset_bottom = 12.5
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("7_85fxc")
+expand_mode = 5
+stretch_mode = 5

@@ -1,0 +1,171 @@
+[gd_scene format=3 uid="uid://7sn531ose2as"]
+
+[ext_resource type="Material" uid="uid://dmfwkx1hhpd5x" path="res://resources/SimpleBlurMaterial.tres" id="1_mt01j"]
+[ext_resource type="Script" uid="uid://tb1aau87yyxd" path="res://src/RenderModes.gd" id="2_60r7y"]
+[ext_resource type="Script" uid="uid://cjmmhbp1b5312" path="res://addons/StyleboxFancy/StyleBorder.gd" id="2_erwi1"]
+[ext_resource type="Script" uid="uid://bkadwmxos4osm" path="res://src/gui/EnumButton.gd" id="3_60r7y"]
+[ext_resource type="Script" uid="uid://bkl6g25jwb47h" path="res://addons/StyleboxFancy/StyleBoxFancy.gd" id="3_qac3c"]
+[ext_resource type="Texture2D" uid="uid://cxj57i2flcpss" path="res://assets/textures/guis/editor/render_modes/FoldLeft.svg" id="4_s5wda"]
+[ext_resource type="Script" uid="uid://bwcwfobfohbsd" path="res://src/gui/properties/types/ColorProperty.gd" id="5_5oygk"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dqjdx"]
+content_margin_left = 4.0
+content_margin_top = 4.0
+content_margin_right = 4.0
+content_margin_bottom = 4.0
+bg_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5oygk"]
+bg_color = Color(0.101960786, 0.101960786, 0.101960786, 0.6)
+corner_radius_top_left = 14
+corner_radius_bottom_left = 14
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xfpox"]
+bg_color = Color(0.32941177, 0.32941177, 0.32941177, 0.6)
+border_blend = true
+corner_radius_top_left = 14
+corner_radius_bottom_left = 14
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_erwi1"]
+bg_color = Color(0.22352941, 0.22352941, 0.22352941, 0.6)
+corner_radius_top_left = 14
+corner_radius_bottom_left = 14
+
+[sub_resource type="StyleBox" id="StyleBox_1nuyr"]
+resource_local_to_scene = false
+resource_name = ""
+content_margin_left = -1.0
+content_margin_top = -1.0
+content_margin_right = -1.0
+content_margin_bottom = -1.0
+script = ExtResource("3_qac3c")
+color = Color(0, 0, 0, 1)
+corner_detail = 5
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+shadow_blur = 0
+anti_aliasing = false
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qac3c"]
+bg_color = Color(0.101960786, 0.101960786, 0.101960786, 0.6)
+corner_radius_top_left = 14
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+corner_radius_bottom_left = 14
+corner_detail = 5
+anti_aliasing = false
+
+[node name="RenderModes" type="PanelContainer" unique_id=1941457548 node_paths=PackedStringArray("enum_button", "fold_button", "options_panel", "options_panel_vbox", "global_segment", "object_segment", "background_color_selector", "ground_color_selector", "line_color_selector", "object_color_selector")]
+material = ExtResource("1_mt01j")
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -266.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 48.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_dqjdx")
+script = ExtResource("2_60r7y")
+enum_button = NodePath("VBoxContainer/HBoxContainer/EnumButton")
+fold_button = NodePath("VBoxContainer/HBoxContainer/FoldButton")
+options_panel = NodePath("VBoxContainer/Options")
+options_panel_vbox = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer")
+global_segment = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer/Global")
+object_segment = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer/Object")
+background_color_selector = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer/Object/Background Color")
+ground_color_selector = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer/Object/Ground Color")
+line_color_selector = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer/Object/Line Color")
+object_color_selector = NodePath("VBoxContainer/Options/MarginContainer/VBoxContainer/Object/Object Color")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=251552038]
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_constants/separation = 4
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=754255198]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="FoldButton" type="Button" parent="VBoxContainer/HBoxContainer" unique_id=241458027]
+custom_minimum_size = Vector2(16, 0)
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_5oygk")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_xfpox")
+theme_override_styles/hover = SubResource("StyleBoxFlat_erwi1")
+toggle_mode = true
+expand_icon = true
+
+[node name="TextureRect" type="TextureRect" parent="VBoxContainer/HBoxContainer/FoldButton" unique_id=703889276]
+layout_mode = 0
+anchor_top = 0.23300001
+anchor_right = 1.0
+anchor_bottom = 0.767
+offset_top = 0.009999752
+offset_bottom = -0.010000229
+rotation = -3.1415927
+pivot_offset = Vector2(8, 8)
+texture = ExtResource("4_s5wda")
+stretch_mode = 2
+
+[node name="EnumButton" type="PanelContainer" parent="VBoxContainer/HBoxContainer" unique_id=1477118779]
+clip_children = 1
+layout_mode = 2
+theme_type_variation = &"ClipMaskPanel"
+theme_override_styles/panel = SubResource("StyleBox_1nuyr")
+script = ExtResource("3_60r7y")
+default = 2
+variants = PackedStringArray("Object", "Material", "Rendered")
+icons = Array[Texture2D]([null, null, null])
+metadata/_custom_type_script = "uid://bkadwmxos4osm"
+
+[node name="Options" type="PanelContainer" parent="VBoxContainer" unique_id=1388843025]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_qac3c")
+
+[node name="MarginContainer" type="MarginContainer" parent="VBoxContainer/Options" unique_id=1414995955]
+layout_mode = 2
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/Options/MarginContainer" unique_id=435929528]
+layout_mode = 2
+
+[node name="Global" type="VBoxContainer" parent="VBoxContainer/Options/MarginContainer/VBoxContainer" unique_id=1310725861]
+layout_mode = 2
+
+[node name="Object" type="VBoxContainer" parent="VBoxContainer/Options/MarginContainer/VBoxContainer" unique_id=1387347848]
+layout_mode = 2
+
+[node name="Background Color" type="BoxContainer" parent="VBoxContainer/Options/MarginContainer/VBoxContainer/Object" unique_id=34309323]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("5_5oygk")
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="Ground Color" type="BoxContainer" parent="VBoxContainer/Options/MarginContainer/VBoxContainer/Object" unique_id=1459349795]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("5_5oygk")
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="Line Color" type="BoxContainer" parent="VBoxContainer/Options/MarginContainer/VBoxContainer/Object" unique_id=458752010]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("5_5oygk")
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="Object Color" type="BoxContainer" parent="VBoxContainer/Options/MarginContainer/VBoxContainer/Object" unique_id=213360415]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("5_5oygk")
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[connection signal="toggled" from="VBoxContainer/HBoxContainer/FoldButton" to="." method="toggle_render_mode_options"]

@@ -1,0 +1,51 @@
+[gd_scene format=3 uid="uid://dtesaw4opgkin"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_42b68"]
+[ext_resource type="Script" uid="uid://sv2oa8nvx3ob" path="res://addons/nine_patch_sprite_2d/nine_patch_sprite_2d.gd" id="2_1u1h2"]
+[ext_resource type="Texture2D" uid="uid://cpwidpl0d6peh" path="res://assets/textures/triggers/FlipGravity.svg" id="3_42b68"]
+[ext_resource type="Script" uid="uid://baiq5ve1kkxb7" path="res://src/interactables/public_components/AllowCeilingHitComponent.gd" id="5_1u1h2"]
+[ext_resource type="Script" uid="uid://c11eeqbetvhcv" path="res://src/interactables/public_components/FlipGravityComponent.gd" id="5_42b68"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="5_l2isw"]
+[ext_resource type="Script" uid="uid://cjdpf2wcxjfb1" path="res://src/NinePatchSprite2DAbsoluteSize.gd" id="6_6dku5"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="7_jdurq"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1u1h2"]
+size = Vector2(153.6, 153.6)
+
+[node name="FlipGravity" type="Area2D" unique_id=177876845]
+script = ExtResource("1_42b68")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1461823030]
+shape = SubResource("RectangleShape2D_1u1h2")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprite" type="Node2D" parent="." unique_id=1217448838]
+scale = Vector2(0.25, 0.25)
+script = ExtResource("2_1u1h2")
+texture = ExtResource("3_42b68")
+size = Vector2(512, 512)
+patch_margin_left = 36.0
+patch_margin_top = 36.0
+patch_margin_right = 36.0
+patch_margin_bottom = 36.0
+metadata/_custom_type_script = "uid://sv2oa8nvx3ob"
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="." unique_id=570885664]
+script = ExtResource("5_l2isw")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="AllowCeilingHitComponent" type="Node" parent="." unique_id=1198015196]
+script = ExtResource("5_1u1h2")
+metadata/_custom_type_script = "uid://baiq5ve1kkxb7"
+
+[node name="FlipGravityComponent" type="Node" parent="." unique_id=730248322]
+script = ExtResource("5_42b68")
+metadata/_custom_type_script = "uid://c11eeqbetvhcv"
+
+[node name="NinePatchSprite2DAbsoluteSize" type="Node" parent="." unique_id=911838067 node_paths=PackedStringArray("nine_patch_sprite")]
+script = ExtResource("6_6dku5")
+nine_patch_sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://cjdpf2wcxjfb1"
+
+[node name="EditorSelectionCollider" parent="." unique_id=1988281034 instance=ExtResource("7_jdurq")]
+type = 9

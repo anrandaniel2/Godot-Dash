@@ -1,0 +1,72 @@
+[gd_scene format=3 uid="uid://bwqcjqk3as34v"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_ukvqu"]
+[ext_resource type="Material" uid="uid://t4wcwy036o4d" path="res://resources/PulseWhiteMaterial.tres" id="2_ukvqu"]
+[ext_resource type="Texture2D" uid="uid://d0shbispfys6s" path="res://assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalBack.png" id="3_h3dng"]
+[ext_resource type="Script" uid="uid://d4icbghdufton" path="res://src/LayeredSprite.gd" id="3_xtega"]
+[ext_resource type="Texture2D" uid="uid://dsq6xk2pblqrm" path="res://assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalFront.png" id="4_m7fq6"]
+[ext_resource type="Texture2D" uid="uid://beiu6q5nankgc" path="res://assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalIndicatorBG.png" id="5_67rea"]
+[ext_resource type="Texture2D" uid="uid://d272nnl1ar6hv" path="res://assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalIndicatorIcon.png" id="6_dfbcm"]
+[ext_resource type="PackedScene" uid="uid://d23j4fpbpdrv4" path="res://scenes/particle_emitter_presets/PortalParticles.tscn" id="7_5eui3"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="9_nodad"]
+[ext_resource type="Script" uid="uid://n8ym1w4r5ke" path="res://src/interactables/private_components/PulseWhite.gd" id="10_ufkdc"]
+[ext_resource type="Script" uid="uid://df636dbhnu65v" path="res://src/interactables/public_components/GravityFlipChangerComponent.gd" id="11_12or6"]
+[ext_resource type="Script" uid="uid://cd3jqi4il3x2p" path="res://src/interactables/public_components/TextureRotationPinComponent.gd" id="12_rnoqo"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
+size = Vector2(128, 384)
+
+[node name="GravityPortalNormal" type="Area2D" unique_id=1467166309]
+collision_layer = 8
+script = ExtResource("1_ukvqu")
+metadata/_edit_group_ = true
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=95734593]
+shape = SubResource("RectangleShape2D_cghk8")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprites" type="Node2D" parent="." unique_id=315367576]
+material = ExtResource("2_ukvqu")
+script = ExtResource("3_xtega")
+
+[node name="PortalBack" type="Sprite2D" parent="Sprites" unique_id=167072589]
+z_index = -1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("3_h3dng")
+
+[node name="PortalFront" type="Sprite2D" parent="Sprites" unique_id=1578417085]
+z_index = 1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("4_m7fq6")
+
+[node name="PortalIndicatorBg" type="Sprite2D" parent="Sprites" unique_id=1311732190]
+z_index = 1
+use_parent_material = true
+position = Vector2(58, 0)
+texture = ExtResource("5_67rea")
+
+[node name="IndicatorIcon" type="Sprite2D" parent="Sprites" unique_id=88302707]
+z_index = 1
+use_parent_material = true
+position = Vector2(52, 0)
+texture = ExtResource("6_dfbcm")
+
+[node name="ParticleEmitter" parent="." unique_id=1866013509 instance=ExtResource("7_5eui3")]
+modulate = Color(0, 0.721569, 0.886275, 1)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=220571492]
+script = ExtResource("9_nodad")
+
+[node name="PulseWhite" type="Node" parent="." unique_id=709696425 node_paths=PackedStringArray("pulse_target")]
+script = ExtResource("10_ufkdc")
+pulse_target = NodePath("../Sprites")
+
+[node name="GravityFlipChangerComponent" type="Node" parent="." unique_id=1539330157]
+script = ExtResource("11_12or6")
+
+[node name="TextureRotationPin" type="Node" parent="." unique_id=74377547 node_paths=PackedStringArray("pinned")]
+script = ExtResource("12_rnoqo")
+pinned = NodePath("../Sprites/IndicatorIcon")
+pin_to_gameplay_rotation = true

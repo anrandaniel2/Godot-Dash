@@ -1,0 +1,6 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://t4wcwy036o4d"]
+
+[ext_resource type="Shader" uid="uid://dyxk030ey5wno" path="res://resources/shaders/ColorPulse.gdshader" id="1_aga1m"]
+
+[resource]
+shader = ExtResource("1_aga1m")

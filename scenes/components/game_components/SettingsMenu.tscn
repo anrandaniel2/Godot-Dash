@@ -1,0 +1,2085 @@
+[gd_scene format=3 uid="uid://b6gonom0s5k1n"]
+
+[ext_resource type="Material" uid="uid://dmfwkx1hhpd5x" path="res://resources/SimpleBlurMaterial.tres" id="1_olkne"]
+[ext_resource type="Theme" uid="uid://cntfsyilhn2ic" path="res://resources/Theme.tres" id="1_r47on"]
+[ext_resource type="Script" uid="uid://bkadwmxos4osm" path="res://src/gui/EnumButton.gd" id="3_ivev1"]
+[ext_resource type="Script" uid="uid://86h6yxdj6auo" path="res://src/SettingsMenu.gd" id="3_rvg0e"]
+[ext_resource type="Script" uid="uid://5wf1ujgda80e" path="res://src/gui/EnumButtonTabContainer.gd" id="4_y26le"]
+[ext_resource type="Script" uid="uid://ckqgnvpbftev7" path="res://src/gui/properties/components/PropertySaveLoad.gd" id="6_p6jor"]
+[ext_resource type="Script" uid="uid://dd75trm1kaaiu" path="res://src/gui/properties/types/FloatProperty.gd" id="7_ndunm"]
+[ext_resource type="Script" uid="uid://jlacauhhrxyo" path="res://addons/SmoothScroll/SmoothScrollContainer.gd" id="9_ndunm"]
+[ext_resource type="Script" uid="uid://djfsy06pkw4ju" path="res://src/gui/properties/types/EnumProperty.gd" id="9_vf3uf"]
+[ext_resource type="Script" uid="uid://cfmafqjh1b675" path="res://src/gui/properties/types/FlagsProperty.gd" id="10_bi686"]
+[ext_resource type="Script" uid="uid://b7h0k2h2qwlqv" path="res://addons/SmoothScroll/scroll_damper/expo_scroll_damper.gd" id="10_egxjo"]
+[ext_resource type="Texture2D" uid="uid://dgobch7m00i7a" path="res://assets/textures/icons/godot/Search.svg" id="11_bi686"]
+[ext_resource type="Script" uid="uid://bss8ppxnt7gio" path="res://src/gui/properties/types/BoolProperty.gd" id="11_egxjo"]
+[ext_resource type="Script" uid="uid://bwcwfobfohbsd" path="res://src/gui/properties/types/ColorProperty.gd" id="12_bi686"]
+[ext_resource type="Script" uid="uid://3na5h1vigpxe" path="res://src/gui/properties/types/FileProperty.gd" id="12_c7um1"]
+[ext_resource type="Script" uid="uid://y1hecem53675" path="res://addons/search_bar_node/SearchBarNode.gd" id="12_fl6v2"]
+[ext_resource type="Script" uid="uid://co733tkf77uuu" path="res://src/settings/KeybindLoader.gd" id="12_vf3uf"]
+[ext_resource type="Script" uid="uid://c1ejd8ud4q1b6" path="res://src/gui/properties/types/StringProperty.gd" id="16_c7um1"]
+[ext_resource type="Script" uid="uid://cwu2m4yu7an50" path="res://src/gui/properties/types/OneLineEnumProperty.gd" id="19_y26le"]
+
+[sub_resource type="Resource" id="Resource_ndunm"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_vf3uf"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_ivev1"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_y26le"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_egxjo"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_bi686"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_fl6v2"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_c7um1"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_8xnla"]
+script = ExtResource("10_egxjo")
+
+[sub_resource type="Resource" id="Resource_1y3wg"]
+script = ExtResource("10_egxjo")
+
+[node name="SettingsMenu" type="VBoxContainer" unique_id=623405437]
+material = ExtResource("1_olkne")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_type_variation = &"TitleScreenVBox"
+script = ExtResource("3_rvg0e")
+
+[node name="EnumButton" type="PanelContainer" parent="." unique_id=893827146]
+clip_children = 1
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+theme_type_variation = &"RoundedEnumButton"
+script = ExtResource("3_ivev1")
+variants = PackedStringArray("Graphics", "Gameplay", "Audio", "Keybinds", "Editor", "System", "Debug")
+icons = Array[Texture2D]([null, null, null, null, null, null, null])
+as_tab_container = true
+metadata/_custom_type_script = "uid://bkadwmxos4osm"
+
+[node name="EnumButtonTabContainer" type="BoxContainer" parent="." unique_id=322720694]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 0
+script = ExtResource("4_y26le")
+
+[node name="Graphics" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=1078651350]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/Graphics" unique_id=856411922]
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 1
+theme = ExtResource("1_r47on")
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_ndunm")
+dragging_scroll_damper = SubResource("Resource_vf3uf")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer" unique_id=601345363]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Framerate" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer" unique_id=976038432]
+layout_mode = 2
+mouse_filter = 1
+title = "Framerate"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate" unique_id=654040413]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Max FPS" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate/VBoxContainer" unique_id=716439582]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 60.0
+step = 1.0
+rounded = true
+allow_greater = true
+suffix = "fps"
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate/VBoxContainer/Max FPS" unique_id=1845904465]
+script = ExtResource("6_p6jor")
+config_property = &"max_fps"
+
+[node name="VSync" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate/VBoxContainer" unique_id=1353592635]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_vf3uf")
+default = 1
+fields = PackedStringArray("Disabled", "Enabled", "Adaptive", "Mailbox")
+metadata/_custom_type_script = "uid://djfsy06pkw4ju"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate/VBoxContainer/VSync" unique_id=534868765]
+script = ExtResource("6_p6jor")
+config_property = &"vsync"
+
+[node name="Window" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer" unique_id=1282957337]
+layout_mode = 2
+mouse_filter = 1
+title = "Window"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Window" unique_id=392777110]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Window Mode" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Window/VBoxContainer" unique_id=2084121694]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_vf3uf")
+default = 1
+fields = PackedStringArray("Windowed", "Fullscreen", "Exclusive Fullscreen")
+metadata/_custom_type_script = "uid://djfsy06pkw4ju"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Window/VBoxContainer/Window Mode" unique_id=1293655706]
+script = ExtResource("6_p6jor")
+config_property = &"window_mode"
+
+[node name="Render Scale" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Window/VBoxContainer" unique_id=50212052]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 100.0
+max_value = 200.0
+step = 1.0
+rounded = true
+allow_greater = true
+suffix = "%"
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Post-processing" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer" unique_id=541288887]
+layout_mode = 2
+mouse_filter = 1
+title = "Post-processing"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing" unique_id=1585288434]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Anti-Aliasing" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer" unique_id=2105755392]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_vf3uf")
+default = 3
+fields = PackedStringArray("Disabled", "MSAA 2x", "MSAA 4x", "MSAA 8x")
+metadata/_custom_type_script = "uid://djfsy06pkw4ju"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer/Anti-Aliasing" unique_id=1649066325]
+script = ExtResource("6_p6jor")
+config_property = &"anti_aliasing"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Texture Filtering" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer" unique_id=1088238350]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_vf3uf")
+default = 2
+fields = PackedStringArray("Nearest", "Linear", "Linear Mipmap")
+metadata/_custom_type_script = "uid://djfsy06pkw4ju"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer/Texture Filtering" unique_id=1696859926]
+script = ExtResource("6_p6jor")
+config_property = &"texture_filtering"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Bloom" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer" unique_id=1219818710]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer/Bloom" unique_id=1099871417]
+script = ExtResource("6_p6jor")
+config_property = &"bloom"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Menu Blur" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer" unique_id=484835909]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer/Menu Blur" unique_id=849692516]
+script = ExtResource("6_p6jor")
+config_property = &"menu_blur"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Interface" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer" unique_id=708194891]
+layout_mode = 2
+mouse_filter = 1
+title = "Interface"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface" unique_id=78980704]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Background Blur Strength" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer" unique_id=1147140217]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 3.0
+max_value = 5.0
+step = 0.1
+allow_greater = true
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Background Blur Strength" unique_id=66653969]
+script = ExtResource("6_p6jor")
+config_property = &"blur_strength"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Interface Color" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer" unique_id=33437]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("12_bi686")
+default = Color(0.50140655, 0.5014065, 0.5014065, 1)
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Interface Color" unique_id=1969880900]
+script = ExtResource("6_p6jor")
+config_property = &"ui_color"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Transition Duration" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer" unique_id=1620487115]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 0.5
+max_value = 5.0
+suffix = "s"
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Transition Duration" unique_id=1598599333]
+script = ExtResource("6_p6jor")
+config_property = &"transition_duration"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Performance" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer" unique_id=568226307]
+layout_mode = 2
+mouse_filter = 1
+title = "Performance"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance" unique_id=1987915986]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Enable title screen icons" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer" unique_id=202990419]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Enable title screen icons" unique_id=949405030]
+script = ExtResource("6_p6jor")
+config_property = &"enable_title_screen_icons"
+
+[node name="Low Detail Mode" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer" unique_id=1950667015]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Low Detail Mode" unique_id=1320156099]
+script = ExtResource("6_p6jor")
+config_property = &"ldm"
+
+[node name="Particles" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer" unique_id=200285064]
+layout_mode = 2
+mouse_filter = 1
+folded = true
+title = "Particles"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles" unique_id=1158943392]
+visible = false
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Visibility" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer" unique_id=2009867372]
+layout_mode = 2
+mouse_filter = 1
+title = "Visibility"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Visibility" unique_id=853394429]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Show particles in the editor" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Visibility/VBoxContainer" unique_id=677887375]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Visibility/VBoxContainer/Show particles in the editor" unique_id=1198048551]
+script = ExtResource("6_p6jor")
+config_property = &"show_particles_in_editor"
+
+[node name="Particles visibility" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Visibility/VBoxContainer" unique_id=873794999]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("10_bi686")
+default = 31
+flags = PackedStringArray("Player", "Orb", "Pad", "Portal", "Speed Portal")
+metadata/_custom_type_script = "uid://cfmafqjh1b675"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Visibility/VBoxContainer/Particles visibility" unique_id=2122691751]
+script = ExtResource("6_p6jor")
+config_property = &"particles_visibility"
+
+[node name="Preprocessing" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer" unique_id=220709462]
+layout_mode = 2
+mouse_filter = 1
+title = "Preprocessing"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Preprocessing" unique_id=1757382415]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Preprocess particles in the editor" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Preprocessing/VBoxContainer" unique_id=1846571457]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Preprocessing/VBoxContainer/Preprocess particles in the editor" unique_id=534496324]
+script = ExtResource("6_p6jor")
+config_property = &"preprocess_particles_in_editor"
+
+[node name="Particles preprocessing" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Preprocessing/VBoxContainer" unique_id=1151986994]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("10_bi686")
+default = 15
+flags = PackedStringArray("Orb", "Pad", "Portal", "Speed Portal")
+metadata/_custom_type_script = "uid://cfmafqjh1b675"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Particles/VBoxContainer/Preprocessing/VBoxContainer/Particles preprocessing" unique_id=111770307]
+script = ExtResource("6_p6jor")
+config_property = &"particles_preprocessing"
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/Graphics" unique_id=541523157]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/Graphics" unique_id=1288740548]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/Graphics/HBoxContainer" unique_id=789938066]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/Graphics/HBoxContainer" unique_id=993043844]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[node name="Gameplay" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=1198764347]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/Gameplay" unique_id=851910421]
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 1
+theme = ExtResource("1_r47on")
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_ivev1")
+dragging_scroll_damper = SubResource("Resource_y26le")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer" unique_id=1221719912]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Show Percentage" type="BoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=1088745009]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Show Percentage" unique_id=594502492]
+script = ExtResource("6_p6jor")
+config_property = &"show_percentage"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Click On Steps" type="BoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=596232262]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Click On Steps" unique_id=143308527]
+script = ExtResource("6_p6jor")
+config_property = &"click_on_steps"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Practice" type="FoldableContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=884159843]
+layout_mode = 2
+mouse_filter = 1
+title = "Practice"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Practice" unique_id=1383578043]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Automatic Checkpoints" type="BoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Practice/VBoxContainer" unique_id=2123787959]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Practice/VBoxContainer/Automatic Checkpoints" unique_id=973336010]
+script = ExtResource("6_p6jor")
+config_property = &"automatic_checkpoints"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Automatic Checkpoint Distance" type="BoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Practice/VBoxContainer" unique_id=823347484]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 10.0
+min_value = 1.0
+max_value = 50.0
+step = 0.1
+allow_greater = true
+suffix = "cells"
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Practice/VBoxContainer/Automatic Checkpoint Distance" unique_id=1438187978]
+script = ExtResource("6_p6jor")
+config_property = &"automatic_checkpoint_distance"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/Gameplay" unique_id=807865401]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/Gameplay" unique_id=1365370690]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/Gameplay/HBoxContainer" unique_id=427655308]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/Gameplay/HBoxContainer" unique_id=634045068]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[node name="Audio" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=683759099]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/Audio" unique_id=1866483531]
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 1
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_egxjo")
+dragging_scroll_damper = SubResource("Resource_bi686")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer" unique_id=1646117913]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Volume" type="FoldableContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer" unique_id=1029962144]
+layout_mode = 2
+mouse_filter = 1
+title = "Volume"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume" unique_id=277984561]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Master" type="BoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer" unique_id=1806929668]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 100.0
+step = 5.0
+suffix = "%"
+draw_slider = true
+slider_tick_count = 11
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Master" unique_id=642482444]
+script = ExtResource("6_p6jor")
+config_property = &"master_audio_level"
+
+[node name="Music" type="BoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer" unique_id=1887279183]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 100.0
+step = 5.0
+suffix = "%"
+draw_slider = true
+slider_tick_count = 11
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Music" unique_id=2064338932]
+script = ExtResource("6_p6jor")
+config_property = &"music_audio_level"
+
+[node name="Game SFX" type="BoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer" unique_id=1591652684]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 100.0
+step = 5.0
+suffix = "%"
+draw_slider = true
+slider_tick_count = 11
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Game SFX" unique_id=943003920]
+script = ExtResource("6_p6jor")
+config_property = &"game_sfx_audio_level"
+
+[node name="Level SFX" type="BoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer" unique_id=178775494]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 100.0
+step = 5.0
+suffix = "%"
+draw_slider = true
+slider_tick_count = 11
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Level SFX" unique_id=1570908205]
+script = ExtResource("6_p6jor")
+config_property = &"in_level_sfx_audio_level"
+
+[node name="Mute game on unfocus" type="BoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer" unique_id=180844780]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Mute game on unfocus" unique_id=1568700155]
+script = ExtResource("6_p6jor")
+config_property = &"mute_game_on_unfocus"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Music" type="FoldableContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer" unique_id=1003234329]
+layout_mode = 2
+mouse_filter = 1
+title = "Music"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Music" unique_id=901762365]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Menu Loop" type="BoxContainer" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Music/VBoxContainer" unique_id=779996254]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("12_c7um1")
+filetype_filters = PackedStringArray("*.mp3", "*.wav", "*.ogg")
+load_root = "user://created_levels/songs/"
+import_to = "user://created_levels/songs/"
+metadata/_custom_type_script = "uid://3na5h1vigpxe"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Music/VBoxContainer/Menu Loop" unique_id=2002098453]
+script = ExtResource("6_p6jor")
+config_property = &"menu_loop"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/Audio" unique_id=2051970788]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/Audio" unique_id=1658871972]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/Audio/HBoxContainer" unique_id=986361391]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/Audio/HBoxContainer" unique_id=764018558]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[node name="Keybinds" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=50165745]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SearchBarNode" type="LineEdit" parent="EnumButtonTabContainer/Keybinds" unique_id=633322766 node_paths=PackedStringArray("root_nodes_to_search")]
+layout_mode = 2
+mouse_filter = 1
+theme_type_variation = &"PaddedLineEdit"
+placeholder_text = "Filter settings…"
+right_icon = ExtResource("11_bi686")
+script = ExtResource("12_fl6v2")
+search_by = 1
+root_nodes_to_search = [NodePath("../SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Flip/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer"), NodePath("../SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/View/VBoxContainer")]
+group_name = PackedStringArray()
+filters = Array[StringName]([&"title"])
+discard_similars = false
+metadata/_custom_type_script = "uid://y1hecem53675"
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/Keybinds" unique_id=1956921718]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/scrollbar_h_separation = 5
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_fl6v2")
+dragging_scroll_damper = SubResource("Resource_c7um1")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer" unique_id=1729326893]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Gameplay" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer" unique_id=262304347]
+layout_mode = 2
+mouse_filter = 1
+title = "Gameplay"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay" unique_id=604754333]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Jump" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer" unique_id=10612689]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Jump"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Jump" unique_id=669223946]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "jump"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Restart Level" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer" unique_id=1922214287]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Restart Level"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Restart Level" unique_id=444904278]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "restart_level"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Pause Level" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer" unique_id=874964768]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Pause Level"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Pause Level" unique_id=1753086830]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "pause_level"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Hide Pause Menu" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer" unique_id=317506218]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Hide Pause Menu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Hide Pause Menu" unique_id=1846943298]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "hide_pause_menu"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Practice" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer" unique_id=2122631674]
+layout_mode = 2
+mouse_filter = 1
+title = "Practice"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Practice" unique_id=905987012]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Create Checkpoint" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Practice/VBoxContainer" unique_id=1277369376]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Create Checkpoint"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Practice/VBoxContainer/Create Checkpoint" unique_id=289930521]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "practice_create_checkpoint"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Remove Checkpoint" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Practice/VBoxContainer" unique_id=521757433]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Remove Checkpoint"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Practice/VBoxContainer/Remove Checkpoint" unique_id=3784886]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "practice_remove_checkpoint"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Platformer" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer" unique_id=1342277618]
+layout_mode = 2
+mouse_filter = 1
+title = "Platformer"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer" unique_id=543571421]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Left" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer/VBoxContainer" unique_id=598083146]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Left"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer/VBoxContainer/Left" unique_id=1163128176]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "move_left"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Right" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer/VBoxContainer" unique_id=1287296866]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Right"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer/VBoxContainer/Right" unique_id=368723162]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "move_right"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Down (Wave)" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer/VBoxContainer" unique_id=2092607351]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Down (Wave)"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Gameplay/VBoxContainer/Platformer/VBoxContainer/Down (Wave)" unique_id=78046115]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "platformer_wave_down"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Editor" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer" unique_id=1731803339]
+layout_mode = 2
+mouse_filter = 1
+title = "Editor"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor" unique_id=2100410665]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Toggle Playtest" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer" unique_id=1339538779]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Toggle Playtest"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Toggle Playtest" unique_id=1586565121]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_toggle_playtest"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Viewport" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer" unique_id=1724243709]
+layout_mode = 2
+mouse_filter = 1
+title = "Viewport"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport" unique_id=1191371562]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Selection" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer" unique_id=1079802357]
+layout_mode = 2
+mouse_filter = 1
+title = "Selection"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection" unique_id=1806738694]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Add Object, Set Selection" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer" unique_id=1899084970]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Add Object, Set Selection"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer/Add Object, Set Selection" unique_id=878744727]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_add"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Add Object (Swipe), Add to Selection" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer" unique_id=2262725]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Add Object (Swipe), Add to Selection"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer/Add Object (Swipe), Add to Selection" unique_id=2028659805]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_add_swipe"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Remove Object" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer" unique_id=1953285209]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Remove Object"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer/Remove Object" unique_id=1049269164]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_remove"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Remove Object (Swipe)" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer" unique_id=1902280781]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Remove Object (Swipe)"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer/Remove Object (Swipe)" unique_id=2035172107]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_remove_swipe"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Remove from Selection" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer" unique_id=1564584476]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Remove from Selection"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Selection/VBoxContainer/Remove from Selection" unique_id=928149764]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_selection_remove"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Move" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer" unique_id=1159371383]
+layout_mode = 2
+mouse_filter = 1
+title = "Move"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move" unique_id=1707532087]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Move Left" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer" unique_id=986628224]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Move Left"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer/Move Left" unique_id=1142481460]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_move_left"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Move Right" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer" unique_id=1986481738]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Move Right"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer/Move Right" unique_id=480443807]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_move_right"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Move Up" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer" unique_id=513824189]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Move Up"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer/Move Up" unique_id=1192224599]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_move_up"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Move Down" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer" unique_id=820571261]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Move Down"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Move/VBoxContainer/Move Down" unique_id=1216286605]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_move_down"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Rotate" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer" unique_id=1480327358]
+layout_mode = 2
+mouse_filter = 1
+title = "Rotate"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate" unique_id=1188927098]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Rotate 90°" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer" unique_id=7539482]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Rotate 90°"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer/Rotate 90°" unique_id=896278555]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_rotate_90"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Rotate -90°" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer" unique_id=1342778850]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Rotate -90°"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer/Rotate -90°" unique_id=2069056714]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_rotate_-90"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Rotate 45°" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer" unique_id=1799433168]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Rotate 45°"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer/Rotate 45°" unique_id=416796474]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_rotate_45"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Rotate -45°" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer" unique_id=1327923226]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Rotate -45°"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer/Rotate -45°" unique_id=900035903]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_rotate_-45"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Quick Rotate (Free)" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer" unique_id=43802843]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Quick Rotate (Free)"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer/Quick Rotate (Free)" unique_id=120601126]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_quick_rotate_free"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Rotate (Free)" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer" unique_id=1156155409]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Rotate -45°"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Rotate/VBoxContainer/Rotate (Free)" unique_id=1539469870]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_rotate_free"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Flip" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer" unique_id=1821270842]
+layout_mode = 2
+mouse_filter = 1
+title = "Flip"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Flip" unique_id=46126028]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Flip Vertically" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Flip/VBoxContainer" unique_id=1160892267]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Flip Vertically"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Flip/VBoxContainer/Flip Vertically" unique_id=717577429]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_flip_h"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Flip Horizontally" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Flip/VBoxContainer" unique_id=1529239726]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Flip Horizontally"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Viewport/VBoxContainer/Flip/VBoxContainer/Flip Horizontally" unique_id=951504740]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_flip_v"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Menus" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer" unique_id=138420911]
+layout_mode = 2
+mouse_filter = 1
+title = "Menus"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus" unique_id=2045626808]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Level" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer" unique_id=279184975]
+layout_mode = 2
+mouse_filter = 1
+title = "Level"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level" unique_id=1847338985]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="New" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer" unique_id=2024413682]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "New"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer/New" unique_id=1199908470]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_new_level"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Open" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer" unique_id=91835266]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Open"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer/Open" unique_id=868605901]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_open_level"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Import" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer" unique_id=2044468635]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Import"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer/Import" unique_id=1706219603]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_import_level"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Save" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer" unique_id=573562812]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Save"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer/Save" unique_id=1197639806]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_save"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Save As" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer" unique_id=1389569340]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Save As"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer/Save As" unique_id=257114312]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_save_as"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Export" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer" unique_id=955288799]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Export"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Level/VBoxContainer/Export" unique_id=538906956]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_export_level"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Edit" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer" unique_id=183045215]
+layout_mode = 2
+mouse_filter = 1
+title = "Edit"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit" unique_id=2011969843]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Undo" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=876234151]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Undo"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Undo" unique_id=415054308]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "ui_undo"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Redo" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=1463118336]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Redo"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Redo" unique_id=2044461800]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "ui_redo"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Copy" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=260659702]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Copy"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Copy" unique_id=273810998]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "ui_copy"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Paste" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=9060949]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Paste"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Paste" unique_id=320903758]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "ui_paste"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Duplicate" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=1340710120]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Duplicate"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Duplicate" unique_id=1619849961]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_duplicate"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Select All" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=1134487789]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Select All"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Select All" unique_id=1868762978]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_select_all"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Deselect All" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=1298056105]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Deselect All"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Deselect All" unique_id=1128261531]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_deselect"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Delete" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer" unique_id=958112867]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Delete"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/Edit/VBoxContainer/Delete" unique_id=2050250300]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_delete"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="View" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer" unique_id=1605188016]
+layout_mode = 2
+mouse_filter = 1
+title = "View"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/View" unique_id=1157694661]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Toggle Maximize Viewport" type="FoldableContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/View/VBoxContainer" unique_id=1881480661]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+folded = true
+title = "Toggle Maximize Viewport"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="KeybindLoader" type="VBoxContainer" parent="EnumButtonTabContainer/Keybinds/SmoothScrollContainer/VBoxContainer/Editor/VBoxContainer/Menus/VBoxContainer/View/VBoxContainer/Toggle Maximize Viewport" unique_id=378373199]
+visible = false
+layout_mode = 2
+script = ExtResource("12_vf3uf")
+input_action = "editor_hide_panels"
+metadata/_custom_type_script = "uid://co733tkf77uuu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/Keybinds" unique_id=80977801]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/Keybinds" unique_id=713961408]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/Keybinds/HBoxContainer" unique_id=1539525510]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/Keybinds/HBoxContainer" unique_id=134753408]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[node name="Editor" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=2029027396]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/Editor" unique_id=759487341]
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 1
+theme = ExtResource("1_r47on")
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_ivev1")
+dragging_scroll_damper = SubResource("Resource_y26le")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer" unique_id=1943511471]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Interface" type="FoldableContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer" unique_id=1940607142]
+layout_mode = 2
+mouse_filter = 1
+title = "Interface"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Interface" unique_id=1157346250]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Hide grid on playtest" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer" unique_id=1169702080]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Hide grid on playtest" unique_id=868939427]
+script = ExtResource("6_p6jor")
+config_property = &"hide_grid_on_playtest"
+
+[node name="Enable Trail" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer" unique_id=1486410227]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Enable Trail" unique_id=25151882]
+script = ExtResource("6_p6jor")
+config_property = &"editor_trail"
+
+[node name="Level" type="FoldableContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer" unique_id=655785373]
+layout_mode = 2
+mouse_filter = 1
+title = "Level"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level" unique_id=450830910]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Autosave Delay" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level/VBoxContainer" unique_id=609101785]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+tooltip_text = "Delay in minutes after which the level will be automatically saved.
+The autosave timer will not start for levels that were never saved."
+vertical = true
+script = ExtResource("7_ndunm")
+default = 2.0
+max_value = 1.0
+allow_greater = true
+suffix = "min"
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level/VBoxContainer/Autosave Delay" unique_id=203582709]
+script = ExtResource("6_p6jor")
+config_property = &"autosave_delay"
+
+[node name="Username" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level/VBoxContainer" unique_id=1800282849]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("16_c7um1")
+default = "Player"
+placeholder = "Player"
+metadata/_custom_type_script = "uid://c1ejd8ud4q1b6"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level/VBoxContainer/Username" unique_id=1129063368]
+script = ExtResource("6_p6jor")
+config_property = &"username"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Default Render Mode" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level/VBoxContainer" unique_id=1717001169]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("19_y26le")
+default = 2
+fields = PackedStringArray("Object Mode", "Material Mode", "Rendered Mode")
+icons = Array[Texture2D]([null, null, null])
+metadata/_custom_type_script = "uid://cwu2m4yu7an50"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Level/VBoxContainer/Default Render Mode" unique_id=394664206]
+script = ExtResource("6_p6jor")
+config_property = &"default_render_mode"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Colors" type="FoldableContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer" unique_id=95107697]
+layout_mode = 2
+mouse_filter = 1
+title = "Colors"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors" unique_id=511291632]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+focus_mode = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Hidden Layers Alpha" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer" unique_id=481526916]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 0.1
+max_value = 1.0
+draw_slider = true
+is_percentage = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Hidden Layers Alpha" unique_id=614815194]
+script = ExtResource("6_p6jor")
+config_property = &"hidden_layers_alpha"
+
+[node name="Selection Zone" type="FoldableContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer" unique_id=46578164]
+layout_mode = 2
+mouse_filter = 1
+title = "Selection Zone"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Selection zone" type="VBoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Selection Zone" unique_id=1918351094]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Color" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Selection Zone/Selection zone" unique_id=980244842]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("12_bi686")
+default = Color(0, 1, 0, 1)
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Selection Zone/Selection zone/Color" unique_id=1512213194]
+script = ExtResource("6_p6jor")
+config_property = &"selection_zone_color"
+
+[node name="Alpha" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Selection Zone/Selection zone" unique_id=466891096]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 0.2
+max_value = 1.0
+draw_slider = true
+is_percentage = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Selection Zone/Selection zone/Alpha" unique_id=1957447075]
+script = ExtResource("6_p6jor")
+config_property = &"selection_zone_fill_alpha"
+
+[node name="Trigger Hitboxes" type="FoldableContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer" unique_id=1069300649]
+layout_mode = 2
+mouse_filter = 1
+title = "Trigger Hitboxes"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Trigger hitboxes" type="VBoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Trigger Hitboxes" unique_id=152334012]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Color" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Trigger Hitboxes/Trigger hitboxes" unique_id=1326838704]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("12_bi686")
+default = Color(0, 1, 1, 1)
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Trigger Hitboxes/Trigger hitboxes/Color" unique_id=2105798562]
+script = ExtResource("6_p6jor")
+config_property = &"trigger_hitbox_color"
+
+[node name="Alpha" type="BoxContainer" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Trigger Hitboxes/Trigger hitboxes" unique_id=1505611728]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 0.2
+max_value = 1.0
+draw_slider = true
+is_percentage = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Editor/SmoothScrollContainer/VBoxContainer/Colors/VBoxContainer/Trigger Hitboxes/Trigger hitboxes/Alpha" unique_id=1176758875]
+script = ExtResource("6_p6jor")
+config_property = &"trigger_hitbox_fill_alpha"
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/Editor" unique_id=497210512]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/Editor" unique_id=272809289]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/Editor/HBoxContainer" unique_id=859748056]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/Editor/HBoxContainer" unique_id=73419327]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[node name="System" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=1228812666]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/System" unique_id=1891468884]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_8xnla")
+dragging_scroll_damper = SubResource("Resource_1y3wg")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer" unique_id=95261110]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Input" type="FoldableContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer" unique_id=242099010]
+layout_mode = 2
+mouse_filter = 1
+title = "Input"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Input" unique_id=1535147915]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Touchscreen Mode" type="BoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Input/VBoxContainer" unique_id=2091857934]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_vf3uf")
+default = 2
+fields = PackedStringArray("Follow device", "Force-enabled", "Force-disabled")
+metadata/_custom_type_script = "uid://djfsy06pkw4ju"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Input/VBoxContainer/Touchscreen Mode" unique_id=593261658]
+script = ExtResource("6_p6jor")
+config_property = &"touch_screen_mode"
+
+[node name="Internet" type="FoldableContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer" unique_id=44743564]
+layout_mode = 2
+mouse_filter = 1
+title = "Internet"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet" unique_id=1459611722]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Check for updates" type="BoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet/VBoxContainer" unique_id=868555574]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet/VBoxContainer/Check for updates" unique_id=1275601038]
+script = ExtResource("6_p6jor")
+config_property = &"check_for_updates"
+
+[node name="Discord Rich Presence" type="BoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet/VBoxContainer" unique_id=771200023]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet/VBoxContainer/Discord Rich Presence" unique_id=1089330865]
+script = ExtResource("6_p6jor")
+config_property = &"discord_rich_presence"
+
+[node name="Operating System" type="FoldableContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer" unique_id=39703967]
+layout_mode = 2
+mouse_filter = 1
+title = "Operating System"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System" unique_id=1730015777]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="File Associations" type="FoldableContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer" unique_id=765932943]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 1
+title = "File Associations"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations" unique_id=1474610172]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Label" type="Label" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations/VBoxContainer" unique_id=187968365]
+layout_mode = 2
+mouse_filter = 1
+theme_type_variation = &"PropertyLabel"
+text = "Open *.gmd and *.gmd2 files with this Godot Dash installation"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations/VBoxContainer" unique_id=941763850]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Register" type="Button" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations/VBoxContainer/HBoxContainer" unique_id=1799014286]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+text = "Register"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Unregister" type="Button" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations/VBoxContainer/HBoxContainer" unique_id=1097135591]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+text = "Unregister"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/System" unique_id=1127424019]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/System" unique_id=1537398673]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/System/HBoxContainer" unique_id=364917010]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/System/HBoxContainer" unique_id=1381635684]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[node name="Debug" type="VBoxContainer" parent="EnumButtonTabContainer" unique_id=598921979]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="EnumButtonTabContainer/Debug" unique_id=1429334405]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("9_ndunm")
+wheel_scroll_damper = SubResource("Resource_8xnla")
+dragging_scroll_damper = SubResource("Resource_1y3wg")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer" unique_id=1973312908]
+layout_mode = 2
+size_flags_horizontal = 3
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Debug" type="FoldableContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer" unique_id=1902069086]
+layout_mode = 2
+mouse_filter = 1
+title = "Debug"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer/Debug" unique_id=350930795]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Draw debug overlays" type="BoxContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer/Debug/VBoxContainer" unique_id=343712675]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer/Debug/VBoxContainer/Draw debug overlays" unique_id=1621840699]
+script = ExtResource("6_p6jor")
+config_property = &"draw_debug_overlays"
+
+[node name="Easter Eggs" type="FoldableContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer" unique_id=1149348488]
+layout_mode = 2
+mouse_filter = 1
+title = "Easter Eggs"
+title_alignment = 1
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer/Easter Eggs" unique_id=434398132]
+layout_mode = 2
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="Enable easter eggs" type="BoxContainer" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer/Easter Eggs/VBoxContainer" unique_id=1019087017]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Debug/SmoothScrollContainer/VBoxContainer/Easter Eggs/VBoxContainer/Enable easter eggs" unique_id=79417656]
+script = ExtResource("6_p6jor")
+config_property = &"enable_easter_eggs"
+
+[node name="HSeparator" type="HSeparator" parent="EnumButtonTabContainer/Debug" unique_id=1774706930]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="EnumButtonTabContainer/Debug" unique_id=1105475626]
+layout_mode = 2
+alignment = 1
+
+[node name="Close" type="Button" parent="EnumButtonTabContainer/Debug/HBoxContainer" unique_id=1700716728]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Close"
+
+[node name="Apply" type="Button" parent="EnumButtonTabContainer/Debug/HBoxContainer" unique_id=67572843]
+layout_mode = 2
+theme_type_variation = &"GroupButton"
+text = "Apply and Reload"
+
+[connection signal="value_changed" from="EnumButton" to="EnumButtonTabContainer" method="_on_enum_button_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Window/VBoxContainer/Render Scale" to="." method="_on_render_scale_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Post-processing/VBoxContainer/Menu Blur" to="." method="_on_menu_blur_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Background Blur Strength" to="." method="_on_blur_strength_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Interface/VBoxContainer/Interface Color" to="." method="_on_ui_color_value_changed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Graphics/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Graphics/HBoxContainer/Apply" to="." method="_on_apply_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Gameplay/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Gameplay/HBoxContainer/Apply" to="." method="_on_apply_pressed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Master" to="." method="_on_game_volume_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Music" to="." method="_on_music_volume_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Game SFX" to="." method="_on_game_sfx_volume_value_changed"]
+[connection signal="value_changed" from="EnumButtonTabContainer/Audio/SmoothScrollContainer/VBoxContainer/Volume/VBoxContainer/Level SFX" to="." method="_on_in_level_sfx_volume_value_changed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Audio/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Audio/HBoxContainer/Apply" to="." method="_on_apply_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Keybinds/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Keybinds/HBoxContainer/Apply" to="." method="_on_apply_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Editor/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Editor/HBoxContainer/Apply" to="." method="_on_apply_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations/VBoxContainer/HBoxContainer/Register" to="." method="_on_register_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Operating System/VBoxContainer/File Associations/VBoxContainer/HBoxContainer/Unregister" to="." method="_on_unregister_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/System/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/System/HBoxContainer/Apply" to="." method="_on_apply_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Debug/HBoxContainer/Close" to="." method="_on_close_pressed"]
+[connection signal="pressed" from="EnumButtonTabContainer/Debug/HBoxContainer/Apply" to="." method="_on_apply_pressed"]

@@ -1,0 +1,42 @@
+[gd_scene format=3 uid="uid://d3eov8ks0tqhl"]
+
+[ext_resource type="Script" uid="uid://c13bd47nn7q63" path="res://src/interactables/Interactable.gd" id="1_8bty4"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="1_co2ph"]
+[ext_resource type="Texture2D" uid="uid://dw38va1ai5osi" path="res://assets/textures/hazards/sawblade/medium/RegularSawbladeMedium.svg" id="1_lbs5a"]
+[ext_resource type="Shader" uid="uid://c8fmb7haov3m7" path="res://resources/shaders/Sawblade.gdshader" id="2_13pfd"]
+[ext_resource type="Material" uid="uid://dr6386rtmro6e" path="res://resources/FadeEnterEffectCanvasGroup.tres" id="2_g3yt8"]
+[ext_resource type="Script" uid="uid://uatxmfuua4wq" path="res://src/interactables/public_components/TextureRotateComponent.gd" id="4_13pfd"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_g3yt8"]
+shader = ExtResource("2_13pfd")
+shader_parameter/gradient_start = 0.0
+shader_parameter/gradient_end = 0.3999999910592
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_8bty4"]
+radius = 96.10411
+
+[node name="SawbladeMedium" type="Area2D" unique_id=1838978671]
+collision_layer = 2048
+script = ExtResource("1_8bty4")
+metadata/_custom_type_script = "uid://c13bd47nn7q63"
+
+[node name="EnterEffectLayer" type="CanvasGroup" parent="." unique_id=420429054]
+material = ExtResource("2_g3yt8")
+
+[node name="RegularSawbladeMedium" type="Sprite2D" parent="EnterEffectLayer" unique_id=186428154]
+material = SubResource("ShaderMaterial_g3yt8")
+texture = ExtResource("1_lbs5a")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=505323515]
+shape = SubResource("CircleShape2D_8bty4")
+debug_color = Color(0.960784, 0, 0, 0)
+
+[node name="EditorSelectionCollider" parent="." unique_id=1628102610 instance=ExtResource("1_co2ph")]
+scale = Vector2(2, 2)
+type = 3
+
+[node name="TextureRotateComponent" type="Node" parent="." unique_id=1810192162 node_paths=PackedStringArray("_sprite")]
+script = ExtResource("4_13pfd")
+_sprite = NodePath("../EnterEffectLayer/RegularSawbladeMedium")
+rotation_rate = -180.0
+metadata/_custom_type_script = "uid://uatxmfuua4wq"
