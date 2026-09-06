@@ -11,6 +11,7 @@ size = Vector2(130, 130)
 collision_layer = 2
 freeze = true
 freeze_mode = 1
+script = ExtResource("3_i3l5m")
 metadata/physics = true
 
 [node name="Detail" type="Sprite2D" parent="." unique_id=2128322817]
@@ -25,7 +26,3 @@ shape = SubResource("RectangleShape2D_s4sak")
 debug_color = Color(0, 0.071, 0.702, 0.25)
 
 [node name="EditorSelectionCollider" parent="." unique_id=576839831 instance=ExtResource("2_i3l5m")]
-
-[node name="PhysicsObjectComponent" type="Node" parent="." unique_id=1100461018]
-script = ExtResource("3_i3l5m")
-metadata/_custom_type_script = "uid://co07p647ncgri"
