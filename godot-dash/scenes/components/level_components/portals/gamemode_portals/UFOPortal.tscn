@@ -1,0 +1,77 @@
+[gd_scene format=3 uid="uid://bd0j0ubumn1dc"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_m72w8"]
+[ext_resource type="Texture2D" uid="uid://n74audulsaf4" path="res://assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalBack.png" id="2_ivt8v"]
+[ext_resource type="Material" uid="uid://t4wcwy036o4d" path="res://resources/PulseWhiteMaterial.tres" id="2_m72w8"]
+[ext_resource type="Script" uid="uid://d4icbghdufton" path="res://src/LayeredSprite.gd" id="3_ah6ko"]
+[ext_resource type="Texture2D" uid="uid://g17qv6d5a8iq" path="res://assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalFront.png" id="3_ogdae"]
+[ext_resource type="Texture2D" uid="uid://d10ak088yudm7" path="res://assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalIndicatorBG.png" id="4_b1r1t"]
+[ext_resource type="Texture2D" uid="uid://6vdlyku2u7i8" path="res://assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalIndicatorIcon.png" id="5_hl8ac"]
+[ext_resource type="PackedScene" uid="uid://d23j4fpbpdrv4" path="res://scenes/particle_emitter_presets/PortalParticles.tscn" id="7_p7ufc"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="8_uesul"]
+[ext_resource type="Script" uid="uid://ch7r67xegri61" path="res://src/interactables/public_components/GamemodeChangerComponent.gd" id="9_h6xnr"]
+[ext_resource type="Script" uid="uid://n8ym1w4r5ke" path="res://src/interactables/private_components/PulseWhite.gd" id="11_8ibny"]
+[ext_resource type="Script" uid="uid://dh8clxh0ec2bd" path="res://src/interactables/public_components/GroundMoverComponent.gd" id="12_gi1ek"]
+[ext_resource type="Script" uid="uid://cd3jqi4il3x2p" path="res://src/interactables/public_components/TextureRotationPinComponent.gd" id="13_dxq01"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
+size = Vector2(128, 384)
+
+[node name="UFOPortal" type="Area2D" unique_id=220896547]
+collision_layer = 8
+script = ExtResource("1_m72w8")
+metadata/_edit_group_ = true
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1039201366]
+shape = SubResource("RectangleShape2D_cghk8")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprites" type="Node2D" parent="." unique_id=549571002]
+material = ExtResource("2_m72w8")
+script = ExtResource("3_ah6ko")
+
+[node name="PortalBack" type="Sprite2D" parent="Sprites" unique_id=538742267]
+z_index = -1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("2_ivt8v")
+
+[node name="PortalFront" type="Sprite2D" parent="Sprites" unique_id=2009375299]
+z_index = 1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("3_ogdae")
+
+[node name="PortalIndicatorBg" type="Sprite2D" parent="Sprites" unique_id=1554360160]
+z_index = 1
+use_parent_material = true
+position = Vector2(48, -1.90735e-06)
+texture = ExtResource("4_b1r1t")
+
+[node name="IndicatorIcon" type="Sprite2D" parent="Sprites" unique_id=720504250]
+z_index = 1
+use_parent_material = true
+position = Vector2(44, -1.90735e-06)
+texture = ExtResource("5_hl8ac")
+
+[node name="ParticleEmitter" parent="." unique_id=1600688424 instance=ExtResource("7_p7ufc")]
+modulate = Color(1, 0.47451, 0, 1)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=523484136]
+script = ExtResource("8_uesul")
+
+[node name="PulseWhite" type="Node" parent="." unique_id=699600628 node_paths=PackedStringArray("pulse_target")]
+script = ExtResource("11_8ibny")
+pulse_target = NodePath("../Sprites")
+metadata/_custom_type_script = "uid://n8ym1w4r5ke"
+
+[node name="GamemodeChangerComponent" type="Node" parent="." unique_id=1046759544]
+script = ExtResource("9_h6xnr")
+_gamemode = 2
+
+[node name="GroundMoverComponent" type="Node" parent="." unique_id=761876644]
+script = ExtResource("12_gi1ek")
+
+[node name="TextureRotationPin" type="Node" parent="." unique_id=676242741 node_paths=PackedStringArray("pinned")]
+script = ExtResource("13_dxq01")
+pinned = NodePath("../Sprites/IndicatorIcon")

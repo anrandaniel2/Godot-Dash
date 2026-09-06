@@ -1,0 +1,103 @@
+[gd_scene format=3 uid="uid://ctw1jhwf8nsij"]
+
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_2lo85"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="2_6mw80"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="3_p8psh"]
+[ext_resource type="Texture2D" uid="uid://dus42ph1rvvjq" path="res://assets/textures/orbs/DashOrbMagenta.svg" id="3_q66dt"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="4_4y57n"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="4_w7bt3"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="5_tgwkr"]
+[ext_resource type="Script" uid="uid://c772o12ml0hud" path="res://src/interactables/public_components/FireDashComponent.gd" id="7_35cbg"]
+[ext_resource type="Script" uid="uid://734ig4xqcu7j" path="res://src/interactables/private_components/fire_dash/FireDashTangentSpeed.gd" id="8_fdxk0"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="8_t7vhb"]
+[ext_resource type="Script" uid="uid://df636dbhnu65v" path="res://src/interactables/public_components/GravityFlipChangerComponent.gd" id="9_tqky4"]
+[ext_resource type="Script" uid="uid://bxwbrvsv1wbcj" path="res://src/interactables/private_components/fire_dash/FireDashRotatedSpeed.gd" id="10_0a3a8"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="10_y60uf"]
+[ext_resource type="Script" uid="uid://cy2u4smg8q8f7" path="res://src/interactables/private_components/fire_dash/FireDashSpeedPlatformerSwitch.gd" id="12_sr550"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="12_vy66y"]
+[ext_resource type="Script" uid="uid://tfriwfc7uruu" path="res://src/interactables/public_components/EasingComponent.gd" id="14_83uii"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[sub_resource type="Resource" id="Resource_rajme"]
+script = ExtResource("10_0a3a8")
+metadata/_custom_type_script = "uid://bxwbrvsv1wbcj"
+
+[sub_resource type="Resource" id="Resource_4f06y"]
+script = ExtResource("8_fdxk0")
+metadata/_custom_type_script = "uid://734ig4xqcu7j"
+
+[sub_resource type="Resource" id="Resource_83uii"]
+script = ExtResource("12_sr550")
+sidescroller = SubResource("Resource_4f06y")
+platformer = SubResource("Resource_rajme")
+metadata/_custom_type_script = "uid://cy2u4smg8q8f7"
+
+[node name="DashOrbMagenta" type="Area2D" unique_id=955774279]
+collision_layer = 8
+script = ExtResource("1_2lo85")
+
+[node name="ParticleEmitter" parent="." unique_id=2074692356 instance=ExtResource("2_6mw80")]
+modulate = Color(1, 0, 0.823529, 1)
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=1418107144]
+script = ExtResource("3_p8psh")
+
+[node name="PathPreview" type="Line2D" parent="." unique_id=1931035208]
+points = PackedVector2Array(64, 0, 1152, 0)
+width = 4.0
+default_color = Color(1, 0, 0.823529, 1)
+end_cap_mode = 2
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="PathPreview" unique_id=79571367]
+script = ExtResource("4_4y57n")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="Sprite" type="Sprite2D" parent="." unique_id=1539750712]
+position = Vector2(6, 0)
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("3_q66dt")
+
+[node name="MusicScale" type="Node" parent="Sprite" unique_id=1943527297]
+script = ExtResource("3_p8psh")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1528788442]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=813456119]
+script = ExtResource("4_w7bt3")
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=1428799809]
+script = ExtResource("5_tgwkr")
+
+[node name="PulseScale" type="Node" parent="." unique_id=1155739515 node_paths=PackedStringArray("sprite")]
+script = ExtResource("8_t7vhb")
+sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=1365776200]
+script = ExtResource("10_y60uf")
+
+[node name="FireDashComponent" type="Node" parent="." unique_id=2002654548]
+script = ExtResource("7_35cbg")
+_path = SubResource("Resource_83uii")
+
+[node name="EasingComponent" type="Node" parent="." unique_id=590290349]
+script = ExtResource("14_83uii")
+duration = 0.25
+easing_type = 1
+easing_transition = 5
+_use_physics_process = true
+_can_be_previewed = false
+_can_change_action = false
+metadata/_custom_type_script = "uid://tfriwfc7uruu"
+
+[node name="GravityFlipChangerComponent" type="Node" parent="." unique_id=352778780]
+script = ExtResource("9_tqky4")
+flip_state = 2
+
+[node name="EditorSelectionCollider" parent="." unique_id=480540917 instance=ExtResource("12_vy66y")]
+type = 8

@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="ColorChannelSuggestionProvider" format=3 uid="uid://tkk67x1vl52w"]
+
+[ext_resource type="Script" uid="uid://bjl1ldauenayf" path="res://src/resources/ColorChannelSuggestionProvider.gd" id="1_qu4r7"]
+
+[resource]
+script = ExtResource("1_qu4r7")
+metadata/_custom_type_script = "uid://bjl1ldauenayf"

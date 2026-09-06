@@ -1,0 +1,195 @@
+[gd_scene format=3 uid="uid://deehxyexprt42"]
+
+[ext_resource type="Material" uid="uid://dmfwkx1hhpd5x" path="res://resources/SimpleBlurMaterial.tres" id="1_5utp4"]
+[ext_resource type="Theme" uid="uid://cntfsyilhn2ic" path="res://resources/Theme.tres" id="5_4us3b"]
+[ext_resource type="Script" uid="uid://jlacauhhrxyo" path="res://addons/SmoothScroll/SmoothScrollContainer.gd" id="6_gn1b0"]
+[ext_resource type="Script" uid="uid://dio03ib62x52j" path="res://src/ReplayPanelLoader.gd" id="6_jd2xo"]
+[ext_resource type="Script" uid="uid://b7h0k2h2qwlqv" path="res://addons/SmoothScroll/scroll_damper/expo_scroll_damper.gd" id="7_mckxg"]
+[ext_resource type="Texture2D" uid="uid://dgobch7m00i7a" path="res://assets/textures/icons/godot/Search.svg" id="16_nya57"]
+[ext_resource type="Script" uid="uid://y1hecem53675" path="res://addons/search_bar_node/SearchBarNode.gd" id="17_qty6d"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_higv0"]
+content_margin_left = 12.0
+content_margin_right = 12.0
+bg_color = Color(0.1, 0.1, 0.1, 0.6)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_f018m"]
+content_margin_left = 12.0
+content_margin_right = 12.0
+bg_color = Color(0, 0, 0, 0.6)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_lu1w5"]
+content_margin_left = 12.0
+content_margin_right = 12.0
+bg_color = Color(0.225, 0.225, 0.225, 0.6)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="Resource" id="Resource_w3mqd"]
+script = ExtResource("7_mckxg")
+
+[sub_resource type="Resource" id="Resource_rvkhy"]
+script = ExtResource("7_mckxg")
+
+[node name="ReplaysMenu" type="VBoxContainer" unique_id=1168452285]
+material = ExtResource("1_5utp4")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_type_variation = &"TitleScreenVBox"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="." unique_id=1484720533]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="SearchBarNode" type="LineEdit" parent="HBoxContainer" unique_id=1258762670 node_paths=PackedStringArray("root_node_to_search")]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/normal = SubResource("StyleBoxFlat_higv0")
+placeholder_text = "Search..."
+right_icon = ExtResource("16_nya57")
+script = ExtResource("17_qty6d")
+root_node_to_search = NodePath("../../SmoothScrollContainer/ReplayPanelLoader")
+group_name = PackedStringArray()
+metadata/_custom_type_script = "uid://y1hecem53675"
+
+[node name="SortBy" type="OptionButton" parent="HBoxContainer" unique_id=1744453634]
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_higv0")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_f018m")
+theme_override_styles/hover = SubResource("StyleBoxFlat_lu1w5")
+selected = 0
+item_count = 1
+popup/item_0/text = "Alphabetically"
+popup/item_0/id = 0
+
+[node name="Order" type="OptionButton" parent="HBoxContainer" unique_id=1991552038]
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_higv0")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_f018m")
+theme_override_styles/hover = SubResource("StyleBoxFlat_lu1w5")
+selected = 0
+item_count = 2
+popup/item_0/text = "First-Last"
+popup/item_0/id = 0
+popup/item_1/text = "Last-First"
+popup/item_1/id = 1
+
+[node name="HSeparator" type="HSeparator" parent="." unique_id=492030309]
+layout_mode = 2
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="." unique_id=455587636]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("6_gn1b0")
+wheel_scroll_damper = SubResource("Resource_w3mqd")
+dragging_scroll_damper = SubResource("Resource_rvkhy")
+
+[node name="ReplayPanelLoader" type="VBoxContainer" parent="SmoothScrollContainer" unique_id=66389888 node_paths=PackedStringArray("import_dialog", "save_dialog", "replay_already_exists_dialog", "sort_by", "order", "save", "stop")]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+theme_override_constants/separation = 8
+alignment = 1
+script = ExtResource("6_jd2xo")
+import_dialog = NodePath("../../ImportReplayDialog")
+save_dialog = NodePath("../../SaveReplayDialog")
+replay_already_exists_dialog = NodePath("../../ImportReplayDialog")
+sort_by = NodePath("../../HBoxContainer/SortBy")
+order = NodePath("../../HBoxContainer/Order")
+save = NodePath("../../HBoxContainer2/Save")
+stop = NodePath("../../HBoxContainer2/Stop")
+
+[node name="ImportReplayDialog" type="FileDialog" parent="." unique_id=788950934]
+auto_translate_mode = 1
+oversampling_override = 1.0
+title = "Import and open"
+initial_position = 2
+size = Vector2i(1088, 720)
+ok_button_text = "Open"
+mode_overrides_title = false
+file_mode = 0
+access = 2
+filters = PackedStringArray("*.res")
+use_native_dialog = true
+option_count = 1
+option_0/name = "Keep original level file"
+option_0/default = 1
+
+[node name="SaveReplayDialog" type="FileDialog" parent="." unique_id=177312287]
+auto_translate_mode = 1
+oversampling_override = 1.0
+title = "Save"
+initial_position = 2
+size = Vector2i(1088, 720)
+ok_button_text = "Save"
+mode_overrides_title = false
+access = 1
+root_subfolder = "replays"
+filters = PackedStringArray("*.res")
+use_native_dialog = true
+
+[node name="HSeparator2" type="HSeparator" parent="." unique_id=1821575446]
+layout_mode = 2
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="." unique_id=739767339]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="Save" type="Button" parent="HBoxContainer2" unique_id=1719689451]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme_type_variation = &"TitleScreenCommunityLevelListButton"
+text = "Save Replay"
+autowrap_mode = 3
+
+[node name="Stop" type="Button" parent="HBoxContainer2" unique_id=1474177685]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme_type_variation = &"TitleScreenCommunityLevelListButton"
+text = "Stop Replay"
+autowrap_mode = 3
+
+[node name="Import" type="Button" parent="HBoxContainer2" unique_id=1973376112]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("5_4us3b")
+theme_type_variation = &"TitleScreenCommunityLevelListButton"
+text = "Import Replay
+"
+autowrap_mode = 3
+
+[node name="Refresh" type="Button" parent="HBoxContainer2" unique_id=517936487]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("5_4us3b")
+theme_type_variation = &"TitleScreenCommunityLevelListButton"
+text = "Refresh"
+autowrap_mode = 3
+
+[connection signal="file_selected" from="ImportReplayDialog" to="SmoothScrollContainer/ReplayPanelLoader" method="_import_replay"]
+[connection signal="pressed" from="HBoxContainer2/Save" to="SmoothScrollContainer/ReplayPanelLoader" method="_save"]
+[connection signal="pressed" from="HBoxContainer2/Stop" to="SmoothScrollContainer/ReplayPanelLoader" method="_stop_replay"]
+[connection signal="pressed" from="HBoxContainer2/Import" to="SmoothScrollContainer/ReplayPanelLoader" method="_open_importer"]
+[connection signal="pressed" from="HBoxContainer2/Refresh" to="SmoothScrollContainer/ReplayPanelLoader" method="refresh"]

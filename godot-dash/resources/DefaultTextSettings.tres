@@ -1,0 +1,11 @@
+[gd_resource type="LabelSettings" script_class="TextSettings" format=3 uid="uid://cwxr4wnehp2wc"]
+
+[ext_resource type="Script" uid="uid://u6bg45iwy21r" path="res://src/resources/TextSettings.gd" id="1_h1g5p"]
+
+[resource]
+font_size = 64
+outline_size = 32
+outline_color = Color(0, 0, 0, 1)
+shadow_size = 0
+script = ExtResource("1_h1g5p")
+metadata/_custom_type_script = "uid://u6bg45iwy21r"

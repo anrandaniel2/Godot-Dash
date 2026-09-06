@@ -1,0 +1,211 @@
+[gd_scene format=3 uid="uid://cw15476n2m4we"]
+
+[ext_resource type="Theme" uid="uid://cntfsyilhn2ic" path="res://resources/Theme.tres" id="1_orc32"]
+[ext_resource type="Script" uid="uid://dpfci6rxt0pwi" path="res://src/editor/editor_panels/color_channel/ColorChannelEditor.gd" id="2_cnty4"]
+[ext_resource type="ButtonGroup" uid="uid://cev0xn2madcx2" path="res://resources/ColorChannelItemButtonGroup.tres" id="3_u8i2y"]
+[ext_resource type="Texture2D" uid="uid://osgs1eafbggt" path="res://assets/textures/icons/godot/Add.svg" id="4_lmm7r"]
+[ext_resource type="Texture2D" uid="uid://dgobch7m00i7a" path="res://assets/textures/icons/godot/Search.svg" id="4_maglq"]
+[ext_resource type="Script" uid="uid://bss8ppxnt7gio" path="res://src/gui/properties/types/BoolProperty.gd" id="5_b5wg1"]
+[ext_resource type="Script" uid="uid://y1hecem53675" path="res://addons/search_bar_node/SearchBarNode.gd" id="5_dv0aw"]
+[ext_resource type="Script" uid="uid://dewr6g2sliqsr" path="res://src/gui/properties/components/PropertyWatcher.gd" id="6_lmm7r"]
+[ext_resource type="Script" uid="uid://bwcwfobfohbsd" path="res://src/gui/properties/types/ColorProperty.gd" id="6_maglq"]
+[ext_resource type="Script" uid="uid://djfsy06pkw4ju" path="res://src/gui/properties/types/EnumProperty.gd" id="7_dv0aw"]
+[ext_resource type="Script" uid="uid://jlacauhhrxyo" path="res://addons/SmoothScroll/SmoothScrollContainer.gd" id="7_xmx11"]
+[ext_resource type="Script" uid="uid://b7h0k2h2qwlqv" path="res://addons/SmoothScroll/scroll_damper/expo_scroll_damper.gd" id="8_00t8p"]
+[ext_resource type="Script" uid="uid://dd75trm1kaaiu" path="res://src/gui/properties/types/FloatProperty.gd" id="13_xmx11"]
+
+[sub_resource type="Resource" id="Resource_17tqa"]
+script = ExtResource("8_00t8p")
+
+[sub_resource type="Resource" id="Resource_nviis"]
+script = ExtResource("8_00t8p")
+
+[node name="ColorChannelEditor" type="VBoxContainer" unique_id=457190377 node_paths=PackedStringArray("separator", "properties_container")]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("2_cnty4")
+button_group = ExtResource("3_u8i2y")
+separator = NodePath("HSeparator")
+properties_container = NodePath("VBoxContainer")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="." unique_id=2019751470]
+layout_mode = 2
+
+[node name="LineEdit" type="LineEdit" parent="HBoxContainer" unique_id=1505154210 node_paths=PackedStringArray("root_node_to_search")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 1
+theme = ExtResource("1_orc32")
+placeholder_text = "Find or create a color channel…"
+clear_button_enabled = true
+right_icon = ExtResource("4_maglq")
+script = ExtResource("5_dv0aw")
+root_node_to_search = NodePath("../../SmoothScrollContainer/ColorChannelContainer")
+group_name = PackedStringArray()
+filters = Array[StringName]([&"channel_name"])
+discard_similars = false
+metadata/_custom_type_script = "uid://y1hecem53675"
+
+[node name="Button" type="Button" parent="HBoxContainer" unique_id=1388913642]
+texture_filter = 4
+custom_minimum_size = Vector2(31, 31)
+layout_mode = 2
+focus_mode = 0
+icon = ExtResource("4_lmm7r")
+icon_alignment = 1
+
+[node name="SmoothScrollContainer" type="ScrollContainer" parent="." unique_id=796204241]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("7_xmx11")
+wheel_scroll_damper = SubResource("Resource_17tqa")
+dragging_scroll_damper = SubResource("Resource_nviis")
+
+[node name="ColorChannelContainer" type="HFlowContainer" parent="SmoothScrollContainer" unique_id=1655537685]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HSeparator" type="HSeparator" parent="." unique_id=759781961]
+visible = false
+layout_mode = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1408888635]
+visible = false
+layout_mode = 2
+
+[node name="Copy channel" type="BoxContainer" parent="VBoxContainer" unique_id=236908819]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("5_b5wg1")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[node name="PropertyWatcher" type="Node" parent="VBoxContainer/Copy channel" unique_id=700351788 node_paths=PackedStringArray("target")]
+script = ExtResource("6_lmm7r")
+target = NodePath("../../Channel")
+condition = "value"
+property = &"visible"
+metadata/_custom_type_script = "uid://dewr6g2sliqsr"
+
+[node name="PropertyWatcher2" type="Node" parent="VBoxContainer/Copy channel" unique_id=1550979515 node_paths=PackedStringArray("target")]
+script = ExtResource("6_lmm7r")
+target = NodePath("../../Color")
+condition = "not value"
+property = &"visible"
+metadata/_custom_type_script = "uid://dewr6g2sliqsr"
+
+[node name="Color" type="BoxContainer" parent="VBoxContainer" unique_id=1557049686]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("6_maglq")
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="Channel" type="BoxContainer" parent="VBoxContainer" unique_id=407628610]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_dv0aw")
+fields = PackedStringArray("Background", "Ground", "Line", "P1", "P2", "Glow")
+metadata/_custom_type_script = "uid://djfsy06pkw4ju"
+
+[node name="Modulation" type="FoldableContainer" parent="VBoxContainer" unique_id=2126872056]
+layout_mode = 2
+folded = true
+title = "Modulation"
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/Modulation" unique_id=817892931]
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Hue" type="BoxContainer" parent="VBoxContainer/Modulation/VBoxContainer" unique_id=1364278940]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("13_xmx11")
+min_value = -1.0
+max_value = 1.0
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Saturation" type="BoxContainer" parent="VBoxContainer/Modulation/VBoxContainer" unique_id=344041659]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("13_xmx11")
+min_value = -1.0
+max_value = 1.0
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Value" type="BoxContainer" parent="VBoxContainer/Modulation/VBoxContainer" unique_id=2086316635]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("13_xmx11")
+min_value = -1.0
+max_value = 1.0
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Intensity" type="BoxContainer" parent="VBoxContainer/Modulation/VBoxContainer" unique_id=522056495]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("13_xmx11")
+default = 1.0
+max_value = 5.0
+allow_greater = true
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="Alpha" type="BoxContainer" parent="VBoxContainer/Modulation/VBoxContainer" unique_id=1438606802]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("13_xmx11")
+default = 1.0
+max_value = 1.0
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="ConfirmationDialog" type="ConfirmationDialog" parent="." unique_id=975271802]
+auto_translate_mode = 1
+title = "Please confirm..."
+initial_position = 2
+size = Vector2i(355, 106)
+ok_button_text = "Delete"
+dialog_text = "There are 4 objects using this color channel.
+Are you sure you want to delete it?"
+
+[connection signal="text_submitted" from="HBoxContainer/LineEdit" to="." method="_on_line_edit_text_submitted"]
+[connection signal="pressed" from="HBoxContainer/Button" to="." method="_on_button_pressed"]
+[connection signal="value_changed" from="VBoxContainer/Copy channel" to="." method="_on_copy_channel_value_changed"]
+[connection signal="interaction_ended" from="VBoxContainer/Color" to="." method="_on_color_interaction_ended"]
+[connection signal="value_changed" from="VBoxContainer/Color" to="." method="_on_color_value_changed"]
+[connection signal="value_changed" from="VBoxContainer/Channel" to="." method="_on_channel_value_changed"]
+[connection signal="folding_changed" from="VBoxContainer/Modulation" to="." method="_on_modulation_folding_changed"]
+[connection signal="interaction_ended" from="VBoxContainer/Modulation/VBoxContainer/Hue" to="." method="_on_hue_interaction_ended"]
+[connection signal="value_changed" from="VBoxContainer/Modulation/VBoxContainer/Hue" to="." method="_on_hue_value_changed"]
+[connection signal="interaction_ended" from="VBoxContainer/Modulation/VBoxContainer/Saturation" to="." method="_on_saturation_interaction_ended"]
+[connection signal="value_changed" from="VBoxContainer/Modulation/VBoxContainer/Saturation" to="." method="_on_saturation_value_changed"]
+[connection signal="interaction_ended" from="VBoxContainer/Modulation/VBoxContainer/Value" to="." method="_on_value_interaction_ended"]
+[connection signal="value_changed" from="VBoxContainer/Modulation/VBoxContainer/Value" to="." method="_on_value_value_changed"]
+[connection signal="interaction_ended" from="VBoxContainer/Modulation/VBoxContainer/Intensity" to="." method="_on_intensity_interaction_ended"]
+[connection signal="value_changed" from="VBoxContainer/Modulation/VBoxContainer/Intensity" to="." method="_on_intensity_value_changed"]
+[connection signal="interaction_ended" from="VBoxContainer/Modulation/VBoxContainer/Alpha" to="." method="_on_alpha_interaction_ended"]
+[connection signal="value_changed" from="VBoxContainer/Modulation/VBoxContainer/Alpha" to="." method="_on_alpha_value_changed"]
