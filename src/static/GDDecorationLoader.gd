@@ -207,49 +207,95 @@ static func build_batches(objects: Array, art_scale_factor: float) -> Array[Deco
 			continue
 		var hsv_shift: PackedFloat32Array = object_data.get("hsv_shift", PackedFloat32Array())
 		var spin: float = float(object_data.get("spin", 0.0))
-
-		# The base frame's drawn size, so detail and glow layers authored at a
-		# different resolution can be scaled to cover it.
-		var base_frame: GDSpriteSheet.Frame = sheet.get_frame(frames.base)
-		var base_size: Vector2 = base_frame.region.size if base_frame != null else Vector2.ZERO
 		var base_alpha: float = float(object_data.get("base_alpha", 1.0))
+		var detail_tint: Color = object_data.get("detail_tint", tint)
+		var detail_hsv: PackedFloat32Array = object_data.get("detail_hsv_shift", PackedFloat32Array())
 
 		# Sorted so that two objects with the same groups in a different order
 		# still land in the same batch.
 		var group_key: Array = groups.duplicate()
 		group_key.sort()
+		var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending)
 
-		var base_item: DecorationBatch.Item = _add_layer(
-				_batch_for(batches, group_key, z_layer, blending),
-				sheet, frames.base, transform, z_order, gd_id,
-				_channel_for(channels, "base"), "base", art_scale_factor, tint, hsv_shift, base_alpha,
-				base_size, spin,
-		)
-		if base_item != null:
-			base_item.wants_glow = wants_glow
-			base_item.high_detail = bool(object_data.get("high_detail", false))
+		# Geometry Dash draws an object as a small tree of sprites: the parts
+		# with a negative order behind the root sprite, then the root, then the
+		# rest. The order is kept as a sub-key beneath the object's z order so
+		# a fill never lands on top of the outline it belongs under.
+		var base_item: DecorationBatch.Item = null
+		var detail_item: DecorationBatch.Item = null
+		# The first part that follows the base colour, and the first part of any
+		# colour: one of them stands in for the object when its root sprite is
+		# Geometry Dash's empty frame. Tracked here rather than searched for
+		# afterwards, since the batch may already hold an identical neighbour.
+		var first_base_part: DecorationBatch.Item = null
+		var first_part: DecorationBatch.Item = null
+		var root_drawn: bool = false
+		for part: Dictionary in frames.parts:
+			var order: int = int(part.get("order", 0))
+			if order >= 0 and not root_drawn:
+				base_item = _add_root(
+						batch, sheet, frames, transform, z_order, gd_id, channels,
+						art_scale_factor, tint, hsv_shift, base_alpha, spin,
+				)
+				root_drawn = true
+			var part_item: DecorationBatch.Item = _add_part(
+					batch, sheet, part, transform, z_order, gd_id, channels,
+					art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
+					base_alpha, spin,
+			)
+			if part_item == null:
+				continue
+			if first_part == null:
+				first_part = part_item
+			if part_item.layer == "detail":
+				if detail_item == null:
+					detail_item = part_item
+			elif first_base_part == null and str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_BASE:
+				first_base_part = part_item
+		if not root_drawn:
+			base_item = _add_root(
+					batch, sheet, frames, transform, z_order, gd_id, channels,
+					art_scale_factor, tint, hsv_shift, base_alpha, spin,
+			)
+
+		# An object with no visible root sprite is still one object when saved
+		# and recoloured, so one of its parts stands in for it: preferably one
+		# on the base colour, so the saved channel binding is the right one.
+		if base_item == null:
+			base_item = first_base_part if first_base_part != null else first_part
+			if base_item != null:
+				base_item.layer = "base"
+		if base_item == null:
+			continue
+		# The object's own placement and colour, kept verbatim so saving does
+		# not have to reverse-engineer them from a sprite that may sit off the
+		# object's centre or be one of its always-black parts.
+		base_item.object_transform = transform
+		base_item.object_tint = tint
+		base_item.object_hsv_shift = hsv_shift
+		base_item.wants_glow = wants_glow
+		base_item.high_detail = bool(object_data.get("high_detail", false))
+
 		if frames.has_detail():
 			# The detail layer follows the SECONDARY colour channel and its own
 			# HSV shift (keys 22/42/44). Passing the base tint here - as an
 			# earlier revision did - painted both layers the same colour and
 			# flattened every two-tone object in the level.
-			var detail_item: DecorationBatch.Item = _add_layer(
-					_batch_for(batches, group_key, z_layer, blending),
-					sheet, frames.detail, transform, z_order, gd_id,
+			detail_item = _add_layer(
+					batch, sheet, frames.detail, transform, z_order, gd_id,
 					_channel_for(channels, "detail"), "detail", art_scale_factor,
-					object_data.get("detail_tint", tint),
-					object_data.get("detail_hsv_shift", PackedFloat32Array()),
-					base_alpha, base_size, spin,
+					detail_tint, detail_hsv, base_alpha, spin,
+					DRAW_ORDER_DETAIL,
 			)
-			if base_item != null:
-				base_item.detail = detail_item
+		base_item.detail = detail_item
 		if frames.has_glow() and wants_glow:
-			# Glow layers are always additive, whatever the channel says.
+			# Glow layers are always additive, whatever the channel says, and
+			# sit behind the object.
 			_add_layer(
 					_batch_for(batches, group_key, z_layer, true),
 					sheet, frames.glow, transform, z_order, gd_id,
 					_channel_for(channels, "base"), "glow", art_scale_factor, tint, hsv_shift, base_alpha,
-				base_size, spin,
+					spin, DRAW_ORDER_GLOW,
 			)
 
 	var result: Array[DecorationBatch] = []
@@ -260,6 +306,116 @@ static func build_batches(objects: Array, art_scale_factor: float) -> Array[Deco
 		result.append(batch)
 	_finalise_batch_order(result)
 	return result
+
+
+## Sub-order of the sprites making up one object, within its z order. Parts
+## keep their own order from the sprite tree; these are the fixed slots.
+const DRAW_ORDER_GLOW: int = -1000
+const DRAW_ORDER_ROOT: int = 0
+const DRAW_ORDER_DETAIL: int = 1000
+
+
+## Adds the object's root sprite, or nothing when it is Geometry Dash's empty
+## frame (an object drawn entirely from its parts).
+static func _add_root(
+		batch: DecorationBatch,
+		sheet: GDSpriteSheet.Sheet,
+		frames: GDObjectFrames.ObjectFrames,
+		transform: Transform2D,
+		z_order: int,
+		gd_id: int,
+		channels: Variant,
+		art_scale_factor: float,
+		tint: Color,
+		hsv_shift: PackedFloat32Array,
+		base_alpha: float,
+		spin: float,
+) -> DecorationBatch.Item:
+	if not frames.has_visible_root():
+		return null
+	var root_tint: Color = tint
+	var root_channel: StringName = _channel_for(channels, "base")
+	var root_hsv: PackedFloat32Array = hsv_shift
+	if frames.color == GDObjectFrames.COLOR_BLACK:
+		# Sawblades, pits, the "b" block set: black whatever the channel says,
+		# so the sprite is not bound to a channel at all - a channel update
+		# would otherwise repaint it in the object's colour.
+		root_tint = Color(0.0, 0.0, 0.0, tint.a)
+		root_channel = &""
+		root_hsv = PackedFloat32Array()
+	root_tint.a *= frames.opacity
+	return _add_layer(
+			batch, sheet, frames.base, transform, z_order, gd_id, root_channel, "base",
+			art_scale_factor, root_tint, root_hsv, base_alpha * frames.opacity, spin,
+			DRAW_ORDER_ROOT,
+	)
+
+
+## Adds one part of a multi-sprite object, placed relative to the object.
+static func _add_part(
+		batch: DecorationBatch,
+		sheet: GDSpriteSheet.Sheet,
+		part: Dictionary,
+		transform: Transform2D,
+		z_order: int,
+		gd_id: int,
+		channels: Variant,
+		art_scale_factor: float,
+		tint: Color,
+		hsv_shift: PackedFloat32Array,
+		detail_tint: Color,
+		detail_hsv: PackedFloat32Array,
+		base_alpha: float,
+		spin: float,
+) -> DecorationBatch.Item:
+	var frame_name: String = str(part.get("frame", ""))
+	var frame: GDSpriteSheet.Frame = sheet.get_frame(frame_name)
+	if frame == null:
+		return null
+
+	var color_class: String = str(part.get("color", GDObjectFrames.COLOR_BASE))
+	var part_tint: Color = tint
+	var part_hsv: PackedFloat32Array = hsv_shift
+	var channel: StringName = _channel_for(channels, "base")
+	var layer: String = "part"
+	match color_class:
+		GDObjectFrames.COLOR_DETAIL:
+			part_tint = detail_tint
+			part_hsv = detail_hsv
+			channel = _channel_for(channels, "detail")
+			layer = "detail"
+		GDObjectFrames.COLOR_BLACK:
+			# A black fill under an outline. Left unbound: following the
+			# object's channel would turn the fill white on the first update.
+			part_tint = Color(0.0, 0.0, 0.0, tint.a)
+			part_hsv = PackedFloat32Array()
+			channel = &""
+	var opacity: float = clampf(float(part.get("opacity", 1.0)), 0.0, 1.0)
+	part_tint.a *= opacity
+
+	# The part's placement, in Geometry Dash units around the object's centre
+	# (30 units to a cell, y up), converted to world units. Its own trim offset
+	# is handled by _add_layer, like every other sprite. The anchor shifts the
+	# sprite by a fraction of its own size, in its own local frame.
+	var gd_to_world: float = float(Constants.CELL_SIZE) / GMDConverter.GD_CELL_SIZE
+	var scale := Vector2(float(part.get("sx", 1.0)), float(part.get("sy", 1.0)))
+	var rotation: float = -deg_to_rad(float(part.get("rot", 0.0)))
+	var anchor := Vector2(float(part.get("ax", 0.0)), float(part.get("ay", 0.0)))
+	var local := Transform2D(
+			rotation,
+			scale,
+			0.0,
+			Vector2(float(part.get("x", 0.0)), -float(part.get("y", 0.0))) * gd_to_world,
+	)
+	if anchor != Vector2.ZERO:
+		var shift: Vector2 = Vector2(-anchor.x, anchor.y) * frame.region.size * art_scale_factor
+		local = local.translated_local(shift)
+
+	return _add_layer(
+			batch, sheet, frame_name, transform * local, z_order, gd_id, channel, layer,
+			art_scale_factor, part_tint, part_hsv, base_alpha * opacity, spin,
+			int(part.get("order", 0)),
+	)
 
 
 ## Gives batches that share a z layer distinct z indices.
@@ -336,6 +492,12 @@ static func _batch_for(
 
 ## Appends one sprite layer to [param batch], returning the item, or
 ## [code]null[/code] when the frame cannot be drawn.
+##
+## Every sprite is drawn at its [i]own[/i] pixel size and trim offset, at the
+## one atlas-to-world scale. An earlier revision stretched detail and glow
+## layers to the width of the base frame instead; the atlases trim every frame
+## to its opaque pixels, so a 5x6 px accent on a 60x60 block was blown up
+## twelvefold into a solid white square over the block.
 static func _add_layer(
 		batch: DecorationBatch,
 		sheet: GDSpriteSheet.Sheet,
@@ -349,25 +511,19 @@ static func _add_layer(
 		tint: Color = Color.WHITE,
 		hsv_shift: PackedFloat32Array = PackedFloat32Array(),
 		base_alpha: float = 1.0,
-		base_region_size: Vector2 = Vector2.ZERO,
 		spin: float = 0.0,
+		draw_order: int = 0,
 ) -> DecorationBatch.Item:
 	var frame: GDSpriteSheet.Frame = sheet.get_frame(frame_name)
 	if frame == null or frame.atlas == null:
 		return null
-
-	# A detail or glow layer is not always authored at the base layer's
-	# resolution - several are half size - so it is scaled to cover the base
-	# rather than drawn at its own pixel size.
-	var layer_scale: float = 1.0
-	if layer != "base" and base_region_size.x > 0.0 and frame.region.size.x > 0.0:
-		layer_scale = base_region_size.x / frame.region.size.x
 
 	var item := DecorationBatch.Item.new()
 	item.texture = frame.atlas
 	item.region = frame.region
 	item.gd_id = gd_id
 	item.z_order = z_order
+	item.draw_order = draw_order
 	item.channel = channel
 	item.layer = layer
 	item.modulate = tint
@@ -379,8 +535,8 @@ static func _add_layer(
 	# the conversion is folded in here rather than paid at draw time. The trim
 	# offset is applied through the basis so it rotates with the object.
 	var placement := object_transform
-	placement.x *= art_scale_factor * layer_scale
-	placement.y *= art_scale_factor * layer_scale
+	placement.x *= art_scale_factor
+	placement.y *= art_scale_factor
 	placement.origin = object_transform.origin + object_transform.basis_xform(
 			Vector2(frame.offset.x, -frame.offset.y) * art_scale_factor
 	)
@@ -422,18 +578,8 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 		if frames == null:
 			continue
 
-		# Undo the atlas-pixel scaling folded in at build time, then reapply the
-		# batch transform so any trigger movement is preserved.
-		var object_transform := item.transform
-		object_transform.x /= art_scale_factor
-		object_transform.y /= art_scale_factor
-
-		var frame: GDSpriteSheet.Frame = sheet.get_frame(frames.base)
-		if frame != null:
-			object_transform.origin = item.transform.origin - object_transform.basis_xform(
-					Vector2(frame.offset.x, -frame.offset.y) * art_scale_factor
-			)
-		object_transform = batch.transform * object_transform
+		# The batch transform is reapplied so any trigger movement is preserved.
+		var object_transform: Transform2D = batch.transform * item.object_transform
 
 		var channels: Dictionary = { }
 		if not item.channel.is_empty():
@@ -451,15 +597,16 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 			"transform": object_transform,
 			"groups": groups.duplicate(),
 			"color_channels": channels,
-			# Appearance is restored from the item itself, so a level that has
-			# been recoloured or faded saves the way it currently looks.
-			"tint": item.modulate,
+			# Appearance is restored from the object's own tint. A channel
+			# update repaints the sprites that follow it, so a recoloured level
+			# saves the way it currently looks; black parts never leak in.
+			"tint": item.modulate if not item.channel.is_empty() else item.object_tint,
 			"blending": batch.gd_blending,
 			# Only objects that asked for their glow get it back. Emitting it
 			# for every object with a glow frame, as before, buried a reloaded
 			# level under additive white.
 			"glow": frames.has_glow() and item.wants_glow,
-			"hsv_shift": item.hsv_shift,
+			"hsv_shift": item.object_hsv_shift,
 			"base_alpha": item.base_alpha,
 			"spin": item.spin,
 			"high_detail": item.high_detail,

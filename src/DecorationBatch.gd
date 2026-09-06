@@ -67,11 +67,15 @@ class Item:
 	var hsv_shift: PackedFloat32Array = PackedFloat32Array()
 	## Sort key within this batch.
 	var z_order: int = 0
+	## Order among the sprites that make up one object, beneath [member z_order]:
+	## negative parts sit behind the object's root sprite, positive in front.
+	var draw_order: int = 0
 	## Geometry Dash object id, kept for round-tripping and diagnostics.
 	var gd_id: int = 0
 	## Colour channel group this layer follows; empty when it has none.
 	var channel: StringName = &""
-	## Which layer of the object this is: "base", "detail" or "glow".
+	## Which layer of the object this is: "base", "detail", "glow" or "part"
+	## (an extra sprite of a multi-sprite object that follows the base colour).
 	var layer: String = "base"
 	## Local X of the origin, cached for bucketing.
 	var origin_x: float = 0.0
@@ -85,6 +89,15 @@ class Item:
 	## Base items only: the object's detail layer item, when it has one, so its
 	## channel and tint survive a save.
 	var detail: Item = null
+	## Base items only: the object's own transform in the batch's local space,
+	## in world units, exactly as it was imported. Saving reads this rather than
+	## undoing the sprite placement, which for a multi-sprite object may not
+	## even be centred on the object.
+	var object_transform: Transform2D = Transform2D.IDENTITY
+	## Base items only: the object's imported tint and HSV shift, before any
+	## always-black sprite rule was applied to the sprite standing in for it.
+	var object_tint: Color = Color.WHITE
+	var object_hsv_shift: PackedFloat32Array = PackedFloat32Array()
 	## Geometry Dash's "high detail" flag (key 103), kept for saving.
 	var high_detail: bool = false
 
@@ -154,19 +167,27 @@ func add_item(item: Item) -> Item:
 func build() -> void:
 	# Sorting on a precomputed integer key beats comparing object fields inside
 	# the callable, which matters when a batch holds tens of thousands of items.
+	#
+	# The sprites of one object must stay in their own order (fill, outline,
+	# detail), so within a z order the object's draw order comes before texture
+	# locality; the stable index keeps equal keys in insertion order.
 	var keyed: Array = []
 	keyed.resize(items.size())
 	for index in items.size():
 		var item: Item = items[index]
-		keyed[index] = [item.z_order, item.texture.get_instance_id(), item]
+		keyed[index] = [item.z_order, item.draw_order, item.texture.get_instance_id(), index, item]
 	keyed.sort_custom(
 			func(a: Array, b: Array) -> bool:
 				if a[0] != b[0]:
 					return a[0] < b[0]
-				return a[1] < b[1]
+				if a[1] != b[1]:
+					return a[1] < b[1]
+				if a[2] != b[2]:
+					return a[2] < b[2]
+				return a[3] < b[3]
 	)
 	for index in keyed.size():
-		items[index] = keyed[index][2]
+		items[index] = keyed[index][4]
 
 	_cull = items.size() >= CULL_THRESHOLD
 	_buckets.clear()

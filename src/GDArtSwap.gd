@@ -11,22 +11,35 @@ class_name GDArtSwap
 ##
 ## Those objects still need their scene - it carries the collision shape, the
 ## editor collider and any gameplay components - so the node is kept and only
-## its [b]textures[/b] are swapped for the matching atlas frames.
+## its [b]artwork[/b] is swapped: the scene's own textures are cleared and the
+## Geometry Dash sprites are added beneath the same nodes, so colour channels,
+## enter effects, hide attributes and the sawblade's rotation keep working.
 ##
-## 69 of the ids Godot Dash models have real artwork in the bundled atlases.
+## Geometry Dash draws an object as a small tree of sprites (an outline over a
+## black fill, a sawblade mirrored from one quarter, a two-tone block), all of
+## which [GDObjectFrames] describes. Every sprite is drawn at Geometry Dash's
+## own scale: 60 atlas pixels to a cell, its trimmed pixels put back where the
+## atlas says they belong. An earlier revision stretched the one base frame to
+## the size of the texture it replaced, which turned a 60x6 pixel bar (the
+## thick pixel-block outline) into a solid white square.
 ##
-## A swap is skipped whenever the frame is missing, so an object always renders
-## with something rather than vanishing.
+## A swap is skipped whenever the artwork is missing, so an object always
+## renders with something rather than vanishing.
 
 ## Nodes that carry an object's main silhouette, in the order they're searched.
 const BASE_NODE_NAMES: PackedStringArray = ["Base", "Sprite"]
 ## Nodes that carry the recolourable overlay.
 const DETAIL_NODE_NAMES: PackedStringArray = ["Detail"]
+## Name of the container the Geometry Dash sprites are added under.
+const ART_NODE_NAME: StringName = &"GDArt"
+## The scene node that pins a nine-patch block's texture scale while the block
+## is resized; Geometry Dash artwork scales with the block instead.
+const ABSOLUTE_SIZE_NODE_NAME: StringName = &"NinePatchSprite2DAbsoluteSize"
 
 
-## Swaps [param object]'s textures for the Geometry Dash artwork of [param gd_id].
+## Swaps [param object]'s artwork for the Geometry Dash artwork of [param gd_id].
 ##
-## Returns [code]true[/code] when at least one texture was replaced.
+## Returns [code]true[/code] when the artwork was replaced.
 static func apply(object: Node2D, gd_id: int) -> bool:
 	if not Config.use_gd_artwork:
 		return false
@@ -38,46 +51,66 @@ static func apply(object: Node2D, gd_id: int) -> bool:
 		return false
 
 	var sheet: GDSpriteSheet.Sheet = GDDecorationLoader.get_sheet()
-	var base_frame: GDSpriteSheet.Frame = sheet.get_frame(frames.base)
-	if base_frame == null:
+	if frames.has_visible_root() and sheet.get_frame(frames.base) == null:
 		_warn_once(gd_id, "frame '%s' is missing from the atlases" % frames.base)
 		return false
 
-	var swapped: bool = false
-
-	# The base silhouette. Its original texture size is remembered so a
-	# detail node that ships without a texture can be sized to match it.
+	# The node the main silhouette hangs from. Its colour channel watcher, enter
+	# effect and any rotation component keep applying to the new artwork.
 	var base_node: Node2D = _find_texture_node(object, BASE_NODE_NAMES)
-	var reference_size: Vector2 = Vector2.ZERO
-	if base_node != null:
-		var original: Variant = base_node.get("texture")
-		if original is Texture2D:
-			reference_size = original.get_size()
-		if _set_texture(base_node, base_frame, object):
-			swapped = true
-
-	# The recolourable overlay. Only scenes that genuinely have a separate
-	# Detail node get one: on a single-sprite scene such as GroundSpike the
-	# fallback search would hand back the node just written to, and the detail
-	# frame would overwrite the base artwork.
-	var detail_node: Node2D = _find_named_node(object, DETAIL_NODE_NAMES)
-	if detail_node != null:
-		if frames.has_detail():
-			# The block scenes ship their Detail node empty, so the swap has
-			# to work without a previous texture: the detail layer is where
-			# a two-tone block's colour fill lives, and dropping it left just
-			# a hollow outline.
-			var detail_frame: GDSpriteSheet.Frame = sheet.get_frame(frames.detail)
-			if detail_frame != null and _set_texture(detail_node, detail_frame, object, reference_size):
-				swapped = true
-		elif detail_node.get("texture") != null:
-			# Geometry Dash draws nothing here, so Godot Dash's own detail art
-			# is hidden rather than left showing through.
-			detail_node.visible = false
-
-	if not swapped:
+	if base_node == null:
 		_warn_once(gd_id, "%s has no texture node to swap" % object.scene_file_path.get_file())
-	return swapped
+		return false
+	# Only scenes that genuinely have a separate Detail node get one: on a
+	# single-sprite scene the detail sprites share the base node.
+	var detail_node: Node2D = _find_named_node(object, DETAIL_NODE_NAMES)
+	if detail_node == null:
+		detail_node = base_node
+
+	var base_art: Node2D = _art_container(base_node)
+	var detail_art: Node2D = base_art if detail_node == base_node else _art_container(detail_node)
+
+	# Sprites are added in Geometry Dash's draw order: parts behind the root
+	# sprite, the root, then the parts in front. Detail sprites go under the
+	# Detail node, which the block scenes draw behind Base - where Geometry
+	# Dash puts a block's colour fill too.
+	var drawn: int = 0
+	var root_drawn: bool = false
+	for part: Dictionary in frames.parts:
+		if int(part.get("order", 0)) >= 0 and not root_drawn:
+			root_drawn = true
+			if _add_root(base_art, sheet, frames):
+				drawn += 1
+		var color_class: String = str(part.get("color", GDObjectFrames.COLOR_BASE))
+		var container: Node2D = detail_art if color_class == GDObjectFrames.COLOR_DETAIL else base_art
+		if _add_part(container, sheet, part):
+			drawn += 1
+	if not root_drawn and _add_root(base_art, sheet, frames):
+		drawn += 1
+	if frames.has_detail():
+		# Objects whose sprite tree isn't known keep the naming-convention
+		# detail frame, drawn behind the base like a Detail node is.
+		var detail_sprite: Sprite2D = _add_sprite(detail_art, sheet, frames.detail, "Detail")
+		if detail_sprite != null:
+			detail_art.move_child(detail_sprite, 0)
+			drawn += 1
+
+	if drawn == 0:
+		# Nothing could be drawn, so the scene's own artwork stays.
+		base_art.free()
+		if detail_art != base_art:
+			detail_art.free()
+		_warn_once(gd_id, "none of its frames could be drawn")
+		return false
+
+	# Only now that the replacement exists is the scene's own art hidden.
+	_clear_art(base_node)
+	if detail_node != base_node:
+		_clear_art(detail_node)
+	_drop_absolute_size(object)
+
+	object.set_meta(&"gd_art_swapped", true)
+	return true
 
 
 ## Objects whose swap failed, reported once each. A failed swap leaves the
@@ -128,39 +161,6 @@ static func _find_texture_node(object: Node2D, names: PackedStringArray) -> Node
 	return best
 
 
-## Swaps a nine-patch node for a plain sprite showing the frame whole.
-##
-## The node itself is kept - scenes reference it by name and by NodePath - so
-## its texture is cleared and a child Sprite2D is added in its place. That keeps
-## the scene tree valid while getting the artwork drawn 1:1.
-static func _replace_nine_patch(node: Node2D, frame: GDSpriteSheet.Frame, object: Node2D) -> bool:
-	var target_size: Vector2 = node.get("size")
-	if target_size.x <= 0.0 or target_size.y <= 0.0:
-		target_size = Vector2(Constants.CELL_SIZE, Constants.CELL_SIZE)
-
-	# Stop the nine-patch drawing anything.
-	node.set("texture", null)
-
-	var sprite: Sprite2D = node.get_node_or_null(^"GDArt") as Sprite2D
-	if sprite == null:
-		sprite = Sprite2D.new()
-		sprite.name = "GDArt"
-		node.add_child(sprite)
-
-	sprite.texture = frame.texture
-	# Match the batches: no mipmaps on an atlas.
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	sprite.centered = bool(node.get("centered")) if node.get("centered") != null else true
-	# Scale the frame to exactly cover the space the block occupies.
-	var frame_size: Vector2 = frame.texture.get_size()
-	if frame_size.x > 0.0 and frame_size.y > 0.0:
-		sprite.scale = Vector2(target_size.x / frame_size.x, target_size.y / frame_size.y)
-	sprite.position = Vector2(frame.offset.x, -frame.offset.y) * sprite.scale
-
-	object.set_meta(&"gd_art_swapped", true)
-	return true
-
-
 ## Every descendant of [param node], depth first.
 static func _descendants(node: Node) -> Array[Node]:
 	var out: Array[Node] = []
@@ -170,58 +170,116 @@ static func _descendants(node: Node) -> Array[Node]:
 	return out
 
 
-## Assigns an atlas frame to a texture-bearing node, scaling it so the artwork
-## occupies the space the original texture did.
+## The container under [param anchor] that holds the Geometry Dash sprites,
+## created on first use.
 ##
-## [param reference_size] stands in for the original texture size when the
-## node has no texture of its own (the empty Detail node of a block scene).
-static func _set_texture(
-		node: Node2D,
-		frame: GDSpriteSheet.Frame,
-		object: Node2D,
-		reference_size: Vector2 = Vector2.ZERO,
-) -> bool:
-	# Only Sprite2D and NinePatchSprite2D carry textures the swap understands.
-	if not (node is Sprite2D or node is NinePatchSprite2D):
-		return false
-
-	# The size the artwork has to cover: the node's own texture, or the base
-	# layer's when the node ships empty. A nine-patch sizes itself.
-	var previous: Variant = node.get("texture")
-	var previous_size: Vector2 = reference_size
-	if previous is Texture2D:
-		previous_size = (previous as Texture2D).get_size()
-	if node is Sprite2D and (previous_size.x <= 0.0 or previous_size.y <= 0.0):
-		return false
-
-	node.set("texture", frame.texture)
-	if node.get("texture_filter") != null:
-		node.set("texture_filter", CanvasItem.TEXTURE_FILTER_LINEAR)
-
-	var new_size: Vector2 = frame.texture.get_size()
-	if new_size.x <= 0.0 or new_size.y <= 0.0:
-		return false
-
-	# Geometry Dash block art is a single tile meant to be drawn whole, not
-	# nine-sliced. Godot Dash's own blocks are 512px textures with 36px margins
-	# designed for stretching; Geometry Dash's are 60px tiles, several of which
-	# (blockOutline_01, for one) are a hollow 2px frame around empty space.
-	# Nine-slicing those smears the border across the whole block and fills the
-	# middle with stretched nothing - the blurry white slabs.
-	#
-	# So a nine-patch node is converted to a plain sprite for the swap: the
-	# frame is drawn once, at the size the block occupies.
-	if node is NinePatchSprite2D:
-		return _replace_nine_patch(node, frame, object)
-
-	# Plain sprites are rescaled so the frame covers what the old texture did.
-	var previous_scale: Vector2 = node.scale
-	node.scale = Vector2(
-			previous_scale.x * previous_size.x / new_size.x,
-			previous_scale.y * previous_size.y / new_size.y,
+## Its children are placed in atlas pixels. The anchor's own scale is divided
+## out so that one atlas pixel is always [method GDDecorationLoader.art_scale]
+## world units at object scale 1 - whatever size texture the scene used - and
+## the object's transform then scales, flips and rotates the art as a whole.
+static func _art_container(anchor: Node2D) -> Node2D:
+	var container: Node2D = anchor.get_node_or_null(NodePath(ART_NODE_NAME)) as Node2D
+	if container == null:
+		container = Node2D.new()
+		container.name = ART_NODE_NAME
+		anchor.add_child(container)
+	var art: float = GDDecorationLoader.art_scale()
+	container.scale = Vector2(
+			art / anchor.scale.x if not is_zero_approx(anchor.scale.x) else art,
+			art / anchor.scale.y if not is_zero_approx(anchor.scale.y) else art,
 	)
-	# Put the trimmed pixels back where Geometry Dash draws them.
-	node.position += Vector2(frame.offset.x, -frame.offset.y) * node.scale
+	container.rotation = -anchor.rotation
+	# The anchor keeps the enter-effect material; the sprites draw with it.
+	container.use_parent_material = true
+	# Match the batches: no mipmaps on an atlas.
+	container.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	return container
 
-	object.set_meta(&"gd_art_swapped", true)
+
+## Adds the object's root sprite, unless it is Geometry Dash's empty frame.
+static func _add_root(
+		container: Node2D,
+		sheet: GDSpriteSheet.Sheet,
+		frames: GDObjectFrames.ObjectFrames,
+) -> bool:
+	if not frames.has_visible_root():
+		return false
+	var sprite: Sprite2D = _add_sprite(container, sheet, frames.base, "Root")
+	if sprite == null:
+		return false
+	if frames.color == GDObjectFrames.COLOR_BLACK:
+		# Sawblades, pits, the "b" block set: black whatever the channel says.
+		sprite.modulate = Color.BLACK
+	sprite.modulate.a = frames.opacity
 	return true
+
+
+## Adds one part of a multi-sprite object, placed relative to the object's
+## centre. See [member GDObjectFrames.ObjectFrames.parts] for the fields.
+static func _add_part(container: Node2D, sheet: GDSpriteSheet.Sheet, part: Dictionary) -> bool:
+	var sprite: Sprite2D = _add_sprite(container, sheet, str(part.get("frame", "")), "Part")
+	if sprite == null:
+		return false
+	# Geometry Dash units (30 to a cell, y up) to atlas pixels (60 to a cell,
+	# y down). Rotations are anticlockwise there, clockwise here.
+	var px_per_unit: float = float(GDDecorationLoader.HD_ART_UNITS_PER_GRID_UNIT)
+	sprite.position = Vector2(float(part.get("x", 0.0)), -float(part.get("y", 0.0))) * px_per_unit
+	sprite.rotation = -deg_to_rad(float(part.get("rot", 0.0)))
+	sprite.scale = Vector2(float(part.get("sx", 1.0)), float(part.get("sy", 1.0)))
+	# The anchor shifts the sprite by a fraction of its own size, in its own
+	# local frame - the same space the trim offset lives in.
+	var anchor := Vector2(float(part.get("ax", 0.0)), float(part.get("ay", 0.0)))
+	if anchor != Vector2.ZERO:
+		sprite.offset += Vector2(-anchor.x, anchor.y) * sprite.texture.get_size()
+	var opacity: float = clampf(float(part.get("opacity", 1.0)), 0.0, 1.0)
+	if str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_BLACK:
+		sprite.modulate = Color.BLACK
+	sprite.modulate.a = opacity
+	return true
+
+
+## Creates a sprite for [param frame_name] under [param container], or returns
+## [code]null[/code] when the frame is not in the atlases.
+static func _add_sprite(
+		container: Node2D,
+		sheet: GDSpriteSheet.Sheet,
+		frame_name: String,
+		sprite_name: String,
+) -> Sprite2D:
+	var frame: GDSpriteSheet.Frame = sheet.get_frame(frame_name)
+	if frame == null or frame.texture == null:
+		return null
+	var sprite := Sprite2D.new()
+	sprite.name = "%s%d" % [sprite_name, container.get_child_count()]
+	sprite.texture = frame.texture
+	sprite.centered = true
+	# Put the trimmed pixels back where Geometry Dash draws them.
+	sprite.offset = Vector2(frame.offset.x, -frame.offset.y)
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	sprite.use_parent_material = true
+	container.add_child(sprite)
+	return sprite
+
+
+## Stops [param node] drawing the scene's own artwork.
+##
+## The node itself is kept - scenes reference it by name and by NodePath, and
+## it carries the colour channel watcher - so only its texture goes. A shader
+## written for the old texture (the sawblade's hollow centre) goes with it.
+static func _clear_art(node: Node2D) -> void:
+	if node is Sprite2D or node is NinePatchSprite2D:
+		node.set("texture", null)
+	if node is Sprite2D and node.material is ShaderMaterial:
+		node.material = null
+
+
+## Removes the node that keeps a nine-patch block's texture scale fixed while
+## the block is resized. Geometry Dash artwork is one tile that scales with the
+## block, and the nine-patch it belonged to no longer draws anything.
+static func _drop_absolute_size(object: Node2D) -> void:
+	var absolute: Node = object.get_node_or_null(NodePath(ABSOLUTE_SIZE_NODE_NAME))
+	if absolute == null:
+		return
+	# Every caller looks this node up by name and tolerates its absence.
+	object.remove_child(absolute)
+	absolute.free()

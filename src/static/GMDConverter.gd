@@ -629,7 +629,9 @@ static func _decoration_channels(
 ) -> Dictionary:
 	# Only bind a layer that the artwork actually has. Roughly half the mapped
 	# objects have no detail sprite, and naming a channel for a layer that isn't
-	# there leaves the loader looking up a node that was never created.
+	# there leaves the loader looking up a node that was never created. Sprites
+	# Geometry Dash always draws black are not bound at all - the loader paints
+	# them black outright - so no "black" binding is emitted either.
 	var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
 	if frames == null:
 		return { }
@@ -638,7 +640,7 @@ static func _decoration_channels(
 	if _is_colorable_channel(channel_style, base_id):
 		channels["base"] = Constants.COLOR_CHANNEL_GROUP_PREFIX + str(base_id)
 		used_channels[base_id] = true
-	if frames.has_detail() and _is_colorable_channel(channel_style, detail_id):
+	if frames.has_detail_layer() and _is_colorable_channel(channel_style, detail_id):
 		channels["detail"] = Constants.COLOR_CHANNEL_GROUP_PREFIX + str(detail_id)
 		used_channels[detail_id] = true
 	return channels

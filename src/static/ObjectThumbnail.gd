@@ -17,10 +17,31 @@ static func get_object_thumbnail_image(object: CanvasItem) -> Array[Image]:
 			images.append(REBOUND_PAD_TEXTURE.get_image())
 		elif child is LayeredSprite:
 			images.append(child.get_composite_image())
-		elif (child is Sprite2D or child is NinePatchSprite2D) and child.texture:
-			images.append(child.texture.get_image())
+		elif child is Sprite2D or child is NinePatchSprite2D:
+			if child.texture:
+				images.append(child.texture.get_image())
+			else:
+				# Geometry Dash artwork swapped onto the sprite (see GDArtSwap)
+				# sits in a container beneath it; its own texture was cleared.
+				images.append_array(_swapped_art_images(child))
 		elif child is CanvasGroup or child is Polygon2D or child is Control:
 			images.append_array(get_object_thumbnail_image(child))
+	return images
+
+
+## The images of the Geometry Dash sprites swapped onto [param node], if any.
+##
+## The root sprite alone is enough for an icon; a multi-sprite object's fills
+## and mirrored quarters would only blur a 16 px thumbnail.
+static func _swapped_art_images(node: Node) -> Array[Image]:
+	var images: Array[Image]
+	var art: Node = node.get_node_or_null(NodePath(GDArtSwap.ART_NODE_NAME))
+	if art == null:
+		return images
+	for sprite: Node in art.get_children():
+		if sprite is Sprite2D and sprite.texture:
+			images.append(sprite.texture.get_image())
+			break
 	return images
 
 
@@ -52,6 +73,10 @@ static func generate(object: Node2D, side_length: int) -> ImageTexture:
 		return AssetManager.generated_editor_object_thumbnails[cache_path]
 	var composite_image_size: Vector2i = Vector2i.ONE * side_length
 	var images: Array[Image] = get_object_thumbnail_image(object)
+	# An object with nothing drawable (a decoration placeholder, a scene whose
+	# artwork could not be resolved) gets a blank icon rather than an error.
+	if images.is_empty():
+		images.append(Image.create_empty(side_length, side_length, false, Image.FORMAT_RGBA8))
 	for image: Image in images:
 		var image_size: Vector2i = fit_size_to_square(image.get_size(), side_length)
 		image.resize(image_size.x, image_size.y, Image.Interpolation.INTERPOLATE_LANCZOS)
