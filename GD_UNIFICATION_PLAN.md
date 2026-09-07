@@ -317,3 +317,22 @@ layers, shapes, monitoring flags) from that cache when the level stops
 being played or an object becomes dynamic again. Hand-made scene roots
 (their own body) keep the in-place disable path. Expected: physics objects
 drop to ~zero per static gameplay object (shared bodies only).
+
+## Perf fix 3 (2026-09-07) — RobTop-style draw batching + directional culling
+
+- **LevelBatching (new)**: during play (including editor playtest of a live
+  edited level), static GDObject placements nothing can drive individually
+  (no GD group, no spin, no physics, no texture override) keep their node but
+  hide their art and draw through shared DecorationBatches built from the
+  placements' own data (GDObject.to_data + GDDecorationLoader.build_batches,
+  which registers channel groups so colour triggers repaint batches). Batches
+  are built once per play session at Level.start_level and persist across
+  attempts (attempt resets re-hide placements use_data showed); teardown at
+  playtest stop / level leave frees batches and restores every placement's art.
+- **CullingManager**: batched placements are skipped (the batch self-culls);
+  the visibility buffer is now asymmetric in scrolling levels - full buffer
+  ahead of the camera where objects scroll in, only BEHIND_BUFFER_CELLS behind
+  where they have already passed (platformer levels keep the symmetric
+  buffer). Fewer objects stay live at once.
+- Remaining candidate (not done): free per-node EditorSelectionCollider areas
+  during editor playtest (kept now because editing needs them back on stop).

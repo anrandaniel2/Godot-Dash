@@ -32,6 +32,12 @@ extends Node
 const OVERSIZE_CELLS: float = 64.0
 ## Cells per bucket.
 const BUCKET_CELLS: int = 8
+## How far past the camera's trailing edge objects stay visible. The leading
+## edge keeps the full [member Config.culling_buffer_cells] buffer so nothing
+## pops in ahead of a fast camera; trailing objects have already been played
+## through, so a small buffer is enough (a teleport or backward camera move
+## still cannot pop more than this much in one step).
+const BEHIND_BUFFER_CELLS: float = 8.0
 
 var level: Level
 
@@ -93,6 +99,10 @@ func track(object: Node2D) -> void:
 ## Whether the manager may hide [param object]: static scenery only.
 static func is_cullable(object: Node2D) -> bool:
 	if object is Layer or object is Player or object is Interactable:
+		return false
+	# Placements whose art is hidden and drawn through a shared batch while
+	# playing (see LevelBatching): the batch culls itself by buckets.
+	if object.has_meta(LevelBatching.OBJECT_META):
 		return false
 	if object is SolidObject and object.physics_object:
 		return false
@@ -173,7 +183,18 @@ func _update() -> void:
 	var camera: Camera2D = get_viewport().get_camera_2d() if is_inside_tree() else null
 	if camera == null:
 		return
-	var view: Rect2 = _camera_rect(camera).grow(Config.culling_buffer_cells * Constants.CELL_SIZE)
+	var cell: float = Constants.CELL_SIZE
+	var view: Rect2 = _camera_rect(camera)
+	if not LevelManager.platformer:
+		# A level scrolls one way; keep the full buffer where objects scroll
+		# in (ahead of the camera) and barely any where they have already
+		# passed, so far fewer objects stay live at once. Free-roaming
+		# platformer levels move both ways and keep the symmetric buffer.
+		var behind: float = minf(BEHIND_BUFFER_CELLS * cell, Config.culling_buffer_cells * cell)
+		var ahead: float = Config.culling_buffer_cells * cell
+		view = view.grow_individual(behind, ahead, ahead, ahead)
+	else:
+		view = view.grow(Config.culling_buffer_cells * cell)
 	var first: int = _bucket_of(view.position.x)
 	var last: int = _bucket_of(view.end.x)
 	if first == _last_first and last == _last_last:

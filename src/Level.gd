@@ -304,6 +304,9 @@ func start_level() -> void:
 	# pass at least one frame between deserializing objects (component data
 	# applies via call_deferred) and reaching this point.
 	LevelPhysics.prepare(self)
+	# Static placements keep their node (collision, channels, serialization)
+	# but draw through shared batches while playing (see LevelBatching).
+	LevelBatching.prepare(self)
 	LevelManager.level_playing = true
 
 

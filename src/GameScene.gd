@@ -107,6 +107,7 @@ func _on_leave_pressed() -> PauseMenu.Leave:
 	for level in $Level.get_children():
 		level.stop_level()
 		LevelPhysics.teardown(level)
+		LevelBatching.teardown(level)
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
 	LevelManager.player_camera.process_mode = Node.PROCESS_MODE_DISABLED
 	$FadeScreen.fade_in()
