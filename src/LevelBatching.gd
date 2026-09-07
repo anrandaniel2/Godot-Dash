@@ -102,8 +102,6 @@ static func _is_batchable(object: GDObject) -> bool:
 	# Hidden placements stay hidden; only what would otherwise draw is batched.
 	if not object.is_visible_in_tree():
 		return false
-	if object is SolidObject:
-		return false
 	# A spinning object rotates its own transform each frame.
 	if not is_zero_approx(object.spin):
 		return false
