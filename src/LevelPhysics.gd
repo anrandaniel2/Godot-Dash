@@ -25,12 +25,14 @@ extends Object
 ##   - any object whose group is the target of a move/rotate/scale trigger,
 ##     because those triggers animate the node transform and with it the body.
 ##
-## Merged objects have their own body neutralised (layer/mask 0, shapes
-## disabled; monitoring off for areas). That is done once per Level instance and
-## the shared body takes over, so gameplay is identical. The neutralisation is
-## reversible: rebuilding stores a snapshot per object, and an object that
-## becomes dynamic again (a move trigger was added targeting its group) has its
-## own body restored.
+## Merged objects hand their collision over to the shared body: a gd-scene
+## object's own [code]Collision[/code] child is freed once harvested (a
+## registered physics body costs a physics-server object and tree nodes even
+## fully disabled), while hand-made scene roots - which are their own body and
+## cannot be freed - are neutralised (layers/mask 0, shapes disabled; monitoring
+## off for areas). Both are fully reversible: a snapshot plus the cached
+## geometry rebuild an identical body when an object becomes dynamic again or
+## the level stops being played.
 ##
 ## Rebuild policy: the shared state is rebuilt on the next level start whenever
 ## a layer's children changed since the last build (the level tracks that with
@@ -289,13 +291,21 @@ static func _body_for(
 	return body
 
 
-## Neutralises the object's own body once, stores the snapshot needed to bring
-## it back, and marks the object merged.
+## Neutralises the object's own body and marks the object merged.
+##
+## A gd-scene body is a [code]Collision[/code] child node: once its geometry is
+## harvested into the shared bodies it is freed entirely, because a registered
+## physics body still costs a physics-server object (and its tree nodes) even
+## with every shape disabled. Hand-made scene roots are the object itself and
+## cannot be freed, so those are neutralised in place instead.
 static func _merge_object(object: Node2D) -> void:
 	if object.has_meta(MERGED_META):
 		return
 	var body := _own_body(object)
 	if body == null:
+		return
+	if body != object:
+		_free_child_body(object, body)
 		return
 	var snapshot := {
 		"collision_layer": body.collision_layer,
@@ -321,25 +331,75 @@ static func _merge_object(object: Node2D) -> void:
 	object.set_meta(MERGED_META, true)
 
 
+## Frees a merged object's own body child after its geometry was cached on the
+## object (DESCRIPTORS_META). The snapshot carries everything needed to rebuild
+## an identical body when the level stops being played.
+static func _free_child_body(object: Node2D, body: CollisionObject2D) -> void:
+	var is_area := body is Area2D
+	var monitoring := true
+	var monitorable := true
+	if is_area:
+		monitoring = (body as Area2D).monitoring
+		monitorable = (body as Area2D).monitorable
+	var snapshot := {
+		"freed": true,
+		"area": is_area,
+		"body_name": body.name,
+		"body_transform": body.transform,
+		"collision_layer": body.collision_layer,
+		"collision_mask": body.collision_mask,
+		"monitoring": monitoring,
+		"monitorable": monitorable,
+	}
+	object.set_meta(SNAPSHOT_META, snapshot)
+	object.set_meta(MERGED_META, true)
+	body.free()
+
+
 ## Restores an object that was merged earlier but must keep its own body again.
 static func _restore_object(object: Node2D) -> void:
 	if not object.has_meta(SNAPSHOT_META):
 		return
-	var body := _own_body(object)
 	var snapshot: Dictionary = object.get_meta(SNAPSHOT_META)
-	if body != null:
-		body.collision_layer = int(snapshot.get("collision_layer", 0))
-		body.collision_mask = int(snapshot.get("collision_mask", 0))
-		if body is Area2D:
-			(body as Area2D).monitoring = bool(snapshot.get("monitoring", true))
-			(body as Area2D).monitorable = bool(snapshot.get("monitorable", true))
-		for entry: Dictionary in snapshot.get("shape_states", []):
-			var shape_node: CollisionShape2D = entry.get("node")
-			if is_instance_valid(shape_node):
-				shape_node.disabled = bool(entry.get("disabled", false))
+	if snapshot.get("freed", false):
+		_rebuild_child_body(object, snapshot)
+	else:
+		var body := _own_body(object)
+		if body != null:
+			body.collision_layer = int(snapshot.get("collision_layer", 0))
+			body.collision_mask = int(snapshot.get("collision_mask", 0))
+			if body is Area2D:
+				(body as Area2D).monitoring = bool(snapshot.get("monitoring", true))
+				(body as Area2D).monitorable = bool(snapshot.get("monitorable", true))
+			for entry: Dictionary in snapshot.get("shape_states", []):
+				var shape_node: CollisionShape2D = entry.get("node")
+				if is_instance_valid(shape_node):
+					shape_node.disabled = bool(entry.get("disabled", false))
 	object.remove_meta(SNAPSHOT_META)
 	object.remove_meta(MERGED_META)
 	object.remove_meta(DESCRIPTORS_META)
+
+
+## Recreates the Collision body a freed merged object lost, from the geometry
+## cached at merge time (DESCRIPTORS_META). The body is identical in type,
+## name, transform, layers and shapes, so the object is fully editable again.
+static func _rebuild_child_body(object: Node2D, snapshot: Dictionary) -> void:
+	var geometry := _object_geometry(object)
+	var body: CollisionObject2D = Area2D.new() if snapshot.get("area", false) else StaticBody2D.new()
+	body.name = str(snapshot.get("body_name", "Collision"))
+	body.transform = snapshot.get("body_transform", Transform2D.IDENTITY)
+	body.collision_layer = int(snapshot.get("collision_layer", 0))
+	body.collision_mask = int(snapshot.get("collision_mask", 0))
+	if body is Area2D:
+		(body as Area2D).monitoring = bool(snapshot.get("monitoring", true))
+		(body as Area2D).monitorable = bool(snapshot.get("monitorable", true))
+	for descriptor in geometry.get("descriptors", []):
+		var shape_node := CollisionShape2D.new()
+		shape_node.shape = descriptor.resource
+		shape_node.debug_color = descriptor.debug_color
+		shape_node.transform = descriptor.local_xform
+		body.add_child(shape_node)
+	object.add_child(body)
 
 
 ## Whether [param collider] is one of the level's shared bodies.

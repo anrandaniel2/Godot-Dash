@@ -303,3 +303,17 @@ DecorationBatch whenever not editing (standalone play); the editor keeps
 per-node decoration so pieces stay selectable/editable. Gameplay objects
 (per-object gd scenes) are unaffected. Batches join their objects' GD groups,
 so triggers still drive decoration, and they draw from the same atlases.
+
+## Perf fix 2 (2026-09-07) — free merged static bodies during play
+
+The profile of a big level showed ~124k *physics objects*: every static
+gd_object's own Collision body (StaticBody2D/Area2D) stayed registered in
+the physics server even though LevelPhysics had disabled its layers and
+shapes. A registered body costs a physics-server object and tree nodes no
+matter what. LevelPhysics now frees the Collision child of merged gd-scene
+objects after harvesting (its geometry is cached in DESCRIPTORS_META +
+SNAPSHOT_META) and rebuilds an identical body (type, name, transform,
+layers, shapes, monitoring flags) from that cache when the level stops
+being played or an object becomes dynamic again. Hand-made scene roots
+(their own body) keep the in-place disable path. Expected: physics objects
+drop to ~zero per static gameplay object (shared bodies only).
