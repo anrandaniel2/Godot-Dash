@@ -60,6 +60,16 @@ func load_level() -> void:
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
 	add_loaded_level(level)
+	if LevelStream.is_streaming(level):
+		# The stream now keeps the level's gameplay records as compact packed
+		# blobs and the decoration batches hold what they draw - the full
+		# level-data Dictionary graph (tens of MB on a large level) was only
+		# needed to build those. Releasing it here is what stops resident
+		# memory from scaling with the whole level. The real start position is
+		# kept on the level for restarts that leave practice mode.
+		level.set_meta(Level.REAL_START_META, level.start_position)
+		cached_level_data = {}
+		cached_level_path = ""
 
 
 func add_loaded_level(level: Level) -> Level:
@@ -113,11 +123,15 @@ func restart_level() -> void:
 				level.use_data(snapshot)
 		else:
 			level._elapsed_time = 0.0
-			# Practice restarts move level.start_position to the checkpoint;
-			# a non-practice restart (including practice just being toggled
-			# off) goes back to the level's real start.
-			if not cached_level_data.is_empty() and cached_level_data.has("start_position"):
-				level.start_position = cached_level_data.start_position
+			# Practice restarts move level.start_position to the checkpoint; a
+			# non-practice restart (including practice just being toggled off)
+			# goes back to the level's real start. Streamed levels release the
+			# cached level data, so their real start lives on the level.
+			var real_start: Variant = level.get_meta(Level.REAL_START_META, null)
+			if real_start == null and not cached_level_data.is_empty():
+				real_start = cached_level_data.get("start_position", null)
+			if real_start != null:
+				level.start_position = real_start as Vector2
 		level.stream_restart_at(level.start_position.x)
 	elif LevelManager.practice_mode and LevelManager.practice_level_snapshots.size() > 0:
 		level.use_data(LevelManager.practice_level_snapshots[-1])

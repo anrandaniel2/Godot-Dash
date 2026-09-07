@@ -1,14 +1,20 @@
 class_name LevelStream
 extends Node
 ## Builds gameplay placements the way Geometry Dash does: the level's object
-## records stay resident as data, and actual scene nodes only exist for a
-## window around the player.
+## records stay resident as *packed data* (not per-object Dictionaries and not
+## nodes), and actual scene nodes only exist for a window around the player.
 ##
 ## A GD level never instantiates every object - it keeps a compact list of
 ## every object's fields and creates display nodes only for the section the
 ## camera is in. Copying that here is what lets a very large level (hundreds of
 ## thousands of objects) open and play on a phone: the memory cost stops
 ## scaling with the whole level.
+##
+## Resident records: at load the gameplay entries are snapshotted per chunk
+## into var_to_bytes() blobs (an exact, engine-guaranteed round trip) and the
+## source level-data Dictionary graph is released (see GameScene.load_level).
+## A chunk decodes back into its entries only when it enters the window, so
+## whole-level Dictionary allocations simply never happen during play.
 ##
 ## What lives in this window: every non-decoration placement (blocks, slopes,
 ## spikes, saws, orbs, pads, portals, triggers...). Decoration was already
@@ -78,7 +84,13 @@ const FORCE_DISTANCE_CHUNKS := 0
 const STREAMING_META: StringName = &"_gd_level_streaming"
 
 var level: Level
-## Per layer index: chunk id -> Array of object-data entries.
+## Per layer index: chunk id -> PackedByteArray. Each blob is var_to_bytes()
+## of that chunk's object-data entries, snapshotted at load time so the level
+## does not have to keep the whole Dictionary graph resident (the GD idea of a
+## compact resident record list: memory stops scaling with the full level).
+## A chunk is decoded back into entry Dictionaries only when it enters the
+## player's window; the graph itself is released once indexed (see
+## GameScene.load_level).
 var _chunk_entries: Array = []
 ## Fully spawned live chunks: "layer/chunk" -> chunk record Dictionary
 ## {nodes: Array[Node2D], phys: int, key: String}. phys counts how many of the
@@ -153,7 +165,10 @@ static func make(level: Level, data: Dictionary) -> LevelStream:
 
 
 ## Splits each layer's object data into horizontal chunks by the placement's
-## x. Entries are kept as references into the source level data.
+## x, then snapshots every chunk as a var_to_bytes() blob. The Dictionary
+## entries are only referenced here transiently: once indexed, the caller can
+## release the whole level-data graph and this stream keeps working from the
+## blobs (decoding a chunk is exact, so nothing about the entries changes).
 func _index(data: Dictionary) -> void:
 	var layers_data: Array = data.get("layers", [])
 	_chunk_entries.resize(layers_data.size())
@@ -167,7 +182,20 @@ func _index(data: Dictionary) -> void:
 			if not by_chunk.has(chunk):
 				by_chunk[chunk] = []
 			by_chunk[chunk].append(entry)
-		_chunk_entries[layer_idx] = by_chunk
+		var cold: Dictionary = {}
+		for chunk: int in by_chunk.keys():
+			cold[chunk] = var_to_bytes(by_chunk[chunk])
+		_chunk_entries[layer_idx] = cold
+
+
+## Decodes a chunk's packed records back into object-data entries. Called only
+## when the chunk enters the player's window, so the resident memory stays a
+## few compact blobs rather than per-object Dictionaries for the whole level.
+func _entries_of(layer_idx: int, chunk: int) -> Array:
+	var by_chunk: Dictionary = _chunk_entries[layer_idx]
+	var blob: PackedByteArray = by_chunk[chunk]
+	var decoded: Variant = bytes_to_var(blob)
+	return decoded as Array
 
 
 func _chunk_of(world_x: float) -> int:
@@ -465,10 +493,14 @@ func _enqueue_missing_window(player_chunk: int) -> void:
 			var key := _chunk_key(layer_idx, chunk)
 			if _spawned.has(key) or _key_in_queue(_spawn_queue, key) or _key_in_queue(_free_queue, key):
 				continue
-			_enqueue_spawn_near(layer_idx, chunk, by_chunk[chunk] as Array, key, player_chunk)
+			_enqueue_spawn_near(layer_idx, chunk, key, player_chunk)
 
 
-func _enqueue_spawn_near(layer_idx: int, chunk: int, entries: Array, key: String, near_chunk: int) -> void:
+func _enqueue_spawn_near(layer_idx: int, chunk: int, key: String, near_chunk: int) -> void:
+	# The chunk's records were kept cold (packed) precisely so that decoding
+	# them - the only per-chunk Dictionary allocation - happens here, when the
+	# chunk enters the window, and not for the whole level at load.
+	var entries := _entries_of(layer_idx, chunk)
 	var rec := {"nodes": [], "phys": 0, "key": key}
 	var item := _make_spawn_item(layer_idx, chunk, entries, key, rec)
 	# Nearest chunks first (what the run needs soonest); the per-frame share
@@ -514,8 +546,9 @@ func _spawn_chunk_now(world_x: float) -> void:
 				_free_node_array((partial.rec as Dictionary).nodes)
 				break
 			qi += 1
+		var entries := _entries_of(layer_idx, chunk)
 		var rec := {"nodes": [], "phys": 0, "key": key}
-		var item := _make_spawn_item(layer_idx, chunk, by_chunk[chunk] as Array, key, rec)
+		var item := _make_spawn_item(layer_idx, chunk, entries, key, rec)
 		_spawn_slice(item, (item.entries as Array).size())
 		_spawned[key] = rec
 		_refresh_pending = true
@@ -687,11 +720,12 @@ func _initial_spawn(world_x: float) -> void:
 			if not by_chunk.has(chunk):
 				continue
 			var key := _chunk_key(layer_idx, chunk)
+			var entries := _entries_of(layer_idx, chunk)
 			var rec := {"nodes": [], "phys": 0, "key": key}
-			var item := _make_spawn_item(layer_idx, chunk, by_chunk[chunk] as Array, key, rec)
+			var item := _make_spawn_item(layer_idx, chunk, entries, key, rec)
 			_spawn_slice(item, (item.entries as Array).size())
 			_spawned[key] = rec
-			_request_scene_preloads(item.entries as Array)
+			_request_scene_preloads(entries)
 	_last_player_chunk = player_chunk
 
 

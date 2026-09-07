@@ -551,3 +551,44 @@ where Orbit actually dies (open vs first start vs mid-play).
   heap via Performance.MEMORY_STATIC). Numbers from that readout on TS2 (and
   a readout during Orbit's load, if it gets that far) will drive the tuning
   and tell us whether stream churn or something else owns the frame time.
+
+## Fourth pass (2026-09-07) — packed resident records, level-data graph released
+
+The resident representation of a streamed level was still the whole
+level-data Dictionary graph: GameScene.cached_level_data held it for the
+session and LevelStream._chunk_entries referenced its entry Dictionaries, so
+a 100k+ object level kept tens of MB of per-object Dictionaries alive even
+though only gameplay records and the decoration batches were ever used again
+after load. This pass stores GD-style compact *records* instead:
+
+- LevelStream._index snapshots each gameplay chunk's entries into a
+  var_to_bytes() PackedByteArray ("cold blob") at load time, then only the
+  blobs stay resident (bytes, no per-object Dictionary or hashtable
+  overhead). A chunk decodes back into its entries - via the engine's exact,
+  lossless bytes_to_var - only when it enters the player's window, so
+  whole-level Dictionary allocations never happen during play. Engine
+  round-trip guarantees no field is ever dropped or altered; there is no
+  hand-written schema to drift.
+- GameScene.load_level releases the level-data graph for streamed levels as
+  soon as the level is assembled (cached_level_data + path cleared): the
+  stream has its blobs and the decoration batches copied what they draw.
+  Net effect for a big level: resident = few compact blobs + live-window
+  nodes instead of the full graph for the whole session (roughly an order of
+  magnitude less resident per stored object).
+- The level's real start position is stashed on the Level
+  (REAL_START_META) at load, because restarts that leave practice mode
+  previously restored it from cached level data.
+- Non-streamed / editor paths are untouched and still keep cached data.
+
+Honest limits of this pass (do not re-read as done):
+- This is records-vs-graph compaction (~2x on the kept gameplay entries plus
+  the whole decoration/level graph freed). It is NOT yet the GD *file* line
+  format: on-disk levels remain gzip(var_to_bytes) of the graph (they were
+  already compressed), and per-object entries are still self-describing
+  Dictionaries inside the blobs rather than packed number fields - the
+  remaining ~5-15x to a true GD encoding, which is a hand-written schema
+  codec and needs compile/test care.
+- The open-time *peak* (decode whole file + build all decoration batches)
+  is unchanged, so a level that dies while opening (Orbit) is not addressed
+  by this pass; fixing that needs a chunked/container file so open never
+  materialises the whole graph, plus a staged decoration batch build.

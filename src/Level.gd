@@ -20,6 +20,11 @@ enum UseDataFlags {
 ## Gameplay placements serialize in the gameplay entry format (scene path +
 ## gd_object_id) so the level rebuilds them through the gameplay path.
 const GD_GAMEPLAY_META: StringName = &"gd_gameplay"
+## Metadata key on a streamed Level: its true start position, stashed when the
+## level loads. GameScene releases the level-data graph after a streamed level
+## is built, so restarts that leave practice mode restore the real start from
+## here instead of from cached level data.
+const REAL_START_META: StringName = &"_gd_real_start_position"
 
 const START_SPEED: Array[float] = [
 	0.0, # 0x
