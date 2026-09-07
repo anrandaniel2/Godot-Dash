@@ -290,3 +290,16 @@ the hand-made component scenes:
 Remaining for M3 (next pass): repoint the editor block palette buttons at gd
 scenes (with their texture-variation ids), and retire GDArtSwap usage for
 static objects placed from the palette.
+
+## Perf fix (2026-09-07) — batch decoration during play
+
+Big imported levels showed 92,940 nodes / 23 ms scene-tree Process at 24 FPS.
+Root cause: since M1 generated gd scenes for every object type,
+`Level.from_data` instanced essentially all decoration as individual GDObject
+nodes; the project's own DecorationBatch design exists precisely because a
+node-per-object level "spends its whole frame on scene-tree and physics
+bookkeeping" (its header doc). Fix: decoration entries are drawn by
+DecorationBatch whenever not editing (standalone play); the editor keeps
+per-node decoration so pieces stay selectable/editable. Gameplay objects
+(per-object gd scenes) are unaffected. Batches join their objects' GD groups,
+so triggers still drive decoration, and they draw from the same atlases.

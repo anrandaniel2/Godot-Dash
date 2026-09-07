@@ -539,16 +539,23 @@ static func from_data(data: Dictionary) -> Level:
 		layer.name = layer_data.name
 		layer.locked = layer_data.locked
 
-		# Every Geometry Dash object type has a generated scene
-		# (scenes/gd_objects) that is instanced once per placement, so each
-		# placed object is an ordinary node with the collision its scene
-		# defines. Objects whose scene is missing fall back to being drawn in
-		# bulk by a DecorationBatch.
+		# Decoration is drawn in bulk by DecorationBatch nodes: a real level has
+		# tens of thousands of decoration sprites and a node per object would
+		# spend the whole frame on scene-tree bookkeeping (see DecorationBatch).
+		# The editor keeps one node per decoration placement so pieces can be
+		# selected and edited; while playing, everything decoration collapses
+		# into batches - each batch joins its objects' Geometry Dash groups, so
+		# Move/Rotate/Scale/Alpha triggers still drive them, and it draws from
+		# the same GD atlases. Gameplay objects below stay one node each (their
+		# gd scene carries collision, groups and editor behaviour).
 		var drop_decoration: bool = Config.ldm and not Editor.in_editor
 		var decoration_data: Array = []
 		for object_data: Dictionary in layer_data.objects:
 			if object_data.get("decoration", false):
 				if drop_decoration:
+					continue
+				if not Editor.in_editor:
+					decoration_data.append(object_data)
 					continue
 				var placed: GDObject = instantiate_gd_object(object_data, level)
 				if placed != null:
