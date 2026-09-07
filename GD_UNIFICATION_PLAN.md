@@ -358,3 +358,63 @@ level removal trashes the sidecar too.
 - **LevelPhysics chunking**: shared bodies are now one per (collision layer,
   horizontal CHUNK_CELLS=24 chunk) instead of one per layer spanning the whole
   level, so the physics broadphase only tests the chunks near the player.
+
+## GD-model streaming of gameplay placements (2026-09-07) — "do it like GD"
+
+Implements how Geometry Dash actually handles giant levels: keep every
+object as resident *records*, instantiate real nodes only for a window
+around the player, free what is left behind, and never duplicate the level.
+
+- `LevelStream` (new): at play build (`Level.from_data(..., stream=true)`,
+  which is the default when not in the editor) only decoration batches are
+  built; non-decoration placements (blocks, spikes, orbs, pads, portals,
+  triggers...) are indexed into horizontal 12-cell chunks and spawned around
+  the player (3 chunks behind / 8 ahead), freed 12+ behind, respawned from
+  records on every attempt. Each spawn uses the editor's own per-object
+  instantiate+deserialize path, so collision, colour channels, attributes
+  and components are identical. Physics (LevelPhysics.rebuild over the live
+  window only) and CullingManager/LevelBatching are guarded to defer to the
+  stream. Editor builds are unchanged (full tree).
+- Restart (`GameScene.restart_level`) for streamed levels respawns the window
+  from records instead of deserializing a snapshot over the whole tree -
+  GD respawn semantics, and it also resets every one-shot object.
+- Practice checkpoints no longer copy the level: `thin_practice_snapshot`
+  stores only the respawn position + player state (velocity, replay tick,
+  elapsed). The old full-snapshot path stays for editor playtests.
+
+### Implementation notes (same pass)
+
+- Chunk teardown frees nodes immediately (`free()`, not `queue_free()`): the
+  physics rebuild for a window change runs in the same frame, and a node still
+  pending deletion would have its geometry re-harvested into the shared bodies
+  and linger as a ghost until the next chunk boundary. Immediate frees also
+  release memory right away, which is the point of streaming on a phone.
+- Gameplay chunks spawn through the exact full-build per-object pipeline
+  (`Level.instantiate_object_from_data` + `deserialize_data_to_object(..., true)`)
+  and are inserted before the layer's DecorationBatch children so decoration
+  keeps drawing above gameplay, as in the full build.
+- Colour correctness for late spawns: the level's ColorChannelWatchers run
+  their one-shot `_ready` colour pass before any gameplay node exists, so every
+  chunk spawn re-pushes the current channel colours
+  (`LevelStream._refresh_new_node_colors`). Geometry caches
+  (`DESCRIPTORS_META`) make repeated per-chunk physics rebuilds of
+  already-merged objects cheap.
+- `LevelPhysics.rebuild`'s first pass re-checks mergeability on every rebuild,
+  so a move/rotate/scale trigger that enters the live window un-merges its
+  group's objects before it animates them.
+- CullingManager defers to the stream for streamed levels; LevelBatching is
+  never prepared (nothing to batch: gameplay nodes draw their own gd art within
+  the window). `restart_level` respawns the window via
+  `Level.stream_restart_at`; physics is rebuilt on the following `start_level`
+  (`LevelPhysics.prepare`), and mid-play window changes rebuild immediately.
+- `GameScene.load_level` only builds from a practice snapshot when the snapshot
+  is a full level (`has("layers")`); a thin snapshot there falls back to the
+  resident cached data (mid-practice scene rebuilds otherwise cannot happen -
+  every exit clears snapshots - but a crash on Android would be silent).
+
+- Known scope limits (tracked for later): the Android *editor* (Godot's own
+  APK) is a separate tool we cannot grant more heap and still builds full
+  levels; grouped gameplay objects outside the live window are not
+  transformed by far-away triggers (records keep their fields; GD moves
+  records too - a later pass can apply trigger moves to records); toggled
+  *decoration* batches persist their visual state across a streamed respawn.

@@ -139,6 +139,10 @@ func _on_level_started() -> void:
 		return
 	if level == null or level != LevelManager.current_level:
 		return
+	# A streamed level bounds its live nodes to a window around the player
+	# itself (see LevelStream); culling has nothing left to hide.
+	if LevelStream.is_streaming(level):
+		return
 	# Buckets are keyed on load-time positions, which every attempt restores,
 	# so they are only rebuilt when the set of objects changed.
 	var object_count: int = 0

@@ -46,7 +46,17 @@ func load_level() -> void:
 		# the metadata sidecar here: the community list reads only sidecars and
 		# must never decode a level itself.
 		LevelOperationsHandler.write_level_meta(LevelManager.current_level_path, cached_level_data)
-	var level: Level = Level.from_data(cached_level_data if not should_use_practice_snapshot else LevelManager.practice_level_snapshots[-1])
+	# A practice snapshot is only usable as full level data when the level was
+	# duplicated into it (the non-streamed build). A streamed level never
+	# duplicates itself - its checkpoint stores just the respawn point and
+	# player state (see LevelStream), so a scene rebuild must fall back to the
+	# resident records; restart_level is what resumes from a checkpoint mid-run.
+	var level_data: Dictionary = cached_level_data
+	if should_use_practice_snapshot:
+		var latest_snapshot: Dictionary = LevelManager.practice_level_snapshots[-1]
+		if latest_snapshot.has("layers"):
+			level_data = latest_snapshot
+	var level: Level = Level.from_data(level_data)
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
 	add_loaded_level(level)
@@ -80,10 +90,31 @@ func restart_level() -> void:
 	LevelManager.player.global_position = LevelManager.current_level.start_position
 	LevelManager.player.process_mode = Node.PROCESS_MODE_INHERIT
 	reset()
-	if LevelManager.practice_mode and LevelManager.practice_level_snapshots.size() > 0:
-		LevelManager.current_level.use_data(LevelManager.practice_level_snapshots[-1])
+	var level: Level = LevelManager.current_level
+	if LevelStream.is_streaming(level):
+		# Streamed levels respawn the way GD does: the object records stay
+		# resident and the live window is rebuilt from them around the respawn
+		# point (which also resets every one-shot object). No level snapshot is
+		# deserialized - the level was never duplicated.
+		var respawn_x: float = level.start_position.x
+		if LevelManager.practice_mode and LevelManager.practice_level_snapshots.size() > 0:
+			var snapshot: Dictionary = LevelManager.practice_level_snapshots[-1]
+			if snapshot.has("practice_data"):
+				level._apply_practice_data(snapshot.practice_data)
+				if snapshot.has("start_position"):
+					var respawn_position: Vector2 = snapshot.start_position
+					LevelManager.player.global_position = respawn_position
+					respawn_x = respawn_position.x
+			else:
+				# A full (legacy) snapshot still works on a streamed level.
+				level.use_data(snapshot)
+		else:
+			level._elapsed_time = 0.0
+		level.stream_restart_at(respawn_x)
+	elif LevelManager.practice_mode and LevelManager.practice_level_snapshots.size() > 0:
+		level.use_data(LevelManager.practice_level_snapshots[-1])
 	elif not cached_level_data.is_empty():
-		LevelManager.current_level.use_data(cached_level_data)
+		level.use_data(cached_level_data)
 	await get_tree().physics_frame
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
 	start_level()

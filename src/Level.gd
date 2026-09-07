@@ -305,8 +305,11 @@ func start_level() -> void:
 	# applies via call_deferred) and reaching this point.
 	LevelPhysics.prepare(self)
 	# Static placements keep their node (collision, channels, serialization)
-	# but draw through shared batches while playing (see LevelBatching).
-	LevelBatching.prepare(self)
+	# but draw through shared batches while playing (see LevelBatching). A
+	# streamed level (see LevelStream) already bounds the live nodes to a
+	# window around the player, so there is nothing to batch.
+	if not LevelStream.is_streaming(self):
+		LevelBatching.prepare(self)
 	LevelManager.level_playing = true
 
 
@@ -427,6 +430,13 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 
 
 func use_data(data: Dictionary, options: int = UseDataFlags.NONE) -> void:
+	_use_data_fields(data)
+	_use_data_objects(data, options)
+
+
+## Applies the level-wide fields of a level-data dictionary (metadata, song,
+## colours, player start state). Does not touch the object tree.
+func _use_data_fields(data: Dictionary) -> void:
 	name = data.name
 	creator = data.creator
 	description = data.description
@@ -466,21 +476,16 @@ func use_data(data: Dictionary, options: int = UseDataFlags.NONE) -> void:
 	# in their respective setters.
 
 	if "practice_data" in data:
-		var practice_data: Dictionary = data.practice_data
-		practice_data.replay.data = practice_data.replay.data.slice(0, practice_data.physics_tick)
-		var player: Player = LevelManager.player
-		# HACK: Force `is_on_floor` to return false so the velocity can be applied.
-		player.set_collisions_enabled(false)
-		player.velocity = Vector2.ZERO
-		player.move_and_slide()
-		player.set_collisions_enabled(true)
-		player.velocity = practice_data.player_velocity
-		player.replay = practice_data.replay
-		player.replay_physics_tick = practice_data.physics_tick
-		_elapsed_time = practice_data.elapsed_time
+		_apply_practice_data(data.practice_data)
 	else:
 		_elapsed_time = 0.0
 
+
+## Applies one object pass of a level-data dictionary onto the existing object
+## tree, matching children to data entries by name per layer. Only valid when
+## every object in the data has a live node - streaming levels (see
+## LevelStream) build objects on demand instead and never call this.
+func _use_data_objects(data: Dictionary, options: int) -> void:
 	for layer_idx: int in layers.size():
 		var layer: Layer = layers[layer_idx]
 		var layer_data: Dictionary = data.layers[layer_idx]
@@ -523,6 +528,55 @@ func _get_practice_data() -> Dictionary:
 	return practice_data
 
 
+## Restores player practice state (velocity, replay position, elapsed time)
+## recorded at a checkpoint.
+func _apply_practice_data(practice_data: Dictionary) -> void:
+	practice_data.replay.data = practice_data.replay.data.slice(0, practice_data.physics_tick)
+	var player: Player = LevelManager.player
+	# HACK: Force `is_on_floor` to return false so the velocity can be applied.
+	player.set_collisions_enabled(false)
+	player.velocity = Vector2.ZERO
+	player.move_and_slide()
+	player.set_collisions_enabled(true)
+	player.velocity = practice_data.player_velocity
+	player.replay = practice_data.replay
+	player.replay_physics_tick = practice_data.physics_tick
+	_elapsed_time = practice_data.elapsed_time
+
+
+## Marks the shared physics for a rebuild, or rebuilds immediately when the
+## level is being played (the stream spawns chunks mid-run, so the shared
+## bodies must pick up their shapes right away).
+func stream_physics_dirty() -> void:
+	if LevelManager.level_playing:
+		LevelPhysics.rebuild(self)
+	else:
+		LevelPhysics.mark_dirty(self)
+
+
+## A checkpoint snapshot for streamed levels. GD does not copy a level for
+## practice checkpoints - the object records are already resident and fresh
+## nodes are rebuilt from them on respawn, so only the player's state at the
+## checkpoint is kept. The plain (non-streamed) path keeps the full snapshot it
+## always used, because it resets its existing tree from it.
+func thin_practice_snapshot() -> Dictionary:
+	return {
+		# The checkpoint respawns the player here (GD practice markers are just
+		# a position; the level is not copied).
+		"start_position": LevelManager.player.global_position,
+		"practice_data": _get_practice_data(),
+	}
+
+
+## Respawns a streamed level around [param world_x]: the live gameplay window
+## is freed and rebuilt from the resident records, and the shared physics is
+## marked dirty so the next level start rebuilds it for the new window.
+func stream_restart_at(world_x: float) -> void:
+	var streamer := get_node_or_null(&"LevelStream") as LevelStream
+	if streamer != null:
+		streamer.reset_to(world_x)
+
+
 func _update_enter_effect_shader_parameter(parameter: StringName, value: float) -> void:
 	if not AssetManager.ready:
 		await AssetManager.ready
@@ -534,9 +588,11 @@ func _update_enter_effect_shader_parameter(parameter: StringName, value: float) 
 	AssetManager.fade_enter_effect_canvas_group.set_shader_parameter(parameter, value)
 
 
-static func from_data(data: Dictionary) -> Level:
+static func from_data(data: Dictionary, stream: bool = not Editor.in_editor) -> Level:
 	var level := Level.new()
 
+	var drop_decoration: bool = Config.ldm and not Editor.in_editor
+	var decoration_data: Array = []
 	for layer_data: Dictionary in data.layers:
 		var layer: Layer = Layer.new()
 		layer.name = layer_data.name
@@ -549,30 +605,37 @@ static func from_data(data: Dictionary) -> Level:
 		# selected and edited; while playing, everything decoration collapses
 		# into batches - each batch joins its objects' Geometry Dash groups, so
 		# Move/Rotate/Scale/Alpha triggers still drive them, and it draws from
-		# the same GD atlases. Gameplay objects below stay one node each (their
-		# gd scene carries collision, groups and editor behaviour).
-		var drop_decoration: bool = Config.ldm and not Editor.in_editor
-		var decoration_data: Array = []
-		for object_data: Dictionary in layer_data.objects:
-			if object_data.get("decoration", false):
+		# the same GD atlases.
+		if not stream:
+			# Gameplay objects stay one node each (their gd scene carries
+			# collision, groups and editor behaviour) and every decoration is a
+			# real node the editor can select. This is the editor build.
+			for object_data: Dictionary in layer_data.objects:
+				if object_data.get("decoration", false):
+					if drop_decoration:
+						continue
+					var placed: GDObject = instantiate_gd_object(object_data, level)
+					if placed != null:
+						placed.set_meta(Constants.LAYER_META, layer)
+						layer.add_child(placed)
+					elif not gd_object_entry_has_node(object_data):
+						decoration_data.append(object_data)
+					continue
+				var object: Node2D = instantiate_object_from_data(object_data, level)
+				# Null when the object was filtered out by low detail mode.
+				if object == null:
+					continue
+				object.set_meta(Constants.LAYER_META, layer)
+				layer.add_child(object)
+		else:
+			# Play build: gameplay placements are streamed in around the player
+			# from their records (see LevelStream), so none are built here.
+			for object_data: Dictionary in layer_data.objects:
+				if not object_data.get("decoration", false):
+					continue
 				if drop_decoration:
 					continue
-				if not Editor.in_editor:
-					decoration_data.append(object_data)
-					continue
-				var placed: GDObject = instantiate_gd_object(object_data, level)
-				if placed != null:
-					placed.set_meta(Constants.LAYER_META, layer)
-					layer.add_child(placed)
-				elif not gd_object_entry_has_node(object_data):
-					decoration_data.append(object_data)
-				continue
-			var object: Node2D = instantiate_object_from_data(object_data, level)
-			# Null when the object was filtered out by low detail mode.
-			if object == null:
-				continue
-			object.set_meta(Constants.LAYER_META, layer)
-			layer.add_child(object)
+				decoration_data.append(object_data)
 
 		if not decoration_data.is_empty():
 			for batch: DecorationBatch in GDDecorationLoader.build_batches(
@@ -580,11 +643,21 @@ static func from_data(data: Dictionary) -> Level:
 			):
 				batch.set_meta(Constants.LAYER_META, layer)
 				layer.add_child(batch)
+			decoration_data.clear()
 
 		level.layers.append(layer)
 		level.add_child(layer)
 
-	level.use_data(data, true)
+	if stream:
+		# Level-wide fields only - the object pass would need every object to
+		# have a node, which a streamed level does not.
+		level._use_data_fields(data)
+		level.setup_level_sprites_colors()
+		var streamer := LevelStream.make(level, data)
+		# Spawn the window around the start and build the shared physics for it.
+		streamer.reset_to(data.start_position.x)
+	else:
+		level.use_data(data, true)
 	level.ready.connect(level.setup_color_channel_watchers, CONNECT_ONE_SHOT)
 
 	return level

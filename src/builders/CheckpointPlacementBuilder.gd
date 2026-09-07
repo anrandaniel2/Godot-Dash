@@ -30,6 +30,16 @@ func done() -> void:
 		new_checkpoint.name = "Checkpoint%s" % checkpoint_parent.get_child_count()
 		new_checkpoint.global_position = player.global_position
 		new_checkpoint.global_rotation_degrees = player.gameplay_rotation_degrees
-	LevelManager.practice_level_snapshots.append(
-		LevelManager.current_level.to_data(Serialize.Reason.PRACTICE),
-	)
+	if LevelStream.is_streaming(LevelManager.current_level):
+		# A streamed level is never duplicated: the checkpoint only records the
+		# respawn point and player state, and the level window is rebuilt from
+		# the resident records on respawn (see LevelStream). Copying the whole
+		# level per checkpoint is what made practice on large levels run out of
+		# memory.
+		LevelManager.practice_level_snapshots.append(
+			LevelManager.current_level.thin_practice_snapshot(),
+		)
+	else:
+		LevelManager.practice_level_snapshots.append(
+			LevelManager.current_level.to_data(Serialize.Reason.PRACTICE),
+		)

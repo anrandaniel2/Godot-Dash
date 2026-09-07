@@ -325,6 +325,9 @@ static func _merge_object(object: Node2D) -> void:
 		return
 	var body := _own_body(object)
 	if body == null:
+		# Nothing left to neutralise (a previous merge freed the body child),
+		# but the object still belongs to the shared world.
+		object.set_meta(MERGED_META, true)
 		return
 	if body != object:
 		_free_child_body(object, body)
