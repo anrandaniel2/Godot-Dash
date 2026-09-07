@@ -679,3 +679,69 @@ the existing late-spawn refresh. The open-time full-file decode (bytes_to_var
 of the whole level) is still one peak; if Orbit still dies at open after this
 (not decoration-related), the next step is a chunked on-disk container so open
 never materialises the whole graph.
+
+## Seventh pass (2026-09-07) — bound the stream's frame cost by time, slice decoration per entry
+
+Device feedback after the sixth pass: "The streaming still has lag spikes."
+Two structural causes remained in the code, both burst-shaped:
+
+1. **Fixed node-count budgets don't bound frame time.** A per-frame budget of
+   "N instantiations / M commits / K frees" bounds *work units*, but the cost
+   of a unit varies wildly with the device and the object: 48 instantiations
+   is nothing on a desktop and a dropped frame on a phone, and the old deco
+   budget of "1 chunk per frame" meant one whole decorated chunk - thousands
+   of items, sorted into batches - built in a single frame whenever a chunk
+   entered the window. Whatever budget is picked, it is either starved or it
+   spikes, because it is in the wrong units.
+2. **Decoration chunks were still built atomically.** Pass 6 streamed deco
+   per chunk, but a chunk's entire DecorationBatch build (item allocation +
+   per-batch sort + bucketing) still ran in the one frame the chunk was
+   granted - the exact whole-chunk burst that gameplay had been sliced out of
+   since pass 3.
+
+This pass replaces budgets-in-units with budgets-in-time, and slices the last
+atomic operation:
+
+- **Every queue now runs against a wall-clock budget per frame**
+  (PLAY_DRAIN_MS = 4 ms in live play, PRELOAD_DRAIN_MS = 8 ms during the death
+  animation). `_drain(ms)` loops over the queues in small passes and stops as
+  soon as the budget is spent. The *_SLICE constants only bound how far one
+  pass can overshoot (checked between tickers), so the stream's cost per
+  frame is bounded on *any* device - a dense chunk or a big respawn spreads
+  across frames instead of landing whole. The AHEAD_CHUNKS margin absorbs the
+  leftover.
+- **Decoration chunks are now built entry by entry.** A chunk joins the build
+  queue with a GDDecorationLoader batch accumulator that persists across
+  frames; each drain pass feeds it a fair share of entries
+  (GDDecorationLoader.build_batches was split into `add_object` +
+  `finish_batches`, so the one-shot callers - the editor build, the open-time
+  start region, restart ground decoration - behave exactly as before).
+  When a chunk's entries are all in, its batches are *sorted* one per pass
+  (batch.build), and only when the last batch is sorted do the ordered batch
+  nodes join the layer together - so even the finalise cost is sliced. A
+  chunk with no drawable artwork is remembered (_deco_blank) so the window
+  scan never re-decodes it every frame (a hazard the old code shared).
+- **No more force-finish of the chunk under the player.** The spawn queue is
+  nearest-first and the drain spends its budget on the front of the queue, so
+  the player's chunk is always what is built first; a "force finish this
+  whole chunk now" path was itself a guaranteed burst and is gone. Restart
+  still spawns the ground chunk synchronously (_spawn_chunk_now /
+  _deco_chunk_now).
+- **Attempt-start boost, in time.** The first attempt of a session and any
+  restart not preloaded by a death gets 120 frames at 2x the drain budget
+  (ATTEMPT_BOOST_FRAMES/MULTIPLIER), so a fresh window fills quickly behind
+  the first seconds of play without a burst.
+- **Teardown safety.** Half-built decoration chunks hold detached
+  DecorationBatch nodes; every cancel path (death preload, manual restart,
+  stream exit, far-behind reconcile) now frees them instead of leaking or
+  leaving stale builders.
+
+How to read it on a device: the overlay's `stream Xms` figure is now the
+bound itself - it should sit at or under ~4 ms (8 during the death pause) and
+no longer correlate with hitches. If frames are still heavy with `stream` at
+its cap, lower PLAY_DRAIN_MS; if the window lags behind a very fast run with
+stream well under its cap, the per-pass slices (SPAWN_SLICE etc.) or
+AHEAD_CHUNKS are the levers. Constant (non-spiky) low FPS on a huge level is
+a separate signal - the live-node count of the window (the overlay `live`)
+- and would point at the window width (AHEAD/BEHIND_CHUNKS) or render cost,
+not the stream queues.

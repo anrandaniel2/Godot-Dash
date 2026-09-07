@@ -161,10 +161,32 @@ static func to_data(
 	}
 
 
-## Builds the batched decoration nodes for a whole layer.
+## Builds the batched decoration nodes for a whole set of objects in one call.
 ##
-## Objects are grouped into batches that share everything a trigger or the
-## renderer cares about:
+## This is the whole-level / whole-chunk one-shot builder. Streamed levels do
+## not use it chunk-at-a-time: building one chunk's decoration in a single
+## frame is a multi-millisecond burst on a decorated level, so LevelStream
+## feeds the same per-object logic through [method add_object] across many
+## frames and only calls [method finish_batches] when a chunk's items are all
+## in (see DecorationBatch for why objects are grouped this way).
+static func build_batches(objects: Array, art_scale_factor: float) -> Array[DecorationBatch]:
+	var batches := new_batches()
+	for object_data: Dictionary in objects:
+		add_object(batches, object_data, art_scale_factor)
+	return finish_batches(batches)
+
+
+## An empty batch accumulator for [method add_object].
+static func new_batches() -> Dictionary:
+	# batch key -> DecorationBatch
+	return {}
+
+
+## Feeds one object's decoration into [param batches]. The batch set is a
+## plain Dictionary, so callers may add one object per frame (LevelStream) or
+## the whole array at once (build_batches) and the grouping result is
+## identical - a batch is keyed by the properties a trigger or the renderer
+## cares about:
 ## [codeblock]
 ## group set + z layer + blend mode
 ## [/codeblock]
@@ -179,136 +201,145 @@ static func to_data(
 ##
 ## Objects whose artwork is unavailable are skipped; the caller need not handle
 ## nulls.
-static func build_batches(objects: Array, art_scale_factor: float) -> Array[DecorationBatch]:
+static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_factor: float) -> void:
+	if not object_data.get("decoration", false):
+		return
 	var sheet: GDSpriteSheet.Sheet = get_sheet()
-	# batch key -> DecorationBatch
-	var batches: Dictionary[String, DecorationBatch] = { }
+	var gd_id: int = int(object_data.get("gd_object_id", 0))
+	var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
+	if frames == null:
+		return
 
-	for object_data: Dictionary in objects:
-		if not object_data.get("decoration", false):
-			continue
-		var gd_id: int = int(object_data.get("gd_object_id", 0))
-		var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
-		if frames == null:
-			continue
+	var transform: Transform2D = object_data.get("transform", Transform2D.IDENTITY)
+	var z_order: int = int(object_data.get("z_order", 0))
+	var z_layer: int = int(object_data.get("z_layer", 0))
+	var channels: Variant = object_data.get("color_channels", { })
+	var groups: Array = object_data.get("groups", [])
+	var tint: Color = object_data.get("tint", Color.WHITE)
+	# A channel flagged for blending is drawn additively, which is what
+	# gives Geometry Dash levels their glow.
+	var blending: bool = bool(object_data.get("blending", false))
+	# Most objects explicitly disable their glow (key 96); drawing it anyway
+	# stacked thousands of additive white sprites over the level.
+	var wants_glow: bool = bool(object_data.get("glow", false))
+	# Low detail mode drops the objects Geometry Dash itself marks as
+	# decoration-only, which is what key 103 means.
+	if Config.ldm and bool(object_data.get("high_detail", false)):
+		return
+	var hsv_shift: PackedFloat32Array = object_data.get("hsv_shift", PackedFloat32Array())
+	var spin: float = float(object_data.get("spin", 0.0))
+	var base_alpha: float = float(object_data.get("base_alpha", 1.0))
+	var detail_tint: Color = object_data.get("detail_tint", tint)
+	var detail_hsv: PackedFloat32Array = object_data.get("detail_hsv_shift", PackedFloat32Array())
 
-		var transform: Transform2D = object_data.get("transform", Transform2D.IDENTITY)
-		var z_order: int = int(object_data.get("z_order", 0))
-		var z_layer: int = int(object_data.get("z_layer", 0))
-		var channels: Variant = object_data.get("color_channels", { })
-		var groups: Array = object_data.get("groups", [])
-		var tint: Color = object_data.get("tint", Color.WHITE)
-		# A channel flagged for blending is drawn additively, which is what
-		# gives Geometry Dash levels their glow.
-		var blending: bool = bool(object_data.get("blending", false))
-		# Most objects explicitly disable their glow (key 96); drawing it anyway
-		# stacked thousands of additive white sprites over the level.
-		var wants_glow: bool = bool(object_data.get("glow", false))
-		# Low detail mode drops the objects Geometry Dash itself marks as
-		# decoration-only, which is what key 103 means.
-		if Config.ldm and bool(object_data.get("high_detail", false)):
-			continue
-		var hsv_shift: PackedFloat32Array = object_data.get("hsv_shift", PackedFloat32Array())
-		var spin: float = float(object_data.get("spin", 0.0))
-		var base_alpha: float = float(object_data.get("base_alpha", 1.0))
-		var detail_tint: Color = object_data.get("detail_tint", tint)
-		var detail_hsv: PackedFloat32Array = object_data.get("detail_hsv_shift", PackedFloat32Array())
+	# Sorted so that two objects with the same groups in a different order
+	# still land in the same batch.
+	var group_key: Array = groups.duplicate()
+	group_key.sort()
+	var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending)
 
-		# Sorted so that two objects with the same groups in a different order
-		# still land in the same batch.
-		var group_key: Array = groups.duplicate()
-		group_key.sort()
-		var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending)
-
-		# Geometry Dash draws an object as a small tree of sprites: the parts
-		# with a negative order behind the root sprite, then the root, then the
-		# rest. The order is kept as a sub-key beneath the object's z order so
-		# a fill never lands on top of the outline it belongs under.
-		var base_item: DecorationBatch.Item = null
-		var detail_item: DecorationBatch.Item = null
-		# The first part that follows the base colour, and the first part of any
-		# colour: one of them stands in for the object when its root sprite is
-		# Geometry Dash's empty frame. Tracked here rather than searched for
-		# afterwards, since the batch may already hold an identical neighbour.
-		var first_base_part: DecorationBatch.Item = null
-		var first_part: DecorationBatch.Item = null
-		var root_drawn: bool = false
-		for part: Dictionary in frames.parts:
-			var order: int = int(part.get("order", 0))
-			if order >= 0 and not root_drawn:
-				base_item = _add_root(
-						batch, sheet, frames, transform, z_order, gd_id, channels,
-						art_scale_factor, tint, hsv_shift, base_alpha, spin,
-				)
-				root_drawn = true
-			var part_item: DecorationBatch.Item = _add_part(
-					batch, sheet, part, transform, z_order, gd_id, channels,
-					art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
-					base_alpha, spin,
-			)
-			if part_item == null:
-				continue
-			if first_part == null:
-				first_part = part_item
-			if part_item.layer == "detail":
-				if detail_item == null:
-					detail_item = part_item
-			elif first_base_part == null and str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_BASE:
-				first_base_part = part_item
-		if not root_drawn:
+	# Geometry Dash draws an object as a small tree of sprites: the parts
+	# with a negative order behind the root sprite, then the root, then the
+	# rest. The order is kept as a sub-key beneath the object's z order so
+	# a fill never lands on top of the outline it belongs under.
+	var base_item: DecorationBatch.Item = null
+	var detail_item: DecorationBatch.Item = null
+	# The first part that follows the base colour, and the first part of any
+	# colour: one of them stands in for the object when its root sprite is
+	# Geometry Dash's empty frame. Tracked here rather than searched for
+	# afterwards, since the batch may already hold an identical neighbour.
+	var first_base_part: DecorationBatch.Item = null
+	var first_part: DecorationBatch.Item = null
+	var root_drawn: bool = false
+	for part: Dictionary in frames.parts:
+		var order: int = int(part.get("order", 0))
+		if order >= 0 and not root_drawn:
 			base_item = _add_root(
 					batch, sheet, frames, transform, z_order, gd_id, channels,
 					art_scale_factor, tint, hsv_shift, base_alpha, spin,
 			)
-
-		# An object with no visible root sprite is still one object when saved
-		# and recoloured, so one of its parts stands in for it: preferably one
-		# on the base colour, so the saved channel binding is the right one.
-		if base_item == null:
-			base_item = first_base_part if first_base_part != null else first_part
-			if base_item != null:
-				base_item.layer = "base"
-		if base_item == null:
+			root_drawn = true
+		var part_item: DecorationBatch.Item = _add_part(
+				batch, sheet, part, transform, z_order, gd_id, channels,
+				art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
+				base_alpha, spin,
+		)
+		if part_item == null:
 			continue
-		# The object's own placement and colour, kept verbatim so saving does
-		# not have to reverse-engineer them from a sprite that may sit off the
-		# object's centre or be one of its always-black parts.
-		base_item.object_transform = transform
-		base_item.object_tint = tint
-		base_item.object_hsv_shift = hsv_shift
-		base_item.wants_glow = wants_glow
-		base_item.high_detail = bool(object_data.get("high_detail", false))
+		if first_part == null:
+			first_part = part_item
+		if part_item.layer == "detail":
+			if detail_item == null:
+				detail_item = part_item
+		elif first_base_part == null and str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_BASE:
+			first_base_part = part_item
+	if not root_drawn:
+		base_item = _add_root(
+				batch, sheet, frames, transform, z_order, gd_id, channels,
+				art_scale_factor, tint, hsv_shift, base_alpha, spin,
+		)
 
-		if frames.has_detail():
-			# The detail layer follows the SECONDARY colour channel and its own
-			# HSV shift (keys 22/42/44). Passing the base tint here - as an
-			# earlier revision did - painted both layers the same colour and
-			# flattened every two-tone object in the level.
-			detail_item = _add_layer(
-					batch, sheet, frames.detail, transform, z_order, gd_id,
-					_channel_for(channels, "detail"), "detail", art_scale_factor,
-					detail_tint, detail_hsv, base_alpha, spin,
-					DRAW_ORDER_DETAIL,
-			)
-		base_item.detail = detail_item
-		if frames.has_glow() and wants_glow:
-			# Glow layers are always additive, whatever the channel says, and
-			# sit behind the object.
-			_add_layer(
-					_batch_for(batches, group_key, z_layer, true),
-					sheet, frames.glow, transform, z_order, gd_id,
-					_channel_for(channels, "base"), "glow", art_scale_factor, tint, hsv_shift, base_alpha,
-					spin, DRAW_ORDER_GLOW,
-			)
+	# An object with no visible root sprite is still one object when saved
+	# and recoloured, so one of its parts stands in for it: preferably one
+	# on the base colour, so the saved channel binding is the right one.
+	if base_item == null:
+		base_item = first_base_part if first_base_part != null else first_part
+		if base_item != null:
+			base_item.layer = "base"
+	if base_item == null:
+		return
+	# The object's own placement and colour, kept verbatim so saving does
+	# not have to reverse-engineer them from a sprite that may sit off the
+	# object's centre or be one of its always-black parts.
+	base_item.object_transform = transform
+	base_item.object_tint = tint
+	base_item.object_hsv_shift = hsv_shift
+	base_item.wants_glow = wants_glow
+	base_item.high_detail = bool(object_data.get("high_detail", false))
 
+	if frames.has_detail():
+		# The detail layer follows the SECONDARY colour channel and its own
+		# HSV shift (keys 22/42/44). Passing the base tint here - as an
+		# earlier revision did - painted both layers the same colour and
+		# flattened every two-tone object in the level.
+		detail_item = _add_layer(
+				batch, sheet, frames.detail, transform, z_order, gd_id,
+				_channel_for(channels, "detail"), "detail", art_scale_factor,
+				detail_tint, detail_hsv, base_alpha, spin,
+				DRAW_ORDER_DETAIL,
+		)
+	base_item.detail = detail_item
+	if frames.has_glow() and wants_glow:
+		# Glow layers are always additive, whatever the channel says, and
+		# sit behind the object.
+		_add_layer(
+				_batch_for(batches, group_key, z_layer, true),
+				sheet, frames.glow, transform, z_order, gd_id,
+				_channel_for(channels, "base"), "glow", art_scale_factor, tint, hsv_shift, base_alpha,
+				spin, DRAW_ORDER_GLOW,
+		)
+
+## Finalises a batch set accumulated by [method add_object]: sorts each
+## batch's items, drops empty batches (freeing their nodes) and assigns the
+## cross-batch draw order, exactly as build_batches always did. Returns the
+## finished [DecorationBatch] nodes ready to be added to a layer.
+static func finish_batches(batches: Dictionary) -> Array[DecorationBatch]:
 	var result: Array[DecorationBatch] = []
 	for batch: DecorationBatch in batches.values():
 		if batch.items.is_empty():
 			continue
 		batch.build()
 		result.append(batch)
-	_finalise_batch_order(result)
+	finalise_batch_order(result)
 	return result
+
+
+## Assigns cross-batch draw order (distinct z indices per shared layer) to a
+## list of already-built batches. Separate from finish_batches so a streamed
+## chunk - whose batches are built one per frame - can order and add them once
+## the last one finishes without re-running any build work.
+static func finalise_batch_order(batches: Array[DecorationBatch]) -> void:
+	_finalise_batch_order(batches)
 
 
 ## Sub-order of the sprites making up one object, within its z order. Parts
