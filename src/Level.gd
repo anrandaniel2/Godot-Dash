@@ -572,7 +572,7 @@ func thin_practice_snapshot() -> Dictionary:
 ## is freed and rebuilt from the resident records, and the shared physics is
 ## marked dirty so the next level start rebuilds it for the new window.
 func stream_restart_at(world_x: float) -> void:
-	var streamer := get_node_or_null(&"LevelStream") as LevelStream
+	var streamer := get_node_or_null(NodePath("LevelStream")) as LevelStream
 	if streamer != null:
 		streamer.reset_to(world_x)
 
