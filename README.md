@@ -44,6 +44,28 @@ See https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_androi
 - Hit `Export Project`.
 
 
+## Geometry Dash objects
+
+Imported `.gmd` levels draw Geometry Dash's own artwork. The pipeline lives in `tools/`:
+
+| Step | Command | Output |
+| --- | --- | --- |
+| 1. Object table | `python3 tools/build_object_frames.py --id-list tools/gd_object_id_list.txt` | `assets/textures/gd_atlas/object_frames.json` (object id → sprites, default z layer/order) |
+| 2. Godot atlas | `python3 tools/build_godot_atlas.py` | `assets/textures/gd_atlas/gd_objects_atlas_*.png` + `.json` — the cocos2d `-hd` sheets from `assets/textures/gd_atlas/source/` repacked into 4096² pages, rotated frames turned upright |
+| 3. Object scenes | `python3 tools/build_gd_object_scenes.py` | `scenes/gd_objects/gd_<id>.tscn`, one scene per object type |
+
+Each `gd_<id>.tscn` has the object's sprites laid out under `Base` / `Detail`, an empty `Collision`
+(`StaticBody2D`, layer 2 = solids) with a `Hitbox` placeholder, and an editor selection box. Open one
+in Godot and add the collision shapes you want; every placement of that object type in every level
+gets them. Re-running step 3 refreshes the artwork but keeps your `Collision` subtree and the scene UID.
+
+At runtime `Level` instances the type's scene once per placement (`GDObject`). Object types with no
+scene fall back to the batched renderer (`DecorationBatch`). While a level plays, `CullingManager`
+hides objects beyond a buffer around the camera (Settings → Graphics → Performance → *Culling buffer*,
+in cells) so a sudden speed change never shows a gap.
+
+Steps 1–2 need Python 3 and Pillow (`pip install pillow`).
+
 ## Contributing
 
 **⚠️ Make sure to use Godot 4.7. ⚠️**

@@ -350,6 +350,38 @@ metadata/_smooth_scroll_default_mouse_filter_set = true
 script = ExtResource("6_p6jor")
 config_property = &"ldm"
 
+[node name="Cull off-screen objects" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+default = true
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Cull off-screen objects"]
+script = ExtResource("6_p6jor")
+config_property = &"culling_enabled"
+
+[node name="Culling buffer" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("7_ndunm")
+default = 40.0
+min_value = 4.0
+max_value = 200.0
+step = 1.0
+rounded = true
+suffix = " cells"
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer/Culling buffer"]
+script = ExtResource("6_p6jor")
+config_property = &"culling_buffer_cells"
+
 [node name="Particles" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Performance/VBoxContainer" unique_id=200285064]
 layout_mode = 2
 mouse_filter = 1

@@ -61,6 +61,14 @@ enum ParticlePreprocessing {
 @export_group("Performance")
 @export var enable_title_screen_icons: bool = true
 @export var ldm: bool = false
+## Hide level objects far outside the camera while playing. Cheap to leave on;
+## turn it off only to rule it out when debugging a level.
+@export var culling_enabled: bool = true
+## How far beyond the screen edges, in cells, objects stay visible. A speed
+## change or camera trigger can move the view a long way in one frame, and the
+## buffer keeps objects on screen from popping in late. Half a screen is 7-8
+## cells; the default is deliberately generous.
+@export_range(4, 200, 1, "suffix:cells") var culling_buffer_cells: int = 40
 
 @export_subgroup("Geometry Dash import")
 ## Draw decoration objects from the bundled Geometry Dash atlases when importing
@@ -189,6 +197,8 @@ func _init():
 	# Performance
 	enable_title_screen_icons = config_file.get_value("Performance", "enable_title_screen_icons", enable_title_screen_icons)
 	ldm = config_file.get_value("Performance", "ldm", ldm)
+	culling_enabled = config_file.get_value("Performance", "culling_enabled", culling_enabled)
+	culling_buffer_cells = config_file.get_value("Performance", "culling_buffer_cells", culling_buffer_cells)
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
 	preprocess_particles_in_editor = config_file.get_value("Performance", "preprocess_particles_in_editor", preprocess_particles_in_editor)
@@ -282,6 +292,8 @@ func save() -> void:
 	# Performance
 	config_file.set_value("Performance", "enable_title_screen_icons", enable_title_screen_icons)
 	config_file.set_value("Performance", "ldm", ldm)
+	config_file.set_value("Performance", "culling_enabled", culling_enabled)
+	config_file.set_value("Performance", "culling_buffer_cells", culling_buffer_cells)
 	config_file.set_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	config_file.set_value("Performance", "particles_visibility", particles_visibility)
 	config_file.set_value("Performance", "preprocess_particles_in_editor", preprocess_particles_in_editor)
