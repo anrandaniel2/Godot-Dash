@@ -469,9 +469,7 @@ func use_data(data: Dictionary, options: int = UseDataFlags.NONE) -> void:
 			if object_data.get("decoration", false):
 				# A decoration entry is a GDObject node when its type has a
 				# generated scene; otherwise it lives inside a DecorationBatch
-				# and has no node of its own. Matched by order rather than by
-				# name: Godot may have renamed a placed object whose imported
-				# name clashed with a sibling's.
+				# and has no node of its own to deserialize onto.
 				if gd_object_entry_has_node(object_data) and object is GDObject and object.name == object_data.name:
 					child_idx += 1
 					deserialize_data_to_object(object_data, object, self, options & UseDataFlags.IS_INSTANTIATION)
