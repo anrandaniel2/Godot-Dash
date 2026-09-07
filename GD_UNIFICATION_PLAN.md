@@ -173,11 +173,9 @@ win.
 - **M2 — Shared level body + Player per-shape death**: ✓ shipped 2026-09-07
   (`src/LevelPhysics.gd` + Level/Player/editor-session wiring; see notes below).
   Old scenes still drive gameplay art until M3.
-- **M3 — Gameplay objects instantiate from gd scenes (static set)**:
-  `GMDObjects`/`GMDConverter`/`Level.instantiate_object_from_data` switch to gd
-  scenes for solids/slopes/hazards + fallback-block families; palette swap for
-  those entries; delete `GDArtSwap` usage for them. Playtest/editor flows use
-  the unified entry format (incl. `"gd_object_id"` on gameplay entries).
+- **M3 — Gameplay objects instantiate from gd scenes (static set)**: ◐
+  import + level load/save paths shipped 2026-09-07 (see notes below); editor
+  palette repoint + `GDArtSwap` retirement for statics still pending.
 - **M4 — Interactables on gd scenes**: behaviour subtree generation, editor
   `Interactable` mapping, palette swap for orbs/pads/portals/triggers/letter
   objects/checkpoints, export round-trip verification.
@@ -255,3 +253,40 @@ changes) without data loss. "Re-enable on overlap exit" is done per attempt in
 old exit-restore behaviour in every practical flow).
 
 Runtime-untested in the sandbox (no Godot binary; see Verification).
+
+## M3 implementation notes (2026-09-07) — import & load path shipped
+
+Static gameplay objects (blocks, slopes, spikes, saws, and the fallback-block
+families) now import and rebuild from their **generated gd scenes** instead of
+the hand-made component scenes:
+
+- `GMDObjects`: `is_static_gameplay_object()` (MAP entries whose scene lives
+  under the solids/ or hazards/ dirs, i.e. no component behaviour) and
+  `gd_scene_path()` (relative path of the generated scene, empty when the build
+  lacks it).
+- `GMDConverter._object_from_properties`: static gameplay entries write
+  `scene_file_path = scenes/gd_objects/gd_<id>.tscn` (falling back to the old
+  scene only when the gd scene is absent, e.g. 290/292 slopes). Everything else
+  in the entry (transform, groups, color_channels, hsv, gd_object_id) is
+  unchanged, so saved levels and export keep working.
+- `GMDConverter.export_level_string`: exports by the recorded `gd_object_id`
+  when present (static objects now live in per-ID scenes, and scene paths no
+  longer identify them), falling back to `get_gd_id(scene_path)` for older
+  entries. Pure decorations are still skipped.
+- `Level`: generated-scene placements get one shared configuration path.
+  `instantiate_gd_object()` grew a `_configure_gd_object()` helper (draw order,
+  tints, Base/Detail colour-channel watchers, HSV, enter effect, attributes);
+  gameplay instantiation of a GDObject-rooted scene calls the same helper and
+  stamps the node with `GD_GAMEPLAY_META`. Decoration entries are untouched.
+- `Level.serialize_gd_object` / `GDObject.to_gameplay_data`: gameplay
+  placements serialize back in the gameplay entry format (scene path +
+  gd_object_id + transform/groups/color_channels/hsv), so they rebuild through
+  the gameplay path and are never treated as decoration (no low-detail culling,
+  no batch collapsing). Decorations keep `to_data()`.
+- Old hand-made scenes are still instantiated when a data entry references them
+  (palette placements, older saved levels, interactables until M4), so this is
+  a clean dual-path transition.
+
+Remaining for M3 (next pass): repoint the editor block palette buttons at gd
+scenes (with their texture-variation ids), and retire GDArtSwap usage for
+static objects placed from the palette.

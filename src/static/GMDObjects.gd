@@ -30,6 +30,8 @@ const OTHER_PORTALS := "scenes/components/level_components/portals/other_portals
 const SPEED_PORTALS := "scenes/components/level_components/portals/speed_portals/"
 const TRIGGERS := "scenes/components/level_components/triggers/"
 const LEVEL_COMPONENTS := "scenes/components/level_components/"
+## Directory of the generated Geometry Dash object scenes (relative paths).
+const GD_OBJECT_SCENES := "scenes/gd_objects/"
 
 ## Geometry Dash object ID -> Godot Dash object description.
 const MAP: Dictionary[int, Dictionary] = {
@@ -323,6 +325,30 @@ static func get_object(gd_id: int) -> Dictionary:
 ## dedicated scene or because it's a block that falls back to a plain one.
 static func is_supported(gd_id: int) -> bool:
 	return MAP.has(gd_id) or is_fallback_block(gd_id)
+
+
+## The generated scene for [param gd_id] as a relative path
+## ([code]scenes/gd_objects/gd_<id>.tscn[/code]), or an empty [String] when the
+## build has no such scene (run tools/build_gd_object_scenes.py).
+static func gd_scene_path(gd_id: int) -> String:
+	var path := GD_OBJECT_SCENES + "gd_%d.tscn" % gd_id
+	return path if ResourceLoader.exists("res://" + path) else ""
+
+
+## [code]true[/code] when [param gd_id] is a [i]static[/i] gameplay object - a
+## solid block, a slope, a spike or a saw - as opposed to an interactive object
+## (orb, pad, portal, trigger) or a decoration.
+##
+## Static objects only exist to be walked on or to kill the player: their scene
+## contributes solid/hazard collision and nothing else, so they can be built
+## from their generated gd scene (atlas art + authored collision) instead of a
+## hand-made component scene.
+static func is_static_gameplay_object(gd_id: int) -> bool:
+	var description := get_object(gd_id)
+	if description.is_empty():
+		return false
+	var scene: String = description.get("scene", "")
+	return scene.begins_with(SOLIDS) or scene.begins_with(HAZARDS)
 
 
 ## Returns the Geometry Dash object ID for a Godot Dash scene path

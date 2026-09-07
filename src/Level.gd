@@ -15,6 +15,12 @@ enum UseDataFlags {
 	IS_INSTANTIATION = 1,
 }
 
+## Metadata key marking a generated gd scene placement that takes part in
+## gameplay (solid block, slope, spike or saw), as opposed to a decoration.
+## Gameplay placements serialize in the gameplay entry format (scene path +
+## gd_object_id) so the level rebuilds them through the gameplay path.
+const GD_GAMEPLAY_META: StringName = &"gd_gameplay"
+
 const START_SPEED: Array[float] = [
 	0.0, # 0x
 	0.807, # 0.5x
@@ -551,7 +557,7 @@ static func from_data(data: Dictionary) -> Level:
 				elif not gd_object_entry_has_node(object_data):
 					decoration_data.append(object_data)
 				continue
-			var object: Node2D = instantiate_object_from_data(object_data)
+			var object: Node2D = instantiate_object_from_data(object_data, level)
 			# Null when the object was filtered out by low detail mode.
 			if object == null:
 				continue
@@ -574,12 +580,15 @@ static func from_data(data: Dictionary) -> Level:
 	return level
 
 
-static func instantiate_object_from_data(object_data: Dictionary) -> Node2D:
+static func instantiate_object_from_data(
+		object_data: Dictionary,
+		level: Level = LevelManager.current_level,
+) -> Node2D:
 	# A decoration entry is instanced from its object type's generated scene.
 	# When that scene is missing it has no node of its own (from_data draws it
 	# in a DecorationBatch instead), so it must not reach the loader below.
 	if object_data.get("decoration", false):
-		return instantiate_gd_object(object_data, LevelManager.current_level)
+		return instantiate_gd_object(object_data, level)
 
 	var prefab: PackedScene = load("res://%s" % object_data.scene_file_path)
 	if not prefab:
@@ -590,9 +599,22 @@ static func instantiate_object_from_data(object_data: Dictionary) -> Node2D:
 			return null
 	var object: Node2D = prefab.instantiate()
 	object.name = object_data.name
-	# Imported objects keep their scene - it carries collision, components and
-	# editor behaviour - but wear Geometry Dash's artwork, so a level is not
-	# half authentic decoration and half Godot Dash placeholder art.
+	# Static gameplay objects (blocks, slopes, spikes, saws) are built from
+	# their generated gd scene - the scene carries the GD artwork, the authored
+	# collision and the editor selection box. Configure it exactly like a
+	# decoration, and mark it gameplay so it serializes back in the gameplay
+	# format (kept out of decoration batching / low-detail culling).
+	if object is GDObject:
+		var gd_object := object as GDObject
+		if object_data.has("gd_object_id"):
+			gd_object.set_meta(&"gd_object_id", int(object_data.gd_object_id))
+		gd_object.set_meta(GD_GAMEPLAY_META, true)
+		_configure_gd_object(gd_object, object_data, level)
+		return object
+	# Hand-made scenes (interactables, and older gameplay data) keep their
+	# scene - it carries collision, components and editor behaviour - but wear
+	# Geometry Dash's artwork, so a level is not half authentic decoration and
+	# half Godot Dash placeholder art.
 	if object_data.has("gd_object_id"):
 		object.set_meta(&"gd_object_id", int(object_data.gd_object_id))
 		GDArtSwap.apply(object, int(object_data.gd_object_id))
@@ -648,6 +670,15 @@ static func instantiate_gd_object(object_data: Dictionary, level: Level) -> GDOb
 		return null
 	object.name = str(object_data.get("name", "GD%d" % gd_id))
 	object.set_meta(&"gd_object_id", gd_id)
+	_configure_gd_object(object, object_data, level)
+	return object
+
+
+## Applies the shared placement data to a generated gd scene instance: draw
+## order, tints, colour-channel watchers, HSV, enter-effect material and any
+## attributes. Used by both the decoration path and the gameplay path (static
+## gameplay objects are the same generated scenes).
+static func _configure_gd_object(object: GDObject, object_data: Dictionary, level: Level) -> void:
 	object.setup(object_data)
 
 	# Colour channels. The Base and Detail nodes get the watchers a channel
@@ -683,7 +714,13 @@ static func instantiate_gd_object(object_data: Dictionary, level: Level) -> GDOb
 	# additive objects keep their blend material instead.
 	if object.material == null:
 		object.material = AssetManager.fade_enter_effect
-	return object
+	# Attributes behave exactly as they do on hand-made gameplay scenes.
+	if "attributes" in object_data:
+		var attributes: Array[String]
+		attributes.assign(object_data.attributes)
+		for attribute: String in attributes:
+			var attribute_script: Script = load("%s/%s.gd" % [Constants.ATTRIBUTE_PATH_ROOT, attribute.get_basename()])
+			NodeUtils.get_node_or_add(object, str(attribute_script.get_global_name()), attribute_script, NodeUtils.SET_OWNER | NodeUtils.FORCE_READABLE_NAME)
 
 
 ## Splits a layer's baked tint so that, once a channel watcher owns the layer,
@@ -811,9 +848,25 @@ static func deserialize_data_to_object(object_data: Dictionary, object: Node2D, 
 			object.markers_from_data(object_data.markers)
 
 
+## Serializes one placed object from a generated gd scene.
+##
+## Decorations keep the scene-less decoration format ([method GDObject.to_data])
+## so they route back through [method instantiate_gd_object] and may collapse
+## into batches. Gameplay placements (blocks, slopes, spikes, saws) keep the
+## gameplay entry format instead: they must never be treated as decorations
+## (low detail mode culls those, and batching would strip their collision).
+static func serialize_gd_object(object: GDObject) -> Dictionary:
+	if not object.has_meta(GD_GAMEPLAY_META):
+		return object.to_data()
+	var object_data := object.to_gameplay_data()
+	if object.has_meta(Constants.ATTRIBUTE_META):
+		object_data.attributes = object.get_meta(Constants.ATTRIBUTE_META)
+	return object_data
+
+
 static func serialize_object(object: Node2D, reason: Serialize.Reason) -> Dictionary:
 	if object is GDObject:
-		return object.to_data()
+		return serialize_gd_object(object as GDObject)
 
 	var object_data: Dictionary = {
 		"name": object.name,

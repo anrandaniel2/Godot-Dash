@@ -446,6 +446,14 @@ static func _object_from_properties(
 	if description.is_empty():
 		return { }
 	var scene_path: String = description.scene
+	# Static gameplay objects (blocks, slopes, spikes, saws) are built from
+	# their generated gd scene: it carries the GD atlas artwork, the authored
+	# (PRISTINE) collision and the editor selection box, so no placeholder
+	# scene or runtime art swap is involved.
+	if GMDObjects.is_static_gameplay_object(gd_id):
+		var gd_scene: String = GMDObjects.gd_scene_path(gd_id)
+		if not gd_scene.is_empty():
+			scene_path = gd_scene
 	if not ResourceLoader.exists("res://" + scene_path):
 		# The map references a scene that isn't in this build. Skip rather than
 		# letting `load()` fail later during instantiation.
@@ -1328,9 +1336,21 @@ static func export_level_string(level_data: Dictionary, report: ImportReport = n
 
 	for layer_data: Dictionary in level_data.get("layers", []):
 		for object_data: Dictionary in layer_data.get("objects", []):
-			var scene_path: String = object_data.get("scene_file_path", "")
-			var gd_id: int = GMDObjects.get_gd_id(scene_path)
-			if gd_id == -1:
+			# Pure decoration has no Geometry Dash gameplay identity and is not
+			# exported (Godot Dash saves it separately); anything else is one
+			# of the supported gameplay objects. The gd_object_id recorded at
+			# import is authoritative when present (static objects now live in
+			# per-ID generated scenes); scene paths only resolve older entries.
+			if object_data.get("decoration", false):
+				report.note_skipped(0)
+				continue
+			var gd_id: int = -1
+			var object_id: Variant = object_data.get("gd_object_id", null)
+			if object_id != null:
+				gd_id = int(object_id)
+			else:
+				gd_id = GMDObjects.get_gd_id(str(object_data.get("scene_file_path", "")))
+			if gd_id <= 0:
 				report.note_skipped(0)
 				continue
 			var chunk: String = _object_to_chunk(gd_id, object_data)

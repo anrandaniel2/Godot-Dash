@@ -221,6 +221,25 @@ func to_data() -> Dictionary:
 	)
 
 
+## Serializes this placement as a [i]gameplay[/i] level-data entry: the
+## counterpart of [method to_data] for placements that live on a generated gd
+## scene but take part in gameplay (solid blocks, slopes, spikes, saws). Such
+## entries reference the gd scene by path so [Level] instantiates them through
+## the gameplay path, keeping them out of decoration batching and low-detail
+## culling, and keep their Geometry Dash identity for export.
+func to_gameplay_data() -> Dictionary:
+	var decoration_data := to_data()
+	return {
+		"name": decoration_data.name,
+		"scene_file_path": "scenes/gd_objects/gd_%d.tscn" % gd_id,
+		"gd_object_id": gd_id,
+		"transform": decoration_data.transform,
+		"groups": decoration_data.groups,
+		"color_channels": decoration_data.color_channels,
+		"hsv": decoration_data.hsv,
+	}
+
+
 static func _channel_of(watcher: HSVWatcher) -> String:
 	for group: StringName in watcher.get_groups():
 		if str(group).begins_with(Constants.COLOR_CHANNEL_GROUP_PREFIX):
