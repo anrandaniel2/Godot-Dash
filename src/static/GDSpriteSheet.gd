@@ -1,33 +1,28 @@
 @abstract
 class_name GDSpriteSheet
-## Loads the Geometry Dash texture atlases that ship in
-## [code]assets/textures/gd_atlas/[/code].
+## Loads the Geometry Dash artwork atlas.
 ##
-## Each atlas is a cocos2d pair - a [code].plist[/code] describing every frame
-## and a [code].png[/code] holding the packed pixels:
-## [codeblock]
-## PixelSheet_01-hd.plist   # 3444 frame definitions
-## PixelSheet_01-hd.png     # 2006x1120 packed texture
-## [/codeblock]
+## The artwork ships as a Godot-native atlas built by
+## [code]tools/build_godot_atlas.py[/code]: one or more square PNG pages under
+## [constant ATLAS_DIR] plus [constant ATLAS_JSON], which records where every
+## frame sits on its page along with the trim offset and untrimmed size the
+## original cocos2d [code].plist[/code] carried. Rotated frames were turned
+## upright when the pages were packed, so every frame is a plain
+## [AtlasTexture] region and the whole sheet loads in a single pass - no plist
+## parsing and no per-frame image surgery at startup.
 ##
-## Frames are described in cocos2d "format 3":
-## [codeblock]
-## textureRect      {{x,y},{w,h}}   where the frame sits in the png
-## textureRotated   <true/>         packed rotated 90 degrees clockwise
-## spriteOffset     {dx,dy}         trimmed pixels, relative to the sprite centre
-## spriteSourceSize {w,h}           size before transparent edges were trimmed
-## [/codeblock]
-##
-## [b]Trimming matters.[/b] The packer crops transparent borders, so a frame's
-## pixels are usually smaller than the original artwork and sit off-centre
-## within it. [member Frame.offset] carries that displacement so callers can put
-## the sprite back exactly where Geometry Dash would draw it; ignoring it makes
-## decoration drift by a few pixels each, which is visible across a whole level.
+## The original cocos2d sheets are kept in [constant SOURCE_DIR] as the input of
+## that tool. The folder carries a [code].gdignore[/code], so Godot neither
+## imports nor exports them. If the packed atlas is missing (a checkout where the
+## tool hasn't been run), they are parsed directly as a fallback so the game
+## still draws in the editor, just more slowly on first load.
 
-## Where the atlases live inside the project.
 const ATLAS_DIR: String = "res://assets/textures/gd_atlas/"
+const ATLAS_JSON: String = ATLAS_DIR + "gd_objects_atlas.json"
+const SOURCE_DIR: String = ATLAS_DIR + "source/"
 
-## Atlas base names, loaded in this order. Earlier sheets win on a name clash.
+## Sheets of the cocos2d fallback, in lookup priority order (the packing tool
+## uses the same order, so both agree on which sheet wins a duplicated name).
 const SHEET_NAMES: PackedStringArray = [
 	"PixelSheet_01",
 	"GJ_GameSheet02",
@@ -39,43 +34,41 @@ const SHEET_NAMES: PackedStringArray = [
 	# Fire, beast and ambient particle artwork.
 	"FireSheet_01",
 	# Ground and background tiles from Geometry Dash 2.2. These are scenery
-	# rather than level objects, so no object id maps to them; they are loaded
-	# so the ground can be textured to match the level.
+	# rather than level objects, so no object id maps to them.
 	"GroundSheet_01",
 ]
 
-## Quality suffix to prefer. `-hd` is roughly double resolution.
 const HD_SUFFIX: String = "-hd"
 
 
-## One frame: its texture plus the placement data needed to draw it faithfully.
+## One frame of the atlas.
 class Frame:
 	extends RefCounted
 
-	## Ready-to-use texture, for code that just wants to assign it to a sprite.
+	## Ready-to-use texture: an [AtlasTexture] region of the page.
 	var texture: Texture2D
-	## The full atlas page this frame lives on, and the rectangle it occupies.
-	##
-	## [DecorationBatch] draws with these directly rather than through
-	## [member texture]: issuing consecutive draws against one shared atlas is
-	## what allows the renderer to batch them, whereas a per-frame
-	## [AtlasTexture] would look like a different texture each time.
+	## The page this frame lives on, and the rectangle it occupies there.
 	var atlas: Texture2D
 	var region: Rect2 = Rect2()
-	## Displacement of the trimmed pixels from the untrimmed centre, in the
-	## atlas's own pixel units.
+	## Displacement of the trimmed pixels from the untrimmed centre, in atlas
+	## pixels, y up (as cocos2d stores it).
 	var offset: Vector2 = Vector2.ZERO
 	## Size of the artwork before trimming.
 	var source_size: Vector2 = Vector2.ZERO
-	## Which atlas this came from.
+	## Which cocos2d sheet this came from.
 	var sheet: String = ""
 
 
-## A loaded set of atlases.
+## A loaded atlas.
 class Sheet:
 	extends RefCounted
 
 	var frames: Dictionary[String, Frame] = { }
+	## The page textures, in the order the JSON lists them.
+	var pages: Array[Texture2D] = []
+	## [code]true[/code] when loaded from the packed atlas rather than the
+	## cocos2d sheets.
+	var packed: bool = false
 
 	func has_frame(frame_name: String) -> bool:
 		return frames.has(frame_name)
@@ -88,46 +81,97 @@ class Sheet:
 		return frame.texture if frame != null else null
 
 
-## Loads every atlas in [constant ATLAS_DIR].
-##
-## Only the high-resolution [code]-hd[/code] variant is used. The standard
-## sheets are exactly half resolution and carry an identical frame list, so they
-## added nothing but disk space and a second art scale to keep in step.
-##
-## A sheet that only ships without the suffix is still loaded - not every atlas
-## has an `-hd` twin - but it is then assumed to be authored at the same
-## resolution as the rest.
+## Loads the atlas: the packed pages when present, the cocos2d sheets otherwise.
 static func load_all() -> Sheet:
 	var sheet := Sheet.new()
+	if _load_packed(sheet):
+		return sheet
+	push_warning(
+			"GDSpriteSheet: packed atlas %s not found, parsing the cocos2d sheets in %s instead "
+			+ "(run tools/build_godot_atlas.py to build it)"
+			% [ATLAS_JSON, SOURCE_DIR]
+	)
 	for sheet_name: String in SHEET_NAMES:
 		for suffix: String in [HD_SUFFIX, ""]:
-			var base: String = ATLAS_DIR + sheet_name + suffix
-			if not ResourceLoader.exists(base + ".png") and not FileAccess.file_exists(base + ".png"):
-				continue
-			_load_into(sheet, base + ".plist", base + ".png", sheet_name)
-			break
+			var base: String = SOURCE_DIR + sheet_name + suffix
+			if FileAccess.file_exists(base + ".plist"):
+				_load_cocos_into(sheet, base + ".plist", base + ".png", sheet_name)
+				break
 	return sheet
 
 
-## Parses one atlas and merges its frames into [param sheet].
-static func _load_into(sheet: Sheet, plist_path: String, texture_path: String, sheet_name: String) -> void:
+#region Packed atlas
+
+## Reads [constant ATLAS_JSON] and its pages. Returns [code]false[/code] when
+## the packed atlas isn't available.
+static func _load_packed(sheet: Sheet) -> bool:
+	if not FileAccess.file_exists(ATLAS_JSON):
+		return false
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(ATLAS_JSON))
+	if parsed is not Dictionary or not parsed.has("frames") or not parsed.has("pages"):
+		push_warning("GDSpriteSheet: %s is malformed" % ATLAS_JSON)
+		return false
+
+	for page_name: Variant in parsed.pages:
+		var page_path: String = ATLAS_DIR + str(page_name)
+		var page: Texture2D = load(page_path) as Texture2D
+		if page == null:
+			push_warning("GDSpriteSheet: atlas page %s failed to load" % page_path)
+			return false
+		sheet.pages.append(page)
+
+	var sheet_names: Array = parsed.get("sheets", [])
+	var table: Dictionary = parsed.frames
+	for frame_name: String in table:
+		var record: Variant = table[frame_name]
+		# [page, x, y, w, h, offset_x, offset_y, source_w, source_h, sheet]
+		if record is not Array or record.size() < 9:
+			continue
+		var page_index: int = int(record[0])
+		if page_index < 0 or page_index >= sheet.pages.size():
+			continue
+		var frame := Frame.new()
+		frame.atlas = sheet.pages[page_index]
+		frame.region = Rect2(
+				float(record[1]), float(record[2]), float(record[3]), float(record[4])
+		)
+		frame.offset = Vector2(float(record[5]), float(record[6]))
+		frame.source_size = Vector2(float(record[7]), float(record[8]))
+		if record.size() > 9:
+			var sheet_index: int = int(record[9])
+			if sheet_index >= 0 and sheet_index < sheet_names.size():
+				frame.sheet = str(sheet_names[sheet_index])
+		var texture := AtlasTexture.new()
+		texture.atlas = frame.atlas
+		texture.region = frame.region
+		frame.texture = texture
+		sheet.frames[frame_name] = frame
+	sheet.packed = true
+	return true
+
+#endregion
+
+
+#region cocos2d fallback
+
+static func _load_cocos_into(sheet: Sheet, plist_path: String, texture_path: String, sheet_name: String) -> void:
 	if not FileAccess.file_exists(plist_path):
 		push_warning("GDSpriteSheet: missing %s" % plist_path)
 		return
 
-	var atlas_texture: Texture2D = load(texture_path)
-	if atlas_texture == null:
+	# The source folder is ignored by the importer, so the PNG is read as a
+	# plain file rather than as an imported resource.
+	var atlas_image: Image = Image.load_from_file(ProjectSettings.globalize_path(texture_path))
+	if atlas_image == null:
 		push_warning("GDSpriteSheet: couldn't load %s" % texture_path)
 		return
+	var atlas_texture: Texture2D = ImageTexture.create_from_image(atlas_image)
+	sheet.pages.append(atlas_texture)
 
 	var plist: Variant = parse_plist(FileAccess.get_file_as_string(plist_path))
 	if plist is not Dictionary or not plist.has("frames"):
 		push_warning("GDSpriteSheet: %s has no frames dictionary" % plist_path)
 		return
-
-	# Rotated frames need pixel access to un-rotate, which means pulling the
-	# image off the texture. Do it once per atlas, and only if needed.
-	var atlas_image: Image = null
 
 	for frame_name: String in plist.frames:
 		if sheet.frames.has(frame_name):
@@ -155,19 +199,13 @@ static func _load_into(sheet: Sheet, plist_path: String, texture_path: String, s
 			atlas.atlas = atlas_texture
 			atlas.region = rect
 			frame.texture = atlas
-			# Shared page + region, so batched drawing can group by atlas.
 			frame.atlas = atlas_texture
 			frame.region = rect
 		else:
-			if atlas_image == null:
-				atlas_image = atlas_texture.get_image()
-				if atlas_image == null:
-					continue
 			frame.texture = _unrotate(atlas_image, rect)
 			if frame.texture == null:
 				continue
-			# An un-rotated frame is its own standalone texture, so it batches
-			# only with itself.
+			# An un-rotated frame is its own standalone texture.
 			frame.atlas = frame.texture
 			frame.region = Rect2(Vector2.ZERO, frame.texture.get_size())
 
@@ -175,9 +213,6 @@ static func _load_into(sheet: Sheet, plist_path: String, texture_path: String, s
 
 
 ## Rebuilds a frame that was packed rotated 90 degrees clockwise.
-##
-## [AtlasTexture] cannot express rotation, so the pixels are lifted out and
-## turned upright once, at load time, rather than every draw.
 static func _unrotate(atlas_image: Image, rect: Rect2) -> Texture2D:
 	# A rotated frame occupies a region whose width and height are swapped.
 	var packed := Rect2i(
@@ -343,5 +378,7 @@ static func _unescape(text: String) -> String:
 			.replace("&quot;", "\"") \
 			.replace("&apos;", "'") \
 			.replace("&amp;", "&")
+
+#endregion
 
 #endregion

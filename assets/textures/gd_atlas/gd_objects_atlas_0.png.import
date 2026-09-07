@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dk4xvbwiry12f"
-path="res://.godot/imported/GJ_GameSheetGlow-hd.png-825c8f709367a77dff0f0ce660492ddc.ctex"
+uid="uid://dx77cvh0lh2m5"
+path="res://.godot/imported/gd_objects_atlas_0.png-69310b515f51a23c347576fa59e80c21.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/textures/gd_atlas/GJ_GameSheetGlow-hd.png"
-dest_files=["res://.godot/imported/GJ_GameSheetGlow-hd.png-825c8f709367a77dff0f0ce660492ddc.ctex"]
+source_file="res://assets/textures/gd_atlas/gd_objects_atlas_0.png"
+dest_files=["res://.godot/imported/gd_objects_atlas_0.png-69310b515f51a23c347576fa59e80c21.ctex"]
 
 [params]
 

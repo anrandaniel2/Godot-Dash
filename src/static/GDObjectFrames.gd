@@ -6,9 +6,9 @@ class_name GDObjectFrames
 ## [code]tools/gd_object_id_list.txt[/code] (object ID -> base frame name), the
 ## sprite-tree table in [code]tools/gdrweb_objects.json[/code] (which child
 ## sprites an object is built from, and how each is placed) and the shipped
-## atlas plists, which supply the matching [code]_color_[/code] (detail) and
+## atlas sheets, which supply the matching [code]_color_[/code] (detail) and
 ## [code]_glow_[/code] frames. Every entry is backed by a frame that provably
-## exists in the bundled atlases.
+## exists in the bundled atlas.
 ##
 ## The generated table lives in
 ## [code]assets/textures/gd_atlas/object_frames.json[/code]. Additions and
@@ -35,6 +35,9 @@ const COLOR_BLACK: String = "black"
 ## of their artwork lives in [member ObjectFrames.parts].
 const EMPTY_FRAME: String = "emptyFrame.png"
 
+## Marker for "no default z known"; real defaults are small odd numbers.
+const Z_UNKNOWN: int = -9999
+
 
 ## One object's layered artwork.
 class ObjectFrames:
@@ -55,6 +58,12 @@ class ObjectFrames:
 	## Opacity Geometry Dash gives the root sprite itself, before any channel
 	## or per-object opacity.
 	var opacity: float = 1.0
+	## Where Geometry Dash draws the object when the level string doesn't say
+	## (keys 24/25 absent): its default z layer (1 = B2, 3 = B1, 5 = T1, ...)
+	## and fine z order within that layer. [constant Z_UNKNOWN] when the
+	## object table doesn't cover this id.
+	var default_z_layer: int = Z_UNKNOWN
+	var default_z_order: int = Z_UNKNOWN
 	## Extra sprites the object is drawn from, in draw order. Each is a
 	## [Dictionary] with:
 	## [codeblock]
@@ -165,6 +174,8 @@ static func _merge_file(path: String) -> void:
 			entry.glow = str(value.get("glow", ""))
 			entry.color = str(value.get("color", COLOR_BASE))
 			entry.opacity = clampf(float(value.get("opacity", 1.0)), 0.0, 1.0)
+			entry.default_z_layer = int(value.get("zl", Z_UNKNOWN))
+			entry.default_z_order = int(value.get("zo", Z_UNKNOWN))
 			var raw_parts: Variant = value.get("parts", [])
 			if raw_parts is Array:
 				for raw_part: Variant in raw_parts:

@@ -59,8 +59,9 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ATLAS_DIR = PROJECT_ROOT / "assets" / "textures" / "gd_atlas"
+DEFAULT_ATLAS_DIR = PROJECT_ROOT / "assets" / "textures" / "gd_atlas" / "source"
 DEFAULT_GDRWEB_JSON = PROJECT_ROOT / "tools" / "gdrweb_objects.json"
+DEFAULT_OUT = PROJECT_ROOT / "assets" / "textures" / "gd_atlas" / "object_frames.json"
 
 # Loaded in priority order: the first atlas to define a frame owns it.
 SHEETS = [
@@ -324,6 +325,14 @@ def entry_from_gdrweb(frame: str, spec: dict, owner: dict[str, str]) -> tuple[di
         entry["opacity"] = round(float(opacity), 4)
     if parts:
         entry["parts"] = parts
+    # Where Geometry Dash draws the object when the level string carries no
+    # explicit z layer (key 24) or z order (key 25): 1/3/5 are B2/B1/T1.
+    z_layer = spec.get("default_z_layer")
+    z_order = spec.get("default_z_order")
+    if z_layer is not None:
+        entry["zl"] = int(z_layer)
+    if z_order is not None:
+        entry["zo"] = int(z_order)
     # Glow is not described by the object table, so it is still probed.
     entry.update(find_layers(texture, owner, detail=False))
     return entry, missing
@@ -414,10 +423,10 @@ def main() -> None:
         preview = ", ".join(f"{i}:{f}" for i, f in missing_parts[:5])
         print(f"    e.g. {preview}")
 
-    out_path: Path = args.out or (args.atlas_dir / "object_frames.json")
+    out_path: Path = args.out or DEFAULT_OUT
     payload = {
         "_source": "ObjectToolbox id list, validated against the shipped atlases",
-        "_parts_source": "gdrweb object table (MIT) for the sprite tree of multi-sprite objects",
+        "_parts_source": "gdrweb object table (MIT) for the sprite tree of multi-sprite objects and the default z layer/order (zl/zo)",
         "_verified": "every frame below exists in an atlas plist",
         "_count": len(entries),
         "frames": {str(i): entries[i] for i in sorted(entries)},
