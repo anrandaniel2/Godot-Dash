@@ -52,6 +52,14 @@ const SNAPSHOT_META: StringName = &"_gd_level_physics_snapshot"
 const DESCRIPTORS_META: StringName = &"_gd_level_physics_descriptors"
 ## Metadata key on the Level: whether a rebuild is needed before next play.
 const DIRTY_META: StringName = &"_gd_level_physics_dirty"
+## Metadata key on merged objects: the CollisionShape2D children this object
+## contributed to the shared bodies. Lets a streamed chunk be removed (or an
+## object restored) by freeing exactly its shapes, without touching the rest.
+const SHAPES_META: StringName = &"_gd_level_physics_shapes"
+## Metadata key on the Level: the trigger-group set the last merge decision was
+## made against. When a new move/rotate/scale trigger enters the live window,
+## its group's merged members must get their own bodies back before it fires.
+const DYNAMIC_META: StringName = &"_gd_level_physics_dynamic_groups"
 
 ## Old-scene collision layers that represent static world geometry. Everything
 ## else (interactables 8/16, custom physics, editor layers...) stays per-object.
@@ -73,6 +81,14 @@ static func mark_dirty(level: Level) -> void:
 
 static func is_dirty(level: Level) -> bool:
 	return bool(level.get_meta(DIRTY_META, true))
+
+
+## Clears the dirty flag. LevelStream keeps the shared bodies exactly in sync
+## with the live window (commit adds a chunk's shapes, release removes them),
+## so the tree churn of spawning/freeing chunks must not force a full rebuild
+## on the next attempt.
+static func clear_dirty(level: Level) -> void:
+	level.set_meta(DIRTY_META, false)
 
 
 ## Called every time a level starts playing (each attempt). Rebuilds the shared
@@ -110,19 +126,18 @@ static func teardown(level: Level) -> void:
 	var container := level.get_node_or_null(CONTAINER_NAME)
 	if container != null:
 		container.free()
+	level.remove_meta(DYNAMIC_META)
 	level.set_meta(DIRTY_META, true)
 
 
-## Frees and rebuilds the shared bodies from the current object tree.
+## Frees and rebuilds the shared bodies from the current object tree. Used by
+## non-streamed levels (full rebuild each time the tree changed) and by a
+## streamed level's first start; afterwards LevelStream only commits and
+## releases chunk deltas onto the persistent bodies.
 static func rebuild(level: Level) -> void:
-	var container := level.get_node_or_null(CONTAINER_NAME)
-	if container == null:
-		container = Node2D.new()
-		container.name = CONTAINER_NAME
-		level.add_child(container)
-	else:
-		for child in container.get_children():
-			child.free()
+	var container := _container(level)
+	for child in container.get_children():
+		child.free()
 
 	var dynamic_groups := _dynamic_transform_groups(level)
 	# Shared bodies are chunked by horizontal region, so the physics broadphase
@@ -149,26 +164,137 @@ static func rebuild(level: Level) -> void:
 				continue
 			if not _is_mergeable(object, dynamic_groups):
 				continue
-			var geometry := _object_geometry(object)
-			if geometry.descriptors.is_empty():
+			_commit_object(container, bodies, object)
+	level.set_meta(DYNAMIC_META, dynamic_groups)
+
+
+## The Level's shared-body container, created on first use.
+static func _container(level: Level) -> Node2D:
+	var container := level.get_node_or_null(CONTAINER_NAME) as Node2D
+	if container == null:
+		container = Node2D.new()
+		container.name = CONTAINER_NAME
+		level.add_child(container)
+	return container
+
+
+## Adds the collision of every node in [param nodes] to the shared bodies.
+##
+## This is the streaming equivalent of a full rebuild for one chunk: the
+## existing shared bodies stay untouched, only the chunk's shapes are appended
+## to them (and the objects' own bodies are merged away as usual). Because the
+## bodies persist, nothing else in the world is recreated and the player's
+## contacts are undisturbed.
+static func commit(level: Level, nodes: Array) -> void:
+	if nodes.is_empty():
+		return
+	var dynamic_groups := _dynamic_transform_groups(level)
+	var known: Dictionary = level.get_meta(DYNAMIC_META, {})
+	if not _dynamic_groups_equal(known, dynamic_groups):
+		# A trigger entered the live window and made a group dynamic; merged
+		# members of the newly dynamic groups get their own bodies back before
+		# anything new is committed, so a trigger never animates a body that
+		# belongs to the shared world.
+		level.set_meta(DYNAMIC_META, dynamic_groups)
+		_restore_dynamic_members(level, known, dynamic_groups)
+	var container := _container(level)
+	var bodies := _bodies_of(container)
+	for object: Node2D in nodes:
+		if object is DecorationBatch or object is Interactable:
+			continue
+		if not _is_mergeable(object, dynamic_groups):
+			continue
+		_commit_object(container, bodies, object)
+	clear_dirty(level)
+
+
+## Removes the shared shapes of every node in [param nodes]. Call before the
+## nodes themselves are freed (a streamed chunk dropping out of the window).
+## The owning shared bodies persist; only the chunk's own shapes are freed.
+static func release(level: Level, nodes: Array) -> void:
+	for object: Node2D in nodes:
+		_drop_shared_shapes(object)
+	clear_dirty(level)
+
+
+## Existing shared bodies, keyed by node name.
+static func _bodies_of(container: Node2D) -> Dictionary:
+	var bodies: Dictionary = {}
+	for child in container.get_children():
+		if child is CollisionObject2D and child.has_meta(BODY_META):
+			bodies[child.name] = child
+	return bodies
+
+
+## Harvests one mergeable object into the shared bodies: its geometry is read
+## (and cached), shape nodes are added under the region's body, and the
+## object's own body is merged away. Exactly what one loop iteration of a full
+## rebuild does, minus the rebuild. Safe for already-merged objects (a full
+## rebuild over previously committed chunks): their stale shape registration
+## is dropped and recreated from the cached geometry.
+static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D) -> void:
+	_drop_shared_shapes(object)
+	var geometry := _object_geometry(object)
+	if geometry.descriptors.is_empty():
+		return
+	if not MERGEABLE_LAYERS.has(int(geometry.collision_layer)):
+		return
+	var body := _body_for(
+			bodies, container, int(geometry.collision_layer),
+			_chunk_of(object.global_position.x),
+	)
+	var added: Array = []
+	for descriptor in geometry.descriptors:
+		var shape_node: CollisionShape2D = CollisionShape2D.new()
+		shape_node.shape = descriptor.resource
+		shape_node.debug_color = descriptor.debug_color
+		body.add_child(shape_node)
+		# Position the shape where the source shape is in the world: body is at
+		# the container's origin (identity), so applying the object's own global
+		# transform reproduces the shape exactly, including the object's scale,
+		# rotation and flip.
+		shape_node.global_transform = object.global_transform * descriptor.local_xform
+		added.append(shape_node)
+	object.set_meta(SHAPES_META, added)
+	_merge_object(object)
+
+
+## Frees the shape nodes an object contributed to the shared bodies.
+static func _drop_shared_shapes(object: Node2D) -> void:
+	var shapes: Array = object.get_meta(SHAPES_META, [])
+	if not shapes.is_empty():
+		for shape_node in shapes:
+			if is_instance_valid(shape_node):
+				shape_node.free()
+	object.remove_meta(SHAPES_META)
+
+
+static func _dynamic_groups_equal(a: Dictionary, b: Dictionary) -> bool:
+	if a.size() != b.size():
+		return false
+	for group: StringName in a:
+		if not b.has(group):
+			return false
+	return true
+
+
+## Restores merged live objects whose group turned dynamic since the last
+## merge decision. Only the objects in the newly dynamic groups are touched.
+static func _restore_dynamic_members(level: Level, known: Dictionary, current: Dictionary) -> void:
+	var newly_dynamic: Array = []
+	for group: StringName in current:
+		if not known.has(group):
+			newly_dynamic.append(group)
+	if newly_dynamic.is_empty():
+		return
+	for layer in level.layers:
+		for object: Node2D in layer.get_children():
+			if not object.has_meta(MERGED_META):
 				continue
-			if not MERGEABLE_LAYERS.has(geometry.collision_layer):
-				continue
-			var body := _body_for(
-					bodies, container, geometry.collision_layer,
-					_chunk_of(object.global_position.x),
-			)
-			for descriptor in geometry.descriptors:
-				var shape_node: CollisionShape2D = CollisionShape2D.new()
-				shape_node.shape = descriptor.resource
-				shape_node.debug_color = descriptor.debug_color
-				body.add_child(shape_node)
-				# Position the shape where the source shape is in the world:
-				# body is at the container's origin (identity), so applying the
-				# object's own global transform reproduces the shape exactly,
-				# including the object's scale, rotation and flip.
-				shape_node.global_transform = object.global_transform * descriptor.local_xform
-			_merge_object(object)
+			for group: StringName in object.get_groups():
+				if group in newly_dynamic:
+					_restore_object(object)
+					break
 
 
 static func _is_mergeable(object: Node2D, dynamic_groups: Dictionary) -> bool:
@@ -280,9 +406,6 @@ static func _body_for(
 		collision_layer: int,
 		chunk_x: int,
 ) -> CollisionObject2D:
-	var key: String = "%d|%d" % [collision_layer, chunk_x]
-	if bodies.has(key):
-		return bodies[key]
 	var body: CollisionObject2D = StaticBody2D.new()
 	var base_name: String
 	match collision_layer:
@@ -295,20 +418,24 @@ static func _body_for(
 			body.collision_layer = CIRCLE_HAZARD_LAYER
 			base_name = "CircleHazards"
 		SLOPE_LAYER:
+			body = Area2D.new()
 			body.collision_layer = SLOPE_LAYER
 			base_name = "Slopes"
 		_:
 			body.collision_layer = SOLID_LAYER
 			base_name = "Solids"
-	body.name = "%s@%d" % [base_name, chunk_x]
+	# Keys and names are the body name: a persistent body set must be findable
+	# by name when chunks are added incrementally (see commit).
+	var key := "%s@%d" % [base_name, chunk_x]
+	if bodies.has(key):
+		return bodies[key]
+	body.name = key
 	body.collision_mask = 0
 	body.set_meta(BODY_META, true)
 	container.add_child(body)
 	bodies[key] = body
 	return body
 
-
-## Horizontal chunk a world x belongs to, for the shared bodies.
 static func _chunk_of(world_x: float) -> int:
 	return floori(world_x / (CHUNK_CELLS * Constants.CELL_SIZE))
 
@@ -385,6 +512,9 @@ static func _free_child_body(object: Node2D, body: CollisionObject2D) -> void:
 static func _restore_object(object: Node2D) -> void:
 	if not object.has_meta(SNAPSHOT_META):
 		return
+	# Its shapes no longer belong in the shared bodies once it has its own
+	# body back.
+	_drop_shared_shapes(object)
 	var snapshot: Dictionary = object.get_meta(SNAPSHOT_META)
 	if snapshot.get("freed", false):
 		_rebuild_child_body(object, snapshot)

@@ -96,21 +96,29 @@ func restart_level() -> void:
 		# resident and the live window is rebuilt from them around the respawn
 		# point (which also resets every one-shot object). No level snapshot is
 		# deserialized - the level was never duplicated.
-		var respawn_x: float = level.start_position.x
 		if LevelManager.practice_mode and LevelManager.practice_level_snapshots.size() > 0:
 			var snapshot: Dictionary = LevelManager.practice_level_snapshots[-1]
 			if snapshot.has("practice_data"):
 				level._apply_practice_data(snapshot.practice_data)
 				if snapshot.has("start_position"):
 					var respawn_position: Vector2 = snapshot.start_position
+					# start_level()'s prepare_external_data positions the
+					# player at level.start_position, so the checkpoint becomes
+					# the level's start for this attempt - exactly what the
+					# full-snapshot path did through use_data().
+					level.start_position = respawn_position
 					LevelManager.player.global_position = respawn_position
-					respawn_x = respawn_position.x
 			else:
 				# A full (legacy) snapshot still works on a streamed level.
 				level.use_data(snapshot)
 		else:
 			level._elapsed_time = 0.0
-		level.stream_restart_at(respawn_x)
+			# Practice restarts move level.start_position to the checkpoint;
+			# a non-practice restart (including practice just being toggled
+			# off) goes back to the level's real start.
+			if not cached_level_data.is_empty() and cached_level_data.has("start_position"):
+				level.start_position = cached_level_data.start_position
+		level.stream_restart_at(level.start_position.x)
 	elif LevelManager.practice_mode and LevelManager.practice_level_snapshots.size() > 0:
 		level.use_data(LevelManager.practice_level_snapshots[-1])
 	elif not cached_level_data.is_empty():

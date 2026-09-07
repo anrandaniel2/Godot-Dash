@@ -544,16 +544,6 @@ func _apply_practice_data(practice_data: Dictionary) -> void:
 	_elapsed_time = practice_data.elapsed_time
 
 
-## Marks the shared physics for a rebuild, or rebuilds immediately when the
-## level is being played (the stream spawns chunks mid-run, so the shared
-## bodies must pick up their shapes right away).
-func stream_physics_dirty() -> void:
-	if LevelManager.level_playing:
-		LevelPhysics.rebuild(self)
-	else:
-		LevelPhysics.mark_dirty(self)
-
-
 ## A checkpoint snapshot for streamed levels. GD does not copy a level for
 ## practice checkpoints - the object records are already resident and fresh
 ## nodes are rebuilt from them on respawn, so only the player's state at the
@@ -650,12 +640,12 @@ static func from_data(data: Dictionary, stream: bool = not Editor.in_editor) -> 
 
 	if stream:
 		# Level-wide fields only - the object pass would need every object to
-		# have a node, which a streamed level does not.
+		# have a node, which a streamed level does not. LevelStream.make builds
+		# the initial window around the start position (masked by the level's
+		# loading), and the first start_level builds the shared physics for it.
 		level._use_data_fields(data)
 		level.setup_level_sprites_colors()
-		var streamer := LevelStream.make(level, data)
-		# Spawn the window around the start and build the shared physics for it.
-		streamer.reset_to(data.start_position.x)
+		LevelStream.make(level, data)
 	else:
 		level.use_data(data, true)
 	level.ready.connect(level.setup_color_channel_watchers, CONNECT_ONE_SHOT)
