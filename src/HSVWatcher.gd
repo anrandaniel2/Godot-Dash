@@ -14,6 +14,11 @@ enum SelectionHighlight {
 # Set by ColorChannelWatchers
 @export_storage var base_intensity: float = 1.0
 @export_storage var base_alpha: float = 1.0
+## Whether the saturation / value entries of [member hsv_shift] multiply the
+## colour instead of being added to it. Geometry Dash objects can use either;
+## set per object when an imported level is built, never saved.
+var saturation_multiplies: bool = false
+var value_multiplies: bool = false
 
 var selection_highlight: SelectionHighlight
 
@@ -48,8 +53,14 @@ func use_data(data: Dictionary) -> void:
 
 func update_color() -> void:
 	var shifted_modulate: Color = modulate
-	shifted_modulate.s += hsv_shift[1]
-	shifted_modulate.v += hsv_shift[2]
+	if saturation_multiplies:
+		shifted_modulate.s *= hsv_shift[1]
+	else:
+		shifted_modulate.s += hsv_shift[1]
+	if value_multiplies:
+		shifted_modulate.v *= hsv_shift[2]
+	else:
+		shifted_modulate.v += hsv_shift[2]
 	shifted_modulate.h += hsv_shift[0]
 	match selection_highlight:
 		SelectionHighlight.NONE:

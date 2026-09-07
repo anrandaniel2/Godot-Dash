@@ -1,11 +1,52 @@
 @abstract
 class_name ObjectThumbnail
 
+## Decoded atlas pages, so a thousand Geometry Dash object icons don't each
+## pull the whole page back from the GPU.
+static var _page_images: Dictionary[Texture2D, Image] = { }
+
+
+## The image of one atlas region, via the page cache.
+static func _atlas_image(texture: AtlasTexture) -> Image:
+	if texture == null or texture.atlas == null:
+		return null
+	if not _page_images.has(texture.atlas):
+		var page: Image = texture.atlas.get_image()
+		if page == null:
+			return null
+		_page_images[texture.atlas] = page
+	var region: Rect2i = Rect2i(texture.region)
+	if region.size.x <= 0 or region.size.y <= 0:
+		return null
+	return _page_images[texture.atlas].get_region(region)
+
+
+## The root sprite of a placed Geometry Dash object - enough for an icon; the
+## fills and mirrored quarters of a multi-sprite object would only blur it.
+static func _gd_object_images(object: GDObject) -> Array[Image]:
+	var images: Array[Image]
+	for layer_name: String in ["Base", "Detail"]:
+		var layer: Node = object.get_node_or_null(NodePath(layer_name))
+		if layer == null:
+			continue
+		var root: Node = layer.get_node_or_null(^"Root")
+		var candidates: Array[Node] = [root] if root != null else layer.get_children()
+		for sprite: Node in candidates:
+			if sprite is Sprite2D and sprite.texture is AtlasTexture and sprite.name != &"Glow":
+				var image: Image = _atlas_image(sprite.texture)
+				if image != null:
+					images.append(image)
+					return images
+	return images
+
+
 static func get_object_thumbnail_image(object: CanvasItem) -> Array[Image]:
 	const REBOUND_ORB_TEXTURE: Texture2D = preload("res://assets/textures/guis/editor/block_palette/ReboundOrbPreview.svg")
 	const REBOUND_PAD_TEXTURE: Texture2D = preload("res://assets/textures/guis/editor/block_palette/ReboundPadPreview.svg")
 	const TEXT_TEXTURE: Texture2D = preload("res://assets/textures/Text.svg")
 	var images: Array[Image]
+	if object is GDObject:
+		return _gd_object_images(object)
 	for child: Node in object.get_children():
 		if child is TriggerSprite:
 			images.append(crop_image_around_center(child.texture.get_image(), 0.5))

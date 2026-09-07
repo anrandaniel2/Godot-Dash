@@ -1,0 +1,46 @@
+[gd_scene load_steps=6 format=3 uid="uid://df2til0gtvaer"]
+
+[ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
+[ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
+[ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
+size = Vector2(128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
+atlas = ExtResource("gd_page0")
+region = Rect2(250, 807, 60, 60)
+
+[node name="GD282" type="Node2D"]
+texture_filter = 1
+script = ExtResource("gd_script")
+gd_id = 282
+bounds = Rect2(-64, -64, 128, 128)
+metadata/_editor_description_ = "Geometry Dash object 282 (d_square_05_001.png)"
+
+[node name="Base" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Root" type="Sprite2D" parent="Base"]
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+
+[node name="Collision" type="StaticBody2D" parent="."]
+collision_layer = 2
+collision_mask = 0
+metadata/_editor_description_ = "Collision for this Geometry Dash object type. Assign a shape to Hitbox or add more CollisionShape2D / CollisionPolygon2D children; every placement of this object in a level gets them. Layer 2 = solid. Keep the node named Hitbox - the player looks it up. tools/build_gd_object_scenes.py preserves this subtree when it regenerates the artwork."
+
+[node name="Hitbox" type="CollisionShape2D" parent="Collision"]
+debug_color = Color(0, 0.07, 0.7, 0.25)
+
+[node name="EditorSelectionCollider" type="Area2D" parent="."]
+collision_layer = 256
+collision_mask = 128
+script = ExtResource("gd_selector")
+type = 9
+id = 282
+
+[node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+shape = SubResource("RectangleShape2D_gdsel")
+debug_color = Color(0, 0.6, 0.7, 0)

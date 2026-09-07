@@ -49,8 +49,9 @@ func update_bounding_boxes(selection: Selection) -> void:
 			objects_in_group.assign(
 				get_tree() \
 						.get_nodes_in_group(target_group) \
-						.filter(func(group_object: Node): return group_object is CollisionObject2D) \
-						.map(EditHandler.get_object_selection_collider),
+						.filter(func(group_object: Node): return group_object is CollisionObject2D or group_object is GDObject) \
+						.map(EditHandler.get_object_selection_collider) \
+						.filter(func(collider: Variant): return collider != null),
 			)
 			if objects_in_group.is_empty():
 				continue

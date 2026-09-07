@@ -164,7 +164,7 @@ static func add_hsv_watchers(object: Node2D, level: Level) -> void:
 		hsv_watcher.name = "HSVWatcher"
 		object_to_be_colored.add_child(hsv_watcher)
 		object_to_be_colored.set_meta(Constants.HSV_WATCHER_META, hsv_watcher)
-		if level.is_inside_tree():
+		if level != null and level.is_inside_tree():
 			hsv_watcher.set_owner(level)
 
 

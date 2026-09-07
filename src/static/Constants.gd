@@ -24,6 +24,8 @@ enum SpecialColorChannel {
 }
 
 const GROUP_PREFIX: String = "g_"
+## Generated per-type scenes of Geometry Dash objects (tools/build_gd_object_scenes.py).
+const GD_OBJECT_SCENE_DIR: String = "res://scenes/gd_objects/"
 const COLOR_CHANNEL_GROUP_PREFIX := "c_"
 
 const DEFAULT_PLAYER_POSITION: Vector2 = Vector2(640.0, 861.0)

@@ -1,9 +1,12 @@
 @abstract
 class_name GDDecorationLoader
-## Builds [Decoration] nodes from the bundled Geometry Dash atlases.
+## Geometry Dash artwork lookups shared by the importer, the per-object scenes
+## and the batched fallback renderer.
 ##
-## The atlases total several thousand frames, so the parsed sheet is cached for
-## the lifetime of the process and shared by every import and every level load.
+## Placed objects are normally instances of the generated per-type scenes in
+## [code]scenes/gd_objects[/code] ([GDObject]); [method build_batches] is the
+## fallback for object types that have no scene yet. Both read the same packed
+## atlas ([GDSpriteSheet]), cached for the lifetime of the process.
 
 ## Atlas pixels per Geometry Dash grid unit, for the `-hd` sheets.
 ##
@@ -44,12 +47,12 @@ static func get_sheet() -> GDSpriteSheet.Sheet:
 		var elapsed: int = Time.get_ticks_msec() - started
 		if _sheet.frames.is_empty():
 			push_warning(
-					"GDDecorationLoader: no atlases found in %s" % GDSpriteSheet.ATLAS_DIR
+					"GDDecorationLoader: no atlas found in %s" % GDSpriteSheet.ATLAS_DIR
 			)
 		else:
-			print("GDDecorationLoader: %d frames from %d atlases in %d ms, %d objects mapped" % [
+			print("GDDecorationLoader: %d frames from %s in %d ms, %d objects mapped" % [
 				_sheet.frames.size(),
-				GDSpriteSheet.SHEET_NAMES.size(),
+				"%d packed page(s)" % _sheet.pages.size() if _sheet.packed else "the cocos2d sheets",
 				elapsed,
 				GDObjectFrames.count(),
 			])
@@ -103,7 +106,7 @@ static func diagnose() -> String:
 	if not Config.import_gd_decorations:
 		return "decoration import is turned off in Settings"
 	if get_sheet().frames.is_empty():
-		return "no atlases found in %s" % GDSpriteSheet.ATLAS_DIR
+		return "no atlas found in %s (run tools/build_godot_atlas.py)" % GDSpriteSheet.ATLAS_DIR
 	if GDObjectFrames.count() == 0:
 		return "object_frames.json is missing or empty"
 	if not _bad_frames.is_empty():
@@ -619,36 +622,3 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 			data["detail_hsv_shift"] = item.detail.hsv_shift
 		result.append(data)
 	return result
-
-
-## Serializes a [Decoration] back into level data.
-static func serialize(decoration: Decoration) -> Dictionary:
-	var data: Dictionary = {
-		"name": decoration.name,
-		"decoration": true,
-		"scene_file_path": "",
-		"gd_object_id": decoration.gd_object_id,
-		"z_order": decoration.z_index,
-		"transform": decoration.transform,
-		"groups": decoration.get_groups(),
-		"color_channels": { },
-		"hsv": decoration.get_meta(Constants.HSV_WATCHER_META).to_data() \
-				if decoration.has_meta(Constants.HSV_WATCHER_META) \
-				else { "hsv_shift": [0.0, 0.0, 0.0], "intensity": 1.0, "alpha": 1.0 },
-	}
-
-	var channels: Dictionary = { }
-	for layer_name: String in ["Base", "Detail"]:
-		var layer: Node2D = decoration.get_node_or_null(NodePath(layer_name))
-		if layer == null:
-			continue
-		var watcher: HSVWatcher = BaseDetailHandler.use_hsv_watcher(layer)
-		if watcher == null:
-			continue
-		for group: StringName in watcher.get_groups():
-			if str(group).begins_with(Constants.COLOR_CHANNEL_GROUP_PREFIX):
-				channels[layer_name.to_lower()] = str(group)
-				break
-	if not channels.is_empty():
-		data.color_channels = channels
-	return data

@@ -185,7 +185,8 @@ class ImportReport:
 	## Unsupported block styles that were imported as a plain block instead of
 	## being skipped, by Geometry Dash object ID.
 	var substituted_block_ids: Dictionary[int, int] = { }
-	## Decoration objects drawn from Geometry Dash's spritesheet, by object ID.
+	## Objects instanced from their generated Geometry Dash scene
+	## (scenes/gd_objects) or, lacking one, drawn from the atlas, by object ID.
 	var decoration_ids: Dictionary[int, int] = { }
 	## Group ID -> how many triggers point at it, for groups whose every member
 	## object was skipped. Those triggers will warn "target group doesn't
@@ -597,8 +598,8 @@ static func _decoration_from_properties(
 				"intensity": 1.0,
 				"alpha": 1.0,
 			},
-			_z_order_from_properties(properties),
-			int(properties.get(Prop.Z_LAYER, "0")),
+			_z_order_from_properties(properties, gd_id),
+			_z_layer_from_properties(properties, gd_id),
 			tint,
 			blending,
 			glow,
@@ -711,8 +712,26 @@ static func _style_for(channel_style: Dictionary[int, Dictionary], channel_id: i
 ## The coarse layer (key 24) is carried separately rather than being packed into
 ## the same integer: combining them meant a negative fine order could push an
 ## object into the layer below, which visibly scrambled the draw order.
-static func _z_order_from_properties(properties: Dictionary[String, String]) -> int:
-	return clampi(int(properties.get(Prop.Z_ORDER, "0")), -9999, 9999)
+static func _z_order_from_properties(properties: Dictionary[String, String], gd_id: int = 0) -> int:
+	if properties.has(Prop.Z_ORDER):
+		return clampi(int(properties.get(Prop.Z_ORDER, "0")), -9999, 9999)
+	# Geometry Dash omits the key when the object sits at its built-in order.
+	var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
+	if frames != null and frames.default_z_order != GDObjectFrames.Z_UNKNOWN:
+		return frames.default_z_order
+	return 0
+
+
+## The coarse z layer (key 24), or the object's built-in layer when the level
+## string omits it: Geometry Dash only writes the key for objects moved off
+## their default layer, so a missing key does not mean layer 0.
+static func _z_layer_from_properties(properties: Dictionary[String, String], gd_id: int = 0) -> int:
+	if properties.has(Prop.Z_LAYER):
+		return int(properties.get(Prop.Z_LAYER, "0"))
+	var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
+	if frames != null and frames.default_z_layer != GDObjectFrames.Z_UNKNOWN:
+		return frames.default_z_layer
+	return 0
 
 
 ## Groups that a setup Toggle trigger switches off before the level begins.

@@ -103,6 +103,8 @@ const START_SPEED: Array[float] = [
 
 var song_player: AudioStreamPlayer
 var stopwatch: Stopwatch
+## Hides objects far outside the camera while the level plays.
+var culling_manager: CullingManager
 var layers: Array[Layer]
 var active_layer_idx: int
 var music_scale: float = 1.0
@@ -154,6 +156,9 @@ func _ready() -> void:
 	song_player.name = "Song Player"
 	LevelManager.song_player = song_player
 	add_child(song_player, false, INTERNAL_MODE_BACK)
+	culling_manager = CullingManager.new()
+	culling_manager.name = "CullingManager"
+	add_child(culling_manager, false, INTERNAL_MODE_BACK)
 
 
 func _process(_delta: float) -> void:
@@ -454,16 +459,22 @@ func use_data(data: Dictionary, options: int = UseDataFlags.NONE) -> void:
 		var child_idx: int = 0
 		for object_idx: int in layer_data.objects.size():
 			var object_data: Dictionary = layer_data.objects[object_idx]
-			# Decoration lives inside a DecorationBatch and has no node to
-			# deserialize onto; it was fully configured when the batch was built.
-			if object_data.get("decoration", false):
-				continue
 			if child_idx >= layer.get_child_count():
 				break
 			var object: Node2D = layer.get_child(child_idx)
 			if object is DecorationBatch:
 				# Batches are appended after the real objects; skip past them.
 				child_idx += 1
+				continue
+			if object_data.get("decoration", false):
+				# A decoration entry is a GDObject node when its type has a
+				# generated scene; otherwise it lives inside a DecorationBatch
+				# and has no node of its own. Matched by order rather than by
+				# name: Godot may have renamed a placed object whose imported
+				# name clashed with a sibling's.
+				if gd_object_entry_has_node(object_data) and object is GDObject and object.name == object_data.name:
+					child_idx += 1
+					deserialize_data_to_object(object_data, object, self, options & UseDataFlags.IS_INSTANTIATION)
 				continue
 			if object.name != object_data.name:
 				continue
@@ -501,14 +512,23 @@ static func from_data(data: Dictionary) -> Level:
 		layer.name = layer_data.name
 		layer.locked = layer_data.locked
 
-		# Imported decoration is drawn in bulk rather than as one node per
-		# object. A large level carries well over a hundred thousand decoration
-		# sprites, and giving each its own node costs more in scene-tree and
-		# physics overhead than the drawing itself.
+		# Every Geometry Dash object type has a generated scene
+		# (scenes/gd_objects) that is instanced once per placement, so each
+		# placed object is an ordinary node with the collision its scene
+		# defines. Objects whose scene is missing fall back to being drawn in
+		# bulk by a DecorationBatch.
+		var drop_decoration: bool = Config.ldm and not Editor.in_editor
 		var decoration_data: Array = []
 		for object_data: Dictionary in layer_data.objects:
 			if object_data.get("decoration", false):
-				decoration_data.append(object_data)
+				if drop_decoration:
+					continue
+				var placed: GDObject = instantiate_gd_object(object_data, level)
+				if placed != null:
+					placed.set_meta(Constants.LAYER_META, layer)
+					layer.add_child(placed)
+				elif not gd_object_entry_has_node(object_data):
+					decoration_data.append(object_data)
 				continue
 			var object: Node2D = instantiate_object_from_data(object_data)
 			# Null when the object was filtered out by low detail mode.
@@ -517,7 +537,7 @@ static func from_data(data: Dictionary) -> Level:
 			object.set_meta(Constants.LAYER_META, layer)
 			layer.add_child(object)
 
-		if not decoration_data.is_empty() and not (Config.ldm and not Editor.in_editor):
+		if not decoration_data.is_empty():
 			for batch: DecorationBatch in GDDecorationLoader.build_batches(
 					decoration_data, GDDecorationLoader.art_scale()
 			):
@@ -534,10 +554,11 @@ static func from_data(data: Dictionary) -> Level:
 
 
 static func instantiate_object_from_data(object_data: Dictionary) -> Node2D:
-	# Decoration has no node of its own: it is collapsed into a DecorationBatch
-	# by from_data, so it must never reach the scene-loading path below.
+	# A decoration entry is instanced from its object type's generated scene.
+	# When that scene is missing it has no node of its own (from_data draws it
+	# in a DecorationBatch instead), so it must not reach the loader below.
 	if object_data.get("decoration", false):
-		return null
+		return instantiate_gd_object(object_data, LevelManager.current_level)
 
 	var prefab: PackedScene = load("res://%s" % object_data.scene_file_path)
 	if not prefab:
@@ -557,6 +578,122 @@ static func instantiate_object_from_data(object_data: Dictionary) -> Node2D:
 	return object
 
 
+## Scene of each Geometry Dash object type, loaded on first use.
+static var _gd_object_scenes: Dictionary[int, PackedScene] = { }
+## Types whose scene is missing, so the disk is asked once per type.
+static var _gd_object_scene_missing: Dictionary[int, bool] = { }
+
+
+## The generated scene for Geometry Dash object [param gd_id], or
+## [code]null[/code] when there is none (run tools/build_gd_object_scenes.py).
+static func get_gd_object_scene(gd_id: int) -> PackedScene:
+	if _gd_object_scenes.has(gd_id):
+		return _gd_object_scenes[gd_id]
+	if _gd_object_scene_missing.has(gd_id):
+		return null
+	var path: String = Constants.GD_OBJECT_SCENE_DIR + "gd_%d.tscn" % gd_id
+	if not ResourceLoader.exists(path):
+		_gd_object_scene_missing[gd_id] = true
+		return null
+	var scene: PackedScene = load(path)
+	if scene == null:
+		_gd_object_scene_missing[gd_id] = true
+		return null
+	_gd_object_scenes[gd_id] = scene
+	return scene
+
+
+## Whether a decoration level-data entry becomes a [GDObject] node when the
+## level is built (as opposed to being drawn by a fallback [DecorationBatch]
+## or dropped by low detail mode).
+static func gd_object_entry_has_node(object_data: Dictionary) -> bool:
+	if Config.ldm and not Editor.in_editor and bool(object_data.get("high_detail", false)):
+		return false
+	return get_gd_object_scene(int(object_data.get("gd_object_id", 0))) != null
+
+
+## Builds one placed Geometry Dash object from a decoration level-data entry
+## (see [method GDDecorationLoader.to_data]). Returns [code]null[/code] when the
+## object type has no generated scene, or when low detail mode drops it.
+static func instantiate_gd_object(object_data: Dictionary, level: Level) -> GDObject:
+	var gd_id: int = int(object_data.get("gd_object_id", 0))
+	if Config.ldm and not Editor.in_editor and bool(object_data.get("high_detail", false)):
+		return null
+	var scene: PackedScene = get_gd_object_scene(gd_id)
+	if scene == null:
+		return null
+	var object: GDObject = scene.instantiate() as GDObject
+	if object == null:
+		return null
+	object.name = str(object_data.get("name", "GD%d" % gd_id))
+	object.set_meta(&"gd_object_id", gd_id)
+	object.setup(object_data)
+
+	# Colour channels. The Base and Detail nodes get the watchers a channel
+	# repaints, exactly like the Base/Detail sprites of a hand-made scene, so
+	# the colour editor and triggers treat both kinds of object alike.
+	var base: Node2D = object.get_node_or_null(^"Base")
+	var detail: Node2D = object.get_node_or_null(^"Detail")
+	var channels: Variant = object_data.get("color_channels", { })
+	var base_channel: StringName = &""
+	var detail_channel: StringName = &""
+	if channels is Dictionary:
+		base_channel = StringName(str(channels.get("base", "")))
+		detail_channel = StringName(str(channels.get("detail", "")))
+	elif channels is String or channels is StringName:
+		base_channel = StringName(str(channels))
+	# A channel repaints the layer from its own colour, so the layer's opacity
+	# must be carried by the watcher rather than baked into the tint, or it
+	# would be applied twice.
+	_prepare_gd_layer(base, not base_channel.is_empty(), object.base_alpha)
+	_prepare_gd_layer(detail, not detail_channel.is_empty(), object.base_alpha)
+	PlaceHandler.add_hsv_watchers(object, level)
+	if base != null:
+		object.set_meta(Constants.BASE_TEXTURE_META, base)
+		_bind_gd_layer(base, base_channel, object.hsv_shift, object.base_alpha)
+	if detail != null:
+		object.set_meta(Constants.DETAIL_TEXTURE_META, detail)
+		_bind_gd_layer(detail, detail_channel, object.detail_hsv_shift, object.base_alpha)
+	var own_watcher: HSVWatcher = BaseDetailHandler.use_hsv_watcher(object)
+	if own_watcher != null and object_data.has("hsv"):
+		own_watcher.use_data(object_data.hsv)
+	# The level's enter effect. Every sprite in the scene draws with its
+	# parent's material, so setting it once on the root covers them all;
+	# additive objects keep their blend material instead.
+	if object.material == null:
+		object.material = AssetManager.fade_enter_effect
+	return object
+
+
+## Splits a layer's baked tint so that, once a channel watcher owns the layer,
+## the object's own opacity lives on the watcher and not in the colour.
+static func _prepare_gd_layer(layer: Node2D, on_channel: bool, own_alpha: float) -> void:
+	if layer == null or not on_channel or own_alpha <= 0.0:
+		return
+	layer.modulate.a = clampf(layer.modulate.a / own_alpha, 0.0, 1.0)
+
+
+## Puts a layer's watcher on its colour channel and gives it the object's own
+## HSV shift and opacity, which the channel colour is refined by.
+static func _bind_gd_layer(
+		layer: Node2D,
+		channel: StringName,
+		shift: PackedFloat32Array,
+		own_alpha: float,
+) -> void:
+	var watcher: HSVWatcher = BaseDetailHandler.use_hsv_watcher(layer)
+	if watcher == null or channel.is_empty():
+		return
+	watcher.add_to_group(channel)
+	watcher.alpha = own_alpha
+	if shift.size() >= 3:
+		watcher.hsv_shift.assign([shift[0], shift[1], shift[2]])
+		# Geometry Dash's saturation and value shifts are added or multiplied
+		# depending on two flags; the watcher supports both.
+		watcher.saturation_multiplies = shift.size() > 3 and shift[3] < 0.5
+		watcher.value_multiplies = shift.size() > 4 and shift[4] < 0.5
+
+
 static func deserialize_data_to_object(object_data: Dictionary, object: Node2D, level: Level, is_instantiation: bool) -> void:
 	# [method instantiate_object_from_data] returns null whenever an object was
 	# deliberately not created - filtered out by low detail mode, or imported
@@ -567,6 +704,17 @@ static func deserialize_data_to_object(object_data: Dictionary, object: Node2D, 
 		return
 
 	object.transform = object_data.transform
+
+	# A placed Geometry Dash object is fully configured by
+	# instantiate_gd_object; only the reset of a re-used node applies here.
+	if object is GDObject:
+		if not is_instantiation:
+			object.show()
+			object.process_mode = Node.PROCESS_MODE_INHERIT
+			var gd_watcher: HSVWatcher = BaseDetailHandler.use_hsv_watcher(object)
+			if gd_watcher != null and object_data.has("hsv"):
+				gd_watcher.use_data(object_data.hsv)
+		return
 
 	if is_instantiation:
 		# Groups
@@ -643,8 +791,8 @@ static func deserialize_data_to_object(object_data: Dictionary, object: Node2D, 
 
 
 static func serialize_object(object: Node2D, reason: Serialize.Reason) -> Dictionary:
-	if object is Decoration:
-		return GDDecorationLoader.serialize(object)
+	if object is GDObject:
+		return object.to_data()
 
 	var object_data: Dictionary = {
 		"name": object.name,

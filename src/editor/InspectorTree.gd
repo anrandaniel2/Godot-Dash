@@ -30,6 +30,10 @@ var selection: Selection
 var flat_item_list: Array[TreeItem]
 
 
+## Objects listed per layer before the tree stops and shows a count instead.
+const MAX_ITEMS_PER_LAYER: int = 1000
+
+
 func _ready() -> void:
 	# Init root
 	create_item()
@@ -196,7 +200,12 @@ func refresh(selected: Selection = selection) -> void:
 		if layer_idx == level.active_layer_idx:
 			layer_item.set_custom_bg_color(0, Color.WHITE, true)
 		layer_item.visible = true
-		for object_idx: int in layer.get_child_count():
+		# An imported Geometry Dash level can hold a hundred thousand objects
+		# per layer; listing them all would freeze the editor on every
+		# selection change. The tree shows the first MAX_ITEMS_PER_LAYER and
+		# says how many more there are.
+		var shown: int = mini(layer.get_child_count(), MAX_ITEMS_PER_LAYER)
+		for object_idx: int in shown:
 			var object: Node2D = layer.get_child(object_idx)
 			var object_item: TreeItem = layer_item.create_child()
 			object_item.visible = true
@@ -206,6 +215,12 @@ func refresh(selected: Selection = selection) -> void:
 				object_item.select(0)
 			else:
 				object_item.deselect(0)
+		if layer.get_child_count() > shown:
+			var more_item: TreeItem = layer_item.create_child()
+			more_item.visible = true
+			more_item.set_text(0, "… and %d more objects" % (layer.get_child_count() - shown))
+			more_item.set_selectable(0, false)
+			more_item.set_custom_color(0, Color(1.0, 1.0, 1.0, 0.5))
 
 	update_active_layer(false)
 

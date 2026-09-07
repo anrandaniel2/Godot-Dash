@@ -11,6 +11,8 @@ enum Type {
 	SLOPE,
 	SLOPE_LARGE,
 	INTERACTABLE,
+	## A placed Geometry Dash object (see GDObject); id is the object id.
+	DECORATION,
 }
 
 @export var type: Type

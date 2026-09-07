@@ -818,12 +818,17 @@ static func add_selection_highlight(object: Node2D, as_duplicate: bool = false) 
 		hsv_watcher = NodeUtils.get_child_of_type(object.get_parent(), HSVWatcher)
 	else:
 		hsv_watcher = NodeUtils.get_child_of_type(object, HSVWatcher)
+	# A batch of fallback decoration has no watcher; it simply isn't tinted.
+	if hsv_watcher == null:
+		return
 	hsv_watcher.selection_highlight = HSVWatcher.SelectionHighlight.NORMAL if not as_duplicate else HSVWatcher.SelectionHighlight.DUPLICATE
 	hsv_watcher.update_color()
 
 
 static func remove_selection_highlight(object: Node2D) -> void:
 	var hsv_watcher: HSVWatcher = NodeUtils.get_child_of_type(object, HSVWatcher)
+	if hsv_watcher == null:
+		return
 	hsv_watcher.selection_highlight = HSVWatcher.SelectionHighlight.NONE
 	hsv_watcher.update_color()
 
@@ -835,9 +840,9 @@ static func get_object_parent(object: Node) -> Node2D:
 		return object
 
 
-static func get_object_selection_collider(object: CollisionObject2D) -> CollisionObject2D:
+static func get_object_selection_collider(object: Node2D) -> CollisionObject2D:
 	var selection_collider: EditorSelectionCollider = NodeUtils.get_child_of_type(object, EditorSelectionCollider)
-	return selection_collider if selection_collider else object
+	return selection_collider if selection_collider else object as CollisionObject2D
 
 
 static func is_not_player(object: Node2D) -> bool:
