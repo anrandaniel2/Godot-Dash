@@ -533,3 +533,21 @@ project compared to a full node tree is only partly realised (nodes vs
 records), not records vs packed arrays. That encoding is the next memory
 phase for the levels that still crash at open (Orbit), along with finding out
 where Orbit actually dies (open vs first start vs mid-play).
+
+### Device feedback (2026-09-07, after the third pass) and where that leaves us
+
+- "Orbit" crashes **while opening** -> the open-time memory peak (whole level
+  decoded to Dictionaries + whole-level decoration batch build + start window)
+  exceeds the device heap. Fix = the GD-style compact record encoding (packed
+  records instead of per-object Dictionaries, ~5-15x), which is the confirmed
+  next phase; a windowed (per-chunk) decoration batch build is the second
+  lever if Orbit is decoration-heavy.
+- Thinking Space II's low FPS is **constant across the whole level** (not
+  worse in dense sections). DecorationBatch is viewport-bucket culled, so it
+  is not redrawing the whole level every frame; the constant cost is being
+  measured rather than guessed.
+- Instrumentation: LevelStream.SHOW_STATS=true draws a top-left readout (FPS,
+  live node count, stream drain ms/frame, spawn/commit/free queue depths, MB
+  heap via Performance.MEMORY_STATIC). Numbers from that readout on TS2 (and
+  a readout during Orbit's load, if it gets that far) will drive the tuning
+  and tell us whether stream churn or something else owns the frame time.

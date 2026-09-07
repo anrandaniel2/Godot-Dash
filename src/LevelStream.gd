@@ -110,6 +110,13 @@ var _prefetch_pending: Dictionary = {}
 ## synchronous teardown. Death restarts do not need it: the death animation
 ## already preloaded the new window.
 var _boost_frames := 0
+## Set true during device tuning to draw a small stats readout (FPS, live
+## nodes, queue depths, stream time budget) in the top-left corner. Leave on
+## until the remaining Android issues are measured, then set false.
+const SHOW_STATS := true
+var _stats_label: Label
+var _stats_timer := 0.0
+var _last_drain_ms := 0.0
 
 
 static func is_streaming(level: Level) -> bool:
@@ -135,6 +142,8 @@ static func make(level: Level, data: Dictionary) -> LevelStream:
 	stream._index(data)
 	level.set_meta(STREAMING_META, true)
 	level.add_child(stream, false, INTERNAL_MODE_BACK)
+	if SHOW_STATS:
+		stream._setup_stats()
 	# Only the start region is built here at load time (masked by the level's
 	# own loading); the rest of the window drains on the per-frame budget once
 	# the attempt runs. The first start_level builds the shared physics from
@@ -169,7 +178,52 @@ func _chunk_key(layer_idx: int, chunk: int) -> String:
 	return "%d/%d" % [layer_idx, chunk]
 
 
+func _setup_stats() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "StreamStatsLayer"
+	layer.layer = 100
+	_stats_label = Label.new()
+	_stats_label.position = Vector2(8, 8)
+	_stats_label.add_theme_font_size_override("font_size", 14)
+	layer.add_child(_stats_label)
+	level.add_child(layer)
+
+
+func _update_stats(delta: float) -> void:
+	_stats_timer += delta
+	if _stats_timer < 0.25:
+		return
+	_stats_timer = 0.0
+	var live := 0
+	for rec: Dictionary in _spawned.values():
+		live += (rec.nodes as Array).size()
+	var pending_spawn := 0
+	for item: Dictionary in _spawn_queue:
+		pending_spawn += (item.entries as Array).size() - int(item.index)
+	var pending_free := 0
+	for item: Dictionary in _free_queue:
+		pending_free += ((item.rec as Dictionary).nodes as Array).size() - int(item.index)
+	var pending_commit := 0
+	for rec: Dictionary in _phys_queue:
+		pending_commit += (rec.nodes as Array).size() - int(rec.phys)
+	var mem_mb: float = Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0
+	_stats_label.text = (
+		"FPS %d  live %d  stream %0.1fms  |  spawn %d  commit %d  free %d  |  mem %.0fMB"
+		% [
+			int(Engine.get_frames_per_second()),
+			live,
+			_last_drain_ms,
+			pending_spawn,
+			pending_commit,
+			pending_free,
+			mem_mb,
+		]
+	)
+
+
 func _process(_delta: float) -> void:
+	if SHOW_STATS and _stats_label != null:
+		_update_stats(_delta)
 	if not LevelManager.level_playing:
 		return
 	_settle_prefetches()
@@ -193,7 +247,9 @@ func _process(_delta: float) -> void:
 		_boost_frames -= 1
 		spawn_budget *= 4
 		commit_budget *= 4
+	var started_usec: int = Time.get_ticks_usec()
 	_drain(spawn_budget, commit_budget, PLAY_FREE_BUDGET, player_chunk, true)
+	_last_drain_ms = (Time.get_ticks_usec() - started_usec) / 1000.0
 
 
 ## The per-frame worker: spawns, physics-shape commits and node frees all run
