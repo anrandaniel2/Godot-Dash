@@ -559,7 +559,7 @@ func _collided_shared_shape(collision: KinematicCollision2D) -> CollisionShape2D
 	var body := collision.get_collider() as CollisionObject2D
 	if body == null:
 		return null
-	var shape_index := collision.get_collider_shape()
+	var shape_index := collision.get_collider_shape_index()
 	var owner_id := body.shape_find_owner(shape_index)
 	if owner_id == -1:
 		return null
