@@ -105,7 +105,14 @@ func _load_data_threaded(index: int) -> void:
 	# Prevent crash when file deleted during refresh
 	if not FileAccess.file_exists(Constants.LEVEL_DIR + file_name):
 		return
-	var level_data: Dictionary = LevelOperationsHandler.load_level_data_from_path(Constants.LEVEL_DIR + file_name)
+	var level_path: String = Constants.LEVEL_DIR + file_name
+	# Browsing only needs the metadata (title, creator, rating, version...).
+	# Every save/import writes a tiny .meta sidecar, so reading it is instant;
+	# levels saved before that (which are small, older ones) fall back to a
+	# full decode.
+	var level_data: Dictionary = LevelOperationsHandler.load_level_meta_from_path(level_path)
+	if level_data.is_empty():
+		level_data = LevelOperationsHandler.load_level_data_from_path(level_path)
 	if stopping:
 		return
 	mutex.lock()
@@ -175,6 +182,9 @@ func _edit_level(file_name: String, version_warning: String) -> void:
 
 func _remove_level(file_name: String) -> void:
 	OS.move_to_trash(ProjectSettings.globalize_path(Constants.LEVEL_DIR + file_name))
+	var meta_path: String = Constants.LEVEL_DIR + file_name + LevelOperationsHandler.LEVEL_META_EXTENSION
+	if FileAccess.file_exists(meta_path):
+		OS.move_to_trash(ProjectSettings.globalize_path(meta_path))
 	levels[file_name].queue_free()
 	levels.erase(file_name)
 	# Node is freed the next frame

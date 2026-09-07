@@ -118,12 +118,10 @@ func _launch_from_file(path: String):
 	if not DirAccess.dir_exists_absolute(Constants.LEVEL_DIR):
 		DirAccess.make_dir_recursive_absolute(Constants.LEVEL_DIR)
 	var level_path: String = Constants.LEVEL_DIR + level_name + "." + Constants.LEVEL_FILE_EXTENSION
-	var file := FileAccess.open_compressed(level_path, FileAccess.WRITE, Constants.LEVEL_COMPRESSION_MODE)
-	if not file:
-		Toasts.error("Couldn't import %s (error %d)" % [path.get_file(), FileAccess.get_open_error()], 5.0)
+	var file_error := LevelOperationsHandler.write_level_and_meta(level_path, level_data)
+	if file_error != OK:
+		Toasts.error("Couldn't import %s (error %d)" % [path.get_file(), file_error], 5.0)
 		return
-	file.store_buffer(var_to_bytes(level_data))
-	file.close()
 
 	if report.skipped > 0:
 		Toasts.warning("Imported %s — %s" % [level_name, report.summary()], 6.0)

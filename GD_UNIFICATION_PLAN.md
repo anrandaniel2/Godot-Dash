@@ -336,3 +336,14 @@ drop to ~zero per static gameplay object (shared bodies only).
   buffer). Fewer objects stay live at once.
 - Remaining candidate (not done): free per-node EditorSelectionCollider areas
   during editor playtest (kept now because editing needs them back on stop).
+
+## Fix (2026-09-07) — community level list crash on large levels
+
+The community list loader fully deserialized every `.bin` level (each a
+tens-of-MB dictionary of ~100k+ objects) on worker threads just to show
+title/creator/rating; a couple of large uploaded levels made it OOM-crash.
+Every save/import now also writes a tiny `.meta` sidecar (JSON: name,
+creator, description, rating, game_version, creation_date, flashing_lights)
+via LevelOperationsHandler.write_level_and_meta; the list reads only the
+sidecar (falling back to a full decode for old sidecar-less levels) and
+level removal trashes the sidecar too.

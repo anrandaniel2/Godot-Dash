@@ -229,9 +229,10 @@ func save_level() -> Error:
 		Editor.level_data_snapshot = level_data
 	$AutosaveTimer.stop()
 	$AutosaveTimer.start(Config.autosave_delay * 60)
-	var file := FileAccess.open_compressed(Constants.LEVEL_DIR + file_name, FileAccess.WRITE, Constants.LEVEL_COMPRESSION_MODE)
-	file.store_buffer(var_to_bytes(level_data))
-	file.close()
+	var file_error := write_level_and_meta(Constants.LEVEL_DIR + file_name, level_data)
+	if file_error != OK:
+		Toasts.error("Couldn't save level (error %d)" % file_error, 5.0)
+		return file_error
 	Toasts.new_toast("Saved level " + editor.level.name)
 	Editor.level_history_version = Editor.version_history.get_version()
 	level_saved.emit()
@@ -396,12 +397,10 @@ Missing or unreadable level string (k4).""" % extension
 			overwrote:
 				pass
 
-	var file := FileAccess.open_compressed(level_path, FileAccess.WRITE, Constants.LEVEL_COMPRESSION_MODE)
-	if not file:
-		Toasts.error("Couldn't save the imported level (error %d)" % FileAccess.get_open_error(), 5.0)
+	var file_error := write_level_and_meta(level_path, level_data)
+	if file_error != OK:
+		Toasts.error("Couldn't save the imported level (error %d)" % file_error, 5.0)
 		return ""
-	file.store_buffer(var_to_bytes(level_data))
-	file.close()
 
 	if not keep_original:
 		OS.move_to_trash(ProjectSettings.globalize_path(path))
@@ -426,10 +425,65 @@ Missing or unreadable level string (k4).""" % extension
 
 static func load_level_data_from_path(file_path: String) -> Dictionary:
 	var file := FileAccess.open_compressed(file_path, FileAccess.READ, Constants.LEVEL_COMPRESSION_MODE)
+	if file == null:
+		return { }
 	var buffer_length: int = file.get_length()
 	var data: Dictionary = bytes_to_var(file.get_buffer(buffer_length))
 	file.close()
 	return data
+
+
+## Writes a level's `.bin` file and, next to it, a tiny metadata sidecar
+## ([code]<file>.meta[/code]). The community level list reads only the sidecar
+## (see [method load_level_meta_from_path]) so browsing does not deserialize
+## every level - large levels are tens of megabytes of objects and decoding
+## each one just to show a title/rating is what made the list crash.
+static func write_level_and_meta(level_path: String, level_data: Dictionary) -> Error:
+	var file := FileAccess.open_compressed(level_path, FileAccess.WRITE, Constants.LEVEL_COMPRESSION_MODE)
+	if file == null:
+		return FileAccess.get_open_error()
+	file.store_buffer(var_to_bytes(level_data))
+	file.close()
+	write_level_meta(level_path, level_data)
+	return OK
+
+
+## Sidecar file holding the metadata the level list shows.
+const LEVEL_META_EXTENSION: String = ".meta"
+
+
+## Writes the metadata sidecar for a saved level. The level's own data carries
+## these keys at its top level (see Level.to_data), so the sidecar is just a
+## trimmed copy.
+static func write_level_meta(level_path: String, level_data: Dictionary) -> void:
+	var meta := {
+		"name": str(level_data.get("name", level_path.get_file().get_basename())),
+		"creator": str(level_data.get("creator", "")),
+		"description": str(level_data.get("description", "")),
+		"rating": int(level_data.get("rating", -1)),
+		"game_version": str(level_data.get("game_version", "")),
+		"creation_date": int(level_data.get("creation_date", 0)),
+		"flashing_lights": bool(level_data.get("flashing_lights", false)),
+	}
+	var file := FileAccess.open(level_path + LEVEL_META_EXTENSION, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify(meta))
+	file.close()
+
+
+## Reads a level's metadata sidecar, or an empty [Dictionary] when there is
+## none (older levels saved before the sidecar existed).
+static func load_level_meta_from_path(file_path: String) -> Dictionary:
+	var meta_path: String = file_path + LEVEL_META_EXTENSION
+	if not FileAccess.file_exists(meta_path):
+		return { }
+	var file := FileAccess.open(meta_path, FileAccess.READ)
+	if file == null:
+		return { }
+	var meta: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	return meta if meta is Dictionary else { }
 
 
 static func file_is_level(file_path: String) -> bool:
