@@ -246,7 +246,7 @@ static func _object_geometry(object: Node2D) -> Dictionary:
 static func _own_body(object: Node2D) -> CollisionObject2D:
 	if object is CollisionObject2D:
 		return object
-	var collision: Node = object.get_node_or_null(GDObject.COLLISION_NODE)
+	var collision: Node = object.get_node_or_null(NodePath(GDObject.COLLISION_NODE))
 	return collision as CollisionObject2D
 
 
