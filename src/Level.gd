@@ -303,12 +303,20 @@ func start_level() -> void:
 	# component data is always settled by now: level loads and restart_level
 	# pass at least one frame between deserializing objects (component data
 	# applies via call_deferred) and reaching this point.
-	LevelPhysics.prepare(self)
-	# Static placements keep their node (collision, channels, serialization)
-	# but draw through shared batches while playing (see LevelBatching). A
-	# streamed level (see LevelStream) already bounds the live nodes to a
-	# window around the player, so there is nothing to batch.
-	if not LevelStream.is_streaming(self):
+	var physics_rebuilt: bool = LevelPhysics.prepare(self)
+	if LevelStream.is_streaming(self):
+		# A streamed level (see LevelStream) bounds the live nodes to a window
+		# around the player, so there is nothing to batch. After a full physics
+		# rebuild the stream's incremental commit queue must not re-add the
+		# shapes the rebuild just created.
+		if physics_rebuilt:
+			var streamer := get_node_or_null(NodePath("LevelStream")) as LevelStream
+			if streamer != null:
+				streamer._mark_all_physics_committed()
+	else:
+		# Static placements keep their node (collision, channels,
+		# serialization) but draw through shared batches while playing
+		# (see LevelBatching).
 		LevelBatching.prepare(self)
 	LevelManager.level_playing = true
 

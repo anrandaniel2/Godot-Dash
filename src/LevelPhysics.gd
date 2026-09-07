@@ -93,13 +93,16 @@ static func clear_dirty(level: Level) -> void:
 
 ## Called every time a level starts playing (each attempt). Rebuilds the shared
 ## state when the level changed since last time; otherwise just re-enables
-## shapes that gameplay disabled during the previous attempt.
-static func prepare(level: Level) -> void:
+## shapes that gameplay disabled during the previous attempt. Returns whether
+## a full rebuild ran (LevelStream uses that to reset its incremental commit
+## bookkeeping, since a rebuild commits every live object's shapes).
+static func prepare(level: Level) -> bool:
 	if is_dirty(level):
 		rebuild(level)
 		level.set_meta(DIRTY_META, false)
-		return
+		return true
 	_reenable_shapes(level)
+	return false
 
 
 static func _reenable_shapes(level: Level) -> void:

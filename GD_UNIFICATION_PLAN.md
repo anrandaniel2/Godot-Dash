@@ -486,3 +486,50 @@ levels; grouped gameplay objects outside the live window are not transformed
 by far-away triggers (records keep their fields; GD moves records too - a
 later pass can apply trigger moves to records); toggled *decoration* batches
 persist their visual state across a streamed respawn.
+
+## Third pass (2026-09-07) — sliced everything + worker-thread scene loads
+
+Device results after the second pass: Thinking Space II now opens and plays
+(no OOM at open) but at sustained low FPS; a decoration-heavy level ("Orbit")
+crashes; chunk-crossing lag spikes were unchanged. Code inspection found the
+"budgeted" streamer still burst where it mattered, and the *resident data*
+was never compacted GD-style. This pass fixes the bursts:
+
+- **Whole-chunk bursts are gone everywhere.** Spawn, physics-shape commit and
+  node teardown are each their own per-frame budgeted queue. A finished chunk
+  no longer commits all its CollisionShape2D in one frame
+  (LevelPhysics.commit is now called with 64-node slices per frame), and a
+  freed chunk no longer rips all its shapes out at once (release happens per
+  node right before that node frees, in slices).
+- **Fair-share spawning.** The per-frame node budget is split across every
+  pending chunk, so one dense chunk can no longer starve the rest of the
+  window and complete far chunks stay many seconds ahead of the player.
+  Only the chunk under the player is force-finished, as a correctness
+  backstop.
+- **Opening a level no longer builds its whole window.** `LevelStream.make`
+  spawns only the start region (chunks start..start+2, START_SPAN_CHUNKS) at
+  load; the rest of the window drains on the play budget once the attempt
+  runs. The first `LevelPhysics.prepare()` (dirty by default) builds the
+  shared physics from that small set. Full-rebuild bookkeeping:
+  `prepare()` returns whether it rebuilt, and `Level.start_level` tells the
+  streamer (`_mark_all_physics_committed`) so incremental commits never
+  double-add shapes a rebuild already created.
+- **Manual restarts tear down synchronously once** (a rare user action) so
+  the new window is never blocked behind the slow free queue; death restarts
+  keep the 1-second death-animation preload (budgeted teardown + rebuild).
+- **Multithreading where Godot allows it**: Godot cannot create or free
+  scene-tree nodes on worker threads (the engine is not thread-safe for the
+  tree), so the instantiations themselves cannot move off the main thread -
+  that is true of GD only because it is C++. What the engine *does* run on
+  worker threads is resource loading: every gd scene a chunk will instantiate
+  is handed to `ResourceLoader.load_threaded_request` the moment the chunk is
+  queued (8 chunks ahead), and finished loads are drained into the cache a
+  few per frame, so instantiation never blocks on disk or scene parsing.
+
+Still open (honest status): resident per-object *data* is NOT yet compacted
+GD-style - each record is still a full Dictionary (hundreds of bytes vs a
+packed GD record of tens of bytes), so the "store ~10-50x less data" win the
+project compared to a full node tree is only partly realised (nodes vs
+records), not records vs packed arrays. That encoding is the next memory
+phase for the levels that still crash at open (Orbit), along with finding out
+where Orbit actually dies (open vs first start vs mid-play).
