@@ -635,3 +635,47 @@ allow off the main thread - resource loading (load_threaded_request) and pure
 data work like the bytes_to_var decode - are now exactly the parts running on
 worker threads; the rest stays main-thread but is sliced across frames so no
 frame ever takes a burst.
+
+## Sixth pass (2026-09-07) — "fix Orbit": stream decoration per chunk
+
+Orbit crashes while opening. Thinking Space II (an object-count monster) opens
+fine, so the differentiator is decoration volume: at open, streamed levels
+still built the *whole level's* decoration into DecorationBatch nodes in one
+shot (from_data), and those batch Items stayed resident for the session. On a
+decoration-heavy level that build is a large memory/CPU peak at open.
+
+Fix: decoration is now streamed exactly like gameplay, which is the GD model
+(display objects only near the player):
+
+- Level.from_data no longer builds any decoration for streamed levels; the
+  decoration records are handed to LevelStream.
+- LevelStream indexes each layer's decoration into the same horizontal chunks
+  as gameplay, packs each chunk with var_to_bytes(), and keeps only the packed
+  blobs resident.
+- A decoration chunk's DecorationBatch nodes are built (on the main thread,
+  via the existing GDDecorationLoader.build_batches) only while the chunk is
+  in the player's window: decode happens on a worker thread
+  (_deco_threads/_deco_ready), batches are built at a budget
+  (PLAY_DECO_BUILD_BUDGET = 1 chunk/frame; 2/frame during the death preload)
+  and freed behind the player (PLAY_DECO_FREE_BUDGET). Batches join the same
+  GD group / colour-channel groups as before (add_to_group happens inside
+  build_batches), so triggers and colour passes behave the same for built
+  chunks.
+- The initial open builds only the start region's decoration
+  (START_SPAN_CHUNKS, 3 chunks), not the whole level.
+- Batch teardown is identity-aware: a chunk rebuilt between enqueue and free
+  (preload racing a teardown) survives the stale free of its predecessor, so
+  respawns never lose freshly built decoration.
+
+Result: opening a level no longer builds the whole level's decoration, and
+resident decoration memory scales with the live window instead of the whole
+level. On-screen stats now show `deco <live>(+<building>)`.
+
+Residual, already-documented limitations this inherits: decoration triggers
+that span multiple chunk batches move each batch by the same delta (identical
+for translation, and for rotation/scale around a per-chunk origin - a rare
+case); decoration built after the level's colour watchers ran is recoloured by
+the existing late-spawn refresh. The open-time full-file decode (bytes_to_var
+of the whole level) is still one peak; if Orbit still dies at open after this
+(not decoration-related), the next step is a chunked on-disk container so open
+never materialises the whole graph.

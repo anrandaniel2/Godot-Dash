@@ -631,16 +631,21 @@ static func from_data(data: Dictionary, stream: bool = not Editor.in_editor) -> 
 				object.set_meta(Constants.LAYER_META, layer)
 				layer.add_child(object)
 		else:
-			# Play build: gameplay placements are streamed in around the player
-			# from their records (see LevelStream), so none are built here.
-			for object_data: Dictionary in layer_data.objects:
-				if not object_data.get("decoration", false):
-					continue
-				if drop_decoration:
-					continue
-				decoration_data.append(object_data)
+			# Play build: nothing is built here. LevelStream (see below)
+			# owns both gameplay placements and decoration for a streamed
+			# level: gameplay nodes and decoration batches are created only
+			# for the window around the player, on a per-frame budget. In
+			# particular decoration batches are no longer built for the whole
+			# level at open - that one-shot build of every decoration item in
+			# the level was the open-time memory/CPU peak that crashed
+			# decoration-heavy levels (Orbit).
+			pass
 
-		if not decoration_data.is_empty():
+		if not stream and not decoration_data.is_empty():
+			# The editor keeps every decoration as a real node; only
+			# decorations whose generated scene is missing fall back to
+			# batches here. Streamed levels never reach this - LevelStream
+			# batches their decoration per chunk around the player instead.
 			for batch: DecorationBatch in GDDecorationLoader.build_batches(
 					decoration_data, GDDecorationLoader.art_scale()
 			):

@@ -85,6 +85,18 @@ const PRELOAD_FREE_BUDGET := 1000
 ## the player always exists.
 const FORCE_DISTANCE_CHUNKS := 0
 
+## Decoration batch chunk-builds / chunk-frees per frame while playing. Each
+## build runs one chunk's decoration through GDDecorationLoader.build_batches
+## (a moderate allocation), so the budget bounds the per-frame decoration
+## cost. Building is far cheaper per object than gameplay instantiation, but
+## on a heavily decorated level a whole chunk can still be thousands of items.
+const PLAY_DECO_BUILD_BUDGET := 1
+const PLAY_DECO_FREE_BUDGET := 2
+## Decoration budgets during the death-animation preload (a hidden loading
+## window, like GD's respawn pause).
+const PRELOAD_DECO_BUILD_BUDGET := 2
+const PRELOAD_DECO_FREE_BUDGET := 3
+
 ## Set on the Level while its gameplay placements are streamed.
 const STREAMING_META: StringName = &"_gd_level_streaming"
 
@@ -97,6 +109,24 @@ var level: Level
 ## player's window; the graph itself is released once indexed (see
 ## GameScene.load_level).
 var _chunk_entries: Array = []
+## Per layer index: chunk id -> PackedByteArray of that chunk's *decoration*
+## entries, packed the same way as the gameplay chunks above. Decoration is
+## kept as packed records too and its display objects (DecorationBatch nodes)
+## are built only while the chunk is near the player and freed behind - so
+## neither the open-time build nor the resident memory scales with the whole
+## level's decoration (a whole-level batch build at open was what crashed
+## decoration-heavy levels like Orbit).
+var _deco_entries: Array = []
+## Live decoration batches: chunk key -> Array[DecorationBatch].
+var _deco_live: Dictionary = {}
+## Decoration chunk entries decoded, awaiting their batch build: key -> Array.
+var _deco_ready: Dictionary = {}
+## Worker threads decoding decoration chunk entries: key -> Thread.
+var _deco_threads: Dictionary = {}
+## Chunks waiting to have their decoration batches built (nearest first).
+var _deco_build_queue: Array = []
+## Chunks waiting to have their decoration batches freed.
+var _deco_free_queue: Array = []
 ## Fully spawned live chunks: "layer/chunk" -> chunk record Dictionary
 ## {nodes: Array[Node2D], phys: int, key: String}. phys counts how many of the
 ## node's shapes have been committed to the shared bodies.
@@ -177,6 +207,7 @@ static func make(level: Level, data: Dictionary) -> LevelStream:
 	# the attempt runs. The first start_level builds the shared physics from
 	# whatever this spawns (see Level.start_level).
 	stream._initial_spawn(data.start_position.x)
+	stream._initial_deco(data.start_position.x)
 	return stream
 
 
@@ -188,6 +219,7 @@ static func make(level: Level, data: Dictionary) -> LevelStream:
 func _index(data: Dictionary) -> void:
 	var layers_data: Array = data.get("layers", [])
 	_chunk_entries.resize(layers_data.size())
+	_deco_entries.resize(layers_data.size())
 	for layer_idx: int in layers_data.size():
 		var by_chunk: Dictionary = {}
 		for entry: Dictionary in layers_data[layer_idx].get("objects", []):
@@ -202,6 +234,23 @@ func _index(data: Dictionary) -> void:
 		for chunk: int in by_chunk.keys():
 			cold[chunk] = var_to_bytes(by_chunk[chunk])
 		_chunk_entries[layer_idx] = cold
+		# Decoration entries are chunked identically. In low detail mode the
+		# whole decoration layer is dropped (as the old whole-level build did),
+		# leaving every layer's decoration list empty.
+		var deco_cold: Dictionary = {}
+		if not Config.ldm:
+			var deco_by_chunk: Dictionary = {}
+			for entry: Dictionary in layers_data[layer_idx].get("objects", []):
+				if not entry.get("decoration", false):
+					continue
+				var x: float = entry.get("transform", Transform2D.IDENTITY).origin.x
+				var chunk := _chunk_of(x)
+				if not deco_by_chunk.has(chunk):
+					deco_by_chunk[chunk] = []
+				deco_by_chunk[chunk].append(entry)
+			for chunk: int in deco_by_chunk.keys():
+				deco_cold[chunk] = var_to_bytes(deco_by_chunk[chunk])
+		_deco_entries[layer_idx] = deco_cold
 
 
 ## Decodes a chunk's packed records back into object-data entries. Called only
@@ -212,6 +261,14 @@ func _entries_of(layer_idx: int, chunk: int) -> Array:
 	var blob: PackedByteArray = by_chunk[chunk]
 	var decoded: Variant = bytes_to_var(blob)
 	return decoded as Array
+
+
+## Decodes a chunk's packed *decoration* records. Same lossless round trip as
+## gameplay; called on a worker thread when the chunk nears the window.
+func _deco_entries_of(layer_idx: int, chunk: int) -> Array:
+	var by_chunk: Dictionary = _deco_entries[layer_idx]
+	var blob: PackedByteArray = by_chunk[chunk]
+	return bytes_to_var(blob) as Array
 
 
 ## Entries for a chunk the player needs *right now* (the ground under a
@@ -270,9 +327,15 @@ func _ensure_decoded(layer_idx: int, chunk: int, key: String) -> Array:
 	return []
 
 
-## Drains finished background decodes into [_decoded] and moves them into the
-## spawn queue when their chunk is still inside the current window.
+## Drains finished background decodes into [_decoded] / [_deco_ready] and
+## moves them into the spawn/build queues when their chunk is still inside the
+## current window.
 func _settle_decodes() -> void:
+	_settle_gameplay_decodes()
+	_settle_deco_decodes()
+
+
+func _settle_gameplay_decodes() -> void:
 	if _decode_threads.is_empty():
 		return
 	for key: String in _decode_threads.keys():
@@ -296,6 +359,22 @@ func _settle_decodes() -> void:
 				_enqueue_spawn_item(int(parts[0]), chunk, entries, key, target_chunk)
 
 
+## Drains finished decoration decodes into [_deco_ready]; _enqueue_missing_window
+## picks them up into the build queue (running later the same frame). If the
+## window has already moved far past the chunk the entries are dropped - they
+## re-decode on demand, and holding them would defeat the packing.
+func _settle_deco_decodes() -> void:
+	if _deco_threads.is_empty():
+		return
+	for key: String in _deco_threads.keys():
+		var thread: Thread = _deco_threads[key]
+		if thread.is_alive():
+			continue
+		var entries: Array = thread.wait_to_finish() as Array
+		_deco_threads.erase(key)
+		_deco_ready[key] = entries
+
+
 ## The chunk the window is currently centred on: the respawn target during the
 ## death preload, the player's chunk while playing, or a sentinel otherwise.
 func _current_target_chunk() -> int:
@@ -317,6 +396,12 @@ func _exit_tree() -> void:
 			thread.wait_to_finish()
 	_decode_threads.clear()
 	_decoded.clear()
+	for key: String in _deco_threads.keys():
+		var thread: Thread = _deco_threads[key]
+		if thread.is_alive():
+			thread.wait_to_finish()
+	_deco_threads.clear()
+	_deco_ready.clear()
 
 
 func _setup_stats() -> void:
@@ -348,9 +433,11 @@ func _update_stats(delta: float) -> void:
 	for rec: Dictionary in _phys_queue:
 		pending_commit += (rec.nodes as Array).size() - int(rec.phys)
 	var decoding: int = _decode_threads.size() + _decoded.size()
+	var deco_chunks: int = _deco_live.size()
+	var deco_build: int = _deco_build_queue.size() + _deco_threads.size() + _deco_ready.size()
 	var mem_mb: float = Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0
 	_stats_label.text = (
-		"FPS %d  live %d  stream %0.1fms  |  spawn %d  commit %d  free %d  dec %d  |  mem %.0fMB"
+		"FPS %d  live %d  stream %0.1fms  |  spawn %d  commit %d  free %d  dec %d  |  deco %d(+%d)  mem %.0fMB"
 		% [
 			int(Engine.get_frames_per_second()),
 			live,
@@ -359,6 +446,8 @@ func _update_stats(delta: float) -> void:
 			pending_commit,
 			pending_free,
 			decoding,
+			deco_chunks,
+			deco_build,
 			mem_mb,
 		]
 	)
@@ -393,7 +482,11 @@ func _process(_delta: float) -> void:
 		commit_budget *= 4
 	var started_usec: int = Time.get_ticks_usec()
 	_drain(spawn_budget, commit_budget, PLAY_FREE_BUDGET, player_chunk, true)
+	_tick_deco(PLAY_DECO_BUILD_BUDGET, PLAY_DECO_FREE_BUDGET)
 	_last_drain_ms = (Time.get_ticks_usec() - started_usec) / 1000.0
+	if _refresh_pending:
+		_refresh_pending = false
+		_refresh_new_node_colors()
 
 
 ## The per-frame worker: spawns, physics-shape commits and node frees all run
@@ -596,6 +689,11 @@ func _reconcile_window(player_chunk: int) -> void:
 		var chunk := int(parts[1])
 		if chunk < player_chunk - FREE_BEHIND_CHUNKS:
 			_enqueue_free(key)
+	for key: String in _deco_live.keys():
+		var parts := key.split("/")
+		var chunk := int(parts[1])
+		if chunk < player_chunk - FREE_BEHIND_CHUNKS:
+			_enqueue_deco_free(key)
 
 
 ## Enqueues every window chunk that is neither live nor queued nor being
@@ -619,6 +717,23 @@ func _enqueue_missing_window(player_chunk: int) -> void:
 			var entries := _ensure_decoded(layer_idx, chunk, key)
 			if not entries.is_empty():
 				_enqueue_spawn_item(layer_idx, chunk, entries, key, player_chunk)
+		# Decoration for the same window: its display batches are built (and
+		# later freed) chunk by chunk, never for the whole level.
+		var deco_by_chunk: Dictionary = _deco_entries[layer_idx]
+		if deco_by_chunk.is_empty():
+			continue
+		for chunk: int in range(player_chunk - BEHIND_CHUNKS, player_chunk + AHEAD_CHUNKS + 1):
+			if not deco_by_chunk.has(chunk):
+				continue
+			var key := _chunk_key(layer_idx, chunk)
+			if _deco_live.has(key) or _key_in_queue(_deco_build_queue, key) or _key_in_queue(_deco_free_queue, key):
+				continue
+			if _deco_threads.has(key):
+				continue
+			if _deco_ready.has(key):
+				_enqueue_deco_build(key)
+			else:
+				_start_deco_decode(layer_idx, chunk, key)
 
 
 ## Inserts a decoded chunk into the spawn queue, nearest first. Only called
@@ -766,6 +881,201 @@ func _teardown_live_chunk(key: String) -> void:
 	_spawned.erase(key)
 
 
+# --- Decoration streaming -------------------------------------------------
+#
+# Decoration lives as packed records (see _deco_entries) and its display
+# objects - DecorationBatch nodes - are built only while their chunk is in the
+# player's window, then freed behind it. This is what stops a decorated
+# level's memory and its open-time build from scaling with the whole level:
+# the old path built every decoration in the level into batches at open, which
+# was the crash point for decoration-heavy levels like Orbit.
+
+
+## Starts a worker-thread decode of a chunk's decoration records.
+func _start_deco_decode(layer_idx: int, chunk: int, key: String) -> void:
+	var thread := Thread.new()
+	var err := thread.start(_decode_blob.bind(_deco_entries[layer_idx][chunk]))
+	if err != OK:
+		# Thread pool exhausted: decode inline so the chunk still appears (a
+		# rare one-frame cost beats missing decoration).
+		_deco_ready[key] = _deco_entries_of(layer_idx, chunk)
+		_enqueue_deco_build(key)
+		return
+	_deco_threads[key] = thread
+
+
+## Queues a decoded chunk's decoration for building, nearest chunk first.
+func _enqueue_deco_build(key: String) -> void:
+	if _deco_live.has(key) or _key_in_queue(_deco_build_queue, key) or _key_in_queue(_deco_free_queue, key):
+		return
+	if not _deco_ready.has(key):
+		return
+	var entries: Array = _deco_ready[key]
+	_deco_ready.erase(key)
+	var parts := key.split("/")
+	var chunk := int(parts[1])
+	var target := _current_target_chunk()
+	var distance := absi(chunk - target) if target != -0x7fffffff else 0
+	var index := 0
+	while index < _deco_build_queue.size():
+		var other: Dictionary = _deco_build_queue[index]
+		var parts_other := (other.key as String).split("/")
+		var other_distance := absi(int(parts_other[1]) - target) if target != -0x7fffffff else 0
+		if distance < other_distance:
+			break
+		index += 1
+	_deco_build_queue.insert(index, {"key": key, "entries": entries})
+
+
+## Builds one chunk's decoration batches and adds them above the layer's
+## gameplay nodes (the draw order a full build uses: gameplay under deco).
+func _build_deco(item: Dictionary) -> void:
+	var key: String = item.key
+	var parts := key.split("/")
+	var layer_idx := int(parts[0])
+	var layer: Layer = level.layers[layer_idx]
+	var batches := GDDecorationLoader.build_batches(
+			item.entries, GDDecorationLoader.art_scale()
+	)
+	if batches.is_empty():
+		return
+	for batch: DecorationBatch in batches:
+		batch.set_meta(Constants.LAYER_META, layer)
+		layer.add_child(batch)
+	_deco_live[key] = batches
+	_refresh_pending = true
+	LevelPhysics.clear_dirty(level)
+
+
+## Queues a live decoration chunk for freeing.
+func _enqueue_deco_free(key: String) -> void:
+	if not _deco_live.has(key) or _key_in_queue(_deco_free_queue, key):
+		return
+	_deco_free_queue.append({"key": key, "batches": _deco_live[key]})
+
+
+## Frees one decoration chunk's batches immediately (cancelling any queued
+## teardown of it). When [param captured] is given (a queued free with the
+## chunk's batches snapshotted at enqueue time) exactly those are freed and the
+## live entry is only dropped if it still refers to the same batch objects - a
+## chunk rebuilt between enqueue and free (respawn preload racing a teardown)
+## must survive the stale free of its predecessor.
+func _free_deco_chunk_now(key: String, captured: Array = []) -> void:
+	# Cancel any queued teardown of this chunk, freeing its snapshotted
+	# batches.
+	var qi := 0
+	while qi < _deco_free_queue.size():
+		var item: Dictionary = _deco_free_queue[qi]
+		if item.key == key:
+			_free_deco_batches(item.batches)
+			_deco_free_queue.remove_at(qi)
+		else:
+			qi += 1
+	if captured.is_empty():
+		if not _deco_live.has(key):
+			return
+		captured = _deco_live[key]
+	_free_deco_batches(captured)
+	# Removing layer children invalidates the shared-physics rebuild flag (the
+	# level tracks any child change); decoration is not part of that physics,
+	# so the flag must not force a needless rebuild on the next attempt.
+	LevelPhysics.clear_dirty(level)
+	# Only forget the live entry if what was freed is what is live: a rebuilt
+	# chunk (new batch nodes) must not be erased by a stale teardown of its
+	# predecessor. Batches are never empty for a stored chunk.
+	if not _deco_live.has(key):
+		return
+	var current_arr: Array = _deco_live[key]
+	if current_arr.is_empty():
+		_deco_live.erase(key)
+		return
+	if captured.is_empty() or current_arr[0] == captured[0]:
+		_deco_live.erase(key)
+
+
+## Frees a set of DecorationBatch nodes (idempotent per node).
+func _free_deco_batches(batches: Array) -> void:
+	for batch: DecorationBatch in batches:
+		if is_instance_valid(batch):
+			batch.free()
+
+
+## Synchronously frees every live decoration chunk. Manual-restart path.
+func _teardown_all_deco() -> void:
+	for key: String in _deco_live.keys():
+		_free_deco_chunk_now(key)
+	_deco_free_queue.clear()
+	_deco_build_queue.clear()
+	_deco_ready.clear()
+
+
+## Per-frame decoration work: build and free chunk batches on budgets so no
+## live frame ever takes a whole decorated chunk at once.
+func _tick_deco(build_budget: int, free_budget: int) -> void:
+	var built := false
+	while build_budget > 0 and not _deco_build_queue.is_empty():
+		var item: Dictionary = _deco_build_queue[0]
+		_deco_build_queue.remove_at(0)
+		_build_deco(item)
+		build_budget -= 1
+		built = true
+	while free_budget > 0 and not _deco_free_queue.is_empty():
+		var item: Dictionary = _deco_free_queue[0]
+		_deco_free_queue.remove_at(0)
+		_free_deco_chunk_now(item.key, item.batches)
+		free_budget -= 1
+
+
+## Builds the decoration of the single chunk holding [param world_x] right
+## now, synchronously - the visual ground under a respawn. Used at restart,
+## mirroring _spawn_chunk_now for gameplay.
+func _deco_chunk_now(world_x: float) -> void:
+	var chunk := _chunk_of(world_x)
+	for layer_idx: int in level.layers.size():
+		var deco_by_chunk: Dictionary = _deco_entries[layer_idx]
+		if not deco_by_chunk.has(chunk):
+			continue
+		var key := _chunk_key(layer_idx, chunk)
+		if _deco_live.has(key):
+			continue
+		_free_deco_chunk_now(key)
+		var qi := 0
+		while qi < _deco_build_queue.size():
+			if (_deco_build_queue[qi] as Dictionary).key == key:
+				_deco_build_queue.remove_at(qi)
+			else:
+				qi += 1
+		var entries: Array
+		if _deco_ready.has(key):
+			entries = _deco_ready[key]
+			_deco_ready.erase(key)
+		elif _deco_threads.has(key):
+			var thread: Thread = _deco_threads[key]
+			if thread.is_alive():
+				entries = _deco_entries_of(layer_idx, chunk)
+			else:
+				entries = thread.wait_to_finish() as Array
+				_deco_threads.erase(key)
+		else:
+			entries = _deco_entries_of(layer_idx, chunk)
+		_build_deco({"key": key, "entries": entries})
+
+
+## Builds decoration for the start region at load time (see make): a small
+## bounded slice - same span as the initial gameplay window - not the whole
+## level's decoration.
+func _initial_deco(world_x: float) -> void:
+	var player_chunk := _chunk_of(world_x)
+	for layer_idx: int in level.layers.size():
+		var deco_by_chunk: Dictionary = _deco_entries[layer_idx]
+		for chunk: int in range(player_chunk, player_chunk + START_SPAN_CHUNKS + 1):
+			if not deco_by_chunk.has(chunk):
+				continue
+			var key := _chunk_key(layer_idx, chunk)
+			var entries := _deco_entries_of(layer_idx, chunk)
+			_build_deco({"key": key, "entries": entries})
+
+
 # --- Death preloading -------------------------------------------------------
 #
 # GD's fixed respawn pause is where it resets its level between attempts. This
@@ -788,16 +1098,28 @@ func _preload_tick() -> void:
 		for item: Dictionary in _spawn_queue:
 			_free_node_array((item.rec as Dictionary).nodes)
 		_spawn_queue.clear()
+		# Half-built decoration of the finished attempt is stale too.
+		_deco_build_queue.clear()
+		_deco_ready.clear()
 		var death_chunk := _chunk_of(LevelManager.player.global_position.x)
 		var keys: Array = _spawned.keys()
 		keys.sort_custom(func(a: String, b: String) -> bool:
 			return absi(int(a.split("/")[1]) - death_chunk) > absi(int(b.split("/")[1]) - death_chunk))
 		for key: String in keys:
 			_enqueue_free(key)
+		var deco_keys: Array = _deco_live.keys()
+		deco_keys.sort_custom(func(a: String, b: String) -> bool:
+			return absi(int(a.split("/")[1]) - death_chunk) > absi(int(b.split("/")[1]) - death_chunk))
+		for key: String in deco_keys:
+			_enqueue_deco_free(key)
 	_drain(PRELOAD_SPAWN_BUDGET, PRELOAD_COMMIT_BUDGET, PRELOAD_FREE_BUDGET, _preload_chunk, false)
+	_tick_deco(PRELOAD_DECO_BUILD_BUDGET, PRELOAD_DECO_FREE_BUDGET)
 	# Chunks that finished tearing down this frame are now free to be spawned
 	# fresh.
 	_enqueue_missing_window(_preload_chunk)
+	if _refresh_pending:
+		_refresh_pending = false
+		_refresh_new_node_colors()
 
 
 ## Respawns the level around [param world_x]: stale chunks are torn down and
@@ -823,12 +1145,14 @@ func reset_to(world_x: float) -> void:
 		var keys: Array = _spawned.keys()
 		for key: String in keys:
 			_teardown_live_chunk(key)
+		_teardown_all_deco()
 		_boost_frames = 75
 	var target_chunk := _chunk_of(world_x)
 	_enqueue_missing_window(target_chunk)
 	_last_player_chunk = -0x7fffffff
 	# Ground under the respawn point must exist and collide right now.
 	_spawn_chunk_now(world_x)
+	_deco_chunk_now(world_x)
 	LevelPhysics.clear_dirty(level)
 
 
