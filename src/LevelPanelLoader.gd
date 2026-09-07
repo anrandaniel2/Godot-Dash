@@ -42,6 +42,7 @@ func refresh() -> void:
 	refresh_button.disabled = true
 	levels.clear()
 	file_names.clear()
+	loaded_level_data.clear()
 
 	for child in get_children():
 		child.queue_free()
@@ -61,13 +62,34 @@ func refresh() -> void:
 		refresh_button.disabled = false
 		return
 
-	var task_id = WorkerThreadPool.add_group_task(_load_data_threaded, file_names.size())
+	# Phase 1 - read every level's cheap metadata sidecar in parallel. This
+	# never deserializes a level, so it is safe no matter how many - or how
+	# large - the levels are.
+	var task_id = WorkerThreadPool.add_group_task(_load_meta_threaded, file_names.size())
 	while not WorkerThreadPool.is_group_task_completed(task_id):
 		if stopping:
 			WorkerThreadPool.wait_for_group_task_completion(task_id)
 			return
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_group_task_completion(task_id)
+
+	# Phase 2 - older levels have no sidecar yet. Decode each one on its own
+	# (never alongside the other levels) so two large levels are not in memory
+	# together, and write its sidecar so the next refresh never decodes it
+	# again.
+	for file_name: String in file_names:
+		if loaded_level_data.has(file_name):
+			continue
+		var file_task_id := WorkerThreadPool.add_task(_backfill_meta.bind(file_name))
+		while not WorkerThreadPool.is_task_completed(file_task_id):
+			if stopping:
+				WorkerThreadPool.wait_for_task_completion(file_task_id)
+				return
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_task_completion(file_task_id)
+		if stopping:
+			return
+
 	for file_name: String in loaded_level_data:
 		var panel: LevelPanel = scene.instantiate()
 		var level_data: Dictionary = loaded_level_data[file_name]
@@ -100,23 +122,41 @@ func refresh() -> void:
 	refresh_button.disabled = false
 
 
-func _load_data_threaded(index: int) -> void:
+func _load_meta_threaded(index: int) -> void:
 	var file_name: String = file_names[index]
-	# Prevent crash when file deleted during refresh
 	if not FileAccess.file_exists(Constants.LEVEL_DIR + file_name):
 		return
-	var level_path: String = Constants.LEVEL_DIR + file_name
-	# Browsing only needs the metadata (title, creator, rating, version...).
-	# Every save/import writes a tiny .meta sidecar, so reading it is instant;
-	# levels saved before that (which are small, older ones) fall back to a
-	# full decode.
-	var level_data: Dictionary = LevelOperationsHandler.load_level_meta_from_path(level_path)
-	if level_data.is_empty():
-		level_data = LevelOperationsHandler.load_level_data_from_path(level_path)
-	if stopping:
+	# Browsing only needs the metadata (title, creator, rating, version...);
+	# every save/import writes a tiny .meta sidecar, so this never has to
+	# decode the level itself.
+	var level_data: Dictionary = LevelOperationsHandler.load_level_meta_from_path(Constants.LEVEL_DIR + file_name)
+	if level_data.is_empty() or stopping:
 		return
 	mutex.lock()
 	loaded_level_data[file_name] = level_data
+	mutex.unlock()
+
+
+## Decodes one level that has no metadata sidecar yet, writes that sidecar for
+## future refreshes, and records the metadata for this refresh. Runs on its own
+## worker task so a large level is never in memory at the same time as another
+## large level's decode.
+func _backfill_meta(file_name: String) -> void:
+	if stopping:
+		return
+	var level_path: String = Constants.LEVEL_DIR + file_name
+	if not FileAccess.file_exists(level_path):
+		return
+	var level_data: Dictionary = LevelOperationsHandler.load_level_data_from_path(level_path)
+	if level_data.is_empty():
+		return
+	LevelOperationsHandler.write_level_meta(level_path, level_data)
+	if stopping:
+		return
+	# Keep only the tiny sidecar for the panel; drop the decoded dictionary.
+	var meta: Dictionary = LevelOperationsHandler.load_level_meta_from_path(level_path)
+	mutex.lock()
+	loaded_level_data[file_name] = meta if not meta.is_empty() else level_data
 	mutex.unlock()
 
 
