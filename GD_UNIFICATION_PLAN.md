@@ -592,3 +592,46 @@ Honest limits of this pass (do not re-read as done):
   is unchanged, so a level that dies while opening (Orbit) is not addressed
   by this pass; fixing that needs a chunked/container file so open never
   materialises the whole graph, plus a staged decoration batch build.
+
+## Fifth pass (2026-09-07) — chunking: worker-thread decode + tighter retention
+
+Two remaining chunking defects found by reading the code:
+
+1. **Per-crossing main-thread decode burst.** Pass 4 packed each gameplay
+   chunk into a var_to_bytes() blob - but the chunk was decoded back with
+   bytes_to_var() *synchronously on the main thread* the moment it entered the
+   window, i.e. once per chunk crossing, allocating that whole chunk's
+   Dictionaries in a single frame. That is exactly the kind of spike that
+   shows up as a hitch every chunk boundary on dense levels.
+   Fix: the decode is pure data (builtin types, no scene tree), so it is now
+   done on a real worker Thread (_decode_blob). A chunk's records are decoded
+   in the background as soon as the chunk is seen entering the window; the
+   decoded entries are cached (_decoded) and only moved into the spawn queue
+   when ready (_settle_decodes), which also starts the threaded scene
+   prefetch. The main thread never allocates a whole chunk of Dictionaries.
+   Threads are joined in _exit_tree so none outlive the node; a soft cap
+   bounds strays in the decode cache; the ground chunk under a respawn
+   prefers a finished decode and only falls back to a rare inline decode.
+2. **Over-retention of dead chunks.** FREE_BEHIND_CHUNKS was 12 (chunks freed
+   only once 12 chunks behind the player) while only BEHIND_CHUNKS=3 are
+   needed for gameplay, so a chunk stayed alive ~21 chunks of travel - nearly
+   double the intended live node count, feeding the constant frame cost on
+   big levels. Reduced to 5 (3 + 2 chunks of hysteresis against boundary
+   oscillation / brief reversals).
+
+Also: the on-screen stats now include `dec` (chunks currently decoding +
+waiting in the decode cache) so a device run can confirm decoding is off the
+main thread and no longer correlates with hitches.
+
+Note on multithreading (answer to "Godot is C++, can't it spawn threads?"):
+Godot is C++, and GDScript can spawn Threads / use WorkerThreadPool freely -
+but Godot's *SceneTree / Node tree is not thread-safe by design*: nodes may
+only be created, added, removed and mutated on the main thread, so
+instantiate/add_child/free of gameplay objects cannot move to a worker
+(doing so corrupts the tree). GD (the game) is bespoke C++, not built on an
+engine scene tree, so RobTop's object lists have no such single-owner tree
+and can be touched from any thread. The parts of this pipeline Godot *does*
+allow off the main thread - resource loading (load_threaded_request) and pure
+data work like the bytes_to_var decode - are now exactly the parts running on
+worker threads; the rest stays main-thread but is sliced across frames so no
+frame ever takes a burst.

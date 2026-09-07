@@ -51,9 +51,14 @@ const BEHIND_CHUNKS := 3
 ## Chunks kept spawned ahead of the player (objects scroll in here, so this is
 ## generous - like GD, nothing should ever pop in).
 const AHEAD_CHUNKS := 8
-## Chunks behind the player beyond which live nodes are freed. Must exceed
-## BEHIND_CHUNKS so chunks are not spawned and freed every frame.
-const FREE_BEHIND_CHUNKS := 12
+## Chunks behind the player beyond which live nodes are freed. BEHIND_CHUNKS
+## (3) are kept for gameplay; this adds a small hysteresis (2 chunks) so a
+## chunk at the edge is not freed one frame and re-requested the next when the
+## player nudges across a boundary or reverses briefly. It must stay small:
+## every chunk between BEHIND_CHUNKS and FREE_BEHIND_CHUNKS behind the player
+## is pure dead weight on a one-way level - keeping 9 of them (the old value)
+## nearly doubled the live node count and with it the steady frame cost.
+const FREE_BEHIND_CHUNKS := 5
 ## How many chunks ahead of the start position are spawned synchronously while
 ## the level opens (the loading moment). Everything else in the window drains
 ## on the per-frame budget once the attempt runs. Kept tiny so opening a level
@@ -117,6 +122,17 @@ var _preload_chunk: int = -0x7fffffff
 var _refresh_pending := false
 ## Scene paths handed to ResourceLoader's worker threads; drained once loaded.
 var _prefetch_pending: Dictionary = {}
+## Decoded-but-not-yet-spawned chunk entries: chunk key -> Array. A chunk's
+## packed records are decoded on a worker thread (pure data, no scene-tree
+## access), cached here, and only moved into the spawn queue when the chunk is
+## inside the window - so the main thread never allocates a whole chunk's
+## Dictionaries in one frame.
+var _decoded: Dictionary = {}
+## Chunk key -> Thread currently decoding that chunk's records.
+var _decode_threads: Dictionary = {}
+## Safety cap: if a fast run or several resets leave strays in [_decoded],
+## drop them rather than let the cache grow (a straggler re-decodes on demand).
+const DECODED_CACHE_CAP := 48
 ## Frames after a manual (non-death) restart during which the play budgets are
 ## multiplied, so a freshly built window catches up quickly after the
 ## synchronous teardown. Death restarts do not need it: the death animation
@@ -198,12 +214,109 @@ func _entries_of(layer_idx: int, chunk: int) -> Array:
 	return decoded as Array
 
 
+## Entries for a chunk the player needs *right now* (the ground under a
+## respawn): prefers an already-finished decode, otherwise decodes inline.
+func _chunk_entries_now(layer_idx: int, chunk: int, key: String) -> Array:
+	if _decoded.has(key):
+		var ready: Array = _decoded[key] as Array
+		_decoded.erase(key)
+		return ready
+	if _decode_threads.has(key):
+		var thread: Thread = _decode_threads[key]
+		if not thread.is_alive():
+			_decode_threads.erase(key)
+			return thread.wait_to_finish() as Array
+	return _entries_of(layer_idx, chunk)
+
+
 func _chunk_of(world_x: float) -> int:
 	return floori(world_x / (CHUNK_CELLS * Constants.CELL_SIZE))
 
 
 func _chunk_key(layer_idx: int, chunk: int) -> String:
 	return "%d/%d" % [layer_idx, chunk]
+
+
+## Worker-thread body: turns one chunk's packed records back into its object
+## entries. This is pure data (builtin types only - transforms, strings,
+## arrays, dictionaries - no Nodes, no scene tree), so it is one of the few
+## operations in the whole pipeline Godot permits off the main thread, and it
+## is where the per-chunk Dictionary allocation happens.
+func _decode_blob(blob: PackedByteArray) -> Array:
+	var decoded: Variant = bytes_to_var(blob)
+	return decoded as Array
+
+
+## Starts a background decode for a chunk, or reuses one already decoded.
+## Returns the decoded entries if they are ready right now, otherwise an empty
+## Array (the chunk is decoding on a worker thread and the spawn is enqueued
+## when that finishes; see _settle_decodes). An empty result is therefore the
+## "not ready yet" signal - every real chunk has at least one entry.
+func _ensure_decoded(layer_idx: int, chunk: int, key: String) -> Array:
+	if _decoded.has(key):
+		return _decoded[key] as Array
+	if _decode_threads.has(key):
+		return []
+	var by_chunk: Dictionary = _chunk_entries[layer_idx]
+	if not by_chunk.has(chunk):
+		return []
+	var thread := Thread.new()
+	var err := thread.start(_decode_blob.bind(by_chunk[chunk]))
+	if err != OK:
+		# Thread pool exhausted or failed: fall back to decoding inline so the
+		# chunk still works (a rare one-frame cost beats missing geometry).
+		return _entries_of(layer_idx, chunk)
+	_decode_threads[key] = thread
+	return []
+
+
+## Drains finished background decodes into [_decoded] and moves them into the
+## spawn queue when their chunk is still inside the current window.
+func _settle_decodes() -> void:
+	if _decode_threads.is_empty():
+		return
+	for key: String in _decode_threads.keys():
+		var thread: Thread = _decode_threads[key]
+		if thread.is_alive():
+			continue
+		var entries: Array = thread.wait_to_finish()
+		_decode_threads.erase(key)
+		_decoded[key] = entries
+		if _decoded.size() > DECODED_CACHE_CAP:
+			# Strays only (a chunk decoded then the window moved away); they
+			# re-decode on demand. Cleared wholesale to stay O(1).
+			_decoded.clear()
+			_decoded[key] = entries
+		var target_chunk := _current_target_chunk()
+		if target_chunk != -0x7fffffff:
+			var parts := key.split("/")
+			var chunk := int(parts[1])
+			var distance := absi(chunk - target_chunk)
+			if distance <= AHEAD_CHUNKS and chunk >= target_chunk - BEHIND_CHUNKS:
+				_enqueue_spawn_item(int(parts[0]), chunk, entries, key, target_chunk)
+
+
+## The chunk the window is currently centred on: the respawn target during the
+## death preload, the player's chunk while playing, or a sentinel otherwise.
+func _current_target_chunk() -> int:
+	if _preloading:
+		return _preload_chunk
+	var player: Player = LevelManager.player
+	if player != null and not player.dead and is_instance_valid(player):
+		return _chunk_of(player.global_position.x)
+	return -0x7fffffff
+
+
+func _exit_tree() -> void:
+	# Join any in-flight decode threads so they never outlive this node and
+	# touch a freed object. Decodes are short (a chunk of plain data), so this
+	# only ever waits a few milliseconds.
+	for key: String in _decode_threads.keys():
+		var thread: Thread = _decode_threads[key]
+		if thread.is_alive():
+			thread.wait_to_finish()
+	_decode_threads.clear()
+	_decoded.clear()
 
 
 func _setup_stats() -> void:
@@ -234,9 +347,10 @@ func _update_stats(delta: float) -> void:
 	var pending_commit := 0
 	for rec: Dictionary in _phys_queue:
 		pending_commit += (rec.nodes as Array).size() - int(rec.phys)
+	var decoding: int = _decode_threads.size() + _decoded.size()
 	var mem_mb: float = Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0
 	_stats_label.text = (
-		"FPS %d  live %d  stream %0.1fms  |  spawn %d  commit %d  free %d  |  mem %.0fMB"
+		"FPS %d  live %d  stream %0.1fms  |  spawn %d  commit %d  free %d  dec %d  |  mem %.0fMB"
 		% [
 			int(Engine.get_frames_per_second()),
 			live,
@@ -244,6 +358,7 @@ func _update_stats(delta: float) -> void:
 			pending_spawn,
 			pending_commit,
 			pending_free,
+			decoding,
 			mem_mb,
 		]
 	)
@@ -255,6 +370,7 @@ func _process(_delta: float) -> void:
 	if not LevelManager.level_playing:
 		return
 	_settle_prefetches()
+	_settle_decodes()
 	var player: Player = LevelManager.player
 	if player == null:
 		return
@@ -482,8 +598,11 @@ func _reconcile_window(player_chunk: int) -> void:
 			_enqueue_free(key)
 
 
-## Enqueues every window chunk that is neither live nor queued. Cheap enough
-## to run every frame.
+## Enqueues every window chunk that is neither live nor queued nor being
+## decoded. Cheap enough to run every frame. A chunk's packed records are
+## decoded on a worker thread (see _ensure_decoded / _settle_decodes) and only
+## moved into the spawn queue once that finishes, so this never allocates a
+## whole chunk's Dictionaries on the main thread.
 func _enqueue_missing_window(player_chunk: int) -> void:
 	for layer_idx: int in level.layers.size():
 		var by_chunk: Dictionary = _chunk_entries[layer_idx]
@@ -493,16 +612,26 @@ func _enqueue_missing_window(player_chunk: int) -> void:
 			var key := _chunk_key(layer_idx, chunk)
 			if _spawned.has(key) or _key_in_queue(_spawn_queue, key) or _key_in_queue(_free_queue, key):
 				continue
-			_enqueue_spawn_near(layer_idx, chunk, key, player_chunk)
+			# Kick off (or reuse) the chunk's decode. When it is already ready
+			# the entries come back immediately and the chunk joins the spawn
+			# queue now; while it decodes on a worker the call returns empty
+			# and _settle_decodes enqueues it later.
+			var entries := _ensure_decoded(layer_idx, chunk, key)
+			if not entries.is_empty():
+				_enqueue_spawn_item(layer_idx, chunk, entries, key, player_chunk)
 
 
-func _enqueue_spawn_near(layer_idx: int, chunk: int, key: String, near_chunk: int) -> void:
-	# The chunk's records were kept cold (packed) precisely so that decoding
-	# them - the only per-chunk Dictionary allocation - happens here, when the
-	# chunk enters the window, and not for the whole level at load.
-	var entries := _entries_of(layer_idx, chunk)
+## Inserts a decoded chunk into the spawn queue, nearest first. Only called
+## once the chunk's records finished decoding, so instantiation never blocks
+## on that allocation.
+func _enqueue_spawn_item(layer_idx: int, chunk: int, entries: Array, key: String, near_chunk: int) -> void:
+	if _spawned.has(key) or _key_in_queue(_spawn_queue, key) or _key_in_queue(_free_queue, key):
+		return
 	var rec := {"nodes": [], "phys": 0, "key": key}
 	var item := _make_spawn_item(layer_idx, chunk, entries, key, rec)
+	# The entries now belong to the spawn item; do not keep a second reference
+	# in the decoded cache.
+	_decoded.erase(key)
 	# Nearest chunks first (what the run needs soonest); the per-frame share
 	# below still stops any single chunk from hogging the budget.
 	var distance := absi(chunk - near_chunk)
@@ -546,7 +675,10 @@ func _spawn_chunk_now(world_x: float) -> void:
 				_free_node_array((partial.rec as Dictionary).nodes)
 				break
 			qi += 1
-		var entries := _entries_of(layer_idx, chunk)
+		# The ground under the respawn point cannot wait on the decode worker:
+		# use the cache if the decode already finished, otherwise decode here
+		# (a rare one-shot cost at the moment of a restart).
+		var entries := _chunk_entries_now(layer_idx, chunk, key)
 		var rec := {"nodes": [], "phys": 0, "key": key}
 		var item := _make_spawn_item(layer_idx, chunk, entries, key, rec)
 		_spawn_slice(item, (item.entries as Array).size())
