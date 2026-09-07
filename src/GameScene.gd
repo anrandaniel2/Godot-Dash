@@ -42,6 +42,10 @@ func load_level() -> void:
 	if LevelManager.current_level_path != cached_level_path:
 		cached_level_path = LevelManager.current_level_path
 		cached_level_data = LevelOperationsHandler.load_level_data_from_path(LevelManager.current_level_path)
+		# This decode is unavoidable (the level is about to be built), so write
+		# the metadata sidecar here: the community list reads only sidecars and
+		# must never decode a level itself.
+		LevelOperationsHandler.write_level_meta(LevelManager.current_level_path, cached_level_data)
 	var level: Level = Level.from_data(cached_level_data if not should_use_practice_snapshot else LevelManager.practice_level_snapshots[-1])
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)

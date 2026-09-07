@@ -13,9 +13,12 @@ extends Object
 ##   ├── RectHazards       Area2D, layer 3 (spikes, ground spikes)
 ##   └── CircleHazards     Area2D, layer 12 (saws)
 ##
-## A body's collision layer is a per-body property, so one body is used per
-## distinct layer combination the level actually needs; the four above are the
-## only ones the old level-component scenes used.
+## A body's collision layer is a per-body property, and bodies are chunked by
+## horizontal region (CHUNK_CELLS wide), so a level is a grid of (layer, chunk)
+## bodies; the four layers above are the only ones the old level-component
+## scenes used. Chunking keeps each body's shape list local to its region -
+## otherwise a big level's one body per layer would be tested shape-by-shape on
+## every player query.
 ##
 ## Objects that gameplay manipulates as bodies are NOT merged and keep their own
 ## physics, exactly as before:
@@ -58,6 +61,10 @@ const SOLID_LAYER := 2
 const SLOPE_LAYER := 66
 const RECT_HAZARD_LAYER := 4
 const CIRCLE_HAZARD_LAYER := 2048
+## Horizontal width of one shared-body chunk, in cells. Each (layer, chunk)
+## pair is one physics body, so a player query only touches the few chunks it
+## is in rather than every shape in the level.
+const CHUNK_CELLS: int = 24
 
 
 static func mark_dirty(level: Level) -> void:
@@ -118,8 +125,11 @@ static func rebuild(level: Level) -> void:
 			child.free()
 
 	var dynamic_groups := _dynamic_transform_groups(level)
-	# One body per distinct static collision layer present in the level.
-	var bodies: Dictionary[int, CollisionObject2D] = {}
+	# Shared bodies are chunked by horizontal region, so the physics broadphase
+	# only ever sees the chunks near the player instead of one body whose shape
+	# list spans the whole level (a huge single body would be tested in full on
+	# every player query and grind large levels to a halt).
+	var bodies: Dictionary[String, CollisionObject2D] = {}
 
 	# First pass: restore objects that were merged but are no longer mergeable
 	# (e.g. a move trigger now targets their group), so they never end up with
@@ -144,7 +154,10 @@ static func rebuild(level: Level) -> void:
 				continue
 			if not MERGEABLE_LAYERS.has(geometry.collision_layer):
 				continue
-			var body := _body_for(bodies, container, geometry.collision_layer)
+			var body := _body_for(
+					bodies, container, geometry.collision_layer,
+					_chunk_of(object.global_position.x),
+			)
 			for descriptor in geometry.descriptors:
 				var shape_node: CollisionShape2D = CollisionShape2D.new()
 				shape_node.shape = descriptor.resource
@@ -265,30 +278,39 @@ static func _body_for(
 		bodies: Dictionary,
 		container: Node2D,
 		collision_layer: int,
+		chunk_x: int,
 ) -> CollisionObject2D:
-	if bodies.has(collision_layer):
-		return bodies[collision_layer]
+	var key: String = "%d|%d" % [collision_layer, chunk_x]
+	if bodies.has(key):
+		return bodies[key]
 	var body: CollisionObject2D = StaticBody2D.new()
+	var base_name: String
 	match collision_layer:
 		RECT_HAZARD_LAYER:
 			body = Area2D.new()
 			body.collision_layer = RECT_HAZARD_LAYER
-			body.name = "RectHazards"
+			base_name = "RectHazards"
 		CIRCLE_HAZARD_LAYER:
 			body = Area2D.new()
 			body.collision_layer = CIRCLE_HAZARD_LAYER
-			body.name = "CircleHazards"
+			base_name = "CircleHazards"
 		SLOPE_LAYER:
 			body.collision_layer = SLOPE_LAYER
-			body.name = "Slopes"
+			base_name = "Slopes"
 		_:
 			body.collision_layer = SOLID_LAYER
-			body.name = "Solids"
+			base_name = "Solids"
+	body.name = "%s@%d" % [base_name, chunk_x]
 	body.collision_mask = 0
 	body.set_meta(BODY_META, true)
 	container.add_child(body)
-	bodies[collision_layer] = body
+	bodies[key] = body
 	return body
+
+
+## Horizontal chunk a world x belongs to, for the shared bodies.
+static func _chunk_of(world_x: float) -> int:
+	return floori(world_x / (CHUNK_CELLS * Constants.CELL_SIZE))
 
 
 ## Neutralises the object's own body and marks the object merged.

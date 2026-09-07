@@ -347,3 +347,14 @@ creator, description, rating, game_version, creation_date, flashing_lights)
 via LevelOperationsHandler.write_level_and_meta; the list reads only the
 sidecar (falling back to a full decode for old sidecar-less levels) and
 level removal trashes the sidecar too.
+
+## Fix (2026-09-07) — community list never decodes; chunked shared physics
+
+- **Community list**: the list no longer decodes any level, ever. Sidecar-less
+  files show a placeholder panel (name only, no version); sidecars are written
+  opportunistically whenever a level is actually opened (GameScene.load_level,
+  editor _load_level, community _edit_level) or imported/saved. Decoding a
+  giant level to show a list row was killing Android (silent OOM force-close).
+- **LevelPhysics chunking**: shared bodies are now one per (collision layer,
+  horizontal CHUNK_CELLS=24 chunk) instead of one per layer spanning the whole
+  level, so the physics broadphase only tests the chunks near the player.

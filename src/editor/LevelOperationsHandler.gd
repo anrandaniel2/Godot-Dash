@@ -310,6 +310,9 @@ func _load_level(path: String) -> Level:
 				return null
 			version_error_dialog.confirmed:
 				pass
+	# The decode above is unavoidable; write the metadata sidecar for the
+	# community list, which reads only sidecars and never decodes a level.
+	write_level_meta(path, level_data)
 	var level: Level = Level.from_data(level_data)
 	LevelManager.current_level_path = path.get_file()
 	return level

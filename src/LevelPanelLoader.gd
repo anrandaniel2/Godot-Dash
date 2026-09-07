@@ -73,22 +73,15 @@ func refresh() -> void:
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_group_task_completion(task_id)
 
-	# Phase 2 - older levels have no sidecar yet. Decode each one on its own
-	# (never alongside the other levels) so two large levels are not in memory
-	# together, and write its sidecar so the next refresh never decodes it
-	# again.
+	# Phase 2 - older levels have no sidecar yet. The list must never decode a
+	# level just to show it: decoding a large level is many tens of megabytes
+	# and on a phone can kill the app outright. Such files get a placeholder
+	# panel (name only); the moment the level is actually opened - play or
+	# edit - the decode that is unavoidable anyway writes its sidecar, so the
+	# next refresh shows full metadata.
 	for file_name: String in file_names:
-		if loaded_level_data.has(file_name):
-			continue
-		var file_task_id := WorkerThreadPool.add_task(_backfill_meta.bind(file_name))
-		while not WorkerThreadPool.is_task_completed(file_task_id):
-			if stopping:
-				WorkerThreadPool.wait_for_task_completion(file_task_id)
-				return
-			await get_tree().process_frame
-		WorkerThreadPool.wait_for_task_completion(file_task_id)
-		if stopping:
-			return
+		if not loaded_level_data.has(file_name):
+			loaded_level_data[file_name] = _placeholder_meta(file_name)
 
 	for file_name: String in loaded_level_data:
 		var panel: LevelPanel = scene.instantiate()
@@ -97,15 +90,18 @@ func refresh() -> void:
 		panel.title.text = level_name
 		panel.creator.text = level_data.creator
 		panel.description.text = level_data.description
-		panel.version.text = "v" + level_data.game_version
-
-		# Version warnings
-		var level_version: Version = Version.new(level_data.game_version)
-		var version_warning: String = Level.generate_version_warning(level_version)
-
-		if not version_warning.is_empty():
-			panel.version.modulate = Color.RED
-			panel.version.text += " – %s" % version_warning
+		# Levels whose sidecar does not exist yet have no version to show, and
+		# no version warning can be judged until the level is opened once.
+		var version_warning: String = ""
+		if str(level_data.game_version).is_empty():
+			panel.version.hide()
+		else:
+			panel.version.text = "v" + level_data.game_version
+			var level_version: Version = Version.new(level_data.game_version)
+			version_warning = Level.generate_version_warning(level_version)
+			if not version_warning.is_empty():
+				panel.version.modulate = Color.RED
+				panel.version.text += " – %s" % version_warning
 
 		panel.rating.text = str(int(level_data.rating)) if level_data.rating != -1 else "?"
 		panel.rating_outline.modulate = rating_colors.get_color(level_data.rating + 1)
@@ -114,7 +110,7 @@ func refresh() -> void:
 		panel.play_button.pressed.connect(_play_level.bind(file_name, version_warning))
 		panel.edit_button.pressed.connect(_edit_level.bind(file_name, version_warning))
 		panel.remove_button.pressed.connect(_remove_level.bind(file_name))
-		panel.creation_date = level_data.creation_date
+		panel.creation_date = int(level_data.creation_date)
 		levels[file_name] = panel
 		add_child(panel)
 	loaded_level_data.clear()
@@ -137,27 +133,20 @@ func _load_meta_threaded(index: int) -> void:
 	mutex.unlock()
 
 
-## Decodes one level that has no metadata sidecar yet, writes that sidecar for
-## future refreshes, and records the metadata for this refresh. Runs on its own
-## worker task so a large level is never in memory at the same time as another
-## large level's decode.
-func _backfill_meta(file_name: String) -> void:
-	if stopping:
-		return
-	var level_path: String = Constants.LEVEL_DIR + file_name
-	if not FileAccess.file_exists(level_path):
-		return
-	var level_data: Dictionary = LevelOperationsHandler.load_level_data_from_path(level_path)
-	if level_data.is_empty():
-		return
-	LevelOperationsHandler.write_level_meta(level_path, level_data)
-	if stopping:
-		return
-	# Keep only the tiny sidecar for the panel; drop the decoded dictionary.
-	var meta: Dictionary = LevelOperationsHandler.load_level_meta_from_path(level_path)
-	mutex.lock()
-	loaded_level_data[file_name] = meta if not meta.is_empty() else level_data
-	mutex.unlock()
+## Metadata shown for a level that has no sidecar yet: the file name is known,
+## nothing else. Reading a sidecar is the only cheap way to get metadata - a
+## full decode must never happen just to browse (it can exceed a phone's
+## memory). Opening the level writes its sidecar.
+static func _placeholder_meta(file_name: String) -> Dictionary:
+	return {
+		"name": file_name.get_basename(),
+		"creator": "",
+		"description": "",
+		"rating": -1,
+		"game_version": "",
+		"creation_date": 0,
+		"flashing_lights": false,
+	}
 
 
 func _exit_tree() -> void:
@@ -216,7 +205,9 @@ func _edit_level(file_name: String, version_warning: String) -> void:
 			version_error_dialog.confirmed:
 				pass
 	LevelManager.current_level_path = Constants.LEVEL_DIR + file_name
-	Editor.level_data_snapshot = LevelOperationsHandler.load_level_data_from_path(LevelManager.current_level_path)
+	var level_data: Dictionary = LevelOperationsHandler.load_level_data_from_path(LevelManager.current_level_path)
+	LevelOperationsHandler.write_level_meta(LevelManager.current_level_path, level_data)
+	Editor.level_data_snapshot = level_data
 	subscene_manager._on_editor_pressed()
 
 
