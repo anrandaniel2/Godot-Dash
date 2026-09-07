@@ -170,10 +170,9 @@ win.
   subtree replaceable-until-hand-edited. Runs for the static gameplay ID set;
   scenes for interactable IDs are filled in the same milestone where the old
   scene geometry exists (touch hitboxes) — nothing reads them yet.
-- **M2 — Shared level body + Player per-shape death**:
-  Level build pass harvesting `Collision` data into shared bodies; strip
-  per-object bodies; `Player._handle_collision` per-shape disable; hazard merge;
-  attempt-reset re-enable. Old scenes still drive gameplay art until M3.
+- **M2 — Shared level body + Player per-shape death**: ✓ shipped 2026-09-07
+  (`src/LevelPhysics.gd` + Level/Player/editor-session wiring; see notes below).
+  Old scenes still drive gameplay art until M3.
 - **M3 — Gameplay objects instantiate from gd scenes (static set)**:
   `GMDObjects`/`GMDConverter`/`Level.instantiate_object_from_data` switch to gd
   scenes for solids/slopes/hazards + fallback-block families; palette swap for
@@ -204,3 +203,55 @@ win.
   spans 167×164 hd px while its hitbox is ~0.8× that; needs GD measurement.
 - Spike tip margins: old scenes use inset hitboxes (e.g. Spike 20×31 at y+27.5);
   kept verbatim, to be cross-checked against GD hitbox-viewer dumps.
+
+## M2 implementation notes (2026-09-07) — carved-out decision now recorded
+
+**Transform-changer carve-out (decided here, was the open question).** Solids
+targeted by a move/rotate/scale trigger cannot be merged: those triggers
+(`PositionChangerComponent`, `RotationChangerComponent`, `ScaleChangerComponent`)
+resolve their target list at runtime from the scene tree via
+`TargetGroupComponent.target_group` and animate node transforms — a merged
+object's node transform would animate while its collision shape stayed on the
+immobile shared body. Rule: an object whose group name matches the target of any
+interactable carrying one of those three changers keeps its own body. The build
+pass gathers those group names up front (`LevelPhysics._dynamic_transform_groups`)
+and the per-object body is restored if a trigger targeting its group is added
+between builds. Pushable/physics-edited solids (`SolidObject.physics_object`)
+also keep their own bodies; hazard Area2D layers and per-shape wall/ceiling
+disable are handled as planned.
+
+**Shipped in this session (runtime collector, in GDScript, not a Python tool):**
+`src/LevelPhysics.gd` — a level-owned container of a small fixed set of bodies
+(`Solids` StaticBody2D layer 2, `Slopes` StaticBody2D layer 66, `RectHazards`
+Area2D layer 4, `CircleHazards` Area2D layer 2048), harvesting per-object
+`Collision` subtree / old-scene body geometry (rects, circles, convex polygons)
+with shape positions expressed relative to each object root so rescale/rotation
+between rebuilds stays correct. Merged objects' own bodies are neutralised
+(layer/mask 0, shapes disabled, monitoring off) and snapshotted so the merge is
+fully reversible.
+
+Wiring:
+- `Level.start_level()` calls `LevelPhysics.prepare()` before the player moves:
+  full rebuild only when the level changed since the last build (layers tracked
+  via `child_entered/exiting_tree` → dirty meta), otherwise just re-enables the
+  shared shapes gameplay disabled on the previous attempt. Component data is
+  always settled by then (level loads and `restart_level` already pass ≥1 frame
+  after deserialization).
+- `Player._handle_collision`: lethal wall/ceiling hit against a shared body
+  disables the exact collided shape (resolved via the collision report's shape
+  index) and plays the same `DeathAnimation` the kill collider triggers;
+  spider-dash pass-through works because the shape is disabled. Per-object
+  bodies keep the old layer-flip path. `_on_solid_overlap_check_body_exited`
+  no-ops for shared bodies.
+- Teardown on session end (not between attempts): `EditorScene.stop_playtest()`
+  and `GameScene._on_leave_pressed()` restore every object's own collision and
+  free the shared bodies, so editor editing/undo is unaffected.
+
+Deviation from the M2 sketch above: merged shapes are *disabled and snapshotted*
+rather than *removed from the tree*; this keeps gd scenes reusable and lets the
+same object move between merged/per-object states across rebuilds (trigger-group
+changes) without data loss. "Re-enable on overlap exit" is done per attempt in
+`prepare()` (spider-dash hole persists only until the attempt ends, matching the
+old exit-restore behaviour in every practical flow).
+
+Runtime-untested in the sandbox (no Godot binary; see Verification).

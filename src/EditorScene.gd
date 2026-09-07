@@ -203,6 +203,9 @@ func stop_playtest() -> void:
 	%Playtest.disabled = true
 	LevelManager.player.process_mode = Node.PROCESS_MODE_INHERIT
 	reset()
+	# Static objects share the level's physics bodies while playing (see
+	# LevelPhysics); give every object back its own collision for editing.
+	LevelPhysics.teardown(LevelManager.current_level)
 	LevelManager.practice_mode = false
 	LevelManager.practice_level_snapshots.clear()
 	just_stopped_playtest = true

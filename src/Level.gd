@@ -145,6 +145,8 @@ func _ready() -> void:
 		if Editor.in_editor:
 			new_layer.selected_in_editor = true
 			active_layer_idx = 0
+	for layer in layers:
+		_track_layer_physics(layer)
 	stopwatch = Stopwatch.new()
 	stopwatch.name = "Stopwatch"
 	stopwatch.paused = true
@@ -163,6 +165,19 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	music_scale = 0.85 + MusicVolume.get_volume()
+
+
+## The shared physics world mirrors the object tree; any object added to or
+## removed from a layer invalidates it until the next level start rebuilds it.
+func _track_layer_physics(layer: Layer) -> void:
+	if layer.child_entered_tree.is_connected(_on_layer_physics_child_changed):
+		return
+	layer.child_entered_tree.connect(_on_layer_physics_child_changed)
+	layer.child_exiting_tree.connect(_on_layer_physics_child_changed)
+
+
+func _on_layer_physics_child_changed(_child: Node) -> void:
+	LevelPhysics.mark_dirty(self)
 
 
 func prepare_external_data() -> void:
@@ -212,6 +227,8 @@ func create_layer(layer_name: String) -> Layer:
 		remove_child(new_layer)
 		if Editor.in_editor:
 			Editor.root.inspector_tree.refresh()
+
+	_track_layer_physics(new_layer)
 
 	Editor.version_history.create_action("Created layer " + layer_name)
 	Editor.version_history.add_do_method(add_layer_to_tree)
@@ -275,6 +292,12 @@ func start_level() -> void:
 	stopwatch.reset()
 	stopwatch.set_elapsed_time_in_seconds(_elapsed_time)
 	stopwatch.paused = false
+	# Static objects share one physics world per level (see LevelPhysics);
+	# (re)build or refresh it before the player moves this attempt. Trigger
+	# component data is always settled by now: level loads and restart_level
+	# pass at least one frame between deserializing objects (component data
+	# applies via call_deferred) and reaching this point.
+	LevelPhysics.prepare(self)
 	LevelManager.level_playing = true
 
 

@@ -509,9 +509,29 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 					or (internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0)
 			)
 	):
-		if collision.get_collider().collision_layer & 1 << 1:
-			collision.get_collider().collision_layer = 1 << 9
-			collision.get_collider().get_node(^"Hitbox").debug_color.s = 0.0 # DEBUG: Hardcoded name for hitbox color
+		var collider := collision.get_collider() as CollisionObject2D
+		if collider != null and collider.collision_layer & 1 << 1:
+			if LevelPhysics.is_shared_body(collider):
+				# The level's shared static body: collision layers are per-body,
+				# so a single block can't be re-layered. Disable the exact shape
+				# the player hit instead - a dashing spider passes through, and
+				# any other mode dies through the same path the kill collider
+				# uses. LevelPhysics.prepare() re-enables the shape on the next
+				# attempt.
+				var shape := _collided_shared_shape(collision)
+				if shape != null:
+					shape.set_deferred(&"disabled", true)
+				if _spider_dash_frames == 0:
+					$DeathAnimator.play("DeathAnimation")
+			else:
+				# Per-object body (kept for trigger-animated or pushable
+				# objects): move it to the solid_overlap_check layer (1 << 9)
+				# so it stops blocking, the kill collider finishes the job, and
+				# SolidOverlapCheck's body_exited restores it - as before.
+				collider.collision_layer = 1 << 9
+				var hitbox := collider.get_node_or_null(^"Hitbox")
+				if hitbox is CollisionShape2D:
+					hitbox.debug_color.s = 0.0 # DEBUG: Hardcoded name for hitbox color
 	if is_ceiling and allow_ceiling_hit_count > 0:
 		hit_ceiling.emit(self)
 	if is_slope:
@@ -530,6 +550,21 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 			var ground_hit_particles: GPUParticles2D = GROUND_HIT_PARTICLE.instantiate()
 			ground_hit_particles.modulate = Config.secondary_color
 			%GroundParticles.add_child(ground_hit_particles)
+
+
+## The CollisionShape2D on the level's shared physics body that a collision
+## report hit, resolved by the collider's shape index. Null when the collider
+## has no shape (or isn't a shared body).
+func _collided_shared_shape(collision: KinematicCollision2D) -> CollisionShape2D:
+	var body := collision.get_collider() as CollisionObject2D
+	if body == null:
+		return null
+	var shape_index := collision.get_collider_shape()
+	var owner_id := body.shape_find_owner(shape_index)
+	if owner_id == -1:
+		return null
+	var shape := body.shape_owner_get_owner(owner_id)
+	return shape as CollisionShape2D
 
 
 func _is_playing_back_replay() -> bool:
@@ -1257,6 +1292,14 @@ func _on_kill_collider_hazard_area_entered(_area: Area2D) -> void:
 
 
 func _on_solid_overlap_check_body_exited(body: Node2D) -> void:
+	if body == null:
+		return
 	body = body as CollisionObject2D
+	# Shared level bodies never get re-layered by lethal hits; only per-object
+	# bodies (trigger-animated / pushable solids) do, and those keep a Hitbox
+	# child to restore the debug colour on.
+	if LevelPhysics.is_shared_body(body):
+		return
 	body.collision_layer = 1 << 1
-	body.get_node("Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
+	if body.has_node(^"Hitbox"):
+		body.get_node(^"Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
