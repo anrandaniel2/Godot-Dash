@@ -19,3 +19,4 @@ target/
 export/
 
 export_presets.cfg
+__pycache__/

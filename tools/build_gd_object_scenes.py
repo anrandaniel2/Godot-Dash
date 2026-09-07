@@ -41,6 +41,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gd_collision_specs
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ATLAS_DIR = PROJECT_ROOT / "assets" / "textures" / "gd_atlas"
 DEFAULT_FRAMES_JSON = ATLAS_DIR / "object_frames.json"
@@ -72,11 +75,42 @@ SOLID_LAYER = 2
 MIN_SELECTION_SIZE = 24.0
 
 COLLISION_DESCRIPTION = (
-    "Collision for this Geometry Dash object type. Assign a shape to Hitbox or add more "
-    "CollisionShape2D / CollisionPolygon2D children; every placement of this object in a "
-    "level gets them. Layer 2 = solid. Keep the node named Hitbox - the player looks it up. "
-    "tools/build_gd_object_scenes.py preserves this subtree when it regenerates the artwork."
+    "Collision for this Geometry Dash object type. tools/build_gd_object_scenes.py "
+    "writes the hitbox for gameplay object types here automatically. Keep the node "
+    "named Hitbox - gameplay and the level's shared physics builder look it up. To "
+    "hand-edit a hitbox, edit the shapes below and DELETE the "
+    "_editor_auto_collision_ metadata line on the Collision node: once the marker "
+    "is gone a regeneration preserves your subtree instead of overwriting it."
 )
+
+# Marker + version stamped on auto-generated Collision subtrees. A subtree that
+# carries the current marker is replaced wholesale on regeneration (so hitbox
+# data improvements flow into scenes); a subtree without it is user content and
+# is preserved verbatim, exactly like hand-authored collision before this
+# feature existed.
+COLLISION_AUTO_META = "_editor_auto_collision_"
+COLLISION_AUTO_VERSION = "gd-hitboxes-1"
+
+# Body kinds -> node type / collision layer, matching gd_collision_specs and the
+# old level-component scenes' roots.
+COLLISION_NODE_TYPE = {
+    "solid": "StaticBody2D",
+    "slope": "StaticBody2D",
+    "rect_hazard": "Area2D",
+    "circle_hazard": "Area2D",
+}
+COLLISION_NODE_LAYER = {
+    "solid": 2,
+    "slope": 66,
+    "rect_hazard": 4,
+    "circle_hazard": 2048,
+}
+COLLISION_DEBUG_COLOR = {
+    "solid": (0, 0.07, 0.7, 0.25),
+    "slope": (0, 0.07, 0.7, 0.25),
+    "rect_hazard": (0.96, 0, 0, 0.25),
+    "circle_hazard": (0.96, 0, 0, 0.25),
+}
 
 
 # --- Godot text helpers -------------------------------------------------------
@@ -332,6 +366,13 @@ def preserve_from(existing: Path) -> Preserved:
         # Nothing hand-made here; let the current template be written.
         result.nodes = []
         return result
+    if any(f"metadata/{COLLISION_AUTO_META}" in b.text() for b in result.nodes):
+        # Auto-generated subtree from a previous run of this tool: replace it
+        # wholesale so hitbox data improvements flow into the scene. Removing
+        # the marker (see the Collision node description) opts a subtree into
+        # preservation.
+        result.nodes = []
+        return result
     for block in blocks:
         if block.kind == "connection":
             endpoints = (block.attr("from") or "", block.attr("to") or "")
@@ -360,15 +401,76 @@ def preserve_from(existing: Path) -> Preserved:
     return result
 
 
-def placeholder_collision_blocks(gd_id: int = 0) -> list[str]:
-    return [
+def auto_collision_text(gd_id: int) -> tuple[list[str], list[str]]:
+    """The generated Collision subtree for one object type.
+
+    Returns (sub_resource_lines, node_lines). Without a collision spec the
+    subtree is the classic empty placeholder, but it now carries the
+    auto-collision marker so a later run can still replace it.
+    """
+    spec = gd_collision_specs.spec_for(gd_id)
+    subs: list[str] = []
+    nodes: list[str] = []
+    if spec is not None:
+        node_type = COLLISION_NODE_TYPE[spec.kind]
+        layer = COLLISION_NODE_LAYER[spec.kind]
+        r, g, b, a = COLLISION_DEBUG_COLOR[spec.kind]
+        nodes.append(
+            '[node name="Collision" type="'
+            + node_type
+            + '" parent="."]\n'
+            + f"collision_layer = {layer}\n"
+            + "collision_mask = 0\n"
+            + f"metadata/_editor_description_ = {gd_string(COLLISION_DESCRIPTION)}\n"
+            + f"metadata/{COLLISION_AUTO_META} = {gd_string(COLLISION_AUTO_VERSION)}\n"
+        )
+        for i, shape in enumerate(spec.shapes):
+            shape_name = shape.__class__.__name__
+            if isinstance(shape, gd_collision_specs.Rect):
+                sub_id = f"RectangleShape2D_gdc{i}"
+                subs.append(
+                    f'[sub_resource type="RectangleShape2D" id="{sub_id}"]\n'
+                    f"size = {vec2(shape.size[0], shape.size[1])}\n"
+                )
+            elif isinstance(shape, gd_collision_specs.Circle):
+                sub_id = f"CircleShape2D_gdc{i}"
+                subs.append(
+                    f'[sub_resource type="CircleShape2D" id="{sub_id}"]\n'
+                    f"radius = {num(shape.radius)}\n"
+                )
+            elif isinstance(shape, gd_collision_specs.Polygon):
+                sub_id = f"ConvexPolygonShape2D_gdc{i}"
+                pts = ", ".join(f"{num(p[0])}, {num(p[1])}" for p in shape.points)
+                subs.append(
+                    f'[sub_resource type="ConvexPolygonShape2D" id="{sub_id}"]\n'
+                    f"points = PackedVector2Array({pts})\n"
+                )
+            else:  # pragma: no cover - spec module only makes the shapes above
+                continue
+            child_name = "Hitbox" if i == 0 else f"Hitbox{i + 1}"
+            lines = [f'[node name="{child_name}" type="CollisionShape2D" parent="Collision"]']
+            if shape.pos[0] or shape.pos[1]:
+                lines.append(f"position = {vec2(shape.pos[0], shape.pos[1])}")
+            if isinstance(shape, gd_collision_specs.Rect) and shape.rotation:
+                lines.append(f"rotation = {num(math.radians(shape.rotation))}")
+            lines.append(f'shape = SubResource("{sub_id}")')
+            lines.append(f"debug_color = {color(r, g, b, a)}")
+            nodes.append("\n".join(lines) + "\n")
+        return subs, nodes
+
+    # No gameplay collision: the classic empty placeholder body.
+    nodes.append(
         '[node name="Collision" type="StaticBody2D" parent="."]\n'
         f"collision_layer = {SOLID_LAYER}\n"
         "collision_mask = 0\n"
-        f"metadata/_editor_description_ = {gd_string(COLLISION_DESCRIPTION)}\n",
+        f"metadata/_editor_description_ = {gd_string(COLLISION_DESCRIPTION)}\n"
+        f"metadata/{COLLISION_AUTO_META} = {gd_string(COLLISION_AUTO_VERSION)}\n"
+    )
+    nodes.append(
         '[node name="Hitbox" type="CollisionShape2D" parent="Collision"]\n'
-        "debug_color = Color(0, 0.07, 0.7, 0.25)\n",
-    ]
+        "debug_color = Color(0, 0.07, 0.7, 0.25)\n"
+    )
+    return subs, nodes
 
 
 def is_untouched_placeholder(nodes: list[Block]) -> bool:
@@ -525,13 +627,18 @@ def build_scene(gd_id: int, entry: dict, ctx: Context, preserved: Preserved) -> 
     if detail and not detail_under:
         nodes.extend(detail_container())
 
-    # Collision: the user's, when the scene already had one; a placeholder otherwise.
+    # Collision: the user's hand-made subtree when the scene has one (it never
+    # carries this tool's auto marker); otherwise the generated subtree - the
+    # real hitbox for gameplay object types (see gd_collision_specs.py) or the
+    # empty placeholder for decorations.
     preserved_ext = [b.text() for b in preserved.ext_resources]
     preserved_sub = [b.text() for b in preserved.sub_resources]
     if preserved.nodes:
         nodes.extend(b.text() for b in preserved.nodes)
     else:
-        nodes.extend(placeholder_collision_blocks(gd_id))
+        auto_subs, auto_nodes = auto_collision_text(gd_id)
+        subs.extend(auto_subs)
+        nodes.extend(auto_nodes)
 
     nodes.append(
         '[node name="EditorSelectionCollider" type="Area2D" parent="."]\n'
