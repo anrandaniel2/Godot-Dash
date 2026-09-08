@@ -239,9 +239,41 @@ func _use_order(comparison: bool) -> bool:
 
 
 func _open_importer() -> void:
+	# On Android the FileDialog control can never open the OS file manager: its
+	# "Keep original level file" option makes the engine fall back to Godot's
+	# built-in dialog, which is confined to the app-private user:// folder and
+	# can't see shared storage. Ask the OS file manager (Storage Access
+	# Framework) directly instead - it needs no storage permission.
+	if OS.has_feature("android"):
+		DisplayServer.file_dialog_show(
+			"Import and open",
+			"", # Ignored on Android; the picker offers its own locations.
+			"",
+			false,
+			DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
+			PackedStringArray(["*/*"]), # .gmd/.gmd2/.lvl have no MIME type, so show every file.
+			_import_level_from_android_picker,
+		)
+		return
 	import_dialog.show()
 
 
 func _import_level(path: String) -> void:
-	var keep_original = import_dialog.get_selected_options()["Keep original level file"]
+	var keep_original = import_dialog.get_selected_options().get("Keep original level file", true)
+	_do_import_level(path, keep_original)
+
+
+func _import_level_from_android_picker(status: bool, selected_paths: PackedStringArray, _selected_filter_index: int) -> void:
+	if not status or selected_paths.is_empty():
+		return
+	# The SAF picker returns a content:// URI; FileAccess reads it directly on
+	# Android 4.6+ and the import path content-sniffs, so the URI having no
+	# real filesystem extension doesn't matter. The picker can't show the
+	# "Keep original level file" checkbox, so the file is always kept - which
+	# is also the dialog's desktop default.
+	_do_import_level(selected_paths[0], true)
+
+
+func _do_import_level(path: String, keep_original: bool) -> void:
 	LevelOperationsHandler.import_level(path, keep_original, corrupted_level_dialog, level_already_exists_dialog)
+
