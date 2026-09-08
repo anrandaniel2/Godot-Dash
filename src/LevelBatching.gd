@@ -43,6 +43,10 @@ const BATCH_META: StringName = &"_gd_level_batched_batch"
 ## once per play session; later attempts just re-hide placements that the
 ## attempt reset showed again.
 static func prepare(level: Level) -> void:
+	# TEMPORARY DIAGNOSTIC: plain play draws every placement's own scene art
+	# (see Config.DIAGNOSTIC_NO_OPTIMIZATIONS).
+	if Config.diagnostic_plain_play():
+		return
 	var active: bool = bool(level.get_meta(LEVEL_META, false))
 	if not active:
 		_build(level)

@@ -61,6 +61,24 @@ enum ParticlePreprocessing {
 @export_group("Performance")
 @export var enable_title_screen_icons: bool = true
 @export var ldm: bool = false
+
+# TEMPORARY DIAGNOSTIC SWITCH - DELETE AFTER THE DEVICE TEST.
+#
+# "Decoration doesn't work on device" is being isolated by turning OFF every
+# optimization layer at once and playing the plain build: no level streaming
+# (the whole level opens at once, like the editor build), no LevelBatching
+# (every placement draws its own scene art), no DecorationBatch instancing
+# (fallback per-item drawing) and no view culling. If decoration appears in
+# this mode, one of the optimizations is the culprit; if it is still missing,
+# the problem is in the art/atlas/data path and the optimizations are
+# innocent. Only applies to exported play (never in the editor).
+const DIAGNOSTIC_NO_OPTIMIZATIONS: bool = true
+
+
+func diagnostic_plain_play() -> bool:
+	return not Editor.in_editor and DIAGNOSTIC_NO_OPTIMIZATIONS
+
+
 ## Hide level objects far outside the camera while playing. Cheap to leave on;
 ## turn it off only to rule it out when debugging a level.
 @export var culling_enabled: bool = true

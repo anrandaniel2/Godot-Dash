@@ -140,7 +140,9 @@ func _horizontal_span(object: Node2D) -> Vector2:
 
 
 func _on_level_started() -> void:
-	if not Config.culling_enabled:
+	# TEMPORARY DIAGNOSTIC: plain play disables view culling too (see
+	# Config.DIAGNOSTIC_NO_OPTIMIZATIONS).
+	if Config.diagnostic_plain_play() or not Config.culling_enabled:
 		return
 	if level == null or level != LevelManager.current_level:
 		return

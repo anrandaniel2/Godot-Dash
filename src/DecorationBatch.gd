@@ -227,6 +227,11 @@ func build() -> void:
 		items[index] = keyed[index][4]
 
 	_cull = items.size() >= CULL_THRESHOLD
+	if Config.diagnostic_plain_play():
+		# TEMPORARY DIAGNOSTIC: plain play keeps even the internal per-item
+		# bucket culling off, so every item is submitted every frame exactly
+		# like the pre-optimisation draw path (Config.DIAGNOSTIC_NO_OPTIMIZATIONS).
+		_cull = false
 	_buckets.clear()
 	_by_channel.clear()
 	_spinning.clear()
@@ -256,7 +261,8 @@ func build() -> void:
 	# (z-sorted) item list, and instances within a child keep the sorted item
 	# order, so painter's order is preserved exactly as the fallback path
 	# draws it.
-	if INSTANCED_DRAW:
+	# TEMPORARY DIAGNOSTIC: plain play falls back to the per-item draw path.
+	if INSTANCED_DRAW and not Config.diagnostic_plain_play():
 		_build_instances()
 
 	_built = true

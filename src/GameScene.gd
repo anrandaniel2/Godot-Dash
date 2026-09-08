@@ -56,7 +56,9 @@ func load_level() -> void:
 		var latest_snapshot: Dictionary = LevelManager.practice_level_snapshots[-1]
 		if latest_snapshot.has("layers"):
 			level_data = latest_snapshot
-	var level: Level = Level.from_data(level_data)
+	# TEMPORARY DIAGNOSTIC: diagnostic_plain_play() forces the unoptimised
+	# full-level build on device (see Config.DIAGNOSTIC_NO_OPTIMIZATIONS).
+	var level: Level = Level.from_data(level_data, not Editor.in_editor and not Config.diagnostic_plain_play())
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
 	add_loaded_level(level)
