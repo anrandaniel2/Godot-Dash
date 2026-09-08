@@ -20,3 +20,8 @@ export/
 
 export_presets.cfg
 __pycache__/
+
+# Android Gradle build template installed by the editor / CI (Project >
+# Install Android Build Template). Regenerated from the Godot export
+# templates on every CI export; never commit it.
+/android/

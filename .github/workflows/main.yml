@@ -1,44 +1,242 @@
-# Whenever a tag push matching pattern "v*" then run the job
-on: 
+name: Build Android APK
+
+# Builds an installable debug .apk automatically so device testing is a
+# download-and-install instead of opening the project on a device (~20 min).
+#
+#   - Every push to main / arena branches (and every manual dispatch) exports
+#     an APK and uploads it as a workflow artifact. Grab it from the Actions
+#     run page -> Artifacts -> godot-dash-android-debug.
+#   - A push of a `release*` tag also attaches the APK to a GitHub release.
+#
+# The export uses the Godot 4.x Android Gradle build (export preset "Android"
+# has gradle_build/use_gradle_build=true), which lets the manifest be edited:
+# the workflow installs the stock Android build template from the export
+# templates and adds android:largeHeap="true" to its AndroidManifest.xml, so
+# the app asks Android for the large heap on devices that allow it (the heap
+# itself is still bounded by the device).
+
+on:
+  workflow_dispatch:
   push:
-    tags:
-      - "release*"
+    branches: [main, master, "arena/**"]
+    tags: ["release*"]
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+  # Godot standard (non-.NET) build & export templates for the version above.
+  # Must match project.godot's config/features ("4.7") minor line exactly.
+  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_TPZ_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  APK_PATH: export/Android/godot-dash.apk
 
 jobs:
-  # job id, can be anything
-  export_game:
-    # Always use ubuntu-latest for this action
+  android-debug:
     runs-on: ubuntu-latest
-    # Add permission for release creation. Can be made narrower according to your needs
-    permissions: write-all
-    # Job name, can be anything
-    name: Export Game
+    permissions:
+      contents: write
     steps:
-      # Always include the checkout step so that 
-      # your project is available for Godot to export
-    - name: checkout
-      uses: actions/checkout@v3.3.0
-  
-    - name: export game
-      id: export
-      # Use latest version (see releases for all versions)
-      uses: firebelley/godot-export@v5.2.0
-      with:
-        # Defining all the required inputs
-        godot_executable_download_url: https://downloads.tuxfamily.org/godotengine/4.0/Godot_v4.0-stable_linux.x86_64.zip
-        godot_export_templates_download_url: https://downloads.tuxfamily.org/godotengine/4.0/Godot_v4.0-stable_export_templates.tpz
-        relative_project_path: ./
-        archive_output: true
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # This release action has worked well for me. However, you can most likely use any release action of your choosing.
-      # https://github.com/ncipollo/release-action
-    - name: create release
-      uses: ncipollo/release-action@v1.12.0
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        generateReleaseNotes: true
-        tag: ${{ github.ref_name }}
-        artifacts: ${{ steps.export.outputs.archive_directory }}/*
-    
-    - name: Release Drafter
-      uses: release-drafter/release-drafter@v6.0.0
+      - name: Set up JDK 17 (Gradle build requirement)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ---------------------------------------------------------------- Godot
+      - name: Cache Godot binary
+        uses: actions/cache@v4
+        id: cache-godot
+        with:
+          path: godot-bin
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot binary
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$GODOT_BIN_URL" -O godot.zip
+          mkdir -p godot-bin
+          unzip -q -o godot.zip -d godot-bin
+          rm -f godot.zip
+          chmod +x "$GODOT_BIN"
+
+      - name: Cache export templates
+        uses: actions/cache@v4
+        id: cache-templates
+        with:
+          path: godot-export-templates.tpz
+          key: godot-templates-${{ env.GODOT_VERSION }}
+
+      - name: Download export templates
+        if: steps.cache-templates.outputs.cache-hit != 'true'
+        run: wget -q "$GODOT_TPZ_URL" -O godot-export-templates.tpz
+
+      - name: Install export templates
+        run: |
+          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+          mkdir -p "$TPZ_DIR"
+          unzip -q -o godot-export-templates.tpz -d "$TPZ_DIR"
+          # The archive nests everything under templates/; Godot wants the
+          # files directly in the version folder.
+          if [ -d "$TPZ_DIR/templates" ]; then
+            mv -f "$TPZ_DIR"/templates/* "$TPZ_DIR"/
+            rmdir "$TPZ_DIR/templates"
+          fi
+          ls -1 "$TPZ_DIR" | head
+
+      # ------------------------------------------------------- Android tooling
+      - name: Verify Android SDK components
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
+          SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+              "platform-tools" "build-tools;35.0.1" "platforms;android-35" >/dev/null || true
+          else
+            echo "sdkmanager not found at $SDKMANAGER; relying on preinstalled SDK."
+          fi
+          "$ANDROID_HOME/build-tools"/*/apksigner --version | head -1 || true
+
+      - name: Generate debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      # ------------------------------------------------- Android build template
+      - name: Install Android build template (res://android/build)
+        run: |
+          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+          if [ ! -f "$TPZ_DIR/android_source.zip" ]; then
+            echo "android_source.zip missing from export templates:"; ls -1 "$TPZ_DIR"; exit 1
+          fi
+          rm -rf android android_tmp
+          mkdir -p android_tmp
+          unzip -q -o "$TPZ_DIR/android_source.zip" -d android_tmp
+          # Zip layout varies (files at root vs under a build/ folder); find the
+          # Gradle project root either way.
+          if [ -f android_tmp/build.gradle ] || [ -d android_tmp/app ]; then
+            SRC=android_tmp
+          elif [ -d android_tmp/build ]; then
+            SRC=android_tmp/build
+          elif [ -d android_tmp/android/build ]; then
+            SRC=android_tmp/android/build
+          else
+            echo "Unexpected android_source.zip layout:"; find android_tmp -maxdepth 3 | head -20; exit 1
+          fi
+          mkdir -p android/build android/plugins
+          cp -a "$SRC"/. android/build/
+          # Markers Godot uses to recognise the installed template.
+          echo "${{ env.GODOT_VERSION }}.stable" > android/.build_version
+          echo "${{ env.GODOT_VERSION }}.stable" > android/build/.build_version
+          touch android/build/.gdignore android/plugins/.gdignore
+          chmod +x android/build/gradlew
+          test -f android/build/build.gradle && echo "template installed: $(ls android/build | head -5)"
+
+      - name: Enable android:largeHeap in the app manifest
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, re, sys
+          manifests = sorted(glob.glob("android/build/**/AndroidManifest.xml", recursive=True))
+          if not manifests:
+              sys.exit("no AndroidManifest.xml found under android/build")
+          for path in manifests:
+              text = open(path, encoding="utf-8").read()
+              if "android:largeHeap" in text:
+                  print("already set:", path)
+                  continue
+              new = re.sub(
+                  r"(<application\b[^>]*?)(/?>)",
+                  lambda m: m.group(1) + ' android:largeHeap="true"' + m.group(2),
+                  text, count=1, flags=re.S,
+              )
+              if new == text:
+                  sys.exit("found no <application> tag to patch in %s" % path)
+              open(path, "w", encoding="utf-8").write(new)
+              print("android:largeHeap=\"true\" added to", path)
+          PYEOF
+
+      # ------------------------------------------------------- Godot project
+      - name: Import project resources
+        run: |
+          chmod +x "$GODOT_BIN"
+          "$GODOT_BIN" --headless --path . --import > godot_import.log 2>&1
+          status=$?
+          tail -n 30 godot_import.log
+          exit $status
+
+      - name: Point Godot at the Android SDK/JDK
+        run: |
+          SET=$(ls "$HOME/.config/godot"/editor_settings-*.tres 2>/dev/null | head -1)
+          if [ -z "$SET" ]; then
+            # Bootstrap once so Godot writes its editor settings file, then find it.
+            "$GODOT_BIN" --headless --editor --quit --path . >/dev/null 2>&1 || true
+            SET=$(ls "$HOME/.config/godot"/editor_settings-*.tres 2>/dev/null | head -1)
+          fi
+          if [ -z "$SET" ]; then
+            mkdir -p "$HOME/.config/godot"
+            SET="$HOME/.config/godot/editor_settings-4.tres"
+            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\n' > "$SET"
+          fi
+          JAVA_HOME_DETECTED="${JAVA_HOME:-$(dirname "$(dirname "$(command -v java)")")}"
+          echo "editor settings: $SET"
+          python3 - "$SET" "$ANDROID_HOME" "$JAVA_HOME_DETECTED" "$HOME/.android/debug.keystore" <<'PYEOF'
+          import sys
+          path, sdk, jdk, keystore = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          values = {
+              "export/android/android_sdk_path": sdk,
+              "export/android/java_sdk_path": jdk,
+              "export/android/debug_keystore": keystore,
+              "export/android/debug_keystore_user": "androiddebugkey",
+              "export/android/debug_keystore_pass": "android",
+          }
+          lines = open(path, encoding="utf-8").read().splitlines()
+          seen = {ln.split("=", 1)[0].strip() for ln in lines if "=" in ln}
+          with open(path, "w", encoding="utf-8") as fh:
+              for key, val in values.items():
+                  if key in seen:
+                      continue
+                  lines.insert(len(lines), '%s = "%s"' % (key, val))
+              fh.write("\n".join(lines) + "\n")
+          print("configured Android SDK/JDK/keystore in", path)
+          PYEOF
+          cat "$SET"
+
+      - name: Export Android debug APK (Gradle build)
+        run: |
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_USER="androiddebugkey"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="android"
+          mkdir -p "$(dirname "$APK_PATH")"
+          "$GODOT_BIN" --headless --path . --export-debug "Android" "$APK_PATH" > godot_export.log 2>&1
+          status=$?
+          tail -n 80 godot_export.log
+          if [ $status -ne 0 ]; then
+            exit $status
+          fi
+          ls -lh "$APK_PATH"
+
+      # -------------------------------------------------------------- Outputs
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-dash-android-debug-${{ github.sha }}
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+
+      - name: Attach APK to release (release* tags only)
+        if: startsWith(github.ref, 'refs/tags/release')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK_PATH }}
+          generate_release_notes: true
