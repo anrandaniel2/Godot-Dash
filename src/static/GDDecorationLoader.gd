@@ -162,13 +162,8 @@ static func to_data(
 
 
 ## Builds the batched decoration nodes for a whole set of objects in one call.
-##
-## This is the whole-level / whole-chunk one-shot builder. Streamed levels do
-## not use it chunk-at-a-time: building one chunk's decoration in a single
-## frame is a multi-millisecond burst on a decorated level, so LevelStream
-## feeds the same per-object logic through [method add_object] across many
-## frames and only calls [method finish_batches] when a chunk's items are all
-## in (see DecorationBatch for why objects are grouped this way).
+## The whole-level one-shot builder (see DecorationBatch for why objects are
+## grouped this way).
 static func build_batches(objects: Array, art_scale_factor: float) -> Array[DecorationBatch]:
 	var batches := new_batches()
 	for object_data: Dictionary in objects:
@@ -183,8 +178,8 @@ static func new_batches() -> Dictionary:
 
 
 ## Feeds one object's decoration into [param batches]. The batch set is a
-## plain Dictionary, so callers may add one object per frame (LevelStream) or
-## the whole array at once (build_batches) and the grouping result is
+## plain Dictionary, so callers may add objects one at a time or the whole
+## array at once (build_batches) and the grouping result is
 ## identical - a batch is keyed by the properties a trigger or the renderer
 ## cares about:
 ## [codeblock]
@@ -335,9 +330,8 @@ static func finish_batches(batches: Dictionary) -> Array[DecorationBatch]:
 
 
 ## Assigns cross-batch draw order (distinct z indices per shared layer) to a
-## list of already-built batches. Separate from finish_batches so a streamed
-## chunk - whose batches are built one per frame - can order and add them once
-## the last one finishes without re-running any build work.
+## list of already-built batches. Kept separate from finish_batches so a
+## caller can order batches after building them without re-running build work.
 static func finalise_batch_order(batches: Array[DecorationBatch]) -> void:
 	_finalise_batch_order(batches)
 

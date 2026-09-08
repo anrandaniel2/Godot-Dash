@@ -206,9 +206,7 @@ func stop_playtest() -> void:
 	# Static objects share the level's physics bodies while playing (see
 	# LevelPhysics); give every object back its own collision for editing.
 	LevelPhysics.teardown(LevelManager.current_level)
-	# Static placements drew through shared batches while playing; bring every
-	# placement's own art back for editing.
-	LevelBatching.teardown(LevelManager.current_level)
+	# FrustumCuller restores every placement's visibility on level_stopped.
 	LevelManager.practice_mode = false
 	LevelManager.practice_level_snapshots.clear()
 	just_stopped_playtest = true

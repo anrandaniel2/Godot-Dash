@@ -1,12 +1,22 @@
-class_name CullingManager
+class_name FrustumCuller
 extends Node
-## Hides level objects that are well outside the camera's view.
+## Dynamic node rendering: hides level objects that are outside the camera's
+## view so the graphics card never draws them and they cost no per-frame work.
 ##
-## A large imported level has tens of thousands of nodes; Godot's renderer
-## culls anything off screen from the GPU, but each visible [CanvasItem] still
-## costs a draw-list entry and each spinning sprite a process call. Turning off
-## [member CanvasItem.visible] on everything far from the camera removes that
-## cost entirely.
+## Every placement keeps its own node (the level is fully built at open, like
+## the editor build). A level with tens of thousands of placements would still
+## make Godot submit every one of those CanvasItems to the draw list every
+## frame; the renderer's own clip test happens far too late to save that work.
+## Turning off [member CanvasItem.visible] on everything far from the camera
+## removes the draw-list entry entirely, which is the win this exists for.
+##
+## "Not processed" comes along for free: the only per-node animation on a
+## placement is [GDObject]'s built-in spin, and GDObject stops its own
+## [method Node._process] as soon as [member CanvasItem.visible] becomes false
+## and picks it back up when the object scrolls into view (see
+## [method GDObject._apply_spin]). Objects that run real logic - triggers,
+## portals, physics blocks, anything in a Geometry Dash group that a trigger
+## can move - are never culled in the first place.
 ##
 ## Objects are bucketed by the horizontal span they cover, in cells. Every
 ## frame the camera's world rectangle is grown by a buffer of
@@ -21,7 +31,7 @@ extends Node
 ## group can be driven by a Move, Rotate or Scale trigger and would leave its
 ## bucket, so those - along with triggers, portals and physics blocks - are
 ## left to the renderer. Objects a Toggle trigger has hidden are left alone
-## too: the manager only ever touches objects it hid itself.
+## too: the manager only ever shows objects it hid itself.
 ##
 ## Active only while a level plays (also during editor playtests); while
 ## editing, every object stays visible.
@@ -53,11 +63,6 @@ var _built_for_count: int = -1
 var _last_first: int = 0x7fffffff
 var _last_last: int = -0x7fffffff
 var _active: bool = false
-## A streamed level spawns and frees whole chunks during play; the manager
-## follows those events so live nodes far from the camera are culled like any
-## other level's.
-var _stream: LevelStream = null
-var _stream_connected: bool = false
 
 
 func _ready() -> void:
@@ -67,8 +72,9 @@ func _ready() -> void:
 	LevelManager.level_stopped.connect(_on_level_stopped)
 
 
-## Registers every object currently in the level's layers. Called by [Level]
-## once its layers are built; safe to call again after the level changes.
+## Registers every object currently in the level's layers. Called once the
+## level's layers are built (on the first level start); safe to call again
+## after the object set changed.
 func rebuild() -> void:
 	_buckets.clear()
 	_oversize.clear()
@@ -105,10 +111,6 @@ func track(object: Node2D) -> void:
 static func is_cullable(object: Node2D) -> bool:
 	if object is Layer or object is Player or object is Interactable:
 		return false
-	# Placements whose art is hidden and drawn through a shared batch while
-	# playing (see LevelBatching): the batch culls itself by buckets.
-	if object.has_meta(LevelBatching.OBJECT_META):
-		return false
 	if object is SolidObject and object.physics_object:
 		return false
 	# Anything a trigger can address may move, so its load-time bucket
@@ -140,41 +142,18 @@ func _horizontal_span(object: Node2D) -> Vector2:
 
 
 func _on_level_started() -> void:
-	# TEMPORARY DIAGNOSTIC: plain play disables view culling too (see
-	# Config.DIAGNOSTIC_NO_OPTIMIZATIONS).
-	if Config.diagnostic_plain_play() or not Config.culling_enabled:
+	if not Config.culling_enabled:
 		return
 	if level == null or level != LevelManager.current_level:
 		return
-	if LevelStream.is_streaming(level):
-		# A streamed level keeps only a window of chunks live, but that window
-		# reaches several chunks ahead of the player (see LevelStream), so most
-		# of what is live is still far off screen. Its chunks spawn and free
-		# during play, so the manager follows the stream's chunk lifecycle
-		# instead of a one-shot build.
-		var stream := LevelStream.instance_for(level)
-		if stream != _stream:
-			if _stream_connected and is_instance_valid(_stream):
-				_stream.chunk_spawned.disconnect(_on_chunk_spawned)
-				_stream.chunk_freed.disconnect(_on_chunk_freed)
-			_stream = stream
-			_stream_connected = false
-		if _stream != null and not _stream_connected:
-			_stream.chunk_spawned.connect(_on_chunk_spawned)
-			_stream.chunk_freed.connect(_on_chunk_freed)
-			_stream_connected = true
-		# Everything currently live (the initial window, or whatever the death
-		# preload rebuilt) becomes the tracked set.
+	# Buckets are keyed on load-time positions, which every attempt restores,
+	# so they are only rebuilt when the set of objects changed.
+	var object_count: int = 0
+	for layer: Layer in level.layers:
+		object_count += layer.get_child_count()
+	if object_count != _built_for_count:
 		rebuild()
-	else:
-		# Buckets are keyed on load-time positions, which every attempt
-		# restores, so they are only rebuilt when the set of objects changed.
-		var object_count: int = 0
-		for layer: Layer in level.layers:
-			object_count += layer.get_child_count()
-		if object_count != _built_for_count:
-			rebuild()
-			_built_for_count = object_count
+		_built_for_count = object_count
 	_active = true
 	set_process(true)
 	# First pass: reconcile every tracked object with the camera (hiding those
@@ -190,61 +169,6 @@ func _on_level_stopped() -> void:
 	_active = false
 	set_process(false)
 	show_all()
-
-
-## Streamed levels spawn whole chunks as the player advances; every new chunk
-## is tracked so its nodes cull like any other scenery. The stream keeps
-## chunks live several chunks ahead of the player, so without this hook a
-## freshly spawned chunk would stay visible until the camera window's far edge
-## first passed it.
-func _on_chunk_spawned(nodes: Array) -> void:
-	if not _active:
-		return
-	for object: Node2D in nodes:
-		if is_instance_valid(object) and is_cullable(object):
-			track(object)
-	# Newly tracked nodes inside the visible window are already visible; the
-	# ones outside it must hide now. Forcing the reconcile sweep (next
-	# _update) is cheap here: chunk spawns happen only when the player crosses
-	# into a new chunk, not every frame.
-	_last_first = 0x7fffffff
-	_last_last = -0x7fffffff
-
-
-## Drops a chunk's nodes from every bucket before the stream frees them, so
-## the registry does not accumulate stale references across a long run.
-func _on_chunk_freed(nodes: Array) -> void:
-	if not _active:
-		return
-	for object: Node2D in nodes:
-		if is_instance_valid(object):
-			untrack(object)
-
-
-## Removes one object from the registry. Only objects the manager tracked are
-## touched; anything else (never cullable, or freed while the manager was
-## inactive) is left alone.
-func untrack(object: Node2D) -> void:
-	if not is_instance_valid(object):
-		return
-	_hidden.erase(object)
-	if _oversize.erase(object):
-		_tracked -= 1
-		return
-	var span: Vector2 = _horizontal_span(object)
-	var first: int = _bucket_of(span.x)
-	var last: int = _bucket_of(span.y)
-	var found: bool = false
-	for bucket: int in range(first, last + 1):
-		if not _buckets.has(bucket):
-			continue
-		var objects: Array = _buckets[bucket]
-		if objects.erase(object):
-			found = true
-		if objects.is_empty():
-			_buckets.erase(bucket)
-	if found:
-		_tracked -= 1
 
 
 func _exit_tree() -> void:
@@ -290,10 +214,10 @@ func _update() -> void:
 
 	if not had_range:
 		# First pass after a (re)build: reconcile every tracked object with the
-		# camera rather than only the range edges, so objects that start (or
-		# spawned) outside the view are hidden right away. The range is set
-		# first so the per-object span test inside _set_bucket_visible sees the
-		# final window and keeps wide objects visible.
+		# camera rather than only the range edges, so objects that start
+		# outside the view are hidden right away. The range is set first so the
+		# per-object span test inside _set_bucket_visible sees the final
+		# window and keeps wide objects visible.
 		_last_first = first
 		_last_last = last
 		for bucket: int in _buckets.keys():

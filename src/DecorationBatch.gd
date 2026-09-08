@@ -43,30 +43,6 @@ const CULL_THRESHOLD: int = 256
 ## channel update can find exactly the batches it affects.
 const CHANNEL_GROUP_PREFIX: String = "decobatch_"
 
-## Draws items as GPU instances (one draw call per texture page) instead of
-## one canvas command per item. The engine's 2D renderer submits every
-## [method _draw_item] call individually; on a phone, a few thousand visible
-## sprites is a few thousand submissions a frame. A MultiMeshInstance2D child
-## renders the same sprites in a single submission, which is what "batching"
-## means for sprites that share one atlas page.
-## Flip to false (and re-open the level) to fall back to per-item drawing.
-const INSTANCED_DRAW: bool = true
-
-## One quad per instance: a unit quad in mesh space whose per-instance
-## transform scales it to the item's region and places it in the batch's local
-## space. Shared by every batch (built once, on first use).
-static var _unit_quad: ArrayMesh = null
-## Canvas shader that samples the item's sub-rectangle out of the shared atlas
-## page. INSTANCE_CUSTOM carries the region, so thousands of items on one page
-## are one draw call with one texture. The engine multiplies the page into the
-## fragment COLOR before user code runs, so the vertex colour (which carries
-## the instance colour: tint and alpha) is forwarded through a varying and the
-## fragment overwrites COLOR, exactly like `COLOR = COLOR` + a region sample.
-static var _region_shader: Shader = null
-static var _region_shader_add: Shader = null
-static var _region_material: ShaderMaterial = null
-static var _region_material_add: ShaderMaterial = null
-
 
 ## One drawable sprite layer.
 ##
@@ -124,15 +100,6 @@ class Item:
 	var object_hsv_shift: PackedFloat32Array = PackedFloat32Array()
 	## Geometry Dash's "high detail" flag (key 103), kept for saving.
 	var high_detail: bool = false
-	## Instanced draw path only: the MultiMeshInstance2D child this item is
-	## drawn from, and its index in that mesh's instance buffer. Set by
-	## [method _build_instances].
-	var _mm: MultiMeshInstance2D = null
-	var _inst: int = -1
-	## Instanced draw path only: the instance transform currently stored in the
-	## buffer is a culled (zero-area) placeholder rather than the item's real
-	## placement, so a spin or camera change knows it must rewrite it.
-	var _cull_zeroed: bool = false
 
 
 ## Every item in this batch.
@@ -164,10 +131,6 @@ var _by_channel: Dictionary[StringName, Array] = { }
 var _last_visible := PackedInt32Array()
 var _built: bool = false
 var _cull: bool = false
-## True once [method _build_instances] has run: the batch's items are drawn by
-## MultiMeshInstance2D children, and per-item visual changes must be mirrored
-## into the instance buffers rather than into [method _draw].
-var _instanced: bool = false
 ## Local-space bounds of every item, used for a cheap whole-batch visibility
 ## test before any per-bucket work.
 var _bounds: Rect2 = Rect2()
@@ -227,11 +190,6 @@ func build() -> void:
 		items[index] = keyed[index][4]
 
 	_cull = items.size() >= CULL_THRESHOLD
-	if Config.diagnostic_plain_play():
-		# TEMPORARY DIAGNOSTIC: plain play keeps even the internal per-item
-		# bucket culling off, so every item is submitted every frame exactly
-		# like the pre-optimisation draw path (Config.DIAGNOSTIC_NO_OPTIMIZATIONS).
-		_cull = false
 	_buckets.clear()
 	_by_channel.clear()
 	_spinning.clear()
@@ -255,198 +213,10 @@ func build() -> void:
 				_buckets[bucket] = []
 			_buckets[bucket].append(item)
 
-	# Instanced mode replaces the per-item canvas commands with GPU instances.
-	# Every item that shares a texture page goes into one MultiMeshInstance2D
-	# child; the children draw in the order the pages first appear in the
-	# (z-sorted) item list, and instances within a child keep the sorted item
-	# order, so painter's order is preserved exactly as the fallback path
-	# draws it.
-	# TEMPORARY DIAGNOSTIC: plain play falls back to the per-item draw path.
-	if INSTANCED_DRAW and not Config.diagnostic_plain_play():
-		_build_instances()
-
 	_built = true
 	_last_visible = PackedInt32Array()
 	set_process(_cull or not _spinning.is_empty())
 	queue_redraw()
-
-
-## Creates one MultiMeshInstance2D child per texture page holding that page's
-## items. The batch itself stops submitting anything: its children draw the
-## items, one instanced draw call per child.
-func _build_instances() -> void:
-	_instanced = true
-	_ensure_instancing_assets()
-	# Rebuilding after a prior build must not leave the old children drawing
-	# the same items a second time.
-	for old: Node in get_children():
-		if old is MultiMeshInstance2D:
-			remove_child(old)
-			old.queue_free()
-	# page texture -> its items, in the batch's sorted order.
-	var by_page: Array[Dictionary] = []
-	var page_of: Dictionary = {}
-	for item: Item in items:
-		var page: Texture2D = _page_of(item.texture)
-		if not page_of.has(page):
-			page_of[page] = by_page.size()
-			by_page.append({"texture": page, "items": []})
-		(by_page[page_of[page]].items as Array).append(item)
-
-	for entry: Dictionary in by_page:
-		var page: Texture2D = entry.texture
-		var page_items: Array = entry.items
-		var page_size: Vector2 = page.get_size()
-		var multimesh := MultiMesh.new()
-		multimesh.transform_format = MultiMesh.TRANSFORM_2D
-		multimesh.use_colors = true
-		multimesh.custom_data_format = MultiMesh.CUSTOM_DATA_FLOAT
-		multimesh.mesh = _unit_quad
-		multimesh.instance_count = page_items.size()
-		for i: int in page_items.size():
-			var item: Item = page_items[i]
-			var region: Rect2 = item.region
-			if region.size == Vector2.ZERO:
-				# A degenerate frame (trimmed to nothing) draws nothing; leave
-				# the instance hidden rather than sampling outside the atlas.
-				region = Rect2(Vector2.ZERO, Vector2.ONE)
-				multimesh.set_instance_transform_2d(i, Transform2D(Vector2.ZERO, Vector2.ZERO, Vector2.ZERO))
-			else:
-				multimesh.set_instance_transform_2d(i, _instance_xform(item))
-			multimesh.set_instance_color(i, item.modulate)
-			multimesh.set_instance_custom_data(i, Color(
-				region.position.x / page_size.x,
-				region.position.y / page_size.y,
-				region.size.x / page_size.x,
-				region.size.y / page_size.y,
-			))
-			item._mm = null
-			item._inst = i
-		var node := MultiMeshInstance2D.new()
-		node.name = "Instanced%d" % by_page.find(entry)
-		node.multimesh = multimesh
-		node.texture = page
-		node.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-		node.material = _region_material_add if gd_blending else _region_material
-		add_child(node)
-		# Assign after add_child: _build_instances runs inside build(), which is
-		# called before the batch ever joins the tree, so this is safe.
-		for i: int in page_items.size():
-			(page_items[i] as Item)._mm = node
-			(page_items[i] as Item)._inst = i
-
-
-## The texture page an item samples: its sprite may be an AtlasTexture over a
-## shared page or a plain texture (an unpacked sheet), in which case the page
-## is the texture itself and its region spans the whole texture.
-static func _page_of(tex: Texture2D) -> Texture2D:
-	if tex is AtlasTexture:
-		var atlas_tex := tex as AtlasTexture
-		if atlas_tex.atlas != null:
-			return atlas_tex.atlas
-	return tex
-
-
-## The instance transform for an item: the unit quad (extent 0.5) scaled by the
-## item's atlas region (in pixels, pre-art-scale - the batch transform and the
-## item's own basis carry the world scale, exactly like the fallback quad of
-## [method _draw_item]) then placed by the item's transform.
-func _instance_xform(item: Item) -> Transform2D:
-	var scale_x: float = item.region.size.x
-	var scale_y: float = item.region.size.y
-	return Transform2D(
-			item.transform.x * scale_x,
-			item.transform.y * scale_y,
-			item.transform.origin,
-	)
-
-
-## Rewrites one item's instance to [param hidden]: a zero-area transform for
-## culled items (cheaper than removing the instance), the real transform
-## otherwise. Used by the bucket culling in [method _process].
-func _set_instance_culled(item: Item, hidden: bool) -> void:
-	if not _instanced or item._mm == null or item._cull_zeroed == hidden:
-		return
-	item._cull_zeroed = hidden
-	if hidden:
-		item._mm.multimesh.set_instance_transform_2d(item._inst, Transform2D(Vector2.ZERO, Vector2.ZERO, Vector2.ZERO))
-	else:
-		item._mm.multimesh.set_instance_transform_2d(item._inst, _instance_xform(item))
-	item._mm.queue_redraw()
-
-
-func _ensure_instancing_assets() -> void:
-	if _unit_quad != null:
-		return
-	# A plain unit quad with explicit UVs. The shared mesh means one resource
-	# for every batch in the level.
-	var vertices := PackedVector3Array()
-	var uvs := PackedVector2Array()
-	var indices := PackedInt32Array()
-	vertices.push_back(Vector3(-0.5, -0.5, 0.0))
-	vertices.push_back(Vector3(0.5, -0.5, 0.0))
-	vertices.push_back(Vector3(0.5, 0.5, 0.0))
-	vertices.push_back(Vector3(-0.5, 0.5, 0.0))
-	uvs.push_back(Vector2(0.0, 0.0))
-	uvs.push_back(Vector2(1.0, 0.0))
-	uvs.push_back(Vector2(1.0, 1.0))
-	uvs.push_back(Vector2(0.0, 1.0))
-	indices.push_back(0)
-	indices.push_back(1)
-	indices.push_back(2)
-	indices.push_back(0)
-	indices.push_back(2)
-	indices.push_back(3)
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_INDEX] = indices
-	_unit_quad = ArrayMesh.new()
-	_unit_quad.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-
-	_region_shader = Shader.new()
-	_region_shader.code = INSTANCING_SHADER_CODE
-	_region_material = ShaderMaterial.new()
-	_region_material.shader = _region_shader
-	_region_shader_add = Shader.new()
-	_region_shader_add.code = INSTANCING_SHADER_CODE_ADD
-	_region_material_add = ShaderMaterial.new()
-	_region_material_add.shader = _region_shader_add
-
-
-## Instancing canvas shader: samples the item's sub-rectangle out of the
-## shared atlas page. INSTANCE_CUSTOM (available in vertex()) carries the
-## normalized region (xy = position, zw = size). The engine multiplies the
-## page into the fragment COLOR before user code runs, so the fragment must
-## overwrite COLOR rather than multiply; the vertex colour - instance colour,
-## i.e. the item's tint and alpha - is forwarded through a varying so the
-## result matches the fallback draw's modulate exactly.
-const INSTANCING_SHADER_CODE: String = "shader_type canvas_item;\n" \
-	+ "varying vec4 vertex_tint;\n" \
-	+ "varying vec4 frame_rect;\n" \
-	+ "void vertex() {\n" \
-	+ "\tvertex_tint = COLOR;\n" \
-	+ "\tframe_rect = INSTANCE_CUSTOM;\n" \
-	+ "}\n" \
-	+ "void fragment() {\n" \
-	+ "\tvec4 region = frame_rect;\n" \
-	+ "\tCOLOR = vertex_tint * texture(TEXTURE, UV * region.zw + region.xy);\n" \
-	+ "}\n"
-
-## Additive (glow) variant: same sampling, additive blend.
-const INSTANCING_SHADER_CODE_ADD: String = "shader_type canvas_item;\n" \
-	+ "render_mode blend_add;\n" \
-	+ "varying vec4 vertex_tint;\n" \
-	+ "varying vec4 frame_rect;\n" \
-	+ "void vertex() {\n" \
-	+ "\tvertex_tint = COLOR;\n" \
-	+ "\tframe_rect = INSTANCE_CUSTOM;\n" \
-	+ "}\n" \
-	+ "void fragment() {\n" \
-	+ "\tvec4 region = frame_rect;\n" \
-	+ "\tCOLOR = vertex_tint * texture(TEXTURE, UV * region.zw + region.xy);\n" \
-	+ "}\n"
 
 
 ## Recolours every item bound to [param channel].
@@ -482,17 +252,9 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 		# makes faint scenery vanish.
 		tinted.a = color.a * item.base_alpha
 		item.modulate = tinted
-		if _instanced and item._mm != null:
-			item._mm.multimesh.set_instance_color(item._inst, tinted)
+		changed = true
 	if changed:
-		if _instanced:
-			var touched := {}
-			for item: Item in affected:
-				if item._mm != null:
-					touched[item._mm] = true
-			_refresh_instances(touched)
-		else:
-			queue_redraw()
+		queue_redraw()
 
 
 ## Local-space bounds of the whole batch, for editor selection and culling.
@@ -518,60 +280,16 @@ func _process(delta: float) -> void:
 	# Rotating objects - sawblades and the like - carry a degrees-per-second
 	# speed in Geometry Dash's key 97.
 	if not _spinning.is_empty():
-		var touched := {}
 		for item: Item in _spinning:
 			item.transform = item.transform.rotated_local(deg_to_rad(item.spin * delta))
-			if _instanced and item._mm != null and not item._cull_zeroed:
-				item._mm.multimesh.set_instance_transform_2d(item._inst, _instance_xform(item))
-				touched[item._mm] = true
-		_refresh_instances(touched)
-		if not _instanced:
-			queue_redraw()
+		queue_redraw()
 
 	if not _cull:
 		return
 	var visible_buckets: PackedInt32Array = _visible_buckets()
-	if visible_buckets == _last_visible:
-		return
-	# Instanced mode cannot skip items per draw call, so culled items get a
-	# zero-area instance transform instead (the renderer draws nothing for
-	# them). The fallback draw path only submits the visible buckets.
-	var cull_touched := {}
-	if not _instanced:
+	if visible_buckets != _last_visible:
 		_last_visible = visible_buckets
 		queue_redraw()
-		return
-	var shown := {}
-	for bucket: int in visible_buckets:
-		shown[bucket] = true
-	# On the first camera-aware pass everything counts as previously visible,
-	# so items that start outside the view are hidden rather than drawn at
-	# their real transform until they first enter and leave the view.
-	var previously_visible := _last_visible
-	if previously_visible.is_empty():
-		previously_visible = PackedInt32Array(_buckets.keys())
-	for old_bucket: int in previously_visible:
-		if shown.has(old_bucket):
-			continue
-		for item: Item in _buckets.get(old_bucket, []):
-			_set_instance_culled(item, true)
-			if item._mm != null:
-				touched[item._mm] = true
-	for new_bucket: int in visible_buckets:
-		if previously_visible.has(new_bucket):
-			continue
-		for item: Item in _buckets.get(new_bucket, []):
-			_set_instance_culled(item, false)
-			if item._mm != null:
-				cull_touched[item._mm] = true
-	_last_visible = visible_buckets
-	_refresh_instances(cull_touched)
-
-
-## Marks every touched instance child for redraw, once each.
-func _refresh_instances(touched: Dictionary) -> void:
-	for node: MultiMeshInstance2D in touched:
-		node.queue_redraw()
 
 
 ## Bucket indices overlapping the current camera view.
@@ -596,9 +314,6 @@ func _visible_buckets() -> PackedInt32Array:
 
 
 func _draw() -> void:
-	if _instanced:
-		# The MultiMeshInstance2D children draw every item; nothing is submitted here.
-		return
 	if items.is_empty():
 		return
 
