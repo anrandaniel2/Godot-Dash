@@ -405,7 +405,9 @@ Missing or unreadable level string (k4).""" % extension
 		Toasts.error("Couldn't save the imported level (error %d)" % file_error, 5.0)
 		return ""
 
-	if not keep_original:
+	if not keep_original and not path.begins_with("content://"):
+		# SAF documents can't be trashed by path; on Android the picked file
+		# simply stays where it is (the level itself was already imported).
 		OS.move_to_trash(ProjectSettings.globalize_path(path))
 
 	var message: String = "Imported %s — %s" % [level_name, report.summary()]
@@ -495,6 +497,11 @@ static func file_is_level(file_path: String) -> bool:
 
 ## [code]true[/code] for either GDShare level format, `.gmd` or `.gmd2`.
 static func file_is_gmd(file_path: String) -> bool:
+	if file_path.begins_with("content://"):
+		# Android's system file picker (SAF) returns a content:// URI whose
+		# "extension" isn't a reliable gate; the real format is content-sniffed
+		# when the file is read.
+		return true
 	return file_path.get_extension().to_lower() in [
 		Constants.GMD_FILE_EXTENSION,
 		Constants.GMD2_FILE_EXTENSION,
