@@ -88,6 +88,17 @@ const DECO_FREE_CHUNKS_PER_FRAME := 4
 
 ## Set on the Level while its gameplay placements are streamed.
 const STREAMING_META: StringName = &"_gd_level_streaming"
+## The stream instance, stored on the level so other systems (CullingManager)
+## can hook the chunk lifecycle without reaching into internal children.
+const STREAM_INSTANCE_META: StringName = &"_gd_level_stream_instance"
+
+## Emitted once a gameplay chunk has been spawned in full (a whole-chunk
+## spawn: see [_spawn_slice]). The payload is the chunk's live scene nodes,
+## one (layer, chunk) pair per emission.
+signal chunk_spawned(nodes: Array)
+## Emitted just before a live gameplay chunk's nodes are freed, so listeners
+## can drop the nodes from any bookkeeping while they are still valid.
+signal chunk_freed(nodes: Array)
 
 var level: Level
 ## Per layer index: chunk id -> PackedByteArray. Each blob is var_to_bytes()
@@ -172,6 +183,14 @@ static func is_streaming(level: Level) -> bool:
 	return level != null and bool(level.get_meta(STREAMING_META, false))
 
 
+## The [LevelStream] driving [param level], or null when the level is not
+## streamed. Stored on the level rather than found through internal children.
+static func instance_for(level: Level) -> LevelStream:
+	if level == null:
+		return null
+	return level.get_meta(STREAM_INSTANCE_META, null) as LevelStream
+
+
 ## Where the player respawns after death: the last practice checkpoint when
 ## practising, otherwise the level start. Kept in sync with
 ## GameScene.restart_level so preloading builds the right window.
@@ -190,6 +209,7 @@ static func make(level: Level, data: Dictionary) -> LevelStream:
 	stream.name = "LevelStream"
 	stream._index(data)
 	level.set_meta(STREAMING_META, true)
+	level.set_meta(STREAM_INSTANCE_META, stream)
 	level.add_child(stream, false, INTERNAL_MODE_BACK)
 	if SHOW_STATS:
 		stream._setup_stats()
@@ -542,6 +562,10 @@ func _free_chunk_now(key: String) -> void:
 		return
 	var rec: Dictionary = _spawned[key]
 	var nodes: Array = rec.nodes
+	if not nodes.is_empty():
+		# Emitted while the nodes are still valid, so listeners (CullingManager)
+		# can drop them from their bookkeeping before they are freed.
+		chunk_freed.emit(nodes)
 	if not nodes.is_empty() and level.is_inside_tree():
 		# The shared-body shapes leave first, then the nodes die: a node never
 		# lingers with its shape still registered in a shared body.
@@ -573,6 +597,11 @@ func _spawn_slice(item: Dictionary, count: int) -> void:
 		# per-object pass the editor's full build runs.
 		Level.deserialize_data_to_object(entry, object, level, true)
 		(item.rec as Dictionary).nodes.append(object)
+	if count > 0:
+		# Every spawn is a whole chunk (see _drain and _spawn_chunk_now), so a
+		# finished slice is a finished chunk. The nodes are live and inside the
+		# tree; listeners may track or hide them.
+		chunk_spawned.emit(item.rec.nodes as Array)
 
 
 func _register_spawned(item: Dictionary) -> void:

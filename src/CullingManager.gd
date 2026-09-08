@@ -53,6 +53,11 @@ var _built_for_count: int = -1
 var _last_first: int = 0x7fffffff
 var _last_last: int = -0x7fffffff
 var _active: bool = false
+## A streamed level spawns and frees whole chunks during play; the manager
+## follows those events so live nodes far from the camera are culled like any
+## other level's.
+var _stream: LevelStream = null
+var _stream_connected: bool = false
 
 
 func _ready() -> void:
@@ -139,20 +144,41 @@ func _on_level_started() -> void:
 		return
 	if level == null or level != LevelManager.current_level:
 		return
-	# A streamed level bounds its live nodes to a window around the player
-	# itself (see LevelStream); culling has nothing left to hide.
 	if LevelStream.is_streaming(level):
-		return
-	# Buckets are keyed on load-time positions, which every attempt restores,
-	# so they are only rebuilt when the set of objects changed.
-	var object_count: int = 0
-	for layer: Layer in level.layers:
-		object_count += layer.get_child_count()
-	if object_count != _built_for_count:
+		# A streamed level keeps only a window of chunks live, but that window
+		# reaches several chunks ahead of the player (see LevelStream), so most
+		# of what is live is still far off screen. Its chunks spawn and free
+		# during play, so the manager follows the stream's chunk lifecycle
+		# instead of a one-shot build.
+		var stream := LevelStream.instance_for(level)
+		if stream != _stream:
+			if _stream_connected and is_instance_valid(_stream):
+				_stream.chunk_spawned.disconnect(_on_chunk_spawned)
+				_stream.chunk_freed.disconnect(_on_chunk_freed)
+			_stream = stream
+			_stream_connected = false
+		if _stream != null and not _stream_connected:
+			_stream.chunk_spawned.connect(_on_chunk_spawned)
+			_stream.chunk_freed.connect(_on_chunk_freed)
+			_stream_connected = true
+		# Everything currently live (the initial window, or whatever the death
+		# preload rebuilt) becomes the tracked set.
 		rebuild()
-		_built_for_count = object_count
+	else:
+		# Buckets are keyed on load-time positions, which every attempt
+		# restores, so they are only rebuilt when the set of objects changed.
+		var object_count: int = 0
+		for layer: Layer in level.layers:
+			object_count += layer.get_child_count()
+		if object_count != _built_for_count:
+			rebuild()
+			_built_for_count = object_count
 	_active = true
 	set_process(true)
+	# First pass: reconcile every tracked object with the camera (hiding those
+	# outside the view) instead of only the range edges.
+	_last_first = 0x7fffffff
+	_last_last = -0x7fffffff
 	_update()
 
 
@@ -162,6 +188,61 @@ func _on_level_stopped() -> void:
 	_active = false
 	set_process(false)
 	show_all()
+
+
+## Streamed levels spawn whole chunks as the player advances; every new chunk
+## is tracked so its nodes cull like any other scenery. The stream keeps
+## chunks live several chunks ahead of the player, so without this hook a
+## freshly spawned chunk would stay visible until the camera window's far edge
+## first passed it.
+func _on_chunk_spawned(nodes: Array) -> void:
+	if not _active:
+		return
+	for object: Node2D in nodes:
+		if is_instance_valid(object) and is_cullable(object):
+			track(object)
+	# Newly tracked nodes inside the visible window are already visible; the
+	# ones outside it must hide now. Forcing the reconcile sweep (next
+	# _update) is cheap here: chunk spawns happen only when the player crosses
+	# into a new chunk, not every frame.
+	_last_first = 0x7fffffff
+	_last_last = -0x7fffffff
+
+
+## Drops a chunk's nodes from every bucket before the stream frees them, so
+## the registry does not accumulate stale references across a long run.
+func _on_chunk_freed(nodes: Array) -> void:
+	if not _active:
+		return
+	for object: Node2D in nodes:
+		if is_instance_valid(object):
+			untrack(object)
+
+
+## Removes one object from the registry. Only objects the manager tracked are
+## touched; anything else (never cullable, or freed while the manager was
+## inactive) is left alone.
+func untrack(object: Node2D) -> void:
+	if not is_instance_valid(object):
+		return
+	_hidden.erase(object)
+	if _oversize.erase(object):
+		_tracked -= 1
+		return
+	var span: Vector2 = _horizontal_span(object)
+	var first: int = _bucket_of(span.x)
+	var last: int = _bucket_of(span.y)
+	var found: bool = false
+	for bucket: int in range(first, last + 1):
+		if not _buckets.has(bucket):
+			continue
+		var objects: Array = _buckets[bucket]
+		if objects.erase(object):
+			found = true
+		if objects.is_empty():
+			_buckets.erase(bucket)
+	if found:
+		_tracked -= 1
 
 
 func _exit_tree() -> void:
@@ -201,18 +282,34 @@ func _update() -> void:
 		view = view.grow(Config.culling_buffer_cells * cell)
 	var first: int = _bucket_of(view.position.x)
 	var last: int = _bucket_of(view.end.x)
-	if first == _last_first and last == _last_last:
+	var had_range: bool = _last_first <= _last_last
+	if had_range and first == _last_first and last == _last_last:
+		return
+
+	if not had_range:
+		# First pass after a (re)build: reconcile every tracked object with the
+		# camera rather than only the range edges, so objects that start (or
+		# spawned) outside the view are hidden right away. The range is set
+		# first so the per-object span test inside _set_bucket_visible sees the
+		# final window and keeps wide objects visible.
+		_last_first = first
+		_last_last = last
+		for bucket: int in _buckets.keys():
+			if bucket < first or bucket > last:
+				_set_bucket_visible(bucket, false)
+		for bucket: int in range(first, last + 1):
+			if _buckets.has(bucket):
+				_set_bucket_visible(bucket, true)
 		return
 
 	# Hide what left the range, show what entered it. Buckets are keyed on
 	# the object's position at load time; a moving object is handled by the
 	# oversize list or by simply remaining in its original buckets, which is
 	# harmless as long as its motion stays within the buffer.
-	if _last_first <= _last_last:
-		for bucket: int in range(_last_first, _last_last + 1):
-			if bucket >= first and bucket <= last:
-				continue
-			_set_bucket_visible(bucket, false)
+	for bucket: int in range(_last_first, _last_last + 1):
+		if bucket >= first and bucket <= last:
+			continue
+		_set_bucket_visible(bucket, false)
 	for bucket: int in range(first, last + 1):
 		if bucket >= _last_first and bucket <= _last_last:
 			continue
