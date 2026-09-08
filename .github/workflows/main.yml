@@ -19,6 +19,11 @@ name: Build Android APK
 # templates and adds android:largeHeap="true" to its AndroidManifest.xml, so
 # the app asks Android for the large heap on devices that allow it (the heap
 # itself is still bounded by the device).
+#
+# Before exporting, the native GDExtension (native/) is compiled with the
+# Android NDK against a pinned godot-cpp master commit (the Godot 4.7 API;
+# no godot-cpp 4.6/4.7 tag exists). The resulting .so is bundled into the APK
+# via native/gdash_native.gdextension.
 
 on:
   workflow_dispatch:
@@ -38,6 +43,12 @@ env:
   GODOT_TPZ_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
   GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
   APK_PATH: export/Android/godot-dash.apk
+  # Native extension: godot-cpp master (v10) pinned to a commit, building the
+  # Godot 4.7 API (no godot-cpp 4.6/4.7 tag exists yet - master is the
+  # maintained path per godot-cpp's README). NDK version must match the folder
+  # name sdkmanager installs under $ANDROID_HOME/ndk/.
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  NDK_VERSION: 28.1.13356709
 
 jobs:
   android-debug:
@@ -117,6 +128,61 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
+
+      # ------------------------------------------------- Native GDExtension
+      # Builds native/src/gdash_native.cpp into the .so bundled into the APK by
+      # native/gdash_native.gdextension. The extension only registers a boot
+      # probe class today (Config.use_native_core); game systems port to C++
+      # behind that flag incrementally.
+      - name: Install scons
+        run: pip3 install --break-system-packages -q scons
+
+      - name: Cache godot-cpp, scons cache and NDK
+        uses: actions/cache@v4
+        id: cache-native
+        with:
+          path: |
+            native/godot-cpp
+            native/scons-cache
+            /usr/local/lib/android/sdk/ndk
+          key: native-${{ env.GODOT_CPP_REF }}-ndk${{ env.NDK_VERSION }}
+
+      - name: Checkout pinned godot-cpp
+        if: steps.cache-native.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/godotengine/godot-cpp native/godot-cpp
+          git -C native/godot-cpp fetch --depth 1 origin "${{ env.GODOT_CPP_REF }}"
+          git -C native/godot-cpp checkout --detach "${{ env.GODOT_CPP_REF }}"
+          git -C native/godot-cpp log -1 --oneline
+
+      - name: Install Android NDK
+        if: steps.cache-native.outputs.cache-hit != 'true'
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
+          SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          NDK_DIR="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
+          if [ ! -d "$NDK_DIR" ]; then
+            if [ ! -x "$SDKMANAGER" ]; then
+              echo "sdkmanager not found and NDK missing at $NDK_DIR"; exit 1
+            fi
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;${{ env.NDK_VERSION }}" >/dev/null || true
+          fi
+          if [ ! -d "$NDK_DIR" ]; then
+            echo "NDK ${{ env.NDK_VERSION }} still missing; installed versions:"; ls "$ANDROID_HOME/ndk"; exit 1
+          fi
+          echo "NDK ready: $NDK_DIR"
+
+      - name: Build gdash_native (Android arm64, Godot 4.7 API)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          scons platform=android target=template_debug arch=arm64 \
+            api_version=4.7 ndk_version="${{ env.NDK_VERSION }}" -j2
+          mkdir -p bin/android_debug/arm64-v8a
+          cp bin/libgdash_native*.so bin/android_debug/arm64-v8a/libgdash_native.so
+          ls -lh bin/android_debug/arm64-v8a/
 
       # ------------------------------------------------- Android build template
       - name: Install Android build template (res://android/build)

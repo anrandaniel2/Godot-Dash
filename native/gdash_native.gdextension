@@ -1,0 +1,18 @@
+[configuration]
+
+entry_symbol = "gdash_native_library_init"
+compatibility_minimum = "4.1"
+
+# The library itself is compiled in CI (Android NDK + godot-cpp pinned in
+# .github/workflows/main.yml) into native/bin/android_debug/arm64-v8a/ and is
+# not committed. Building it needs the NDK, so a local Android export without
+# running that build first will fail with a missing-library error - expected.
+#
+# Only the Android debug target is provided: CI exports --export-debug with
+# arm64-v8a enabled. Desktop/editor hosts find no library for this platform
+# and simply do not load the extension, so GDScript must feature-check
+# GdashNative (ClassDB.class_exists) before using it.
+
+[libraries]
+
+android.debug.arm64-v8a = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"

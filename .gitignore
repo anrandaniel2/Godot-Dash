@@ -25,3 +25,9 @@ __pycache__/
 # Install Android Build Template). Regenerated from the Godot export
 # templates on every CI export; never commit it.
 /android/
+
+# godot-cpp checkout + built extension binaries (compiled fresh in CI)
+native/godot-cpp/
+native/bin/
+native/.sconsign.dblite
+native/.scons-*

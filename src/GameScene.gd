@@ -20,6 +20,7 @@ func _ready() -> void:
 	LevelManager.ground_up = $GroundUpParallax/GroundUpOrigin
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
 	Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN
+	_probe_native_core()
 	if not SceneManager.in_editor():
 		pause_menu.leave_callback = _on_leave_pressed
 		fade_screen.anticipate_fade_out()
@@ -156,6 +157,28 @@ func _on_leave_pressed() -> PauseMenu.Leave:
 	LevelManager.player_camera.process_mode = Node.PROCESS_MODE_DISABLED
 	$FadeScreen.fade_in()
 	return PauseMenu.Leave.CONTINUE
+
+
+## Verifies the compiled C++ runtime when Config.use_native_core is on.
+##
+## GdashNative only exists inside the CI Android APK (native/gdash_native.gdextension;
+## desktop/editor builds never load the library), so it is looked up through
+## ClassDB rather than a typed reference - a static type would stop the whole
+## script from parsing on platforms without the library.
+func _probe_native_core() -> void:
+	if not Config.use_native_core:
+		return
+	if not ClassDB.class_exists(&"GdashNative"):
+		push_warning("Native core is enabled in Config but GdashNative is not loaded.")
+		return
+	var native: Object = ClassDB.instantiate(&"GdashNative")
+	if native == null:
+		push_warning("Native core is enabled in Config but GdashNative could not be instantiated.")
+		return
+	print("[gdash] native core loaded: %s (self-check add(2, 3) == %s)" % [
+		String(native.call(&"build_string")),
+		String(native.call(&"add", 2, 3)),
+	])
 
 
 static func get_camera_rect(camera: Camera2D, viewport: Viewport) -> Rect2:

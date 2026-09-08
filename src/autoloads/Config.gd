@@ -81,6 +81,14 @@ enum ParticlePreprocessing {
 ## Bigger opens faster but stutters the (usually hidden) loading screen more.
 @export_range(4, 120, 1, "suffix:ms") var level_open_frame_budget_ms: int = 40
 
+@export_subgroup("Native core")
+## Use the compiled C++ runtime (GdashNative) when it is present. The native
+## library only ships in the CI Android APK (native/gdash_native.gdextension),
+## so desktop/editor builds never load it and this flag is ignored there. Keep
+## off while the native level/physics port is still landing; it gates a startup
+## self-check probe, not yet any behaviour.
+@export var use_native_core: bool = false
+
 @export_subgroup("Geometry Dash import")
 ## Draw decoration objects from the bundled Geometry Dash atlases when importing
 ## a `.gmd`. Turning this off restores a gameplay-only import, which loads

@@ -10,12 +10,13 @@ extends RefCounted
 ## millisecond budget once per frame - Android would otherwise show an ANR
 ## dialog while a large level opens.
 ##
-## The construction order is identical to the old synchronous build: gameplay
-## placements and decoration placements that have a generated scene become one
-## [GDObject]/scene node each, in data order per layer; decorations without a
-## generated scene are collected and drawn by [DecorationBatch] nodes appended
-## after the layer's real objects; only then does the level apply its data
-## fields and deserialize onto the finished tree.
+## The construction order matches the old synchronous build: gameplay
+## placements become one [GDObject]/scene node each, in data order per layer.
+## In play, every decoration is drawn by shared [DecorationBatch] nodes (see
+## [member Config.use_decoration_batches_in_play]) appended after the layer's
+## real objects, so a decorated level costs a few hundred nodes instead of one
+## per placement; the editor keeps one node per decoration instead. Only then
+## does the level apply its data fields and deserialize onto the finished tree.
 
 ## The level being built. Only fully usable once [member finished] is true.
 var level: Level
