@@ -552,55 +552,13 @@ func _update_enter_effect_shader_parameter(parameter: StringName, value: float) 
 
 
 static func from_data(data: Dictionary) -> Level:
-	var level := Level.new()
-
-	var drop_decoration: bool = Config.ldm and not Editor.in_editor
-	var decoration_data: Array = []
-	for layer_data: Dictionary in data.layers:
-		var layer: Layer = Layer.new()
-		layer.name = layer_data.name
-		layer.locked = layer_data.locked
-
-		# Every placement becomes a real node, exactly like the editor build.
-		# Gameplay objects (blocks, slopes, spikes, saws...) keep one node each:
-		# their generated gd scene carries the artwork, groups and behaviour.
-		# Decoration placements whose object type has a generated scene also get
-		# one node each; only the types without a generated scene fall back to
-		# shared DecorationBatch nodes (appended after the real objects of the
-		# layer), which draw their GD atlas sprites together.
-		for object_data: Dictionary in layer_data.objects:
-			if object_data.get("decoration", false):
-				if drop_decoration:
-					continue
-				var placed: GDObject = instantiate_gd_object(object_data, level)
-				if placed != null:
-					placed.set_meta(Constants.LAYER_META, layer)
-					layer.add_child(placed)
-				elif not gd_object_entry_has_node(object_data):
-					decoration_data.append(object_data)
-				continue
-			var object: Node2D = instantiate_object_from_data(object_data, level)
-			# Null when the object was filtered out by low detail mode.
-			if object == null:
-				continue
-			object.set_meta(Constants.LAYER_META, layer)
-			layer.add_child(object)
-
-		if not decoration_data.is_empty():
-			for batch: DecorationBatch in GDDecorationLoader.build_batches(
-					decoration_data, GDDecorationLoader.art_scale()
-			):
-				batch.set_meta(Constants.LAYER_META, layer)
-				layer.add_child(batch)
-			decoration_data.clear()
-
-		level.layers.append(layer)
-		level.add_child(layer)
-
-	level.use_data(data, true)
-	level.ready.connect(level.setup_color_channel_watchers, CONNECT_ONE_SHOT)
-
-	return level
+	# One unlimited build step: the editor and every synchronous caller get the
+	# level fully built exactly as before. GameScene drives the same job with a
+	# per-frame budget instead so a device never blocks while a level opens.
+	var job := LevelBuildJob.new(data)
+	while not job.finished:
+		job.step(0x7fffffff)
+	return job.level
 
 
 static func instantiate_object_from_data(

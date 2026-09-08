@@ -24,11 +24,13 @@ func _ready() -> void:
 		pause_menu.leave_callback = _on_leave_pressed
 		fade_screen.anticipate_fade_out()
 		$EditorGridParallax/EditorGrid.hide()
-		load_level()
-		start_level()
+		_open_level_paced()
 
 
-func load_level() -> void:
+## Opens the level on device without freezing the app: the level is built a
+## few milliseconds at a time across frames (see LevelBuildJob), so a large
+## level shows a loading pause instead of an Android ANR dialog, then plays.
+func _open_level_paced() -> void:
 	var should_use_practice_snapshot: bool = not LevelManager.practice_level_snapshots.is_empty()
 	assert(
 		not LevelManager.current_level_path.is_empty()
@@ -54,10 +56,40 @@ func load_level() -> void:
 		var latest_snapshot: Dictionary = LevelManager.practice_level_snapshots[-1]
 		if latest_snapshot.has("layers"):
 			level_data = latest_snapshot
-	var level: Level = Level.from_data(level_data)
+
+	var open_started_ms: int = Time.get_ticks_msec()
+	var job := LevelBuildJob.new(level_data)
+	if Config.paced_level_open:
+		while not job.finished:
+			job.step(Config.level_open_frame_budget_ms)
+			await get_tree().process_frame
+			if not is_inside_tree():
+				# The player left while the level was still building.
+				return
+	else:
+		while not job.finished:
+			job.step(0x7fffffff)
+	var level: Level = job.level
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
 	add_loaded_level(level)
+
+	var open_ms: int = Time.get_ticks_msec() - open_started_ms
+	await start_level()
+	if not is_inside_tree():
+		return
+
+	if not Editor.in_editor and open_ms > 400:
+		var object_count := 0
+		for layer_data: Dictionary in level_data.layers:
+			object_count += layer_data.objects.size()
+		var node_count := 0
+		for layer: Layer in level.layers:
+			node_count += layer.get_child_count()
+		Toasts.new_toast(
+			"Level open: %.1f s · %d objects · %d nodes" % [open_ms / 1000.0, object_count, node_count],
+			6.0,
+		)
 
 
 func add_loaded_level(level: Level) -> Level:

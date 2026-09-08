@@ -72,6 +72,15 @@ enum ParticlePreprocessing {
 ## cells; the default is deliberately generous.
 @export_range(4, 200, 1, "suffix:cells") var culling_buffer_cells: int = 40
 
+@export_subgroup("Level open")
+## Build the level progressively across frames instead of blocking the main
+## thread (see LevelBuildJob), so opening a large level never triggers an
+## Android ANR. Turn off for a strict synchronous open when debugging.
+@export var paced_level_open: bool = true
+## Main-thread time budget per frame spent building the level while it opens.
+## Bigger opens faster but stutters the (usually hidden) loading screen more.
+@export_range(4, 120, 1, "suffix:ms") var level_open_frame_budget_ms: int = 40
+
 @export_subgroup("Geometry Dash import")
 ## Draw decoration objects from the bundled Geometry Dash atlases when importing
 ## a `.gmd`. Turning this off restores a gameplay-only import, which loads
