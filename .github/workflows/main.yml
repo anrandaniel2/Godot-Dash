@@ -6,7 +6,12 @@ name: Build Android APK
 #   - Every push to main / arena branches (and every manual dispatch) exports
 #     an APK and uploads it as a workflow artifact. Grab it from the Actions
 #     run page -> Artifacts -> godot-dash-android-debug.
-#   - A push of a `release*` tag also attaches the APK to a GitHub release.
+#   - Every successful export also refreshes the rolling "android-debug"
+#     prerelease with the newest APK, so the latest build is always one
+#     download away (constant URL, no Actions login needed):
+#       https://github.com/anrandaniel2/Godot-Dash/releases/download/android-debug/godot-dash-android-debug.apk
+#   - A push of a `release*` tag additionally creates the stable release for
+#     that tag, as before.
 #
 # The export uses the Godot 4.x Android Gradle build (export preset "Android"
 # has gradle_build/use_gradle_build=true), which lets the manifest be edited:
@@ -240,3 +245,38 @@ jobs:
         with:
           files: ${{ env.APK_PATH }}
           generate_release_notes: true
+
+      # ------------------------------------------------ Rolling debug release
+      - name: Publish rolling android-debug release
+        # Every successful export refreshes the same prerelease (tag + release
+        # are recreated so the tag always points at this build and the
+        # download URL stays constant). The release* tag path above is a
+        # separate, stable release and is untouched.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="android-debug"
+          APK_NAME="godot-dash-android-debug.apk"
+          cp "$APK_PATH" "$APK_NAME"
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "Automatic debug build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
+            echo ""
+            echo "Sideload this APK for device testing (debug-signed, largeHeap enabled)."
+            echo ""
+            echo "Constant download URL:"
+            echo "\`https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_NAME}\`"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$NOTES_FILE"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
+          fi
+          gh release create "$RELEASE_TAG" "$APK_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Android debug APK — $GITHUB_REF_NAME ${GITHUB_SHA::8}" \
+            --notes-file "$NOTES_FILE" \
+            --prerelease
+          rm -f "$NOTES_FILE" "$APK_NAME"
+          echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
