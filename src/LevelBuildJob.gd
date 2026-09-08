@@ -83,6 +83,13 @@ func _place(object_data: Dictionary) -> void:
 	if object_data.get("decoration", false):
 		if _drop_decoration:
 			return
+		if Config.use_decoration_batches_in_play and not Editor.in_editor:
+			# Play build: every decoration, generated scene or not, is drawn by
+			# a shared DecorationBatch (see Config.use_decoration_batches_in_play).
+			# Giving each placement its own GDObject node is what ran large
+			# levels out of heap.
+			_decoration_data.append(object_data)
+			return
 		var placed: GDObject = Level.instantiate_gd_object(object_data, level)
 		if placed != null:
 			placed.set_meta(Constants.LAYER_META, _layer)

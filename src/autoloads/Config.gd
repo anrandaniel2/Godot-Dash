@@ -91,6 +91,15 @@ enum ParticlePreprocessing {
 ## components and editor behaviour are untouched.
 @export var use_gd_artwork: bool = true
 
+## While playing (not editing), draw every decoration through shared
+## DecorationBatch nodes instead of giving each decoration placement its own
+## node. A decorated level has tens of thousands of decoration placements; a
+## node per placement (plus its sprites and HSV watchers) is what made large
+## levels exhaust the device heap. Batches keep the same GD atlas art,
+## per-object groups/z/tint/glow/spin, and join the placements' groups so
+## triggers still drive them. The editor always keeps one node per placement.
+@export var use_decoration_batches_in_play: bool = true
+
 @export_subgroup("Particles")
 @export var show_particles_in_editor: bool = true
 @export var particles_visibility: int = ParticleVisibility.MAX
