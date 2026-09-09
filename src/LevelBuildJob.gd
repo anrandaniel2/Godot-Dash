@@ -31,12 +31,22 @@ var _object_index: int = 0
 var _layer: Layer
 var _layer_initialised: bool = false
 var _decoration_data: Array = []
+## Runtime construction state lives here when the platform extension is
+## available. Untyped because source/editor builds intentionally have no native
+## class and retain the implementation below.
+var _native_job: Object
 
 
 func _init(data: Dictionary) -> void:
 	_data = data
-	level = Level.new()
 	_drop_decoration = Config.ldm and not Editor.in_editor
+	if not Editor.in_editor and NativeCore.available() and ClassDB.class_exists(&"NativeLevelBuildJob"):
+		_native_job = ClassDB.instantiate(&"NativeLevelBuildJob")
+		_native_job.call(&"initialize", data, _drop_decoration)
+		level = _native_job.call(&"get_level") as Level
+		finished = bool(_native_job.call(&"is_finished"))
+		return
+	level = Level.new()
 	_layers_data = _data.layers
 	if _layers_data.is_empty():
 		_finish()
@@ -46,6 +56,11 @@ func _init(data: Dictionary) -> void:
 ## work. Cheap to call with a large budget (the editor path does exactly that).
 func step(budget_ms: int) -> void:
 	if finished:
+		return
+	if _native_job != null:
+		_native_job.call(&"step", budget_ms)
+		finished = bool(_native_job.call(&"is_finished"))
+		level = _native_job.call(&"get_level") as Level
 		return
 	var deadline := Time.get_ticks_msec() + maxi(1, budget_ms)
 	while not finished and Time.get_ticks_msec() < deadline:

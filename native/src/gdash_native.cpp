@@ -5,12 +5,20 @@
 // these C++ kernels for compressed GMD payloads, the per-object GD property
 // parser, decoration ordering/bucketing, and spatial range calculations.
 
+#include <godot_cpp/classes/canvas_item.hpp>
+#include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/shape2d.hpp>
 #include <godot_cpp/classes/marshalls.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -26,6 +34,7 @@
 #include <cstdint>
 #include <map>
 #include <numeric>
+#include <set>
 #include <vector>
 
 namespace godot {
@@ -83,13 +92,15 @@ protected:
 		ClassDB::bind_method(D_METHOD("sort_decoration_indices", "z_orders", "draw_orders", "texture_ids"), &GdashNative::sort_decoration_indices);
 		ClassDB::bind_method(D_METHOD("build_x_buckets", "origins", "bucket_width"), &GdashNative::build_x_buckets);
 		ClassDB::bind_method(D_METHOD("visible_bucket_keys", "keys", "first", "last"), &GdashNative::visible_bucket_keys);
+		ClassDB::bind_method(D_METHOD("commit_collision_shapes", "body", "source", "descriptors"), &GdashNative::commit_collision_shapes);
+		ClassDB::bind_method(D_METHOD("reenable_collision_shapes", "container"), &GdashNative::reenable_collision_shapes);
 	}
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.3.0 / native decoration canvas / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.4.0 / native build-render-cull / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 2; }
+	int64_t version() const { return 4; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	Dictionary parse_gd_pairs(const String &chunk) const {
@@ -167,6 +178,265 @@ public:
 		}
 		return result;
 	}
+
+	Array commit_collision_shapes(Node2D *body, Node2D *source, const Array &descriptors) const {
+		Array added;
+		if (!body || !source) return added;
+		for (int64_t i = 0; i < descriptors.size(); ++i) {
+			const Dictionary descriptor = descriptors[i];
+			Ref<Shape2D> shape = descriptor.get("resource", Variant());
+			if (shape.is_null()) continue;
+			CollisionShape2D *shape_node = memnew(CollisionShape2D);
+			shape_node->set_shape(shape);
+			shape_node->set_debug_color(descriptor.get("debug_color", Color()));
+			body->add_child(shape_node);
+			const Transform2D local = descriptor.get("local_xform", Transform2D());
+			shape_node->set_global_transform(source->get_global_transform() * local);
+			added.append(shape_node);
+		}
+		return added;
+	}
+
+	void reenable_collision_shapes(Node *container) const {
+		if (!container) return;
+		const Array bodies = container->get_children();
+		for (int64_t i = 0; i < bodies.size(); ++i) {
+			Node *body = Object::cast_to<Node>(static_cast<Object *>(bodies[i]));
+			if (!body) continue;
+			const Array shapes = body->get_children();
+			for (int64_t j = 0; j < shapes.size(); ++j) {
+				Object *shape = shapes[j];
+				if (shape && static_cast<bool>(shape->get("disabled"))) shape->set("disabled", false);
+			}
+		}
+	}
+};
+
+// Native visibility index used by FrustumCuller. The facade still computes the
+// camera rectangle (a handful of operations); all large object-set storage,
+// intersection and visibility transitions happen here without GDScript loops.
+class NativeFrustumIndex : public RefCounted {
+	GDCLASS(NativeFrustumIndex, RefCounted)
+
+	struct Entry {
+		uint64_t id = 0;
+		int64_t first = 0;
+		int64_t last = 0;
+	};
+	std::vector<Entry> entries;
+	std::set<uint64_t> hidden;
+	int64_t current_first = INT64_MAX;
+	int64_t current_last = INT64_MIN;
+
+	CanvasItem *canvas_for(uint64_t id) const {
+		Object *object = ObjectDB::get_instance(ObjectID(id));
+		return Object::cast_to<CanvasItem>(object);
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("configure", "objects", "lefts", "rights", "bucket_width"), &NativeFrustumIndex::configure);
+		ClassDB::bind_method(D_METHOD("set_range", "first", "last"), &NativeFrustumIndex::set_range);
+		ClassDB::bind_method(D_METHOD("show_all"), &NativeFrustumIndex::show_all);
+		ClassDB::bind_method(D_METHOD("tracked_count"), &NativeFrustumIndex::tracked_count);
+		ClassDB::bind_method(D_METHOD("hidden_count"), &NativeFrustumIndex::hidden_count);
+	}
+
+public:
+	void configure(const Array &objects, const PackedFloat32Array &lefts,
+			const PackedFloat32Array &rights, double bucket_width) {
+		show_all();
+		entries.clear();
+		const int64_t count = std::min(objects.size(), std::min(lefts.size(), rights.size()));
+		if (bucket_width <= 0.0) return;
+		entries.reserve(static_cast<size_t>(count));
+		for (int64_t i = 0; i < count; ++i) {
+			Object *object = objects[i];
+			CanvasItem *canvas = Object::cast_to<CanvasItem>(object);
+			if (!canvas) continue;
+			Entry entry;
+			entry.id = canvas->get_instance_id();
+			entry.first = static_cast<int64_t>(std::floor(lefts[i] / bucket_width));
+			entry.last = static_cast<int64_t>(std::floor(rights[i] / bucket_width));
+			entries.push_back(entry);
+		}
+		current_first = INT64_MAX;
+		current_last = INT64_MIN;
+	}
+
+	void set_range(int64_t first, int64_t last) {
+		if (first == current_first && last == current_last) return;
+		current_first = first;
+		current_last = last;
+		for (const Entry &entry : entries) {
+			CanvasItem *canvas = canvas_for(entry.id);
+			if (!canvas) {
+				hidden.erase(entry.id);
+				continue;
+			}
+			const bool desired = entry.last >= first && entry.first <= last;
+			if (desired) {
+				auto found = hidden.find(entry.id);
+				if (found != hidden.end()) {
+					Node *node = Object::cast_to<Node>(canvas);
+					if (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED) canvas->set_visible(true);
+					hidden.erase(found);
+				}
+			} else if (canvas->is_visible()) {
+				canvas->set_visible(false);
+				hidden.insert(entry.id);
+			}
+		}
+	}
+
+	void show_all() {
+		for (uint64_t id : hidden) {
+			CanvasItem *canvas = canvas_for(id);
+			Node *node = Object::cast_to<Node>(canvas);
+			if (canvas && (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED)) canvas->set_visible(true);
+		}
+		hidden.clear();
+		current_first = INT64_MAX;
+		current_last = INT64_MIN;
+	}
+
+	int64_t tracked_count() const { return static_cast<int64_t>(entries.size()); }
+	int64_t hidden_count() const { return static_cast<int64_t>(hidden.size()); }
+};
+
+// Native state machine for runtime level construction. It owns iteration,
+// layer creation, placement dispatch and sealing; GDScript's LevelBuildJob is
+// only a source/editor fallback and stable API facade.
+class NativeLevelBuildJob : public RefCounted {
+	GDCLASS(NativeLevelBuildJob, RefCounted)
+
+	Dictionary data;
+	Array layers_data;
+	Array decoration_data;
+	Ref<Script> level_script;
+	Ref<Script> layer_script;
+	Ref<Script> decoration_loader_script;
+	Node *level = nullptr;
+	Node *layer = nullptr;
+	int64_t layer_index = 0;
+	int64_t object_index = 0;
+	bool layer_initialized = false;
+	bool finished = false;
+	bool drop_decoration = false;
+
+	static Ref<Script> load_script(const String &path) {
+		return ResourceLoader::get_singleton()->load(path);
+	}
+
+	static Node *new_script_node(const Ref<Script> &script) {
+		if (script.is_null()) return nullptr;
+		Variant value = script->call("new");
+		Object *object = value;
+		return Object::cast_to<Node>(object);
+	}
+
+	void start_next_layer() {
+		if (layer_index >= layers_data.size()) {
+			finish_build();
+			return;
+		}
+		const Dictionary layer_data = layers_data[layer_index];
+		layer = new_script_node(layer_script);
+		if (!layer) {
+			finish_build();
+			return;
+		}
+		layer->set_name(layer_data.get("name", String("Layer")));
+		layer->set("locked", layer_data.get("locked", false));
+		layer_initialized = true;
+		object_index = 0;
+	}
+
+	void place(const Dictionary &object_data) {
+		if (static_cast<bool>(object_data.get("decoration", false))) {
+			if (!drop_decoration) decoration_data.append(object_data);
+			return;
+		}
+		Variant value = level_script->call("instantiate_object_from_data", object_data, level);
+		Object *object = value;
+		Node *node = Object::cast_to<Node>(object);
+		if (!node) return;
+		node->set_meta("layer", layer);
+		layer->add_child(node);
+	}
+
+	void seal_layer() {
+		if (!decoration_data.is_empty()) {
+			const double scale = decoration_loader_script->call("art_scale");
+			const Array batches = decoration_loader_script->call("build_batches", decoration_data, scale);
+			for (int64_t i = 0; i < batches.size(); ++i) {
+				Object *object = batches[i];
+				Node *batch = Object::cast_to<Node>(object);
+				if (!batch) continue;
+				batch->set_meta("layer", layer);
+				layer->add_child(batch);
+			}
+			decoration_data.clear();
+		}
+		Array layers = level->get("layers");
+		layers.append(layer);
+		level->set("layers", layers);
+		level->add_child(layer);
+		layer = nullptr;
+		layer_initialized = false;
+		++layer_index;
+	}
+
+	void finish_build() {
+		if (finished || !level) return;
+		level->call("use_data", data, 1);
+		level->connect("ready", Callable(level, "setup_color_channel_watchers"), Object::CONNECT_ONE_SHOT);
+		finished = true;
+	}
+
+	void work() {
+		if (!layer_initialized) {
+			start_next_layer();
+			return;
+		}
+		const Dictionary layer_data = layers_data[layer_index];
+		const Array objects = layer_data.get("objects", Array());
+		if (object_index < objects.size()) {
+			place(objects[object_index]);
+			++object_index;
+			return;
+		}
+		seal_layer();
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("initialize", "data", "drop_decoration"), &NativeLevelBuildJob::initialize);
+		ClassDB::bind_method(D_METHOD("step", "budget_ms"), &NativeLevelBuildJob::step);
+		ClassDB::bind_method(D_METHOD("get_level"), &NativeLevelBuildJob::get_level);
+		ClassDB::bind_method(D_METHOD("is_finished"), &NativeLevelBuildJob::is_finished);
+	}
+
+public:
+	void initialize(const Dictionary &p_data, bool p_drop_decoration) {
+		data = p_data;
+		drop_decoration = p_drop_decoration;
+		layers_data = data.get("layers", Array());
+		level_script = load_script("res://src/Level.gd");
+		layer_script = load_script("res://src/Layer.gd");
+		decoration_loader_script = load_script("res://src/static/GDDecorationLoader.gd");
+		level = new_script_node(level_script);
+		if (!level || layers_data.is_empty()) finish_build();
+	}
+
+	void step(int64_t budget_ms) {
+		if (finished) return;
+		const uint64_t deadline = Time::get_singleton()->get_ticks_msec() + static_cast<uint64_t>(std::max<int64_t>(1, budget_ms));
+		while (!finished && Time::get_singleton()->get_ticks_msec() < deadline) work();
+	}
+
+	Node *get_level() const { return level; }
+	bool is_finished() const { return finished; }
 };
 
 // A retained CanvasItem command builder for decoration. DecorationBatch keeps
@@ -301,6 +571,8 @@ namespace {
 void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(godot::GdashNative);
+		GDREGISTER_CLASS(godot::NativeFrustumIndex);
+		GDREGISTER_CLASS(godot::NativeLevelBuildJob);
 		GDREGISTER_CLASS(godot::NativeDecorationCanvas);
 	}
 }

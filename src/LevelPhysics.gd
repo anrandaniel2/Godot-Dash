@@ -100,6 +100,10 @@ static func _reenable_shapes(level: Level) -> void:
 	var container := level.get_node_or_null(CONTAINER_NAME)
 	if container == null:
 		return
+	var native := NativeCore.backend()
+	if native != null:
+		native.call(&"reenable_collision_shapes", container)
+		return
 	for body in container.get_children():
 		for shape in _shape_nodes_of(body):
 			if shape.disabled:
@@ -188,17 +192,20 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 			_chunk_of(object.global_position.x),
 	)
 	var added: Array = []
-	for descriptor in geometry.descriptors:
-		var shape_node: CollisionShape2D = CollisionShape2D.new()
-		shape_node.shape = descriptor.resource
-		shape_node.debug_color = descriptor.debug_color
-		body.add_child(shape_node)
-		# Position the shape where the source shape is in the world: body is at
-		# the container's origin (identity), so applying the object's own global
-		# transform reproduces the shape exactly, including the object's scale,
-		# rotation and flip.
-		shape_node.global_transform = object.global_transform * descriptor.local_xform
-		added.append(shape_node)
+	var native := NativeCore.backend()
+	if native != null:
+		added = native.call(&"commit_collision_shapes", body, object, geometry.descriptors)
+	else:
+		for descriptor in geometry.descriptors:
+			var shape_node: CollisionShape2D = CollisionShape2D.new()
+			shape_node.shape = descriptor.resource
+			shape_node.debug_color = descriptor.debug_color
+			body.add_child(shape_node)
+			# Position the shape where the source shape is in the world: body is at
+			# the container's origin (identity), so applying the object's own global
+			# transform reproduces the shape exactly, including scale/rotation/flip.
+			shape_node.global_transform = object.global_transform * descriptor.local_xform
+			added.append(shape_node)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
 

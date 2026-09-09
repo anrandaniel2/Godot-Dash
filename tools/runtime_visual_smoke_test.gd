@@ -116,7 +116,40 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 2, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 4, "native smoke: old kernel ABI")
+	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
+	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
+	var near := Node2D.new()
+	var far := Node2D.new()
+	add_child(near)
+	add_child(far)
+	var frustum: Object = ClassDB.instantiate(&"NativeFrustumIndex")
+	frustum.call(
+			&"configure", [near, far], PackedFloat32Array([0.0, 100.0]),
+			PackedFloat32Array([5.0, 105.0]), 10.0,
+	)
+	frustum.call(&"set_range", 0, 1)
+	assert(near.visible and not far.visible, "native smoke: frustum rejection")
+	frustum.call(&"show_all")
+	assert(far.visible, "native smoke: frustum restore")
+	near.queue_free()
+	far.queue_free()
+	var collision_body := Node2D.new()
+	var collision_source := Node2D.new()
+	collision_source.position = Vector2(25, 30)
+	add_child(collision_body)
+	add_child(collision_source)
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(10, 12)
+	var committed: Array = native.call(&"commit_collision_shapes", collision_body, collision_source, [{
+		"resource": shape,
+		"debug_color": Color.RED,
+		"local_xform": Transform2D(0.0, Vector2(3, 4)),
+	}])
+	assert(committed.size() == 1 and collision_body.get_child_count() == 1, "native smoke: physics shape commit")
+	assert((committed[0] as CollisionShape2D).global_position == Vector2(28, 34), "native smoke: physics transform")
+	collision_body.queue_free()
+	collision_source.queue_free()
 	var pairs: Dictionary = native.call(&"parse_gd_pairs", "1,42,2,15.5,57,7")
 	assert(pairs == {"1": "42", "2": "15.5", "57": "7"}, "native smoke: GD pair parser")
 	var order: PackedInt32Array = native.call(

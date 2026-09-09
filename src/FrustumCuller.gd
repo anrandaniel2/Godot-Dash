@@ -63,10 +63,15 @@ var _built_for_count: int = -1
 var _last_first: int = 0x7fffffff
 var _last_last: int = -0x7fffffff
 var _active: bool = false
+## Packed C++ visibility index. The GDScript structures remain as a portable
+## source/editor fallback.
+var _native_index: Object
 
 
 func _ready() -> void:
 	level = get_parent() as Level
+	if NativeCore.available() and ClassDB.class_exists(&"NativeFrustumIndex"):
+		_native_index = ClassDB.instantiate(&"NativeFrustumIndex")
 	set_process(false)
 	LevelManager.level_started.connect(_on_level_started)
 	LevelManager.level_stopped.connect(_on_level_stopped)
@@ -81,10 +86,31 @@ func rebuild() -> void:
 	_tracked = 0
 	if level == null:
 		return
-	for layer: Layer in level.layers:
-		for child: Node in layer.get_children():
-			if child is Node2D:
-				track(child)
+	if _native_index != null:
+		var objects: Array = []
+		var lefts := PackedFloat32Array()
+		var rights := PackedFloat32Array()
+		for current_layer: Layer in level.layers:
+			for child: Node in current_layer.get_children():
+				if child is not Node2D or not is_cullable(child):
+					continue
+				var span := _horizontal_span(child)
+				_tracked += 1
+				if span.y - span.x > OVERSIZE_CELLS * Constants.CELL_SIZE:
+					_oversize.append(child)
+					continue
+				objects.append(child)
+				lefts.append(span.x)
+				rights.append(span.y)
+		_native_index.call(
+				&"configure", objects, lefts, rights,
+				BUCKET_CELLS * Constants.CELL_SIZE,
+		)
+	else:
+		for current_layer: Layer in level.layers:
+			for child: Node in current_layer.get_children():
+				if child is Node2D:
+					track(child)
 	_last_first = 0x7fffffff
 	_last_last = -0x7fffffff
 
@@ -178,6 +204,8 @@ func _exit_tree() -> void:
 
 ## Restores everything this manager hid. Objects a trigger hid stay hidden.
 func show_all() -> void:
+	if _native_index != null:
+		_native_index.call(&"show_all")
 	for object: Node2D in _hidden:
 		if is_instance_valid(object) and object.process_mode != Node.PROCESS_MODE_DISABLED:
 			object.visible = true
@@ -210,6 +238,11 @@ func _update() -> void:
 	var last: int = _bucket_of(view.end.x)
 	var had_range: bool = _last_first <= _last_last
 	if had_range and first == _last_first and last == _last_last:
+		return
+	if _native_index != null:
+		_native_index.call(&"set_range", first, last)
+		_last_first = first
+		_last_last = last
 		return
 
 	if not had_range:
@@ -301,4 +334,6 @@ func tracked_count() -> int:
 
 ## Number of objects currently hidden by the manager.
 func hidden_count() -> int:
+	if _native_index != null:
+		return int(_native_index.call(&"hidden_count"))
 	return _hidden.size()
