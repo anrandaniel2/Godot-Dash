@@ -3,10 +3,12 @@ class_name GDDecorationLoader
 ## Geometry Dash artwork lookups shared by the importer, the per-object scenes
 ## and the batched fallback renderer.
 ##
-## Placed objects are normally instances of the generated per-type scenes in
-## [code]scenes/gd_objects[/code] ([GDObject]); [method build_batches] is the
-## fallback for object types that have no scene yet. Both read the same packed
-## atlas ([GDSpriteSheet]), cached for the lifetime of the process.
+## The editor uses generated per-type scenes in [code]scenes/gd_objects[/code]
+## ([GDObject]) so artwork remains selectable. Runtime level construction uses
+## [method build_batches] for all decoration, including mapped types with a
+## generated scene, to avoid a SceneTree node hierarchy per placement. Both
+## paths read the same packed atlas ([GDSpriteSheet]), cached for the lifetime
+## of the process.
 
 ## Atlas pixels per Geometry Dash grid unit, for the `-hd` sheets.
 ##

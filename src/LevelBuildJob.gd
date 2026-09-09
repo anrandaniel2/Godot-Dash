@@ -10,12 +10,13 @@ extends RefCounted
 ## millisecond budget once per frame - Android would otherwise show an ANR
 ## dialog while a large level opens.
 ##
-## The construction order is identical to the old synchronous build: gameplay
-## placements and decoration placements that have a generated scene become one
-## [GDObject]/scene node each, in data order per layer; decorations without a
-## generated scene are collected and drawn by [DecorationBatch] nodes appended
-## after the layer's real objects; only then does the level apply its data
-## fields and deserialize onto the finished tree.
+## Gameplay placements keep their individual nodes. In the editor, decoration
+## placements also keep generated [GDObject] scenes for selection and editing;
+## at runtime every mapped decoration is collected into [DecorationBatch]
+## nodes. This removes the enormous SceneTree built by art-heavy levels while
+## leaving gameplay, collisions and triggers on their established code path.
+## Batches are appended after each layer's real objects; only then does the
+## level apply its data fields and deserialize onto the finished tree.
 
 ## The level being built. Only fully usable once [member finished] is true.
 var level: Level
@@ -82,6 +83,14 @@ func _start_next_layer() -> void:
 func _place(object_data: Dictionary) -> void:
 	if object_data.get("decoration", false):
 		if _drop_decoration:
+			return
+		if not Editor.in_editor:
+			# A generated gd_<id>.tscn is useful for editor selection, but it is
+			# catastrophically expensive as a runtime representation: every
+			# placement brings Node2D/Sprite2D/watcher/selection children. Feed
+			# runtime decoration directly to the now render-tested atlas batcher.
+			# Gameplay objects are deliberately NOT converted here.
+			_decoration_data.append(object_data)
 			return
 		var placed: GDObject = Level.instantiate_gd_object(object_data, level)
 		if placed != null:
