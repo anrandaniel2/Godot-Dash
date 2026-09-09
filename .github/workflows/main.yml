@@ -137,49 +137,49 @@ jobs:
       - name: Install scons
         run: pip3 install --break-system-packages -q scons
 
-      - name: Cache godot-cpp, scons cache and NDK
+      - name: Cache scons build cache
         uses: actions/cache@v4
-        id: cache-native
         with:
-          path: |
-            native/godot-cpp
-            native/scons-cache
-            /usr/local/lib/android/sdk/ndk
-          key: native-${{ env.GODOT_CPP_REF }}-ndk${{ env.NDK_VERSION }}
+          path: native/scons-cache
+          key: native-scons-${{ env.GODOT_CPP_REF }}-api47
 
+      # godot-cpp is cloned fresh each run (small, shallow) rather than cached:
+      # caching it alongside the multi-GB NDK made cache restore unreliable.
       - name: Checkout pinned godot-cpp
-        if: steps.cache-native.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 https://github.com/godotengine/godot-cpp native/godot-cpp
-          git -C native/godot-cpp fetch --depth 1 origin "${{ env.GODOT_CPP_REF }}"
-          git -C native/godot-cpp checkout --detach "${{ env.GODOT_CPP_REF }}"
-          git -C native/godot-cpp log -1 --oneline
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
 
-      - name: Install Android NDK
-        if: steps.cache-native.outputs.cache-hit != 'true'
+      - name: Locate or install Android NDK
         run: |
           : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
-          SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
-          NDK_DIR="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
-          if [ ! -d "$NDK_DIR" ]; then
+          # Use an already-installed NDK if present (runners ship one), else
+          # install the pinned version. Any modern NDK compiles godot-cpp.
+          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1 || true)
+          if [ -z "$NDK_DIR" ]; then
+            SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
             if [ ! -x "$SDKMANAGER" ]; then
-              echo "sdkmanager not found and NDK missing at $NDK_DIR"; exit 1
+              echo "no NDK installed and sdkmanager not found at $SDKMANAGER"; exit 1
             fi
-            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;${{ env.NDK_VERSION }}" >/dev/null || true
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;${{ env.NDK_VERSION }}" >/dev/null
+            NDK_DIR="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
           fi
-          if [ ! -d "$NDK_DIR" ]; then
-            echo "NDK ${{ env.NDK_VERSION }} still missing; installed versions:"; ls "$ANDROID_HOME/ndk"; exit 1
-          fi
-          echo "NDK ready: $NDK_DIR"
+          [ -d "$NDK_DIR" ] || { echo "NDK still missing at $NDK_DIR"; ls "$ANDROID_HOME/ndk"; exit 1; }
+          echo "NDK_DIR=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "Using NDK: $NDK_DIR"
 
       - name: Build gdash_native (Android arm64, Godot 4.7 API)
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
           export SCONS_CACHE="$(pwd)/native/scons-cache"
+          NDK_VERSION="$(basename "$NDK_DIR")"
           cd native
           scons platform=android target=template_debug arch=arm64 \
-            api_version=4.7 ndk_version="${{ env.NDK_VERSION }}" -j2
+            api_version=4.7 ndk_version="$NDK_VERSION" -j2
           mkdir -p bin/android_debug/arm64-v8a
           cp bin/libgdash_native*.so bin/android_debug/arm64-v8a/libgdash_native.so
           ls -lh bin/android_debug/arm64-v8a/
