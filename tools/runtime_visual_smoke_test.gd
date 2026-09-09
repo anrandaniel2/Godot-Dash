@@ -5,9 +5,14 @@ extends Node
 
 const TEST_ID := 1
 const VIEW_SIZE := Vector2i(640, 256)
+# The project uses a 1920-wide canvas stretched into this 640-wide test
+# window, so render placements use logical coordinates while samples use
+# captured-image coordinates (3:1 here).
 const SAMPLE_Y := 128
 const DIRECT_X := 160
 const BATCH_X := 480
+const DIRECT_WORLD := Vector2(480, 384)
+const BATCH_WORLD := Vector2(1440, 384)
 const SAMPLE_RADIUS := 90
 
 var _frames := 0
@@ -18,7 +23,7 @@ func _ready() -> void:
 	get_viewport().transparent_bg = true
 	RenderingServer.set_default_clear_color(Color(0, 0, 0, 0))
 
-	var data := _object_data(Vector2(DIRECT_X, SAMPLE_Y))
+	var data := _object_data(DIRECT_WORLD)
 	var packed := load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene
 	assert(packed != null, "visual smoke: generated GD scene is missing")
 	var direct := packed.instantiate() as GDObject
@@ -26,7 +31,7 @@ func _ready() -> void:
 	direct.setup(data)
 	add_child(direct)
 
-	data = _object_data(Vector2(BATCH_X, SAMPLE_Y))
+	data = _object_data(BATCH_WORLD)
 	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
