@@ -8,14 +8,13 @@ const VIEW_SIZE := Vector2i(640, 256)
 # The project uses a 1920-wide canvas stretched into this 640-wide test
 # window, so render placements use logical coordinates while samples use
 # captured-image coordinates (3:1 here).
-const SAMPLE_Y := 128
-const DIRECT_X := 160
-const BATCH_X := 480
 const DIRECT_WORLD := Vector2(480, 384)
 const BATCH_WORLD := Vector2(1440, 384)
 const SAMPLE_RADIUS := 90
 
 var _frames := 0
+var _direct: Node2D
+var _batch: DecorationBatch
 
 
 func _ready() -> void:
@@ -30,12 +29,14 @@ func _ready() -> void:
 	assert(direct != null, "visual smoke: generated GD scene did not instantiate as GDObject")
 	direct.setup(data)
 	add_child(direct)
+	_direct = direct
 
 	data = _object_data(BATCH_WORLD)
 	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
 		add_child(batch)
+		_batch = batch
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
 		batch.queue_redraw()
 		var item: DecorationBatch.Item = batch.items[0]
@@ -51,12 +52,17 @@ func _process(_delta: float) -> void:
 		return
 	var image := get_viewport().get_texture().get_image()
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
-	var direct_pixels := _opaque_pixels(image, DIRECT_X)
-	var batch_pixels := _opaque_pixels(image, BATCH_X)
+	# Canvas stretch/aspect settings vary with the test window. Ask each
+	# CanvasItem for the actual world-to-viewport transform instead of assuming
+	# a scale ratio.
+	var direct_center := _direct.get_viewport_transform() * DIRECT_WORLD
+	var batch_center := _batch.get_viewport_transform() * BATCH_WORLD
+	var direct_pixels := _opaque_pixels(image, direct_center)
+	var batch_pixels := _opaque_pixels(image, batch_center)
 	var opaque_bounds := _opaque_bounds(image)
 	print(
-			"VISUAL_SMOKE size=%s bounds=%s direct=%d batch=%d"
-			% [image.get_size(), opaque_bounds, direct_pixels, batch_pixels]
+			"VISUAL_SMOKE size=%s bounds=%s centers=%s/%s direct=%d batch=%d"
+			% [image.get_size(), opaque_bounds, direct_center, batch_center, direct_pixels, batch_pixels]
 	)
 	if direct_pixels < 100 or batch_pixels < 100:
 		image.save_png("user://runtime_visual_smoke_failure.png")
@@ -69,12 +75,12 @@ func _process(_delta: float) -> void:
 	get_tree().quit(0)
 
 
-func _opaque_pixels(image: Image, center_x: int) -> int:
+func _opaque_pixels(image: Image, center: Vector2) -> int:
 	var count := 0
-	var left := maxi(0, center_x - SAMPLE_RADIUS)
-	var right := mini(image.get_width(), center_x + SAMPLE_RADIUS)
-	var top := maxi(0, SAMPLE_Y - SAMPLE_RADIUS)
-	var bottom := mini(image.get_height(), SAMPLE_Y + SAMPLE_RADIUS)
+	var left := maxi(0, roundi(center.x) - SAMPLE_RADIUS)
+	var right := mini(image.get_width(), roundi(center.x) + SAMPLE_RADIUS)
+	var top := maxi(0, roundi(center.y) - SAMPLE_RADIUS)
+	var bottom := mini(image.get_height(), roundi(center.y) + SAMPLE_RADIUS)
 	for y in range(top, bottom):
 		for x in range(left, right):
 			if image.get_pixel(x, y).a > 0.05:
