@@ -31,6 +31,13 @@ func _ready() -> void:
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
 		add_child(batch)
+		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
+		batch.queue_redraw()
+		var item: DecorationBatch.Item = batch.items[0]
+		print(
+				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
+				% [batch.items.size(), item.transform, item.region, item.modulate, item.texture]
+		)
 
 
 func _process(_delta: float) -> void:
