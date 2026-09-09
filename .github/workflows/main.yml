@@ -361,16 +361,32 @@ jobs:
           echo "--- export log GDExtension/gdash lines ---"
           grep -in "gdextension\|gdash\|no .* library\|Copying .so" godot_export.log || echo "(no matches)"
 
-      - name: Verify libgdash_native.so is bundled in the APK
+      - name: Verify APK is arm64-v8a only and contains gdash_native
         run: |
           set -euo pipefail
           echo "native libs inside APK:"
           unzip -l "$APK_PATH" | grep -E "lib/" || true
-          unzip -l "$APK_PATH" | grep -q "lib/arm64-v8a/libgdash_native.so" || {
-            echo "ERROR: libgdash_native.so is not inside the APK"
+
+          # Keep the APK single-ABI. export_presets.cfg enables only
+          # architectures/arm64-v8a, but assert the final archive as well so a
+          # future Godot/Gradle template cannot silently add 32-bit or x86
+          # engine libraries and inflate the download.
+          mapfile -t ABIS < <(
+            unzip -Z1 "$APK_PATH" \
+              | sed -n 's#^lib/\([^/]*\)/.*#\1#p' \
+              | sort -u
+          )
+          printf 'packaged ABI: %s\n' "${ABIS[@]:-(none)}"
+          if [ "${#ABIS[@]}" -ne 1 ] || [ "${ABIS[0]}" != "arm64-v8a" ]; then
+            echo "ERROR: APK must contain exactly one ABI: arm64-v8a"
+            exit 1
+          fi
+
+          unzip -t "$APK_PATH" "lib/arm64-v8a/libgdash_native.so" >/dev/null || {
+            echo "ERROR: libgdash_native.so is not inside the arm64-v8a APK"
             exit 1
           }
-          echo "libgdash_native.so present in APK"
+          echo "verified: arm64-v8a only, libgdash_native.so present"
 
       # -------------------------------------------------------------- Outputs
       - name: Upload APK artifact
