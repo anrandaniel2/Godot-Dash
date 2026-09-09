@@ -276,6 +276,30 @@ jobs:
           tail -n 30 godot_import.log
           exit $status
 
+      # A successful import only proves scripts parse. Exercise both GD artwork
+      # render paths and inspect real viewport pixels so an optimization cannot
+      # ship an APK in which levels load but every object is invisible.
+      - name: Render generated and batched GD artwork smoke test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            --script tools/runtime_visual_smoke_test.gd \
+            > visual_smoke.log 2>&1
+          status=$?
+          set -e
+          cat visual_smoke.log
+          grep -q "VISUAL_SMOKE" visual_smoke.log || {
+            echo "visual smoke test produced no result"; exit 1;
+          }
+          exit $status
+
       # If the import-time scan never registered native/gdash_native.gdextension,
       # the exporter has nothing to attach the .so to (and the exported app's
       # runtime loader would not know the extension either). This check turns
