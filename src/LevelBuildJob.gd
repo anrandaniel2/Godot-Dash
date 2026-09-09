@@ -10,13 +10,12 @@ extends RefCounted
 ## millisecond budget once per frame - Android would otherwise show an ANR
 ## dialog while a large level opens.
 ##
-## The construction order matches the old synchronous build: gameplay
-## placements become one [GDObject]/scene node each, in data order per layer.
-## In play, every decoration is drawn by shared [DecorationBatch] nodes (see
-## [member Config.use_decoration_batches_in_play]) appended after the layer's
-## real objects, so a decorated level costs a few hundred nodes instead of one
-## per placement; the editor keeps one node per decoration instead. Only then
-## does the level apply its data fields and deserialize onto the finished tree.
+## The construction order is identical to the old synchronous build: gameplay
+## placements and decoration placements that have a generated scene become one
+## [GDObject]/scene node each, in data order per layer; decorations without a
+## generated scene are collected and drawn by [DecorationBatch] nodes appended
+## after the layer's real objects; only then does the level apply its data
+## fields and deserialize onto the finished tree.
 
 ## The level being built. Only fully usable once [member finished] is true.
 var level: Level
@@ -83,13 +82,6 @@ func _start_next_layer() -> void:
 func _place(object_data: Dictionary) -> void:
 	if object_data.get("decoration", false):
 		if _drop_decoration:
-			return
-		if Config.use_decoration_batches_in_play and not Editor.in_editor:
-			# Play build: every decoration, generated scene or not, is drawn by
-			# a shared DecorationBatch (see Config.use_decoration_batches_in_play).
-			# Giving each placement its own GDObject node is what ran large
-			# levels out of heap.
-			_decoration_data.append(object_data)
 			return
 		var placed: GDObject = Level.instantiate_gd_object(object_data, level)
 		if placed != null:
