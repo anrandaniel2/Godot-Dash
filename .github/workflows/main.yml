@@ -297,6 +297,17 @@ jobs:
           fi
           ls -lh "$APK_PATH"
 
+      - name: Verify libgdash_native.so is bundled in the APK
+        run: |
+          set -euo pipefail
+          echo "native libs inside APK:"
+          unzip -l "$APK_PATH" | grep -E "lib/" || true
+          unzip -l "$APK_PATH" | grep -q "lib/arm64-v8a/libgdash_native.so" || {
+            echo "ERROR: libgdash_native.so is not inside the APK"
+            exit 1
+          }
+          echo "libgdash_native.so present in APK"
+
       # -------------------------------------------------------------- Outputs
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
