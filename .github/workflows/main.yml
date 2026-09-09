@@ -300,14 +300,14 @@ jobs:
             echo '```text' >> "$GITHUB_STEP_SUMMARY"
             tail -n 80 visual_smoke.log >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            # Surface the tail through check annotations as well; Actions log
-            # blobs are not always retrievable from the sandbox.
-            while IFS= read -r line; do
-              line=${line//'%'/'%25'}
-              line=${line//$'\r'/'%0D'}
-              line=${line//$'\n'/'%0A'}
-              echo "::error title=Visual smoke::${line}"
-            done < <(tail -n 30 visual_smoke.log)
+            # Surface the complete tail in one check annotation as well;
+            # Actions retains only the first ten annotations from a step and
+            # its raw log blobs are not always retrievable from the sandbox.
+            details=$(tail -n 80 visual_smoke.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Visual smoke::${details}"
             exit 1
           fi
 
