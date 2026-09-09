@@ -100,6 +100,9 @@ class Item:
 	var object_hsv_shift: PackedFloat32Array = PackedFloat32Array()
 	## Geometry Dash's "high detail" flag (key 103), kept for saving.
 	var high_detail: bool = false
+	## Position in the native renderer's packed record array, or -1 when the
+	## GDScript fallback renderer is active.
+	var render_index: int = -1
 
 
 ## Every item in this batch.
@@ -134,6 +137,9 @@ var _cull: bool = false
 ## Local-space bounds of every item, used for a cheap whole-batch visibility
 ## test before any per-bucket work.
 var _bounds: Rect2 = Rect2()
+## C++ retained draw-command builder. Kept untyped so source/editor builds can
+## parse without the optional platform library.
+var _native_canvas: Node2D
 
 
 func _init() -> void:
@@ -156,7 +162,15 @@ func _ready() -> void:
 	# build() normally runs while the level is detached from the SceneTree.
 	# queue_redraw() issued there is not retained by CanvasItem, so explicitly
 	# request the first draw once the batch has entered a viewport.
-	queue_redraw()
+	if _native_canvas != null:
+		if _cull:
+			_last_visible = _visible_buckets()
+			var first: int = _last_visible[0] if not _last_visible.is_empty() else 1
+			var last: int = _last_visible[-1] if not _last_visible.is_empty() else 0
+			_native_canvas.call(&"set_visible_buckets", first, last)
+		_native_canvas.queue_redraw()
+	else:
+		queue_redraw()
 
 
 ## Adds an item, returning it so the caller can keep configuring it.
@@ -252,10 +266,58 @@ func build() -> void:
 				bucket_items.append(items[index])
 			_buckets[bucket] = bucket_items
 
+	_build_native_canvas(native)
 	_built = true
 	_last_visible = PackedInt32Array()
 	set_process(_cull or not _spinning.is_empty())
-	queue_redraw()
+	_request_redraw()
+
+
+## Packs the sorted item records once and hands them to the retained C++
+## CanvasItem. Trigger transforms remain on this parent; only command emission
+## and spatial rejection move native, so behaviour is unchanged.
+func _build_native_canvas(native: Object) -> void:
+	if _native_canvas != null:
+		_native_canvas.queue_free()
+		_native_canvas = null
+	for item: Item in items:
+		item.render_index = -1
+	if native == null or not ClassDB.class_exists(&"NativeDecorationCanvas"):
+		return
+	_native_canvas = ClassDB.instantiate(&"NativeDecorationCanvas") as Node2D
+	if _native_canvas == null:
+		return
+	_native_canvas.name = "NativeCanvas"
+	add_child(_native_canvas, false, INTERNAL_MODE_BACK)
+	var textures: Array = []
+	var regions: Array = []
+	var transforms: Array = []
+	var colors := PackedColorArray()
+	var origins := PackedFloat32Array()
+	textures.resize(items.size())
+	regions.resize(items.size())
+	transforms.resize(items.size())
+	colors.resize(items.size())
+	origins.resize(items.size())
+	for index in items.size():
+		var item: Item = items[index]
+		item.render_index = index
+		textures[index] = item.texture
+		regions[index] = item.region
+		transforms[index] = item.transform
+		colors[index] = item.modulate
+		origins[index] = item.origin_x
+	_native_canvas.call(
+			&"configure", textures, regions, transforms, colors, origins,
+			_cull, BUCKET_WIDTH,
+	)
+
+
+func _request_redraw() -> void:
+	if _native_canvas != null:
+		_native_canvas.queue_redraw()
+	else:
+		queue_redraw()
 
 
 ## Recolours every item bound to [param channel].
@@ -291,9 +353,11 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 		# makes faint scenery vanish.
 		tinted.a = color.a * item.base_alpha
 		item.modulate = tinted
+		if _native_canvas != null and item.render_index >= 0:
+			_native_canvas.call(&"set_item_color", item.render_index, tinted)
 		changed = true
 	if changed:
-		queue_redraw()
+		_request_redraw()
 
 
 ## Local-space bounds of the whole batch, for editor selection and culling.
@@ -321,14 +385,21 @@ func _process(delta: float) -> void:
 	if not _spinning.is_empty():
 		for item: Item in _spinning:
 			item.transform = item.transform.rotated_local(deg_to_rad(item.spin * delta))
-		queue_redraw()
+			if _native_canvas != null and item.render_index >= 0:
+				_native_canvas.call(&"set_item_transform", item.render_index, item.transform)
+		_request_redraw()
 
 	if not _cull:
 		return
 	var visible_buckets: PackedInt32Array = _visible_buckets()
 	if visible_buckets != _last_visible:
 		_last_visible = visible_buckets
-		queue_redraw()
+		if _native_canvas != null:
+			var first: int = visible_buckets[0] if not visible_buckets.is_empty() else 1
+			var last: int = visible_buckets[-1] if not visible_buckets.is_empty() else 0
+			_native_canvas.call(&"set_visible_buckets", first, last)
+		else:
+			queue_redraw()
 
 
 ## Bucket indices overlapping the current camera view.
@@ -353,7 +424,9 @@ func _visible_buckets() -> PackedInt32Array:
 
 
 func _draw() -> void:
-	if items.is_empty():
+	# The child owns the retained command list on native builds. Keeping this
+	# method as the fallback preserves editor/source compatibility.
+	if _native_canvas != null or items.is_empty():
 		return
 
 	if not _cull:

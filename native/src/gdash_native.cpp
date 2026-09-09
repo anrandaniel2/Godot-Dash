@@ -7,11 +7,15 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/marshalls.hpp>
+#include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_int64_array.hpp>
@@ -83,7 +87,7 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.2.0 / level kernels / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.3.0 / native decoration canvas / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
 	int64_t version() const { return 2; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
@@ -165,11 +169,105 @@ public:
 	}
 };
 
+// A retained CanvasItem command builder for decoration. DecorationBatch keeps
+// trigger/channel semantics in its compatibility facade, while this class
+// performs the expensive atlas command emission and spatial filtering in C++.
+// Godot retains the resulting draw list until queue_redraw(), so stationary
+// frames execute no GDScript drawing loop at all.
+class NativeDecorationCanvas : public Node2D {
+	GDCLASS(NativeDecorationCanvas, Node2D)
+
+	struct Record {
+		Ref<Texture2D> texture;
+		Rect2 region;
+		Transform2D transform;
+		Color color;
+		float origin_x = 0.0f;
+	};
+
+	std::vector<Record> records;
+	bool cull = false;
+	double bucket_width = 4096.0;
+	int64_t first_bucket = INT64_MIN;
+	int64_t last_bucket = INT64_MAX;
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("configure", "textures", "regions", "transforms", "colors", "origins", "enable_culling", "width"), &NativeDecorationCanvas::configure);
+		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationCanvas::set_visible_buckets);
+		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationCanvas::set_item_color);
+		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationCanvas::set_item_transform);
+		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationCanvas::item_count);
+	}
+
+	void _notification(int what) {
+		if (what != CanvasItem::NOTIFICATION_DRAW) return;
+		for (const Record &record : records) {
+			if (cull) {
+				const int64_t bucket = static_cast<int64_t>(std::floor(record.origin_x / bucket_width));
+				if (bucket < first_bucket || bucket > last_bucket) continue;
+			}
+			draw_set_transform_matrix(record.transform);
+			draw_texture_rect_region(record.texture,
+					Rect2(-record.region.size * 0.5, record.region.size),
+					record.region, record.color);
+		}
+		draw_set_transform_matrix(Transform2D());
+	}
+
+public:
+	NativeDecorationCanvas() { set_use_parent_material(true); }
+
+	void configure(const Array &textures, const Array &regions, const Array &transforms,
+			const PackedColorArray &colors, const PackedFloat32Array &origins,
+			bool enable_culling, double width) {
+		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size()});
+		records.clear();
+		records.reserve(static_cast<size_t>(count));
+		for (int64_t i = 0; i < count; ++i) {
+			Record record;
+			record.texture = textures[i];
+			record.region = regions[i];
+			record.transform = transforms[i];
+			record.color = colors[i];
+			record.origin_x = origins[i];
+			records.push_back(record);
+		}
+		cull = enable_culling;
+		bucket_width = width > 0.0 ? width : 4096.0;
+		queue_redraw();
+	}
+
+	void set_visible_buckets(int64_t first, int64_t last) {
+		if (first == first_bucket && last == last_bucket) return;
+		first_bucket = first;
+		last_bucket = last;
+		queue_redraw();
+	}
+
+	void set_item_color(int64_t index, const Color &color) {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return;
+		records[static_cast<size_t>(index)].color = color;
+		queue_redraw();
+	}
+
+	void set_item_transform(int64_t index, const Transform2D &transform) {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return;
+		records[static_cast<size_t>(index)].transform = transform;
+		queue_redraw();
+	}
+
+	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
+};
+
 } // namespace godot
 
 namespace {
 void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
-	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) GDREGISTER_CLASS(godot::GdashNative);
+	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
+		GDREGISTER_CLASS(godot::GdashNative);
+		GDREGISTER_CLASS(godot::NativeDecorationCanvas);
+	}
 }
 void gdash_native_terminate(godot::ModuleInitializationLevel) {}
 } // namespace

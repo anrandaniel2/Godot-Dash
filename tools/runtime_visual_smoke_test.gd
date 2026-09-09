@@ -40,6 +40,10 @@ func _ready() -> void:
 		add_child(batch)
 		_batch = batch
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
+		if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+			var native_canvas := batch.get_node_or_null("NativeCanvas")
+			assert(native_canvas != null, "native smoke: DecorationBatch did not create native canvas")
+			assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
 		var item: DecorationBatch.Item = batch.items[0]
 		print(
 				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
