@@ -290,7 +290,7 @@ jobs:
           xvfb-run -a "$GODOT_BIN" --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
-            --script tools/runtime_visual_smoke_test.gd \
+            res://tools/runtime_visual_smoke_test.tscn \
             > visual_smoke.log 2>&1
           status=$?
           set -e

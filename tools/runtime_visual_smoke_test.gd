@@ -1,7 +1,7 @@
-extends SceneTree
-## Off-screen rendering regression test for the two Geometry Dash artwork paths.
-## CI runs this under Xvfb after importing resources. It fails if either the
-## generated GDObject scene or DecorationBatch produces no visible pixels.
+extends Node
+## Real-renderer regression test for both Geometry Dash artwork paths. This is
+## launched as a project scene (not with --script) so normal autoloads and
+## class-name dependencies are present, matching the exported game.
 
 const TEST_ID := 1
 const VIEW_SIZE := Vector2i(640, 256)
@@ -13,42 +13,31 @@ const SAMPLE_RADIUS := 90
 var _frames := 0
 
 
-func _initialize() -> void:
-	root.size = VIEW_SIZE
-	root.transparent_bg = true
+func _ready() -> void:
+	get_window().size = VIEW_SIZE
+	get_viewport().transparent_bg = true
 	RenderingServer.set_default_clear_color(Color(0, 0, 0, 0))
-
-	var world := Node2D.new()
-	root.add_child(world)
 
 	var data := _object_data(Vector2(DIRECT_X, SAMPLE_Y))
 	var packed := load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene
 	assert(packed != null, "visual smoke: generated GD scene is missing")
-	var direct := packed.instantiate()
-	assert(direct != null, "visual smoke: generated GD scene did not instantiate")
-	print(
-			"VISUAL_SMOKE_SCENE class=%s script=%s setup=%s"
-			% [direct.get_class(), direct.get_script(), direct.has_method(&"setup")]
-	)
-	# Packed artwork is already positioned around its scene root. A custom
-	# SceneTree test does not load project autoloads, so project scripts whose
-	# globals depend on those autoloads may be absent; positioning the root still
-	# exercises the generated sprites and textures themselves.
-	direct.position = Vector2(DIRECT_X, SAMPLE_Y)
-	world.add_child(direct)
+	var direct := packed.instantiate() as GDObject
+	assert(direct != null, "visual smoke: generated GD scene did not instantiate as GDObject")
+	direct.setup(data)
+	add_child(direct)
 
 	data = _object_data(Vector2(BATCH_X, SAMPLE_Y))
 	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
-		world.add_child(batch)
+		add_child(batch)
 
 
-func _process(_delta: float) -> bool:
+func _process(_delta: float) -> void:
 	_frames += 1
 	if _frames < 8:
-		return false
-	var image := root.get_texture().get_image()
+		return
+	var image := get_viewport().get_texture().get_image()
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
 	var direct_pixels := _opaque_pixels(image, DIRECT_X)
 	var batch_pixels := _opaque_pixels(image, BATCH_X)
@@ -59,10 +48,9 @@ func _process(_delta: float) -> bool:
 				"visual smoke failed: generated scene=%d pixels, decoration batch=%d pixels"
 				% [direct_pixels, batch_pixels]
 		)
-		quit(1)
-		return true
-	quit(0)
-	return true
+		get_tree().quit(1)
+		return
+	get_tree().quit(0)
 
 
 func _opaque_pixels(image: Image, center_x: int) -> int:
