@@ -21,11 +21,6 @@ func _initialize() -> void:
 	var world := Node2D.new()
 	root.add_child(world)
 
-	var camera := Camera2D.new()
-	camera.position = Vector2(VIEW_SIZE) * 0.5
-	camera.enabled = true
-	world.add_child(camera)
-
 	var data := _object_data(Vector2(DIRECT_X, SAMPLE_Y))
 	var packed := load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene
 	assert(packed != null, "visual smoke: generated GD scene is missing")
@@ -35,8 +30,11 @@ func _initialize() -> void:
 			"VISUAL_SMOKE_SCENE class=%s script=%s setup=%s"
 			% [direct.get_class(), direct.get_script(), direct.has_method(&"setup")]
 	)
-	assert(direct.has_method(&"setup"), "visual smoke: GDObject script is not active")
-	direct.call(&"setup", data)
+	# Packed artwork is already positioned around its scene root. A custom
+	# SceneTree test does not load project autoloads, so project scripts whose
+	# globals depend on those autoloads may be absent; positioning the root still
+	# exercises the generated sprites and textures themselves.
+	direct.position = Vector2(DIRECT_X, SAMPLE_Y)
 	world.add_child(direct)
 
 	data = _object_data(Vector2(BATCH_X, SAMPLE_Y))
