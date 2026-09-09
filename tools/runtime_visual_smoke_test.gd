@@ -29,9 +29,14 @@ func _initialize() -> void:
 	var data := _object_data(Vector2(DIRECT_X, SAMPLE_Y))
 	var packed := load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene
 	assert(packed != null, "visual smoke: generated GD scene is missing")
-	var direct := packed.instantiate() as GDObject
+	var direct := packed.instantiate()
 	assert(direct != null, "visual smoke: generated GD scene did not instantiate")
-	direct.setup(data)
+	print(
+			"VISUAL_SMOKE_SCENE class=%s script=%s setup=%s"
+			% [direct.get_class(), direct.get_script(), direct.has_method(&"setup")]
+	)
+	assert(direct.has_method(&"setup"), "visual smoke: GDObject script is not active")
+	direct.call(&"setup", data)
 	world.add_child(direct)
 
 	data = _object_data(Vector2(BATCH_X, SAMPLE_Y))
