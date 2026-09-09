@@ -34,6 +34,8 @@ func _ready() -> void:
 	_direct = direct
 
 	data = _object_data(BATCH_WORLD)
+	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+		data.color_channels = {"base": "native_smoke"}
 	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
@@ -44,6 +46,9 @@ func _ready() -> void:
 			var native_canvas := batch.get_node_or_null("NativeCanvas")
 			assert(native_canvas != null, "native smoke: DecorationBatch did not create native canvas")
 			assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
+			batch.apply_channel_color(&"native_smoke", Color(0.8, 0.2, 0.1, 0.75))
+			var native_color: Color = native_canvas.call(&"get_item_color", 0)
+			assert(is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75), "native smoke: channel update")
 		var item: DecorationBatch.Item = batch.items[0]
 		print(
 				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
