@@ -172,9 +172,12 @@ static func build_batches(objects: Array, art_scale_factor: float) -> Array[Deco
 
 
 ## An empty batch accumulator for [method add_object].
-static func new_batches() -> Dictionary:
-	# batch key -> DecorationBatch
-	return {}
+static func new_batches() -> Dictionary[String, DecorationBatch]:
+	# Preserve the typed Dictionary at runtime. Godot 4.7 rejects an untyped
+	# Dictionary passed to _batch_for(Dictionary[String, DecorationBatch]); that
+	# made every batched object disappear even though all scripts parsed.
+	var batches: Dictionary[String, DecorationBatch] = {}
+	return batches
 
 
 ## Feeds one object's decoration into [param batches]. The batch set is a

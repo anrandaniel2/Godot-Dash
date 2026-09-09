@@ -41,7 +41,11 @@ func _process(_delta: float) -> void:
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
 	var direct_pixels := _opaque_pixels(image, DIRECT_X)
 	var batch_pixels := _opaque_pixels(image, BATCH_X)
-	print("VISUAL_SMOKE direct=%d batch=%d" % [direct_pixels, batch_pixels])
+	var opaque_bounds := _opaque_bounds(image)
+	print(
+			"VISUAL_SMOKE size=%s bounds=%s direct=%d batch=%d"
+			% [image.get_size(), opaque_bounds, direct_pixels, batch_pixels]
+	)
 	if direct_pixels < 100 or batch_pixels < 100:
 		image.save_png("user://runtime_visual_smoke_failure.png")
 		push_error(
@@ -64,6 +68,21 @@ func _opaque_pixels(image: Image, center_x: int) -> int:
 			if image.get_pixel(x, y).a > 0.05:
 				count += 1
 	return count
+
+
+func _opaque_bounds(image: Image) -> Rect2i:
+	var bounds := Rect2i()
+	var found := false
+	for y in image.get_height():
+		for x in image.get_width():
+			if image.get_pixel(x, y).a <= 0.05:
+				continue
+			if not found:
+				bounds = Rect2i(x, y, 1, 1)
+				found = true
+			else:
+				bounds = bounds.expand(Vector2i(x, y))
+	return bounds
 
 
 func _object_data(position: Vector2) -> Dictionary:
