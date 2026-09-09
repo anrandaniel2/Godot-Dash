@@ -167,6 +167,10 @@ jobs:
           cp bin/libgdash_native.linux.template_debug.x86_64.so \
             bin/linux_debug/x86_64/libgdash_native.so
           ls -lh bin/linux_debug/x86_64/
+          # Our extension object path is shared between SCons platforms. Remove
+          # Linux intermediates before the Android invocation so the ARM linker
+          # can never consume an apparently up-to-date x86_64 .os file.
+          scons -c platform=linux target=template_debug arch=x86_64 api_version=4.7
 
       - name: Locate or install Android NDK
         run: |
