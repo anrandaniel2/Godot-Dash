@@ -38,7 +38,6 @@ func _ready() -> void:
 		add_child(batch)
 		_batch = batch
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
-		batch.queue_redraw()
 		var item: DecorationBatch.Item = batch.items[0]
 		print(
 				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
