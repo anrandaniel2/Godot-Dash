@@ -175,23 +175,45 @@ func build() -> void:
 	# The sprites of one object must stay in their own order (fill, outline,
 	# detail), so within a z order the object's draw order comes before texture
 	# locality; the stable index keeps equal keys in insertion order.
-	var keyed: Array = []
-	keyed.resize(items.size())
-	for index in items.size():
-		var item: Item = items[index]
-		keyed[index] = [item.z_order, item.draw_order, item.texture.get_instance_id(), index, item]
-	keyed.sort_custom(
-			func(a: Array, b: Array) -> bool:
-				if a[0] != b[0]:
-					return a[0] < b[0]
-				if a[1] != b[1]:
-					return a[1] < b[1]
-				if a[2] != b[2]:
-					return a[2] < b[2]
-				return a[3] < b[3]
-	)
-	for index in keyed.size():
-		items[index] = keyed[index][4]
+	var native := NativeCore.backend()
+	if native != null and items.size() > 1:
+		var z_orders := PackedInt32Array()
+		var draw_orders := PackedInt32Array()
+		var texture_ids := PackedInt64Array()
+		z_orders.resize(items.size())
+		draw_orders.resize(items.size())
+		texture_ids.resize(items.size())
+		for index in items.size():
+			var item: Item = items[index]
+			z_orders[index] = item.z_order
+			draw_orders[index] = item.draw_order
+			texture_ids[index] = item.texture.get_instance_id()
+		var order: PackedInt32Array = native.call(
+				&"sort_decoration_indices", z_orders, draw_orders, texture_ids
+		)
+		var sorted: Array[Item] = []
+		sorted.resize(items.size())
+		for index in order.size():
+			sorted[index] = items[order[index]]
+		items = sorted
+	else:
+		var keyed: Array = []
+		keyed.resize(items.size())
+		for index in items.size():
+			var item: Item = items[index]
+			keyed[index] = [item.z_order, item.draw_order, item.texture.get_instance_id(), index, item]
+		keyed.sort_custom(
+				func(a: Array, b: Array) -> bool:
+					if a[0] != b[0]:
+						return a[0] < b[0]
+					if a[1] != b[1]:
+						return a[1] < b[1]
+					if a[2] != b[2]:
+						return a[2] < b[2]
+					return a[3] < b[3]
+		)
+		for index in keyed.size():
+			items[index] = keyed[index][4]
 
 	_cull = items.size() >= CULL_THRESHOLD
 	_buckets.clear()
@@ -199,6 +221,9 @@ func build() -> void:
 	_spinning.clear()
 	_bounds = Rect2()
 
+	var origins := PackedFloat32Array()
+	if _cull and native != null:
+		origins.resize(items.size())
 	for index in items.size():
 		var item: Item = items[index]
 		var extent: Vector2 = (item.region.size * 0.5).abs() * item.transform.get_scale().abs()
@@ -212,10 +237,20 @@ func build() -> void:
 				add_to_group(CHANNEL_GROUP_PREFIX + item.channel)
 			_by_channel[item.channel].append(item)
 		if _cull:
-			var bucket: int = int(floor(item.origin_x / BUCKET_WIDTH))
-			if not _buckets.has(bucket):
-				_buckets[bucket] = []
-			_buckets[bucket].append(item)
+			if native != null:
+				origins[index] = item.origin_x
+			else:
+				var bucket: int = int(floor(item.origin_x / BUCKET_WIDTH))
+				if not _buckets.has(bucket):
+					_buckets[bucket] = []
+				_buckets[bucket].append(item)
+	if _cull and native != null:
+		var native_buckets: Dictionary = native.call(&"build_x_buckets", origins, BUCKET_WIDTH)
+		for bucket: int in native_buckets:
+			var bucket_items: Array = []
+			for index: int in native_buckets[bucket]:
+				bucket_items.append(items[index])
+			_buckets[bucket] = bucket_items
 
 	_built = true
 	_last_visible = PackedInt32Array()

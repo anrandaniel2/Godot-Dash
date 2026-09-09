@@ -18,6 +18,8 @@ var _batch: DecorationBatch
 
 
 func _ready() -> void:
+	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+		_test_native_core()
 	get_window().size = VIEW_SIZE
 	get_viewport().transparent_bg = true
 	RenderingServer.set_default_clear_color(Color(0, 0, 0, 0))
@@ -100,6 +102,30 @@ func _opaque_bounds(image: Image) -> Rect2i:
 			else:
 				bounds = bounds.expand(Vector2i(x, y))
 	return bounds
+
+
+func _test_native_core() -> void:
+	var native := NativeCore.backend()
+	assert(native != null, "native smoke: GdashNative did not load")
+	assert(int(native.call(&"version")) >= 2, "native smoke: old kernel ABI")
+	var pairs: Dictionary = native.call(&"parse_gd_pairs", "1,42,2,15.5,57,7")
+	assert(pairs == {"1": "42", "2": "15.5", "57": "7"}, "native smoke: GD pair parser")
+	var order: PackedInt32Array = native.call(
+			&"sort_decoration_indices",
+			PackedInt32Array([2, 1, 1]),
+			PackedInt32Array([0, 4, 3]),
+			PackedInt64Array([1, 1, 1]),
+	)
+	assert(order == PackedInt32Array([2, 1, 0]), "native smoke: decoration ordering")
+	var buckets: Dictionary = native.call(
+			&"build_x_buckets", PackedFloat32Array([-1.0, 5.0, 11.0]), 10.0
+	)
+	assert(buckets.has(-1) and buckets.has(0) and buckets.has(1), "native smoke: spatial buckets")
+	var plain := "kS1,1,kS2,2;1,1,2,15,3,15;"
+	var encoded: String = native.call(&"encode_level_string", plain)
+	assert(not encoded.is_empty(), "native smoke: GMD encode")
+	assert(native.call(&"decode_level_string", encoded) == plain, "native smoke: GMD round trip")
+	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
 
 
 func _object_data(position: Vector2) -> Dictionary:

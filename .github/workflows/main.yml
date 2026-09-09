@@ -156,6 +156,18 @@ jobs:
           path: native/godot-cpp
           fetch-depth: 1
 
+      - name: Build gdash_native (Linux x86_64 test host, Godot 4.7 API)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          scons platform=linux target=template_debug arch=x86_64 api_version=4.7 -j2
+          mkdir -p bin/linux_debug/x86_64
+          cp bin/libgdash_native.linux.template_debug.x86_64.so \
+            bin/linux_debug/x86_64/libgdash_native.so
+          ls -lh bin/linux_debug/x86_64/
+
       - name: Locate or install Android NDK
         run: |
           : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
@@ -287,7 +299,7 @@ jobs:
             sudo apt-get install -y -qq xvfb
           }
           set +e
-          xvfb-run -a "$GODOT_BIN" --path . \
+          GDASH_REQUIRE_NATIVE=1 xvfb-run -a "$GODOT_BIN" --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/runtime_visual_smoke_test.tscn \

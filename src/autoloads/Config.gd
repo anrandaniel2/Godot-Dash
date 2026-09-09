@@ -82,12 +82,10 @@ enum ParticlePreprocessing {
 @export_range(4, 120, 1, "suffix:ms") var level_open_frame_budget_ms: int = 40
 
 @export_subgroup("Native core")
-## Use the compiled C++ runtime (GdashNative) when it is present. The native
-## library only ships in the CI Android APK (native/gdash_native.gdextension),
-## so desktop/editor builds never load it and this flag is ignored there. Keep
-## off while the native level/physics port is still landing; it gates a startup
-## self-check probe, not yet any behaviour.
-@export var use_native_core: bool = false
+## Use the compiled C++ large-level kernels when the extension is present.
+## Android release builds bundle it; source/editor builds without a matching
+## library transparently use the equivalent GDScript fallback.
+@export var use_native_core: bool = true
 
 @export_subgroup("Geometry Dash import")
 ## Draw decoration objects from the bundled Geometry Dash atlases when importing

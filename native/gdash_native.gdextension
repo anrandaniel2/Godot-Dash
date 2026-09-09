@@ -8,10 +8,9 @@ compatibility_minimum = "4.1"
 # not committed. Building it needs the NDK, so a local Android export without
 # running that build first will fail with a missing-library error - expected.
 #
-# Only the Android debug target is provided: CI exports --export-debug with
-# arm64-v8a enabled. Desktop/editor hosts find no library for this platform
-# and simply do not load the extension, so GDScript must feature-check
-# GdashNative (ClassDB.class_exists) before using it.
+# CI builds Linux debug as well as Android so import/render tests execute the
+# real native path instead of merely proving it compiles. A developer checkout
+# without the Linux binary simply uses the feature-checked GDScript fallback.
 #
 # The key's third tag is the engine's export feature tag for the ABI, which on
 # Android is "arm64" for the arm64-v8a ABI (not "arm64-v8a" - Godot's export
@@ -19,4 +18,5 @@ compatibility_minimum = "4.1"
 
 [libraries]
 
+linux.debug.x86_64 = "res://native/bin/linux_debug/x86_64/libgdash_native.so"
 android.debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"

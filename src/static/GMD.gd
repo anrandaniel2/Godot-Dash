@@ -155,6 +155,13 @@ static func parse(text: String) -> Document:
 ## Decodes the base64 + gzip level string stored under [code]k4[/code].
 ## Returns an empty string on failure rather than throwing.
 static func decode_level_string(encoded: String) -> String:
+	var native := NativeCore.backend()
+	if native != null:
+		var native_result: String = native.call(&"decode_level_string", encoded)
+		if not native_result.is_empty() or encoded.strip_edges().is_empty():
+			return native_result
+		# Malformed input and a native decode failure both return empty. Run the
+		# fallback so its detailed validation error reaches the importer log.
 	var data: String = encoded.strip_edges()
 	if data.is_empty():
 		return ""
@@ -184,6 +191,11 @@ static func decode_level_string(encoded: String) -> String:
 
 ## Encodes a plain level string the way GDShare expects it in [code]k4[/code].
 static func encode_level_string(plain: String) -> String:
+	var native := NativeCore.backend()
+	if native != null:
+		var native_result: String = native.call(&"encode_level_string", plain)
+		if not native_result.is_empty():
+			return native_result
 	var raw: PackedByteArray = plain.to_utf8_buffer()
 	var compressed: PackedByteArray = raw.compress(FileAccess.COMPRESSION_GZIP)
 	# Godot's COMPRESSION_GZIP produces a bare deflate stream in some versions,

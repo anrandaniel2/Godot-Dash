@@ -1313,7 +1313,10 @@ static func _line_color(header: Dictionary[String, String], _channels: Array) ->
 	return _special_channel_color(header.get(HeaderKey.COLORS, ""), 1002, Constants.DEFAULT_LINE_COLOR)
 
 
-static func _parse_pairs(chunk: String) -> Dictionary[String, String]:
+static func _parse_pairs(chunk: String) -> Dictionary:
+	var native := NativeCore.backend()
+	if native != null:
+		return native.call(&"parse_gd_pairs", chunk)
 	var pairs: Dictionary[String, String] = { }
 	var fields: PackedStringArray = chunk.split(",", false)
 	for i in range(0, fields.size() - 1, 2):
