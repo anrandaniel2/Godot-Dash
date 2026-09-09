@@ -153,6 +153,10 @@ func _ready() -> void:
 	# Item z is baked into draw order within the batch; the batch itself sits at
 	# the z of the layer it represents.
 	z_as_relative = false
+	# build() normally runs while the level is detached from the SceneTree.
+	# queue_redraw() issued there is not retained by CanvasItem, so explicitly
+	# request the first draw once the batch has entered a viewport.
+	queue_redraw()
 
 
 ## Adds an item, returning it so the caller can keep configuring it.
