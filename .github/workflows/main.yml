@@ -23,7 +23,10 @@ name: Build Android APK
 # Before exporting, the native GDExtension (native/) is compiled with the
 # Android NDK against a pinned godot-cpp master commit (the Godot 4.7 API;
 # no godot-cpp 4.6/4.7 tag exists). The resulting .so is bundled into the APK
-# via native/gdash_native.gdextension.
+# two ways: Godot's exporter normally copies it into the gradle project via
+# native/gdash_native.gdextension (checkpointed below), and independently the
+# .so is dropped straight into the gradle debug jniLibs so the APK contains it
+# even if the exporter path fails.
 
 on:
   workflow_dispatch:
@@ -237,6 +240,33 @@ jobs:
               print("android:largeHeap=\"true\" added to", path)
           PYEOF
 
+      # The gradle template declares debug.jniLibs.srcDirs = ['libs/debug', ...]
+      # (sourceSets in the app module's build.gradle). The template is a
+      # single-module project whose build.gradle sits at android/build/ (flat)
+      # or at android/build/app/ (nested); a .so placed at libs/debug/arm64-v8a/
+      # under that module is packaged by gradle as lib/arm64-v8a/ in the APK -
+      # no Godot exporter cooperation needed. This fallback bundling path is
+      # redundant with the exporter's own copy (checkpointed after export).
+      - name: Drop libgdash_native.so into gradle debug jniLibs
+        run: |
+          set -euo pipefail
+          SO="$PWD/native/bin/android_debug/arm64-v8a/libgdash_native.so"
+          test -f "$SO" || { echo "built .so missing at $SO"; exit 1; }
+          if [ -f android/build/app/build.gradle ]; then
+            MODULE="android/build/app"
+          elif [ -f android/build/build.gradle ]; then
+            MODULE="android/build"
+          else
+            echo "cannot locate gradle module build.gradle under android/build:"
+            find android/build -maxdepth 3 -name "build.gradle" | head
+            exit 1
+          fi
+          TARGET="$MODULE/libs/debug/arm64-v8a"
+          mkdir -p "$TARGET"
+          cp "$SO" "$TARGET/libgdash_native.so"
+          echo "dropped libgdash_native.so into $TARGET"
+          ls -R "$MODULE/libs" | head -20
+
       # ------------------------------------------------------- Godot project
       - name: Import project resources
         run: |
@@ -245,6 +275,24 @@ jobs:
           status=$?
           tail -n 30 godot_import.log
           exit $status
+
+      # If the import-time scan never registered native/gdash_native.gdextension,
+      # the exporter has nothing to attach the .so to (and the exported app's
+      # runtime loader would not know the extension either). This check turns
+      # that into an explicit pass/fail instead of a silent omission.
+      - name: "Check extension_list.cfg lists gdash_native"
+        continue-on-error: true
+        run: |
+          echo "--- .godot/extension_list.cfg ---"
+          cat .godot/extension_list.cfg 2>/dev/null || echo "(no extension_list.cfg)"
+          echo "--- import log GDExtension/gdash lines ---"
+          grep -in "gdextension\|gdash" godot_import.log || echo "(no matches)"
+          if grep -q "gdash_native" .godot/extension_list.cfg 2>/dev/null; then
+            echo "REGISTERED: gdash_native is in extension_list.cfg"
+          else
+            echo "NOT REGISTERED: gdash_native missing from extension_list.cfg"
+            exit 1
+          fi
 
       - name: Point Godot at the Android SDK/JDK
         run: |
@@ -296,6 +344,22 @@ jobs:
             exit $status
           fi
           ls -lh "$APK_PATH"
+
+      # Godot's own bundling path: copy_gradle_so writes the extension library
+      # to <gradle_build>/libs/<debug|release>/<abi>/. If this file is missing,
+      # the exporter skipped the GDExtension (file not exported/typed/loaded),
+      # independently of the jniLibs fallback above.
+      - name: "Check exporter copied libgdash_native.so into gradle libs"
+        run: |
+          echo "--- libgdash_native.so under android/build (exporter target) ---"
+          find android/build -name "libgdash_native.so" 2>/dev/null || true
+          if [ -f android/build/libs/debug/arm64-v8a/libgdash_native.so ]; then
+            echo "EXPORTED: exporter copy present at android/build/libs/debug/arm64-v8a/"
+          else
+            echo "NOT EXPORTED: no .so at android/build/libs/debug/arm64-v8a/ (exporter skipped the extension)"
+          fi
+          echo "--- export log GDExtension/gdash lines ---"
+          grep -in "gdextension\|gdash\|no .* library\|Copying .so" godot_export.log || echo "(no matches)"
 
       - name: Verify libgdash_native.so is bundled in the APK
         run: |

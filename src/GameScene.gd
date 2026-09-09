@@ -87,8 +87,14 @@ func _open_level_paced() -> void:
 		var node_count := 0
 		for layer: Layer in level.layers:
 			node_count += layer.get_child_count()
+		# The native runtime (GdashNative, bundled into the CI Android APK) loads
+		# at startup regardless of Config.use_native_core; report whether the
+		# library actually made it into this build so device tests can confirm
+		# the C++ pipeline without logcat.
+		var native_loaded := ClassDB.class_exists(&"GdashNative")
 		Toasts.new_toast(
-			"Level open: %.1f s · %d objects · %d nodes" % [open_ms / 1000.0, object_count, node_count],
+			"Level open: %.1f s · %d objects · %d nodes · native %s"
+			% [open_ms / 1000.0, object_count, node_count, "yes" if native_loaded else "no"],
 			6.0,
 		)
 
