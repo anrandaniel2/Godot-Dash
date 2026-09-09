@@ -140,6 +140,7 @@ var _bounds: Rect2 = Rect2()
 ## C++ retained draw-command builder. Kept untyped so source/editor builds can
 ## parse without the optional platform library.
 var _native_canvas: Node2D
+var _native_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 
 
 func _init() -> void:
@@ -277,6 +278,7 @@ func build() -> void:
 ## CanvasItem. Trigger transforms remain on this parent; only command emission
 ## and spatial rejection move native, so behaviour is unchanged.
 func _build_native_canvas(native: Object) -> void:
+	_native_by_channel.clear()
 	if _native_canvas != null:
 		_native_canvas.queue_free()
 		_native_canvas = null
@@ -294,11 +296,16 @@ func _build_native_canvas(native: Object) -> void:
 	var transforms: Array = []
 	var colors := PackedColorArray()
 	var origins := PackedFloat32Array()
+	var base_alphas := PackedFloat32Array()
+	var hsv_data := PackedFloat32Array()
 	textures.resize(items.size())
 	regions.resize(items.size())
 	transforms.resize(items.size())
 	colors.resize(items.size())
 	origins.resize(items.size())
+	base_alphas.resize(items.size())
+	hsv_data.resize(items.size() * 5)
+	hsv_data.fill(-1.0)
 	for index in items.size():
 		var item: Item = items[index]
 		item.render_index = index
@@ -307,9 +314,17 @@ func _build_native_canvas(native: Object) -> void:
 		transforms[index] = item.transform
 		colors[index] = item.modulate
 		origins[index] = item.origin_x
+		base_alphas[index] = item.base_alpha
+		if item.hsv_shift.size() >= 5:
+			for component in 5:
+				hsv_data[index * 5 + component] = item.hsv_shift[component]
+		if not item.channel.is_empty():
+			var channel_indices: PackedInt32Array = _native_by_channel.get(item.channel, PackedInt32Array())
+			channel_indices.append(index)
+			_native_by_channel[item.channel] = channel_indices
 	_native_canvas.call(
 			&"configure", textures, regions, transforms, colors, origins,
-			_cull, BUCKET_WIDTH,
+			base_alphas, hsv_data, _cull, BUCKET_WIDTH,
 	)
 
 
@@ -329,6 +344,9 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 	# build(); scanning the whole batch per channel does not scale.
 	var affected: Array = _by_channel.get(channel, [])
 	if affected.is_empty():
+		return
+	if _native_canvas != null and _native_by_channel.has(channel):
+		_native_canvas.call(&"apply_channel_color", _native_by_channel[channel], color)
 		return
 	var changed: bool = false
 	for item: Item in affected:
@@ -358,6 +376,15 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 		changed = true
 	if changed:
 		_request_redraw()
+
+
+## Current rendered tint, including native channel animations. Serialization
+## uses this accessor so moving channel updates to C++ does not stale saves or
+## practice snapshots.
+func render_color(item: Item) -> Color:
+	if _native_canvas != null and item.render_index >= 0:
+		return _native_canvas.call(&"get_item_color", item.render_index)
+	return item.modulate
 
 
 ## Local-space bounds of the whole batch, for editor selection and culling.

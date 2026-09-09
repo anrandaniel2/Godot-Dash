@@ -633,7 +633,7 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 			# Appearance is restored from the object's own tint. A channel
 			# update repaints the sprites that follow it, so a recoloured level
 			# saves the way it currently looks; black parts never leak in.
-			"tint": item.modulate if not item.channel.is_empty() else item.object_tint,
+			"tint": batch.render_color(item) if not item.channel.is_empty() else item.object_tint,
 			"blending": batch.gd_blending,
 			# Only objects that asked for their glow get it back. Emitting it
 			# for every object with a glow frame, as before, buried a reloaded
@@ -648,7 +648,7 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 		# The detail layer keeps its own colour; without this a reloaded
 		# two-tone object came back flattened to its base tint.
 		if item.detail != null:
-			data["detail_tint"] = item.detail.modulate
+			data["detail_tint"] = batch.render_color(item.detail)
 			data["detail_hsv_shift"] = item.detail.hsv_shift
 		result.append(data)
 	return result

@@ -183,6 +183,9 @@ class NativeDecorationCanvas : public Node2D {
 		Transform2D transform;
 		Color color;
 		float origin_x = 0.0f;
+		float base_alpha = 1.0f;
+		float hsv[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+		bool has_hsv = false;
 	};
 
 	std::vector<Record> records;
@@ -193,8 +196,10 @@ class NativeDecorationCanvas : public Node2D {
 
 protected:
 	static void _bind_methods() {
-		ClassDB::bind_method(D_METHOD("configure", "textures", "regions", "transforms", "colors", "origins", "enable_culling", "width"), &NativeDecorationCanvas::configure);
+		ClassDB::bind_method(D_METHOD("configure", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "enable_culling", "width"), &NativeDecorationCanvas::configure);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationCanvas::set_visible_buckets);
+		ClassDB::bind_method(D_METHOD("apply_channel_color", "indices", "color"), &NativeDecorationCanvas::apply_channel_color);
+		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationCanvas::get_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationCanvas::set_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationCanvas::set_item_transform);
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationCanvas::item_count);
@@ -220,8 +225,9 @@ public:
 
 	void configure(const Array &textures, const Array &regions, const Array &transforms,
 			const PackedColorArray &colors, const PackedFloat32Array &origins,
+			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
 			bool enable_culling, double width) {
-		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size()});
+		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear();
 		records.reserve(static_cast<size_t>(count));
 		for (int64_t i = 0; i < count; ++i) {
@@ -231,6 +237,11 @@ public:
 			record.transform = transforms[i];
 			record.color = colors[i];
 			record.origin_x = origins[i];
+			record.base_alpha = base_alphas[i];
+			if (hsv_data.size() >= (i + 1) * 5) {
+				record.has_hsv = hsv_data[i * 5 + 4] >= 0.0f;
+				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_data[i * 5 + component];
+			}
 			records.push_back(record);
 		}
 		cull = enable_culling;
@@ -243,6 +254,30 @@ public:
 		first_bucket = first;
 		last_bucket = last;
 		queue_redraw();
+	}
+
+	void apply_channel_color(const PackedInt32Array &indices, const Color &channel_color) {
+		for (int64_t i = 0; i < indices.size(); ++i) {
+			const int64_t index = indices[i];
+			if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
+			Record &record = records[static_cast<size_t>(index)];
+			Color tinted = channel_color;
+			if (record.has_hsv) {
+				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f);
+				if (hue < 0.0f) hue += 1.0f;
+				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
+				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
+				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
+			}
+			tinted.a = channel_color.a * record.base_alpha;
+			record.color = tinted;
+		}
+		queue_redraw();
+	}
+
+	Color get_item_color(int64_t index) const {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return Color(1, 1, 1, 1);
+		return records[static_cast<size_t>(index)].color;
 	}
 
 	void set_item_color(int64_t index, const Color &color) {
