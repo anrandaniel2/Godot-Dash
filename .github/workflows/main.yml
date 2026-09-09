@@ -295,10 +295,21 @@ jobs:
           status=$?
           set -e
           cat visual_smoke.log
-          grep -q "VISUAL_SMOKE" visual_smoke.log || {
-            echo "visual smoke test produced no result"; exit 1;
-          }
-          exit $status
+          if [ $status -ne 0 ] || ! grep -q "VISUAL_SMOKE" visual_smoke.log; then
+            echo "### Visual smoke failure" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 80 visual_smoke.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # Surface the tail through check annotations as well; Actions log
+            # blobs are not always retrievable from the sandbox.
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/'%0D'}
+              line=${line//$'\n'/'%0A'}
+              echo "::error title=Visual smoke::${line}"
+            done < <(tail -n 30 visual_smoke.log)
+            exit 1
+          fi
 
       # If the import-time scan never registered native/gdash_native.gdextension,
       # the exporter has nothing to attach the .so to (and the exported app's
