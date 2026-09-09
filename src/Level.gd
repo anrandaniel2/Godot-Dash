@@ -20,6 +20,12 @@ enum UseDataFlags {
 ## Gameplay placements serialize in the gameplay entry format (scene path +
 ## gd_object_id) so the level rebuilds them through the gameplay path.
 const GD_GAMEPLAY_META: StringName = &"gd_gameplay"
+## Set on standalone levels whose decoration is represented by atlas batches
+## rather than one GDObject scene per placement.
+const RUNTIME_BATCHED_DECORATION_META: StringName = &"runtime_batched_decoration"
+## Group-less static gameplay objects keep a lightweight root for serialization
+## and collision ownership, while their atlas sprites are rendered in batches.
+const RUNTIME_BATCHED_ART_META: StringName = &"runtime_batched_art"
 
 const START_SPEED: Array[float] = [
 	0.0, # 0x
@@ -482,9 +488,17 @@ func _use_data_fields(data: Dictionary) -> void:
 ## every object in the data has a live node - which is always: the level is
 ## built fully from its data (see from_data), so every placement has a node.
 func _use_data_objects(data: Dictionary, options: int) -> void:
+	var runtime_batched := bool(get_meta(RUNTIME_BATCHED_DECORATION_META, false))
 	for layer_idx: int in layers.size():
 		var layer: Layer = layers[layer_idx]
 		var layer_data: Dictionary = data.layers[layer_idx]
+		# A trigger may have transformed, hidden or spun a runtime batch during
+		# the previous attempt. Restore its exact imported state once here;
+		# decoration records below intentionally have no corresponding node.
+		if runtime_batched:
+			for child: Node in layer.get_children():
+				if child is DecorationBatch:
+					(child as DecorationBatch).reset_runtime_state()
 		# Child index cannot be assumed to match data index: low detail mode
 		# drops objects, and decoration is collapsed into a couple of batch
 		# nodes rather than one node each. Walk the children in step and match
@@ -492,6 +506,10 @@ func _use_data_objects(data: Dictionary, options: int) -> void:
 		var child_idx: int = 0
 		for object_idx: int in layer_data.objects.size():
 			var object_data: Dictionary = layer_data.objects[object_idx]
+			# Standalone decoration lives inside DecorationBatch and therefore
+			# consumes no child index, even when gd_<id>.tscn exists.
+			if runtime_batched and object_data.get("decoration", false):
+				continue
 			if child_idx >= layer.get_child_count():
 				break
 			var object: Node2D = layer.get_child(child_idx)

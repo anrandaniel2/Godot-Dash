@@ -20,8 +20,14 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_int64_array.hpp>
 
+#include <algorithm>
+#include <climits>
 #include <cstdint>
+#include <numeric>
+#include <vector>
 
 namespace godot {
 
@@ -33,6 +39,9 @@ protected:
 		ClassDB::bind_method(D_METHOD("build_string"), &GdashNative::build_string);
 		ClassDB::bind_method(D_METHOD("version"), &GdashNative::version);
 		ClassDB::bind_method(D_METHOD("add", "a", "b"), &GdashNative::add);
+		ClassDB::bind_method(
+				D_METHOD("sort_indices", "primary", "secondary", "tertiary"),
+				&GdashNative::sort_indices);
 	}
 
 public:
@@ -41,11 +50,38 @@ public:
 	/// startup when Config.use_native_core is enabled, so a device test can
 	/// confirm the bundled native build loaded without needing logcat.
 	String build_string() const {
-		return String("gdash_native 0.1.0 / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.2.0 / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
 
 	/// Library version, for feature gating from GDScript.
-	int64_t version() const { return 1; }
+	int64_t version() const { return 2; }
+
+	/// Returns a stable lexicographic ordering for three integer key arrays.
+	/// DecorationBatch uses this for its largest open-time CPU task. Keeping the
+	/// sort in C++ avoids hundreds of thousands of GDScript comparator calls and
+	/// the old five-Variant tuple allocated for every atlas sprite.
+	PackedInt32Array sort_indices(
+			const PackedInt64Array &primary,
+			const PackedInt64Array &secondary,
+			const PackedInt64Array &tertiary) const {
+		const int64_t count = primary.size();
+		PackedInt32Array result;
+		if (secondary.size() != count || tertiary.size() != count || count > INT32_MAX) {
+			return result;
+		}
+		std::vector<int32_t> indices(static_cast<size_t>(count));
+		std::iota(indices.begin(), indices.end(), 0);
+		std::stable_sort(indices.begin(), indices.end(), [&](int32_t a, int32_t b) {
+			if (primary[a] != primary[b]) return primary[a] < primary[b];
+			if (secondary[a] != secondary[b]) return secondary[a] < secondary[b];
+			return tertiary[a] < tertiary[b];
+		});
+		result.resize(count);
+		for (int64_t i = 0; i < count; ++i) {
+			result.set(i, indices[static_cast<size_t>(i)]);
+		}
+		return result;
+	}
 
 	/// Trivial arithmetic sanity check used by the startup probe.
 	int64_t add(int64_t a, int64_t b) const { return a + b; }

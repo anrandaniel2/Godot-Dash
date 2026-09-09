@@ -56,6 +56,8 @@ class Item:
 	var region: Rect2
 	## Placement in the batch's local space, including the atlas-to-world scale.
 	var transform: Transform2D
+	## Imported transform restored between attempts (spin mutates transform).
+	var initial_transform: Transform2D
 	## Tint from the object's colour channel, including any per-object HSV
 	## shift and opacity.
 	var modulate: Color = Color.WHITE
@@ -100,6 +102,10 @@ class Item:
 	var object_hsv_shift: PackedFloat32Array = PackedFloat32Array()
 	## Geometry Dash's "high detail" flag (key 103), kept for saving.
 	var high_detail: bool = false
+	## Stable final tie-breaker assigned as the item enters its batch.
+	var insertion_index: int = 0
+	## Runtime-only art for a gameplay root must not serialize as decoration.
+	var gameplay_visual: bool = false
 
 
 ## Every item in this batch.
@@ -134,6 +140,10 @@ var _cull: bool = false
 ## Local-space bounds of every item, used for a cheap whole-batch visibility
 ## test before any per-bucket work.
 var _bounds: Rect2 = Rect2()
+var _initial_transform: Transform2D = Transform2D.IDENTITY
+var _initial_visible: bool = true
+static var _native_sorter_instance: Object
+static var _native_sorter_checked: bool = false
 
 
 func _init() -> void:
@@ -157,9 +167,35 @@ func _ready() -> void:
 
 ## Adds an item, returning it so the caller can keep configuring it.
 func add_item(item: Item) -> Item:
+	item.insertion_index = items.size()
 	items.append(item)
 	_built = false
 	return item
+
+
+static func _native_sorter() -> Object:
+	if not _native_sorter_checked:
+		_native_sorter_checked = true
+		if ClassDB.class_exists(&"GdashNative"):
+			_native_sorter_instance = ClassDB.instantiate(&"GdashNative")
+	return _native_sorter_instance
+
+
+func _sort_items_fallback() -> void:
+	# Direct item sorting uses far less peak memory than allocating a five-value
+	# Variant tuple per sprite. Desktop/editor hosts use this path because the
+	# Android-only native extension is intentionally absent there.
+	items.sort_custom(func(a: Item, b: Item) -> bool:
+		if a.z_order != b.z_order:
+			return a.z_order < b.z_order
+		if a.draw_order != b.draw_order:
+			return a.draw_order < b.draw_order
+		var a_texture := a.texture.get_instance_id()
+		var b_texture := b.texture.get_instance_id()
+		if a_texture != b_texture:
+			return a_texture < b_texture
+		return a.insertion_index < b.insertion_index
+	)
 
 
 ## Finalises the batch: sorts for correct layering and texture locality, then
@@ -171,23 +207,30 @@ func build() -> void:
 	# The sprites of one object must stay in their own order (fill, outline,
 	# detail), so within a z order the object's draw order comes before texture
 	# locality; the stable index keeps equal keys in insertion order.
-	var keyed: Array = []
-	keyed.resize(items.size())
-	for index in items.size():
-		var item: Item = items[index]
-		keyed[index] = [item.z_order, item.draw_order, item.texture.get_instance_id(), index, item]
-	keyed.sort_custom(
-			func(a: Array, b: Array) -> bool:
-				if a[0] != b[0]:
-					return a[0] < b[0]
-				if a[1] != b[1]:
-					return a[1] < b[1]
-				if a[2] != b[2]:
-					return a[2] < b[2]
-				return a[3] < b[3]
-	)
-	for index in keyed.size():
-		items[index] = keyed[index][4]
+	var native_sorter: Object = _native_sorter()
+	if native_sorter != null and int(native_sorter.call(&"version")) >= 2:
+		var primary := PackedInt64Array()
+		var secondary := PackedInt64Array()
+		var tertiary := PackedInt64Array()
+		primary.resize(items.size())
+		secondary.resize(items.size())
+		tertiary.resize(items.size())
+		for index in items.size():
+			var item: Item = items[index]
+			primary[index] = item.z_order
+			secondary[index] = item.draw_order
+			tertiary[index] = item.texture.get_instance_id()
+		var order: PackedInt32Array = native_sorter.call(
+				&"sort_indices", primary, secondary, tertiary
+		)
+		if order.size() == items.size():
+			var unsorted: Array[Item] = items.duplicate()
+			for index in order.size():
+				items[index] = unsorted[order[index]]
+		else:
+			_sort_items_fallback()
+	else:
+		_sort_items_fallback()
 
 	_cull = items.size() >= CULL_THRESHOLD
 	_buckets.clear()
@@ -217,6 +260,30 @@ func build() -> void:
 	_last_visible = PackedInt32Array()
 	set_process(_cull or not _spinning.is_empty())
 	queue_redraw()
+
+
+## Snapshots the state produced by the importer. Called before the batch enters
+## the tree; later trigger transforms/toggles and item spin are reversible.
+func capture_initial_state() -> void:
+	_initial_transform = transform
+	_initial_visible = visible
+	for item: Item in items:
+		item.initial_transform = item.transform
+
+
+## Restores a batch between attempts without rebuilding or reallocating its
+## draw list. This is the batched equivalent of deserializing every GDObject.
+func reset_runtime_state() -> void:
+	transform = _initial_transform
+	visible = _initial_visible
+	process_mode = Node.PROCESS_MODE_INHERIT
+	var changed := false
+	for item: Item in _spinning:
+		if item.transform != item.initial_transform:
+			item.transform = item.initial_transform
+			changed = true
+	if changed:
+		queue_redraw()
 
 
 ## Recolours every item bound to [param channel].

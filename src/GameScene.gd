@@ -74,6 +74,11 @@ func _open_level_paced() -> void:
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
 	add_loaded_level(level)
+	# Runtime batches own decoration state after construction. Keeping every
+	# source Dictionary in cached_level_data doubled the resident memory of a
+	# massive level for no benefit; restarts only deserialize gameplay roots.
+	if not should_use_practice_snapshot and bool(level.get_meta(Level.RUNTIME_BATCHED_DECORATION_META, false)):
+		cached_level_data = _make_runtime_reset_data(cached_level_data)
 
 	var open_ms: int = Time.get_ticks_msec() - open_started_ms
 	await start_level()
@@ -97,6 +102,25 @@ func _open_level_paced() -> void:
 			% [open_ms / 1000.0, object_count, node_count, "yes" if native_loaded else "no"],
 			6.0,
 		)
+
+
+## Keeps level-wide fields and gameplay entries, dropping decoration records
+## whose state is already captured by DecorationBatch. Dictionaries are shared
+## rather than deep-copied so constructing this compact reset graph has a small,
+## bounded peak.
+static func _make_runtime_reset_data(data: Dictionary) -> Dictionary:
+	var compact := data.duplicate(false)
+	var compact_layers: Array = []
+	for source_layer: Dictionary in data.get("layers", []):
+		var layer := source_layer.duplicate(false)
+		var gameplay: Array = []
+		for object_data: Dictionary in source_layer.get("objects", []):
+			if not object_data.get("decoration", false):
+				gameplay.append(object_data)
+		layer["objects"] = gameplay
+		compact_layers.append(layer)
+	compact["layers"] = compact_layers
+	return compact
 
 
 func add_loaded_level(level: Level) -> Level:

@@ -111,6 +111,10 @@ func track(object: Node2D) -> void:
 static func is_cullable(object: Node2D) -> bool:
 	if object is Layer or object is Player or object is Interactable:
 		return false
+	# Runtime-batched gameplay roots carry collision/save identity but no art;
+	# tracking them would duplicate the batch's own culling index for no gain.
+	if object.has_meta(Level.RUNTIME_BATCHED_ART_META):
+		return false
 	if object is SolidObject and object.physics_object:
 		return false
 	# Anything a trigger can address may move, so its load-time bucket
