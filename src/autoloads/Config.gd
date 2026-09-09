@@ -79,13 +79,14 @@ enum ParticlePreprocessing {
 @export var paced_level_open: bool = true
 ## Main-thread time budget per frame spent building the level while it opens.
 ## Bigger opens faster but stutters the (usually hidden) loading screen more.
-@export_range(2, 120, 1, "suffix:ms") var level_open_frame_budget_ms: int = 8
+@export_range(4, 120, 1, "suffix:ms") var level_open_frame_budget_ms: int = 40
 
 @export_subgroup("Native core")
-## Enables verbose startup diagnostics for the compiled runtime. Performance
-## primitives that are exact drop-in replacements (currently decoration key
-## sorting) are used automatically whenever GdashNative is present; this flag
-## only controls the self-check log and remains safe to leave off.
+## Use the compiled C++ runtime (GdashNative) when it is present. The native
+## library only ships in the CI Android APK (native/gdash_native.gdextension),
+## so desktop/editor builds never load it and this flag is ignored there. Keep
+## off while the native level/physics port is still landing; it gates a startup
+## self-check probe, not yet any behaviour.
 @export var use_native_core: bool = false
 
 @export_subgroup("Geometry Dash import")

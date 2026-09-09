@@ -57,12 +57,6 @@ var hsv_shift: PackedFloat32Array = PackedFloat32Array()
 var base_alpha: float = 1.0
 var detail_tint: Color = Color.WHITE
 var detail_hsv_shift: PackedFloat32Array = PackedFloat32Array()
-## Original bindings remain available after runtime batching removes the
-## Base/Detail watcher nodes.
-var imported_color_channels: Variant = { }
-var imported_hsv: Dictionary = {
-	"hsv_shift": [0.0, 0.0, 0.0], "intensity": 1.0, "alpha": 1.0,
-}
 
 ## Shape names the player's hit detection expects on a body (see the Collision
 ## node's description in the generated scene).
@@ -107,22 +101,6 @@ func has_collision() -> bool:
 	return _has_collision_shapes
 
 
-## Drops the per-object sprite/watcher subtree when an equivalent runtime
-## DecorationBatch owns the rendering. The root and Collision remain so shared
-## physics, save data and gameplay semantics are unchanged.
-func set_runtime_art_batched() -> void:
-	for node_name: NodePath in [^"Base", ^"Detail"]:
-		var art := get_node_or_null(node_name)
-		if art != null:
-			art.free()
-	# _configure_gd_object also creates an HSV watcher on the root. Its shift is
-	# baked into the batch item by LevelBuildJob, so retaining it would spend a
-	# node and a global signal connection while modulating an invisible root.
-	for child: Node in get_children():
-		if child is HSVWatcher:
-			child.free()
-
-
 ## Configures this placement from the level-data entry [param data] - the
 ## dictionary [method GDDecorationLoader.to_data] produces.
 func setup(data: Dictionary) -> void:
@@ -138,12 +116,6 @@ func setup(data: Dictionary) -> void:
 	base_alpha = float(data.get("base_alpha", 1.0))
 	detail_tint = data.get("detail_tint", tint)
 	detail_hsv_shift = data.get("detail_hsv_shift", PackedFloat32Array())
-	var channels: Variant = data.get("color_channels", { })
-	imported_color_channels = (
-		channels.duplicate(true) if channels is Dictionary or channels is Array
-		else channels
-	)
-	imported_hsv = data.get("hsv", imported_hsv).duplicate(true)
 	for group: Variant in data.get("groups", []):
 		add_to_group(StringName(str(group)))
 	apply_draw_order()
@@ -205,9 +177,7 @@ func get_world_bounds() -> Rect2:
 ## Colour channels, HSV shifts and opacity are read back from the Base/Detail
 ## watchers, so edits made in the editor's colour panel are what gets saved.
 func to_data() -> Dictionary:
-	var channels: Dictionary = imported_color_channels.duplicate(true) if imported_color_channels is Dictionary else { }
-	if imported_color_channels is String or imported_color_channels is StringName:
-		channels["base"] = str(imported_color_channels)
+	var channels: Dictionary = { }
 	var saved_shift: PackedFloat32Array = hsv_shift
 	var saved_detail_shift: PackedFloat32Array = detail_hsv_shift
 	var saved_alpha: float = base_alpha
@@ -236,7 +206,7 @@ func to_data() -> Dictionary:
 			transform,
 			groups,
 			channels,
-			own_watcher.to_data() if own_watcher != null else imported_hsv.duplicate(true),
+			own_watcher.to_data() if own_watcher != null else { "hsv_shift": [0.0, 0.0, 0.0], "intensity": 1.0, "alpha": 1.0 },
 			z_order,
 			z_layer,
 			tint,

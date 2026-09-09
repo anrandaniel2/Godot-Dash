@@ -291,7 +291,6 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 	base_item.object_hsv_shift = hsv_shift
 	base_item.wants_glow = wants_glow
 	base_item.high_detail = bool(object_data.get("high_detail", false))
-	base_item.gameplay_visual = bool(object_data.get("_runtime_gameplay_art", false))
 
 	if frames.has_detail():
 		# The detail layer follows the SECONDARY colour channel and its own
@@ -514,11 +513,6 @@ static func _batch_for(
 		var material := CanvasItemMaterial.new()
 		material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 		batch.material = material
-	elif AssetManager.fade_enter_effect != null:
-		# Match generated GDObject scenes exactly: ordinary atlas art receives
-		# the level enter-effect shader, while additive glow keeps its blend
-		# material (the same exception used by Level._configure_gd_object).
-		batch.material = AssetManager.fade_enter_effect
 
 	batches[key] = batch
 	return batch
@@ -605,10 +599,8 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 	var sheet: GDSpriteSheet.Sheet = get_sheet()
 
 	for item: DecorationBatch.Item in batch.items:
-		# Only the base layer stands for the object itself. Gameplay visuals
-		# have a separate lightweight GDObject record and must not be duplicated
-		# into the saved level as decoration.
-		if item.layer != "base" or item.gameplay_visual:
+		# Only the base layer stands for the object itself.
+		if item.layer != "base":
 			continue
 		var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(item.gd_id)
 		if frames == null:

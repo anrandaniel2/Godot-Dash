@@ -196,15 +196,11 @@ func _physics_process(delta: float) -> void:
 	if get_viewport().get_window().has_focus():
 		InputUtils.update()
 
-	# Direction queries can touch input/replay state and used to run repeatedly
-	# in one 240 Hz tick. Sample once so simulation and recording see the same
-	# value while avoiding redundant InputMap work.
-	var tick_direction: int = get_direction()
 	if not in_replay:
 		var replay_jump_state: int = int(InputUtils.is_action_pressed(&"jump")) if not InputUtils.is_action_pressed(&"platformer_wave_down") else -1
-		replay.data.append(PackedByteArray([replay_jump_state, tick_direction]))
+		replay.data.append(PackedByteArray([replay_jump_state, get_direction()]))
 
-	velocity = _compute_velocity(delta, velocity, tick_direction, jump_state, $GroundCollider.shape is CircleShape2D)
+	velocity = _compute_velocity(delta, velocity, get_direction(), jump_state, $GroundCollider.shape is CircleShape2D)
 
 	# Slope collision resolution
 	# Reset collision shape and set it back to the slope collider if needed
@@ -217,23 +213,17 @@ func _physics_process(delta: float) -> void:
 
 	for i in range(4):
 		last_collision = move_and_collide(velocity * delta, true)
-		var had_collision := last_collision != null
 		_handle_collision(last_collision, i != 0)
-		# Collide down with solids so the wave can crash into them.
+		# Collide down with solids so the wave can crash into them
 		if internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0:
 			last_collision = move_and_collide(speed.y * Vector2.DOWN * delta, true)
-			had_collision = had_collision or last_collision != null
 			_handle_collision(last_collision, true)
-		# Refinement only has work after a hit. In normal airborne movement the
-		# old loop submitted four identical test motions at 240 Hz.
-		if not had_collision:
-			break
 
 	# Apply movement
 	move_and_slide()
 
 	# Sprite updates
-	_update_sprites_rotation(delta, jump_state, tick_direction)
+	_update_sprites_rotation(delta, jump_state)
 	%GroundParticles.emitting = is_on_floor() and not is_zero_approx(velocity.rotated(-gameplay_rotation).x) and not dash_control
 	if is_on_floor() and not dash_control or displayed_gamemode == Gamemode.WAVE:
 		%Trail.add_points = false
@@ -747,7 +737,7 @@ func _compute_velocity(
 					is_on_floor()
 					and get_last_slide_collision() != null
 					and _get_floor_angle_signed(true, jump_state) != 0.0
-					and direction != 0
+					and get_direction() != 0
 					and jump_state == 1
 			)
 	)
@@ -938,11 +928,12 @@ func _ensure_velocity_redirect(delta: float, new_velocity: Vector2) -> bool:
 	return false
 
 
-func _update_sprites_rotation(delta: float, jump_state: int, direction: int) -> void:
+func _update_sprites_rotation(delta: float, jump_state: int):
 	_fire_sprite_time += delta
 	var local_velocity: Vector2 = velocity.rotated(-gameplay_rotation)
 	var velocity_angle: float = atan2(local_velocity.y, abs(local_velocity.x)) + gameplay_rotation
 	var corrected_direction: int = horizontal_direction if not dash_control else dash_control.initial_direction
+	var direction: int = get_direction()
 	if $GroundCollider.shape is CircleShape2D:
 		var floor_angle_signed: float = _get_floor_angle_signed(false, jump_state)
 		if get_floor_normal() != Vector2.ZERO:
@@ -1035,7 +1026,7 @@ func _update_sprites_rotation(delta: float, jump_state: int, direction: int) -> 
 
 	#region cube
 	if not is_on_floor() and not is_on_ceiling() and speed_multiplier != 0.0:
-		$Icon/Cube.rotation_degrees += delta * gravity_flip * 390 * direction * gravity_multiplier
+		$Icon/Cube.rotation_degrees += delta * gravity_flip * 390 * get_direction() * gravity_multiplier
 	else:
 		$Icon/Cube.rotation = lerp_angle(
 			$Icon/Cube.rotation,
