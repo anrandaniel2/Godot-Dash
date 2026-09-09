@@ -12,7 +12,11 @@ compatibility_minimum = "4.1"
 # arm64-v8a enabled. Desktop/editor hosts find no library for this platform
 # and simply do not load the extension, so GDScript must feature-check
 # GdashNative (ClassDB.class_exists) before using it.
+#
+# The key's third tag is the engine's export feature tag for the ABI, which on
+# Android is "arm64" for the arm64-v8a ABI (not "arm64-v8a" - Godot's export
+# feature set uses the former, and GDExtensionExportPlugin matches on it).
 
 [libraries]
 
-android.debug.arm64-v8a = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
+android.debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
