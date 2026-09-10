@@ -268,7 +268,8 @@ static func _escape_regex_literal(value: String) -> String:
 	# Godot's RegEx class has no static escape() helper. Escape every RE2
 	# metacharacter explicitly so user-entered level names remain literal.
 	var escaped := ""
-	for character in value:
+	for index in range(value.length()):
+		var character := value[index]
 		if "\\.^$|?*+()[]{}".contains(character):
 			escaped += "\\"
 		escaped += character
