@@ -22,6 +22,14 @@ enum Order {
 @export var order: OptionButton
 @export var fade_screen: FadeScreen
 @export var refresh_button: Button
+@export var online_search: SearchBarNode
+@export var local_mode_button: Button
+@export var online_mode_button: Button
+@export var online_category: OptionButton
+@export var previous_page_button: Button
+@export var page_status: Label
+@export var next_page_button: Button
+@export var search_timer: Timer
 
 @onready var mutex: Mutex = Mutex.new()
 
@@ -31,14 +39,6 @@ var online_pages := 0
 var online_busy := false
 var online_refresh_queued := false
 var online_client: RobTopLevels
-var online_search: SearchBarNode
-var local_mode_button: Button
-var online_mode_button: Button
-var online_category: OptionButton
-var previous_page_button: Button
-var page_status: Label
-var next_page_button: Button
-var search_timer: Timer
 
 var levels: Dictionary[String, Control]
 var loaded_level_data: Dictionary
@@ -55,38 +55,15 @@ func _ready() -> void:
 
 
 func _setup_online_controls() -> void:
+	# Every visible control is authored in TitleScreen.tscn. Do not construct
+	# this toolbar dynamically: scene-authored nodes are reliably laid out on
+	# Android and are visible even if the networking client fails to initialize.
 	online_client = RobTopLevels.new()
 	get_parent().add_child(online_client)
-	online_search = get_node("../../HBoxContainer/SearchBarNode") as SearchBarNode
 	online_search.text_submitted.connect(_online_search_submitted)
 	online_search.text_changed.connect(_online_search_changed)
-
-	# Mode selection has its own full-width row. Keeping it out of the crowded
-	# search/sort row makes ONLINE LEVELS impossible to miss on narrow phones.
-	var controls := sort_by.get_parent()
-	var mode_toolbar := HBoxContainer.new()
-	mode_toolbar.name = "LevelSourceToolbar"
-	mode_toolbar.add_theme_constant_override("separation", 8)
-	controls.get_parent().add_child(mode_toolbar)
-	controls.get_parent().move_child(mode_toolbar, 0)
-
-	local_mode_button = Button.new()
-	local_mode_button.text = "LOCAL LEVELS"
-	local_mode_button.tooltip_text = "Levels saved on this device"
-	local_mode_button.disabled = true
 	local_mode_button.pressed.connect(_set_browse_mode.bind(false))
-	mode_toolbar.add_child(local_mode_button)
-
-	online_mode_button = Button.new()
-	online_mode_button.text = "ONLINE LEVELS"
-	online_mode_button.tooltip_text = "Browse public levels on RobTop's servers"
 	online_mode_button.pressed.connect(_set_browse_mode.bind(true))
-	mode_toolbar.add_child(online_mode_button)
-
-	online_category = OptionButton.new()
-	online_category.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for label: String in ["Recent", "Trending", "Most Downloaded", "Most Liked", "Featured", "Awarded"]:
-		online_category.add_item(label)
 	online_category.set_item_metadata(0, 4)
 	online_category.set_item_metadata(1, 3)
 	online_category.set_item_metadata(2, 1)
@@ -94,31 +71,9 @@ func _setup_online_controls() -> void:
 	online_category.set_item_metadata(4, 6)
 	online_category.set_item_metadata(5, 11)
 	online_category.item_selected.connect(_online_category_changed)
-	online_category.hide()
-	mode_toolbar.add_child(online_category)
-
-	previous_page_button = Button.new()
-	previous_page_button.text = "‹"
-	previous_page_button.tooltip_text = "Previous server page"
 	previous_page_button.pressed.connect(_change_online_page.bind(-1))
-	previous_page_button.hide()
-	mode_toolbar.add_child(previous_page_button)
-	page_status = Label.new()
-	page_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	page_status.hide()
-	mode_toolbar.add_child(page_status)
-	next_page_button = Button.new()
-	next_page_button.text = "›"
-	next_page_button.tooltip_text = "Next server page"
 	next_page_button.pressed.connect(_change_online_page.bind(1))
-	next_page_button.hide()
-	mode_toolbar.add_child(next_page_button)
-
-	search_timer = Timer.new()
-	search_timer.one_shot = true
-	search_timer.wait_time = 0.5
 	search_timer.timeout.connect(_restart_online_search)
-	get_parent().add_child(search_timer)
 
 
 func refresh() -> void:
