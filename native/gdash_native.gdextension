@@ -19,4 +19,4 @@ compatibility_minimum = "4.1"
 [libraries]
 
 linux.debug.x86_64 = "res://native/bin/linux_debug/x86_64/libgdash_native.so"
-android.debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
+android.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"

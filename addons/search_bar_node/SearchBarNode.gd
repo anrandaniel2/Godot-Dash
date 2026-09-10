@@ -224,7 +224,7 @@ func _queue_update() -> void:
 	# Search text is literal user input, not a regular expression. Escaping also
 	# prevents names containing `[`, `(`, `+`, etc. from producing an invalid
 	# RegEx while typing (online level names can contain any of these).
-	var escaped_value := RegEx.escape(value)
+	var escaped_value: String = _escape_regex_literal(value)
 	var _rgx0: RegEx = RegEx.create_from_string("(?{0})^{1}$".format([extras, escaped_value]))
 	var _rgx1: RegEx = RegEx.create_from_string("(?{0}).*{1}.*".format([extras, escaped_value]))
 
@@ -262,6 +262,17 @@ func _queue_update() -> void:
 
 	_last_search_buffer0 = nodes_0
 	_last_search_buffer1 = nodes_1
+
+
+static func _escape_regex_literal(value: String) -> String:
+	# Godot's RegEx class has no static escape() helper. Escape every RE2
+	# metacharacter explicitly so user-entered level names remain literal.
+	var escaped := ""
+	for character in value:
+		if "\\.^$|?*+()[]{}".contains(character):
+			escaped += "\\"
+		escaped += character
+	return escaped
 
 
 func _search_childs(root: Node, x: Node, value: String, _filters: Array[StringName], nodes_0: Array[Node], nodes_1: Array[Node], _rgx0: RegEx, _rgx1: RegEx) -> bool:

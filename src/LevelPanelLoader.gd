@@ -22,7 +22,8 @@ enum Order {
 @export var order: OptionButton
 @export var fade_screen: FadeScreen
 @export var refresh_button: Button
-@export var online_search: SearchBarNode
+@export var online_client: RobTopLevels
+@export var online_search: LineEdit
 @export var local_mode_button: Button
 @export var online_mode_button: Button
 @export var online_category: OptionButton
@@ -38,7 +39,8 @@ var online_page := 0
 var online_pages := 0
 var online_busy := false
 var online_refresh_queued := false
-var online_client: RobTopLevels
+
+const ONLINE_CATEGORY_TYPES: Array[int] = [4, 3, 1, 2, 6, 11]
 
 var levels: Dictionary[String, Control]
 var loaded_level_data: Dictionary
@@ -58,16 +60,8 @@ func _setup_online_controls() -> void:
 	# Every visible control is authored in TitleScreen.tscn. Do not construct
 	# this toolbar dynamically: scene-authored nodes are reliably laid out on
 	# Android and are visible even if the networking client fails to initialize.
-	online_client = RobTopLevels.new()
-	get_parent().add_child(online_client)
 	online_search.text_submitted.connect(_online_search_submitted)
 	online_search.text_changed.connect(_online_search_changed)
-	online_category.set_item_metadata(0, 4)
-	online_category.set_item_metadata(1, 3)
-	online_category.set_item_metadata(2, 1)
-	online_category.set_item_metadata(3, 2)
-	online_category.set_item_metadata(4, 6)
-	online_category.set_item_metadata(5, 11)
 	online_category.item_selected.connect(_online_category_changed)
 	previous_page_button.pressed.connect(_change_online_page.bind(-1))
 	next_page_button.pressed.connect(_change_online_page.bind(1))
@@ -179,9 +173,6 @@ func _set_browse_mode(use_online: bool) -> void:
 	if online_mode == use_online:
 		return
 	online_mode = use_online
-	if online_mode and not is_instance_valid(online_client):
-		online_client = RobTopLevels.new()
-		get_parent().add_child(online_client)
 	# SearchBarNode is also a local client-side filter. A stale local query can
 	# hide the loading/error label and every server card, making a completed
 	# request look permanently empty. Enter Online with an unfiltered first page;
@@ -253,7 +244,8 @@ func _refresh_online() -> void:
 	next_page_button.disabled = true
 	page_status.text = "Loading…"
 	_show_list_message("Connecting to RobTop…")
-	var category: int = online_category.get_item_metadata(online_category.selected)
+	var category_index := clampi(online_category.selected, 0, ONLINE_CATEGORY_TYPES.size() - 1)
+	var category: int = ONLINE_CATEGORY_TYPES[category_index]
 	var requested_page := online_page
 	var requested_query := online_search.text.strip_edges()
 	var response := await online_client.search(requested_query, requested_page, category)

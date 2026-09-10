@@ -21,6 +21,7 @@
 [ext_resource type="Script" uid="uid://y1hecem53675" path="res://addons/search_bar_node/SearchBarNode.gd" id="14_hvy54"]
 [ext_resource type="Script" uid="uid://cjmmhbp1b5312" path="res://addons/StyleboxFancy/StyleBorder.gd" id="15_fm4nh"]
 [ext_resource type="Script" uid="uid://863yfw654q5k" path="res://src/LevelPanelLoader.gd" id="15_hvy54"]
+[ext_resource type="Script" path="res://src/RobTopLevels.gd" id="16_robtop"]
 [ext_resource type="Gradient" uid="uid://oidq6h6ak8o" path="res://resources/curves/Ratings.tres" id="18_hvy54"]
 [ext_resource type="Script" uid="uid://cc6dieqa88a8y" path="res://src/UpdateChecker.gd" id="19_1ska7"]
 [ext_resource type="Script" uid="uid://driqqpbqw61rh" path="res://src/IconGarage.gd" id="20_1ska7"]
@@ -524,6 +525,9 @@ layout_mode = 2
 text = "›"
 tooltip_text = "Next server page"
 
+[node name="RobTopLevels" type="Node" parent="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer"]
+script = ExtResource("16_robtop")
+
 [node name="OnlineSearchTimer" type="Timer" parent="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer"]
 wait_time = 0.5
 one_shot = true
@@ -582,7 +586,7 @@ script = ExtResource("21_u3ctg")
 wheel_scroll_damper = SubResource("Resource_1nrh6")
 dragging_scroll_damper = SubResource("Resource_08fpa")
 
-[node name="LevelPanelLoader" type="VBoxContainer" parent="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer" unique_id=436446832 node_paths=PackedStringArray("subscene_manager", "import_dialog", "level_already_exists_dialog", "corrupted_level_dialog", "version_error_dialog", "sort_by", "order", "fade_screen", "refresh_button", "online_search", "local_mode_button", "online_mode_button", "online_category", "previous_page_button", "page_status", "next_page_button", "search_timer")]
+[node name="LevelPanelLoader" type="VBoxContainer" parent="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer" unique_id=436446832 node_paths=PackedStringArray("subscene_manager", "import_dialog", "level_already_exists_dialog", "corrupted_level_dialog", "version_error_dialog", "sort_by", "order", "fade_screen", "refresh_button", "online_client", "online_search", "local_mode_button", "online_mode_button", "online_category", "previous_page_button", "page_status", "next_page_button", "search_timer")]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 0
@@ -599,6 +603,7 @@ sort_by = NodePath("../../HBoxContainer/SortBy")
 order = NodePath("../../HBoxContainer/Order")
 fade_screen = NodePath("../../../../../../../FadeScreen")
 refresh_button = NodePath("../../HBoxContainer2/Refresh")
+online_client = NodePath("../../RobTopLevels")
 online_search = NodePath("../../HBoxContainer/SearchBarNode")
 local_mode_button = NodePath("../../LevelSourceToolbar/LocalLevels")
 online_mode_button = NodePath("../../LevelSourceToolbar/OnlineLevels")

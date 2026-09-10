@@ -290,6 +290,10 @@ jobs:
           "$GODOT_BIN" --headless --path . --import > godot_import.log 2>&1
           status=$?
           tail -n 30 godot_import.log
+          if grep -E "SCRIPT ERROR: Parse Error|Failed to load script" godot_import.log; then
+            echo "Godot reported script parse failures during import"
+            exit 1
+          fi
           exit $status
 
       # A successful import only proves scripts parse. Exercise both GD artwork
@@ -324,6 +328,21 @@ jobs:
             details=${details//$'\r'/'%0D'}
             details=${details//$'\n'/'%0A'}
             echo "::error title=Visual smoke::${details}"
+            exit 1
+          fi
+
+      - name: Exercise Community scene wiring
+        run: |
+          set -euo pipefail
+          xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/community_ui_smoke_test.tscn \
+            > community_ui_smoke.log 2>&1
+          cat community_ui_smoke.log
+          grep -q "COMMUNITY_UI_SMOKE: PASS" community_ui_smoke.log
+          if grep -E "SCRIPT ERROR|Parse Error|Invalid access|resolved to null" community_ui_smoke.log; then
+            echo "Community scene emitted runtime script errors"
             exit 1
           fi
 

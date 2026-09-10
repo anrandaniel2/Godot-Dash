@@ -111,6 +111,7 @@ layout_mode = 2
 metadata/_smooth_scroll_default_mouse_filter_set = true
 
 [node name="Max FPS" type="BoxContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate/VBoxContainer" unique_id=716439582]
+unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 vertical = true
