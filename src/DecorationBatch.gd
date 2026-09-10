@@ -31,9 +31,9 @@ extends Node2D
 ## couple.
 const BUCKET_WIDTH: float = 1024.0
 
-## Margin around the camera rect, so art whose origin is just off-screen but
-## whose pixels still overlap is not clipped early.
-const CULL_MARGIN: float = 1024.0
+## Runtime native culling uses each transformed sprite's exact bounds, so no
+## off-screen look-ahead margin is submitted to the Canvas renderer.
+const CULL_MARGIN: float = 0.0
 
 ## Every runtime batch is spatially filtered. Dense effect levels often have
 ## thousands of small group-specific batches; exempting batches below 256
@@ -166,11 +166,6 @@ func _ready() -> void:
 	# queue_redraw() issued there is not retained by CanvasItem, so explicitly
 	# request the first draw once the batch has entered a viewport.
 	if _native_canvas != null:
-		if _cull:
-			_last_visible = _visible_buckets()
-			var first: int = _last_visible[0] if not _last_visible.is_empty() else 1
-			var last: int = _last_visible[-1] if not _last_visible.is_empty() else 0
-			_native_canvas.call(&"set_visible_buckets", first, last)
 		_native_canvas.queue_redraw()
 	else:
 		queue_redraw()
@@ -238,9 +233,6 @@ func build() -> void:
 	_spinning.clear()
 	_bounds = Rect2()
 
-	var origins := PackedFloat32Array()
-	if _cull and native != null:
-		origins.resize(items.size())
 	for index in items.size():
 		var item: Item = items[index]
 		var extent: Vector2 = (item.region.size * 0.5).abs() * item.transform.get_scale().abs()
@@ -253,21 +245,11 @@ func build() -> void:
 				_by_channel[item.channel] = []
 				add_to_group(CHANNEL_GROUP_PREFIX + item.channel)
 			_by_channel[item.channel].append(item)
-		if _cull:
-			if native != null:
-				origins[index] = item.origin_x
-			else:
-				var bucket: int = int(floor(item.origin_x / BUCKET_WIDTH))
-				if not _buckets.has(bucket):
-					_buckets[bucket] = []
-				_buckets[bucket].append(item)
-	if _cull and native != null:
-		var native_buckets: Dictionary = native.call(&"build_x_buckets", origins, BUCKET_WIDTH)
-		for bucket: int in native_buckets:
-			var bucket_items: Array = []
-			for index: int in native_buckets[bucket]:
-				bucket_items.append(items[index])
-			_buckets[bucket] = bucket_items
+		if _cull and native == null:
+			var bucket: int = int(floor(item.origin_x / BUCKET_WIDTH))
+			if not _buckets.has(bucket):
+				_buckets[bucket] = []
+			_buckets[bucket].append(item)
 
 	_build_native_canvas(native)
 	_built = true

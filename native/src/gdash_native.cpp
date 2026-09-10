@@ -101,9 +101,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.4.0 / native build-render-cull / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.5.0 / exact viewport culling / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 4; }
+	int64_t version() const { return 5; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	Dictionary parse_gd_pairs(const String &chunk) const {
@@ -463,12 +463,15 @@ class NativeDecorationCanvas : public Node2D {
 
 	std::vector<Record> records;
 	bool cull = false;
-	double bucket_width = 1024.0;
-	double cull_margin = 1024.0;
-	// Draw nothing before the first camera update rather than briefly submitting
-	// a whole 100k-object level as the node enters the tree.
-	int64_t first_bucket = 1;
-	int64_t last_bucket = 0;
+	double bucket_width = 1024.0; // Retained for ABI compatibility/fallback tools.
+	double cull_margin = 0.0;
+	int64_t first_bucket = INT64_MIN;
+	int64_t last_bucket = INT64_MAX;
+	Rect2 local_bounds;
+	Transform2D last_viewport_transform;
+	Vector2 last_viewport_size;
+	bool view_initialized = false;
+	int64_t last_drawn_items = 0;
 
 protected:
 	static void _bind_methods() {
@@ -479,33 +482,46 @@ protected:
 		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationCanvas::set_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationCanvas::set_item_transform);
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationCanvas::item_count);
+		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationCanvas::last_drawn_count);
 	}
 
 	void _notification(int what) {
 		if (what == Node::NOTIFICATION_PROCESS && cull && is_inside_tree()) {
-			Viewport *viewport = get_viewport();
-			Camera2D *camera = viewport ? viewport->get_camera_2d() : nullptr;
-			if (camera) {
-				Vector2 zoom = camera->get_zoom();
-				if (Math::is_zero_approx(zoom.x) || Math::is_zero_approx(zoom.y)) zoom = Vector2(1, 1);
-				const Vector2 half = get_viewport_rect().size * 0.5 / zoom;
-				const Vector2 center = to_local(camera->get_screen_center_position());
-				const int64_t first = static_cast<int64_t>(std::floor((center.x - half.x - cull_margin) / bucket_width));
-				const int64_t last = static_cast<int64_t>(std::floor((center.x + half.x + cull_margin) / bucket_width));
-				set_visible_buckets(first, last);
+			// A retained CanvasItem draw list does not otherwise know that a sprite
+			// inside it crossed the screen edge. Rebuild only when the actual
+			// world-to-viewport transform or viewport size changes.
+			const Transform2D current_transform = get_viewport_transform();
+			const Vector2 current_size = get_viewport_rect().size;
+			if (!view_initialized || current_transform != last_viewport_transform || current_size != last_viewport_size) {
+				last_viewport_transform = current_transform;
+				last_viewport_size = current_size;
+				view_initialized = true;
+				queue_redraw();
 			}
 			return;
 		}
 		if (what != CanvasItem::NOTIFICATION_DRAW) return;
+
+		last_drawn_items = 0;
+		const Transform2D to_viewport = get_viewport_transform();
+		const Rect2 screen(Vector2(), get_viewport_rect().size);
+		if (cull && !local_bounds.has_area()) return;
+		// Whole-batch rejection makes the common off-screen group cost one AABB
+		// test, not one test per record.
+		if (cull && !screen.intersects(to_viewport.xform(local_bounds), true)) return;
+
 		for (const Record &record : records) {
+			const Rect2 quad(-record.region.size * 0.5, record.region.size);
 			if (cull) {
-				const int64_t bucket = static_cast<int64_t>(std::floor(record.origin_x / bucket_width));
-				if (bucket < first_bucket || bucket > last_bucket) continue;
+				// Exact transformed sprite bounds: no look-ahead margin and no
+				// origin-only approximation. Off-screen artwork never enters the
+				// retained Canvas command list.
+				const Rect2 viewport_bounds = (to_viewport * record.transform).xform(quad);
+				if (!screen.intersects(viewport_bounds, true)) continue;
 			}
 			draw_set_transform_matrix(record.transform);
-			draw_texture_rect_region(record.texture,
-					Rect2(-record.region.size * 0.5, record.region.size),
-					record.region, record.color);
+			draw_texture_rect_region(record.texture, quad, record.region, record.color);
+			++last_drawn_items;
 		}
 		draw_set_transform_matrix(Transform2D());
 	}
@@ -520,6 +536,8 @@ public:
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear();
 		records.reserve(static_cast<size_t>(count));
+		local_bounds = Rect2();
+		bool first_bounds = true;
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
 			record.texture = textures[i];
@@ -532,11 +550,16 @@ public:
 				record.has_hsv = hsv_data[i * 5 + 4] >= 0.0f;
 				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_data[i * 5 + component];
 			}
+			const Rect2 quad(-record.region.size * 0.5, record.region.size);
+			const Rect2 bounds = record.transform.xform(quad);
+			local_bounds = first_bounds ? bounds : local_bounds.merge(bounds);
+			first_bounds = false;
 			records.push_back(record);
 		}
 		cull = enable_culling;
 		bucket_width = width > 0.0 ? width : 1024.0;
 		cull_margin = std::max(0.0, margin);
+		view_initialized = false;
 		set_process(cull);
 		if (!cull) {
 			first_bucket = INT64_MIN;
@@ -589,6 +612,7 @@ public:
 	}
 
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
+	int64_t last_drawn_count() const { return last_drawn_items; }
 };
 
 } // namespace godot

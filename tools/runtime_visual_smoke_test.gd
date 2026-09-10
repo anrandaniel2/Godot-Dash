@@ -15,6 +15,7 @@ const SAMPLE_RADIUS := 90
 var _frames := 0
 var _direct: Node2D
 var _batch: DecorationBatch
+var _native_canvas: Node2D
 
 
 func _ready() -> void:
@@ -36,7 +37,12 @@ func _ready() -> void:
 	data = _object_data(BATCH_WORLD)
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		data.color_channels = {"base": "native_smoke"}
-	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
+	var batch_objects: Array = [data]
+	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+		var offscreen := _object_data(Vector2(100000, BATCH_WORLD.y))
+		offscreen.color_channels = {"base": "native_smoke"}
+		batch_objects.append(offscreen)
+	var batches := GDDecorationLoader.build_batches(batch_objects, GDDecorationLoader.art_scale())
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
 		add_child(batch)
@@ -44,6 +50,7 @@ func _ready() -> void:
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
 		if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 			var native_canvas := batch.get_node_or_null("NativeCanvas")
+			_native_canvas = native_canvas
 			assert(native_canvas != null, "native smoke: DecorationBatch did not create native canvas")
 			assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
 			assert(not batch.is_processing() and native_canvas.is_processing(), "native smoke: culling must not poll through GDScript")
@@ -63,6 +70,10 @@ func _process(_delta: float) -> void:
 		return
 	var image := get_viewport().get_texture().get_image()
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
+	if _native_canvas != null:
+		var drawn := int(_native_canvas.call(&"last_drawn_count"))
+		var total := int(_native_canvas.call(&"item_count"))
+		assert(drawn > 0 and drawn < total, "native smoke: exact off-screen rejection (%d/%d)" % [drawn, total])
 	# Canvas stretch/aspect settings vary with the test window. Ask each
 	# CanvasItem for the actual world-to-viewport transform instead of assuming
 	# a scale ratio.
@@ -117,7 +128,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 4, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 5, "native smoke: old kernel ABI")
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()
