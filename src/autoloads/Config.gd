@@ -41,15 +41,16 @@ enum ParticlePreprocessing {
 @export_group("Graphics")
 
 @export_subgroup("Framerate")
-@export_range(0, 60, 1, "or_greater") var max_fps: int = 60
-@export var vsync: int
+## Zero is replaced with the active display's refresh rate on first launch.
+@export_range(0, 60, 1, "or_greater") var max_fps: int = 0
+@export var vsync: int = DisplayServer.VSyncMode.VSYNC_ENABLED
 
 @export_subgroup("Window")
 @export var window_mode: WindowMode = WindowMode.FULLSCREEN
 @export var render_scale: float = 1.0
 
 @export_subgroup("Post-processing")
-@export var anti_aliasing: Viewport.MSAA = Viewport.MSAA.MSAA_4X
+@export var anti_aliasing: Viewport.MSAA = Viewport.MSAA.MSAA_DISABLED
 @export var texture_filtering: TextureFilteringMode = TextureFilteringMode.LINEAR_WITH_MIPMAPS
 @export var bloom: bool = true
 @export var menu_blur: bool = true
@@ -68,9 +69,10 @@ enum ParticlePreprocessing {
 @export var culling_enabled: bool = true
 ## How far beyond the screen edges, in cells, objects stay visible. A speed
 ## change or camera trigger can move the view a long way in one frame, and the
-## buffer keeps objects on screen from popping in late. Half a screen is 7-8
-## cells; the default is deliberately generous.
-@export_range(4, 200, 1, "suffix:cells") var culling_buffer_cells: int = 40
+## buffer keeps objects on screen from popping in late. Native span-aware
+## culling makes a tight five-cell look-ahead safe and keeps dense levels from
+## retaining several extra screens of objects.
+@export_range(4, 200, 1, "suffix:cells") var culling_buffer_cells: int = 5
 
 @export_subgroup("Level open")
 ## Build the level progressively across frames instead of blocking the main
@@ -198,8 +200,13 @@ var config_file: ConfigFile = ConfigFile.new()
 func _init():
 	config_file.load("user://config.cfg")
 
-	# Graphics
-	max_fps = config_file.get_value("Graphics", "max_fps", max_fps)
+	# Graphics. On a fresh install, cap to the actual panel refresh rate rather
+	# than an arbitrary 60 FPS. Keep 60 as the platform fallback for displays
+	# that do not report a usable refresh value.
+	var refresh_rate := roundi(DisplayServer.screen_get_refresh_rate())
+	if refresh_rate <= 0:
+		refresh_rate = 60
+	max_fps = config_file.get_value("Graphics", "max_fps", refresh_rate)
 	vsync = config_file.get_value("Graphics", "vsync", vsync)
 	window_mode = config_file.get_value("Graphics", "window_mode", window_mode)
 	render_scale = config_file.get_value("Graphics", "render_scale", render_scale)

@@ -5,6 +5,7 @@
 // these C++ kernels for compressed GMD payloads, the per-object GD property
 // parser, decoration ordering/bucketing, and spatial range calculations.
 
+#include <godot_cpp/classes/camera2d.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
@@ -16,9 +17,11 @@
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/time.hpp>
+#include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/core/object.hpp>
+#include <godot_cpp/core/math.hpp>
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -460,13 +463,16 @@ class NativeDecorationCanvas : public Node2D {
 
 	std::vector<Record> records;
 	bool cull = false;
-	double bucket_width = 4096.0;
-	int64_t first_bucket = INT64_MIN;
-	int64_t last_bucket = INT64_MAX;
+	double bucket_width = 1024.0;
+	double cull_margin = 1024.0;
+	// Draw nothing before the first camera update rather than briefly submitting
+	// a whole 100k-object level as the node enters the tree.
+	int64_t first_bucket = 1;
+	int64_t last_bucket = 0;
 
 protected:
 	static void _bind_methods() {
-		ClassDB::bind_method(D_METHOD("configure", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "enable_culling", "width"), &NativeDecorationCanvas::configure);
+		ClassDB::bind_method(D_METHOD("configure", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "enable_culling", "width", "margin"), &NativeDecorationCanvas::configure);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationCanvas::set_visible_buckets);
 		ClassDB::bind_method(D_METHOD("apply_channel_color", "indices", "color"), &NativeDecorationCanvas::apply_channel_color);
 		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationCanvas::get_item_color);
@@ -476,6 +482,20 @@ protected:
 	}
 
 	void _notification(int what) {
+		if (what == Node::NOTIFICATION_PROCESS && cull && is_inside_tree()) {
+			Viewport *viewport = get_viewport();
+			Camera2D *camera = viewport ? viewport->get_camera_2d() : nullptr;
+			if (camera) {
+				Vector2 zoom = camera->get_zoom();
+				if (Math::is_zero_approx(zoom.x) || Math::is_zero_approx(zoom.y)) zoom = Vector2(1, 1);
+				const Vector2 half = get_viewport_rect().size * 0.5 / zoom;
+				const Vector2 center = to_local(camera->get_screen_center_position());
+				const int64_t first = static_cast<int64_t>(std::floor((center.x - half.x - cull_margin) / bucket_width));
+				const int64_t last = static_cast<int64_t>(std::floor((center.x + half.x + cull_margin) / bucket_width));
+				set_visible_buckets(first, last);
+			}
+			return;
+		}
 		if (what != CanvasItem::NOTIFICATION_DRAW) return;
 		for (const Record &record : records) {
 			if (cull) {
@@ -496,7 +516,7 @@ public:
 	void configure(const Array &textures, const Array &regions, const Array &transforms,
 			const PackedColorArray &colors, const PackedFloat32Array &origins,
 			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
-			bool enable_culling, double width) {
+			bool enable_culling, double width, double margin) {
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear();
 		records.reserve(static_cast<size_t>(count));
@@ -515,7 +535,13 @@ public:
 			records.push_back(record);
 		}
 		cull = enable_culling;
-		bucket_width = width > 0.0 ? width : 4096.0;
+		bucket_width = width > 0.0 ? width : 1024.0;
+		cull_margin = std::max(0.0, margin);
+		set_process(cull);
+		if (!cull) {
+			first_bucket = INT64_MIN;
+			last_bucket = INT64_MAX;
+		}
 		queue_redraw();
 	}
 

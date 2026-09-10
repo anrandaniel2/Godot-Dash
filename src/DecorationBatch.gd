@@ -29,15 +29,17 @@ extends Node2D
 ## Width of one culling bucket, in local units. Wide enough that the bucket list
 ## stays short across a long level, narrow enough that a screen only touches a
 ## couple.
-const BUCKET_WIDTH: float = 4096.0
+const BUCKET_WIDTH: float = 1024.0
 
 ## Margin around the camera rect, so art whose origin is just off-screen but
 ## whose pixels still overlap is not clipped early.
 const CULL_MARGIN: float = 1024.0
 
-## Above this many items, culling is worth its bookkeeping. Small batches - the
-## median batch is about 20 items - just draw everything.
-const CULL_THRESHOLD: int = 256
+## Every runtime batch is spatially filtered. Dense effect levels often have
+## thousands of small group-specific batches; exempting batches below 256
+## items caused almost the entire level to remain in the Canvas draw list even
+## when only one screen was visible. The native canvas makes this cheap.
+const CULL_THRESHOLD: int = 1
 
 ## Prefix for the group a batch joins for each colour channel it draws, so a
 ## channel update can find exactly the batches it affects.
@@ -270,7 +272,9 @@ func build() -> void:
 	_build_native_canvas(native)
 	_built = true
 	_last_visible = PackedInt32Array()
-	set_process(_cull or not _spinning.is_empty())
+	# Native canvases poll their camera in C++; keep this GDScript callback only
+	# when individual spinning records need transform updates.
+	set_process(not _spinning.is_empty() if _native_canvas != null else _cull or not _spinning.is_empty())
 	_request_redraw()
 
 
@@ -324,7 +328,7 @@ func _build_native_canvas(native: Object) -> void:
 			_native_by_channel[item.channel] = channel_indices
 	_native_canvas.call(
 			&"configure", textures, regions, transforms, colors, origins,
-			base_alphas, hsv_data, _cull, BUCKET_WIDTH,
+			base_alphas, hsv_data, _cull, BUCKET_WIDTH, CULL_MARGIN,
 	)
 
 
@@ -416,7 +420,7 @@ func _process(delta: float) -> void:
 				_native_canvas.call(&"set_item_transform", item.render_index, item.transform)
 		_request_redraw()
 
-	if not _cull:
+	if _native_canvas != null or not _cull:
 		return
 	var visible_buckets: PackedInt32Array = _visible_buckets()
 	if visible_buckets != _last_visible:
