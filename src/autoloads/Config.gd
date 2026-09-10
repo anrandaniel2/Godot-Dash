@@ -223,6 +223,21 @@ func _init():
 	ldm = config_file.get_value("Performance", "ldm", ldm)
 	culling_enabled = config_file.get_value("Performance", "culling_enabled", culling_enabled)
 	culling_buffer_cells = config_file.get_value("Performance", "culling_buffer_cells", culling_buffer_cells)
+	# Migrate only values equal to the former shipped defaults. This makes the
+	# optimized defaults effective for existing installations without replacing
+	# intentional custom settings.
+	if int(config_file.get_value("Performance", "defaults_version", 0)) < 1:
+		if max_fps == 60:
+			max_fps = refresh_rate
+		if anti_aliasing == Viewport.MSAA.MSAA_4X:
+			anti_aliasing = Viewport.MSAA.MSAA_DISABLED
+		if culling_buffer_cells == 40:
+			culling_buffer_cells = 5
+		config_file.set_value("Graphics", "max_fps", max_fps)
+		config_file.set_value("Graphics", "anti_aliasing", anti_aliasing)
+		config_file.set_value("Performance", "culling_buffer_cells", culling_buffer_cells)
+		config_file.set_value("Performance", "defaults_version", 1)
+		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
 	preprocess_particles_in_editor = config_file.get_value("Performance", "preprocess_particles_in_editor", preprocess_particles_in_editor)
