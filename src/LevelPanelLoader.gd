@@ -62,8 +62,6 @@ func _setup_online_controls() -> void:
 	get_parent().add_child(online_client)
 	online_search.text_submitted.connect(_online_search_submitted)
 	online_search.text_changed.connect(_online_search_changed)
-	local_mode_button.pressed.connect(_set_browse_mode.bind(false))
-	online_mode_button.pressed.connect(_set_browse_mode.bind(true))
 	online_category.set_item_metadata(0, 4)
 	online_category.set_item_metadata(1, 3)
 	online_category.set_item_metadata(2, 1)
@@ -159,12 +157,25 @@ func refresh() -> void:
 	refresh_button.disabled = false
 
 
+func _on_local_levels_pressed() -> void:
+	_set_browse_mode(false)
+
+
+func _on_online_levels_pressed() -> void:
+	_set_browse_mode(true)
+
+
 func _set_browse_mode(use_online: bool) -> void:
+	# These buttons are tabs, not disabled actions. A disabled tab looked like
+	# an unavailable feature and also made touch-state diagnosis ambiguous.
+	local_mode_button.button_pressed = not use_online
+	online_mode_button.button_pressed = use_online
 	if online_mode == use_online:
 		return
 	online_mode = use_online
-	local_mode_button.disabled = not online_mode
-	online_mode_button.disabled = online_mode
+	if online_mode and not is_instance_valid(online_client):
+		online_client = RobTopLevels.new()
+		get_parent().add_child(online_client)
 	online_page = 0
 	sort_by.visible = not online_mode
 	order.visible = not online_mode
@@ -218,6 +229,7 @@ func _refresh_online() -> void:
 	refresh_button.disabled = true
 	previous_page_button.disabled = true
 	next_page_button.disabled = true
+	page_status.text = "Loading…"
 	_show_list_message("Connecting to RobTop…")
 	var category: int = online_category.get_item_metadata(online_category.selected)
 	var requested_page := online_page

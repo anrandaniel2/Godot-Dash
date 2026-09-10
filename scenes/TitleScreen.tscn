@@ -466,7 +466,8 @@ size_flags_horizontal = 3
 theme_override_styles/normal = SubResource("StyleBox_02qso")
 theme_override_styles/pressed = SubResource("StyleBox_fm4nh")
 theme_override_styles/hover = SubResource("StyleBox_3yl86")
-disabled = true
+toggle_mode = true
+button_pressed = true
 text = "LOCAL LEVELS"
 tooltip_text = "Levels saved on this device"
 
@@ -477,6 +478,7 @@ size_flags_horizontal = 3
 theme_override_styles/normal = SubResource("StyleBox_02qso")
 theme_override_styles/pressed = SubResource("StyleBox_fm4nh")
 theme_override_styles/hover = SubResource("StyleBox_3yl86")
+toggle_mode = true
 text = "ONLINE LEVELS"
 tooltip_text = "Browse public levels on RobTop's servers"
 
@@ -1093,6 +1095,8 @@ title_screen_player_killer = NodePath("../Node2D/Kill Box")
 [connection signal="pressed" from="TitleScreenLayer/TitleScreen/MainPanel/VBoxContainer/HBoxContainer/Settings" to="Subscene Manager" method="_on_settings_pressed"]
 [connection signal="pressed" from="TitleScreenLayer/TitleScreen/MainPanel/VBoxContainer/HBoxContainer/Quit" to="Subscene Manager" method="_on_quit_game_pressed"]
 [connection signal="file_selected" from="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/ImportLevelDialog" to="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer/LevelPanelLoader" method="_import_level"]
+[connection signal="pressed" from="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/LevelSourceToolbar/LocalLevels" to="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer/LevelPanelLoader" method="_on_local_levels_pressed"]
+[connection signal="pressed" from="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/LevelSourceToolbar/OnlineLevels" to="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer/LevelPanelLoader" method="_on_online_levels_pressed"]
 [connection signal="pressed" from="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/HBoxContainer2/Create" to="Subscene Manager" method="_on_editor_pressed"]
 [connection signal="pressed" from="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/HBoxContainer2/Import" to="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer/LevelPanelLoader" method="_open_importer"]
 [connection signal="pressed" from="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/HBoxContainer2/Refresh" to="TitleScreenLayer/TitleScreen/Community/MarginContainer/VBoxContainer/SmoothScrollContainer/LevelPanelLoader" method="refresh"]
