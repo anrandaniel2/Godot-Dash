@@ -32,7 +32,8 @@ var online_busy := false
 var online_refresh_queued := false
 var online_client: RobTopLevels
 var online_search: SearchBarNode
-var browse_mode: OptionButton
+var local_mode_button: Button
+var online_mode_button: Button
 var online_category: OptionButton
 var previous_page_button: Button
 var page_status: Label
@@ -60,16 +61,30 @@ func _setup_online_controls() -> void:
 	online_search.text_submitted.connect(_online_search_submitted)
 	online_search.text_changed.connect(_online_search_changed)
 
+	# Mode selection has its own full-width row. Keeping it out of the crowded
+	# search/sort row makes ONLINE LEVELS impossible to miss on narrow phones.
 	var controls := sort_by.get_parent()
-	browse_mode = OptionButton.new()
-	browse_mode.add_item("Local")
-	browse_mode.add_item("Online")
-	browse_mode.tooltip_text = "Browse saved levels or RobTop's public servers"
-	browse_mode.item_selected.connect(_browse_mode_changed)
-	controls.add_child(browse_mode)
-	controls.move_child(browse_mode, 1)
+	var mode_toolbar := HBoxContainer.new()
+	mode_toolbar.name = "LevelSourceToolbar"
+	mode_toolbar.add_theme_constant_override("separation", 8)
+	controls.get_parent().add_child(mode_toolbar)
+	controls.get_parent().move_child(mode_toolbar, 0)
+
+	local_mode_button = Button.new()
+	local_mode_button.text = "LOCAL LEVELS"
+	local_mode_button.tooltip_text = "Levels saved on this device"
+	local_mode_button.disabled = true
+	local_mode_button.pressed.connect(_set_browse_mode.bind(false))
+	mode_toolbar.add_child(local_mode_button)
+
+	online_mode_button = Button.new()
+	online_mode_button.text = "ONLINE LEVELS"
+	online_mode_button.tooltip_text = "Browse public levels on RobTop's servers"
+	online_mode_button.pressed.connect(_set_browse_mode.bind(true))
+	mode_toolbar.add_child(online_mode_button)
 
 	online_category = OptionButton.new()
+	online_category.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for label: String in ["Recent", "Trending", "Most Downloaded", "Most Liked", "Featured", "Awarded"]:
 		online_category.add_item(label)
 	online_category.set_item_metadata(0, 4)
@@ -80,25 +95,24 @@ func _setup_online_controls() -> void:
 	online_category.set_item_metadata(5, 11)
 	online_category.item_selected.connect(_online_category_changed)
 	online_category.hide()
-	controls.add_child(online_category)
-	controls.move_child(online_category, 2)
+	mode_toolbar.add_child(online_category)
 
 	previous_page_button = Button.new()
 	previous_page_button.text = "‹"
 	previous_page_button.tooltip_text = "Previous server page"
 	previous_page_button.pressed.connect(_change_online_page.bind(-1))
 	previous_page_button.hide()
-	controls.add_child(previous_page_button)
+	mode_toolbar.add_child(previous_page_button)
 	page_status = Label.new()
 	page_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	page_status.hide()
-	controls.add_child(page_status)
+	mode_toolbar.add_child(page_status)
 	next_page_button = Button.new()
 	next_page_button.text = "›"
 	next_page_button.tooltip_text = "Next server page"
 	next_page_button.pressed.connect(_change_online_page.bind(1))
 	next_page_button.hide()
-	controls.add_child(next_page_button)
+	mode_toolbar.add_child(next_page_button)
 
 	search_timer = Timer.new()
 	search_timer.one_shot = true
@@ -190,8 +204,12 @@ func refresh() -> void:
 	refresh_button.disabled = false
 
 
-func _browse_mode_changed(index: int) -> void:
-	online_mode = index == 1
+func _set_browse_mode(use_online: bool) -> void:
+	if online_mode == use_online:
+		return
+	online_mode = use_online
+	local_mode_button.disabled = not online_mode
+	online_mode_button.disabled = online_mode
 	online_page = 0
 	sort_by.visible = not online_mode
 	order.visible = not online_mode
