@@ -25,6 +25,20 @@ enum Order {
 
 @onready var mutex: Mutex = Mutex.new()
 
+var online_mode := false
+var online_page := 0
+var online_pages := 0
+var online_busy := false
+var online_refresh_queued := false
+var online_client: RobTopLevels
+var online_search: SearchBarNode
+var browse_mode: OptionButton
+var online_category: OptionButton
+var previous_page_button: Button
+var page_status: Label
+var next_page_button: Button
+var search_timer: Timer
+
 var levels: Dictionary[String, Control]
 var loaded_level_data: Dictionary
 var scene: PackedScene = load("res://scenes/components/game_components/LevelPanel.tscn")
@@ -35,10 +49,68 @@ var stopping: bool = false
 func _ready() -> void:
 	sort_by.item_selected.connect(reorder.unbind(1))
 	order.item_selected.connect(reorder.unbind(1))
+	_setup_online_controls()
 	refresh.call_deferred()
 
 
+func _setup_online_controls() -> void:
+	online_client = RobTopLevels.new()
+	get_parent().add_child(online_client)
+	online_search = get_node("../../HBoxContainer/SearchBarNode") as SearchBarNode
+	online_search.text_submitted.connect(_online_search_submitted)
+	online_search.text_changed.connect(_online_search_changed)
+
+	var controls := sort_by.get_parent()
+	browse_mode = OptionButton.new()
+	browse_mode.add_item("Local")
+	browse_mode.add_item("Online")
+	browse_mode.tooltip_text = "Browse saved levels or RobTop's public servers"
+	browse_mode.item_selected.connect(_browse_mode_changed)
+	controls.add_child(browse_mode)
+	controls.move_child(browse_mode, 1)
+
+	online_category = OptionButton.new()
+	for label: String in ["Recent", "Trending", "Most Downloaded", "Most Liked", "Featured", "Awarded"]:
+		online_category.add_item(label)
+	online_category.set_item_metadata(0, 4)
+	online_category.set_item_metadata(1, 3)
+	online_category.set_item_metadata(2, 1)
+	online_category.set_item_metadata(3, 2)
+	online_category.set_item_metadata(4, 6)
+	online_category.set_item_metadata(5, 11)
+	online_category.item_selected.connect(_online_category_changed)
+	online_category.hide()
+	controls.add_child(online_category)
+	controls.move_child(online_category, 2)
+
+	previous_page_button = Button.new()
+	previous_page_button.text = "‹"
+	previous_page_button.tooltip_text = "Previous server page"
+	previous_page_button.pressed.connect(_change_online_page.bind(-1))
+	previous_page_button.hide()
+	controls.add_child(previous_page_button)
+	page_status = Label.new()
+	page_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	page_status.hide()
+	controls.add_child(page_status)
+	next_page_button = Button.new()
+	next_page_button.text = "›"
+	next_page_button.tooltip_text = "Next server page"
+	next_page_button.pressed.connect(_change_online_page.bind(1))
+	next_page_button.hide()
+	controls.add_child(next_page_button)
+
+	search_timer = Timer.new()
+	search_timer.one_shot = true
+	search_timer.wait_time = 0.5
+	search_timer.timeout.connect(_restart_online_search)
+	get_parent().add_child(search_timer)
+
+
 func refresh() -> void:
+	if online_mode:
+		await _refresh_online()
+		return
 	refresh_button.disabled = true
 	levels.clear()
 	file_names.clear()
@@ -116,6 +188,174 @@ func refresh() -> void:
 	loaded_level_data.clear()
 	reorder()
 	refresh_button.disabled = false
+
+
+func _browse_mode_changed(index: int) -> void:
+	online_mode = index == 1
+	online_page = 0
+	sort_by.visible = not online_mode
+	order.visible = not online_mode
+	online_category.visible = online_mode and online_search.text.strip_edges().is_empty()
+	previous_page_button.visible = online_mode
+	page_status.visible = online_mode
+	next_page_button.visible = online_mode
+	online_search.placeholder_text = "Search RobTop levels by name or ID…" if online_mode else "Search…"
+	refresh()
+
+
+func _online_category_changed(_index: int) -> void:
+	if online_mode:
+		online_page = 0
+		_refresh_online()
+
+
+func _online_search_submitted(_text: String) -> void:
+	if online_mode:
+		search_timer.stop()
+		_restart_online_search()
+
+
+func _online_search_changed(_text: String) -> void:
+	if online_mode:
+		search_timer.start()
+
+
+func _restart_online_search() -> void:
+	online_page = 0
+	online_category.visible = online_search.text.strip_edges().is_empty()
+	_refresh_online()
+
+
+func _change_online_page(direction: int) -> void:
+	if online_busy:
+		return
+	var destination := online_page + direction
+	if destination < 0 or destination >= online_pages:
+		return
+	online_page = destination
+	_refresh_online()
+
+
+func _refresh_online() -> void:
+	if online_busy:
+		online_refresh_queued = true
+		return
+	online_refresh_queued = false
+	online_busy = true
+	refresh_button.disabled = true
+	previous_page_button.disabled = true
+	next_page_button.disabled = true
+	_show_list_message("Connecting to RobTop…")
+	var category: int = online_category.get_item_metadata(online_category.selected)
+	var requested_page := online_page
+	var requested_query := online_search.text.strip_edges()
+	var response := await online_client.search(requested_query, requested_page, category)
+	online_busy = false
+	refresh_button.disabled = false
+	if online_refresh_queued:
+		online_refresh_queued = false
+		_refresh_online.call_deferred()
+		return
+	if not online_mode or requested_page != online_page or requested_query != online_search.text.strip_edges():
+		return
+	if not response.ok:
+		online_pages = 0
+		page_status.text = "Offline"
+		previous_page_button.disabled = true
+		next_page_button.disabled = true
+		_show_list_message("Could not load online levels.\n%s\nCheck your connection and press Refresh." % response.error)
+		return
+
+	online_pages = int(response.pages)
+	page_status.text = "%d / %d" % [online_page + 1, maxi(1, online_pages)]
+	previous_page_button.disabled = online_page <= 0
+	next_page_button.disabled = online_page + 1 >= online_pages
+	_clear_list_controls()
+	if response.levels.is_empty():
+		_show_list_message("No online levels found.")
+		return
+	for summary: Dictionary in response.levels:
+		var panel: LevelPanel = scene.instantiate()
+		panel.title.text = "%s  ·  #%d" % [summary.name, summary.id]
+		panel.creator.text = summary.creator
+		var description: String = summary.description
+		var statistics := "%s  ·  %s downloads  ·  %s likes" % [summary.difficulty, _compact_number(summary.downloads), _compact_number(summary.likes)]
+		panel.description.text = statistics if description.is_empty() else "%s\n%s" % [description, statistics]
+		panel.version.text = "%d★" % summary.stars if summary.stars > 0 else summary.difficulty
+		panel.rating.text = str(summary.stars) if summary.stars > 0 else "?"
+		panel.rating_outline.modulate = rating_colors.get_color(clampf((summary.difficulty_value + 1.0) / 6.0, 0.0, 1.0))
+		panel.flashing_lights.hide()
+		panel.remove_button.hide()
+		panel.play_button.tooltip_text = "Download and play"
+		panel.edit_button.tooltip_text = "Download and edit"
+		panel.play_button.pressed.connect(_download_online_level.bind(summary, false, panel))
+		panel.edit_button.pressed.connect(_download_online_level.bind(summary, true, panel))
+		add_child(panel)
+
+
+func _download_online_level(summary: Dictionary, edit_after: bool, panel: LevelPanel) -> void:
+	if online_busy:
+		return
+	online_busy = true
+	panel.play_button.disabled = true
+	panel.edit_button.disabled = true
+	var old_version := panel.version.text
+	panel.version.text = "Downloading…"
+	var response := await online_client.download(summary.id, summary)
+	online_busy = false
+	if not is_instance_valid(panel):
+		return
+	panel.play_button.disabled = false
+	panel.edit_button.disabled = false
+	panel.version.text = old_version
+	if not response.ok:
+		_show_transient_error("Level download failed: %s" % response.error)
+		return
+	var file_name := "%s [GD-%d].%s" % [str(summary.name).validate_filename(), summary.id, Constants.LEVEL_FILE_EXTENSION]
+	var error := LevelOperationsHandler.write_level_and_meta(Constants.LEVEL_DIR + file_name, response.level_data)
+	if error != OK:
+		_show_transient_error("Could not save the downloaded level (error %d)." % error)
+		return
+	if edit_after:
+		_edit_level(file_name, "")
+	else:
+		_play_level(file_name, "")
+
+
+func _show_transient_error(message: String) -> void:
+	var dialog := AcceptDialog.new()
+	dialog.title = "Online levels"
+	dialog.dialog_text = message
+	get_tree().current_scene.add_child(dialog)
+	dialog.popup_centered()
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+
+
+func _clear_list_controls() -> void:
+	levels.clear()
+	for child in get_children():
+		if child is Control:
+			child.queue_free()
+
+
+func _show_list_message(message: String) -> void:
+	_clear_list_controls()
+	var label := Label.new()
+	label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.text = message
+	add_child(label)
+
+
+static func _compact_number(value: int) -> String:
+	if value >= 1_000_000:
+		return "%.1fM" % (value / 1_000_000.0)
+	if value >= 1_000:
+		return "%.1fK" % (value / 1_000.0)
+	return str(value)
 
 
 func _load_meta_threaded(index: int) -> void:

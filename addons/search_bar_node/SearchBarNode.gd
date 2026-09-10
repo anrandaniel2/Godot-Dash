@@ -221,8 +221,12 @@ func _queue_update() -> void:
 
 	var nodes_0: Array[Node] = []
 	var nodes_1: Array[Node] = []
-	var _rgx0: RegEx = RegEx.create_from_string("(?{0})^{1}$".format([extras, value]))
-	var _rgx1: RegEx = RegEx.create_from_string("(?{0}).*{1}.*".format([extras, value]))
+	# Search text is literal user input, not a regular expression. Escaping also
+	# prevents names containing `[`, `(`, `+`, etc. from producing an invalid
+	# RegEx while typing (online level names can contain any of these).
+	var escaped_value := RegEx.escape(value)
+	var _rgx0: RegEx = RegEx.create_from_string("(?{0})^{1}$".format([extras, escaped_value]))
+	var _rgx1: RegEx = RegEx.create_from_string("(?{0}).*{1}.*".format([extras, escaped_value]))
 
 	if search_by == SEARCH_BY.SINGLE_ROOT_NODE:
 		for x: Node in root_node_to_search.get_children():
