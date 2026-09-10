@@ -6,10 +6,11 @@ extends Node
 ## levels. Requests are deliberately one-shot and uncached at the HTTP layer;
 ## downloaded levels are converted into the normal local Godot Dash format.
 
-# boomlings.dev's current endpoint examples use HTTPS, the mandatory `www.`
-# subdomain, form-encoded POST bodies, and an empty User-Agent. Keep this exact
-# shape: Cloudflare blocks non-www requests and non-empty user agents.
-const BASE_URL := "https://www.boomlings.com/database/"
+# Exact public endpoints documented by boomlings.dev. Keep these explicit
+# instead of constructing URLs from a base path: endpoint revisions are part
+# of RobTop's protocol (`21` for search and `22` for level downloads).
+const SEARCH_URL := "https://www.boomlings.com/database/getGJLevels21.php"
+const DOWNLOAD_URL := "https://www.boomlings.com/database/downloadGJLevel22.php"
 const COMMON_SECRET := "Wmfd2893gb7"
 const GAME_VERSION := "22"
 const PC_BINARY_VERSION := "47"
@@ -30,7 +31,7 @@ func search(query: String, page: int = 0, category: int = 4) -> Dictionary:
 		"len": "-",
 		"diff": "-",
 	}
-	var response := await _post("getGJLevels21.php", fields)
+	var response := await _post(SEARCH_URL, fields)
 	if not response.ok:
 		return response
 	var text: String = response.text
@@ -81,7 +82,7 @@ func search(query: String, page: int = 0, category: int = 4) -> Dictionary:
 ## Downloads and converts one public GD level. The returned `level_data` is the
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	var response := await _post("downloadGJLevel22.php", {
+	var response := await _post(DOWNLOAD_URL, {
 		"secret": COMMON_SECRET,
 		"gameVersion": GAME_VERSION,
 		"binaryVersion": _binary_version(),
@@ -131,7 +132,7 @@ static func _platform_id() -> String:
 	return "3"
 
 
-func _post(endpoint: String, fields: Dictionary) -> Dictionary:
+func _post(url: String, fields: Dictionary) -> Dictionary:
 	var request := HTTPRequest.new()
 	# HTTPRequest's built-in timeout has failed to emit request_completed on
 	# some Android TLS/DNS stalls. Keep it, but also enforce our own monotonic
@@ -146,7 +147,7 @@ func _post(endpoint: String, fields: Dictionary) -> Dictionary:
 	for key: String in fields:
 		body_parts.append("%s=%s" % [key.uri_encode(), str(fields[key]).uri_encode()])
 	var error := request.request(
-			BASE_URL + endpoint,
+			url,
 			PackedStringArray([
 				"Content-Type: application/x-www-form-urlencoded",
 				"User-Agent:", # RobTop rejects many non-empty user agents.
