@@ -134,9 +134,12 @@ static func _platform_id() -> String:
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
 	var request := HTTPRequest.new()
-	# HTTPRequest's built-in timeout has failed to emit request_completed on
-	# some Android TLS/DNS stalls. Keep it, but also enforce our own monotonic
-	# watchdog below so the Community screen can never load forever.
+	# DNS and TLS connection setup can block the main thread when HTTPRequest
+	# uses its default non-threaded mode. On affected Android networks that
+	# froze both the loading UI and our watchdog before either could update.
+	# Run transport work off the render/UI thread so timeout and cancellation
+	# remain functional even if Cloudflare's connection stalls.
+	request.use_threads = true
 	request.timeout = 15.0
 	add_child(request)
 	var completed: Array = []
