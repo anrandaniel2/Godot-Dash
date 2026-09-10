@@ -6,7 +6,11 @@ extends Node
 ## levels. Requests are deliberately one-shot and uncached at the HTTP layer;
 ## downloaded levels are converted into the normal local Godot Dash format.
 
-const BASE_URL := "https://www.boomlings.com/database/"
+# RobTop's game API is an HTTP service. Although some documentation mirrors
+# can reach it over HTTPS, the actual Geometry Dash client protocol and older
+# server routes use cleartext HTTP; attempting TLS can stall indefinitely on
+# Android instead of returning a response.
+const BASE_URL := "http://www.boomlings.com/database/"
 const COMMON_SECRET := "Wmfd2893gb7"
 const GAME_VERSION := "22"
 const BINARY_VERSION := "47"

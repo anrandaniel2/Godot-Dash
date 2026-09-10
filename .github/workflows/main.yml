@@ -233,7 +233,7 @@ jobs:
           chmod +x android/build/gradlew
           test -f android/build/build.gradle && echo "template installed: $(ls android/build | head -5)"
 
-      - name: Enable android:largeHeap in the app manifest
+      - name: Configure Android runtime manifest
         run: |
           python3 - <<'PYEOF'
           import glob, os, re, sys
@@ -242,18 +242,34 @@ jobs:
               sys.exit("no AndroidManifest.xml found under android/build")
           for path in manifests:
               text = open(path, encoding="utf-8").read()
-              if "android:largeHeap" in text:
-                  print("already set:", path)
-                  continue
-              new = re.sub(
-                  r"(<application\b[^>]*?)(/?>)",
-                  lambda m: m.group(1) + ' android:largeHeap="true"' + m.group(2),
-                  text, count=1, flags=re.S,
-              )
-              if new == text:
-                  sys.exit("found no <application> tag to patch in %s" % path)
-              open(path, "w", encoding="utf-8").write(new)
-              print("android:largeHeap=\"true\" added to", path)
+              attributes = []
+              if "android:largeHeap" not in text:
+                  attributes.append('android:largeHeap="true"')
+              # RobTop's Geometry Dash PHP API uses HTTP rather than HTTPS.
+              # Permit cleartext only for boomlings.com instead of weakening
+              # transport security for every host contacted by the app.
+              if "android:networkSecurityConfig" not in text:
+                  attributes.append('android:networkSecurityConfig="@xml/network_security_config"')
+              if attributes:
+                  new = re.sub(
+                      r"(<application\b[^>]*?)(/?>)",
+                      lambda m: m.group(1) + " " + " ".join(attributes) + m.group(2),
+                      text, count=1, flags=re.S,
+                  )
+                  if new == text:
+                      sys.exit("found no <application> tag to patch in %s" % path)
+                  text = new
+                  open(path, "w", encoding="utf-8").write(text)
+              resource = os.path.join(os.path.dirname(path), "res", "xml", "network_security_config.xml")
+              os.makedirs(os.path.dirname(resource), exist_ok=True)
+              open(resource, "w", encoding="utf-8").write('''<?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <domain-config cleartextTrafficPermitted="true">
+                  <domain includeSubdomains="true">boomlings.com</domain>
+              </domain-config>
+          </network-security-config>
+          ''')
+              print("runtime attributes and RobTop network policy configured in", path)
           PYEOF
 
       # The gradle template declares debug.jniLibs.srcDirs = ['libs/debug', ...]
