@@ -133,6 +133,10 @@ static func _platform_id() -> String:
 
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
+	# Keep diagnostics metadata-only: never log request bodies or credentials.
+	# Android logcat tags Godot's print output as `godot`, making these lines
+	# usable even when package-name filtering only captures system messages.
+	print("[RobTop] POST %s" % url)
 	var request := HTTPRequest.new()
 	# DNS and TLS connection setup can block the main thread when HTTPRequest
 	# uses its default non-threaded mode. On affected Android networks that
@@ -161,6 +165,7 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 	)
 	if error != OK:
 		request.queue_free()
+		push_warning("[RobTop] request could not start: error %d" % error)
 		return _error("Could not start the RobTop request (error %d)" % error)
 
 	var deadline := Time.get_ticks_msec() + 15_000
@@ -169,12 +174,14 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
+		push_warning("[RobTop] timed out after 15 seconds: %s" % url)
 		return _error("RobTop did not respond within 15 seconds")
 
 	request.queue_free()
 	var result: int = completed[0]
 	var status: int = completed[1]
 	var bytes: PackedByteArray = completed[3]
+	print("[RobTop] result=%d HTTP=%d bytes=%d" % [result, status, bytes.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
 		return _error("RobTop connection failed (result %d)" % result)
 	if status < 200 or status >= 300:

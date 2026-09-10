@@ -182,6 +182,13 @@ func _set_browse_mode(use_online: bool) -> void:
 	if online_mode and not is_instance_valid(online_client):
 		online_client = RobTopLevels.new()
 		get_parent().add_child(online_client)
+	# SearchBarNode is also a local client-side filter. A stale local query can
+	# hide the loading/error label and every server card, making a completed
+	# request look permanently empty. Enter Online with an unfiltered first page;
+	# subsequent text input performs the documented server-side search.
+	if online_mode:
+		online_search.clear()
+		search_timer.stop()
 	online_page = 0
 	sort_by.visible = not online_mode
 	order.visible = not online_mode
@@ -260,13 +267,15 @@ func _refresh_online() -> void:
 		return
 	if not response.ok:
 		online_pages = 0
-		page_status.text = "Offline"
+		page_status.text = "ERROR"
+		page_status.tooltip_text = response.error
 		previous_page_button.disabled = true
 		next_page_button.disabled = true
 		_show_list_message("Could not load online levels.\n%s\nCheck your connection and press Refresh." % response.error)
 		return
 
 	online_pages = int(response.pages)
+	page_status.tooltip_text = ""
 	page_status.text = "%d / %d" % [online_page + 1, maxi(1, online_pages)]
 	previous_page_button.disabled = online_page <= 0
 	next_page_button.disabled = online_page + 1 >= online_pages
