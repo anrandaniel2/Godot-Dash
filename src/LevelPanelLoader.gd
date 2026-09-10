@@ -111,6 +111,12 @@ func refresh() -> void:
 			return
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_group_task_completion(task_id)
+	# The user can switch to Online while a large local metadata scan is in
+	# progress. Never let that stale local result overwrite the online loading
+	# state or server cards.
+	if online_mode:
+		refresh_button.disabled = false
+		return
 
 	# Phase 2 - older levels have no sidecar yet. The list must never decode a
 	# level just to show it: decoding a large level is many tens of megabytes
@@ -184,7 +190,16 @@ func _set_browse_mode(use_online: bool) -> void:
 	page_status.visible = online_mode
 	next_page_button.visible = online_mode
 	online_search.placeholder_text = "Search RobTop levels by name or ID…" if online_mode else "Search…"
-	refresh()
+	# Start the selected source on the next frame. Calling refresh() indirectly
+	# from a button signal proved unreliable on Android when the local metadata
+	# load was still unwinding; the explicit deferred route also updates the UI
+	# before networking begins.
+	if online_mode:
+		page_status.text = "Loading…"
+		_show_list_message("Connecting to RobTop…")
+		_refresh_online.call_deferred()
+	else:
+		refresh.call_deferred()
 
 
 func _online_category_changed(_index: int) -> void:

@@ -121,8 +121,15 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 
 func _post(endpoint: String, fields: Dictionary) -> Dictionary:
 	var request := HTTPRequest.new()
-	request.timeout = 30.0
+	# HTTPRequest's built-in timeout has failed to emit request_completed on
+	# some Android TLS/DNS stalls. Keep it, but also enforce our own monotonic
+	# watchdog below so the Community screen can never load forever.
+	request.timeout = 15.0
 	add_child(request)
+	var completed: Array = []
+	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
+		completed.assign([result, status, headers, bytes])
+	)
 	var body_parts := PackedStringArray()
 	for key: String in fields:
 		body_parts.append("%s=%s" % [key.uri_encode(), str(fields[key]).uri_encode()])
@@ -139,7 +146,15 @@ func _post(endpoint: String, fields: Dictionary) -> Dictionary:
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start the RobTop request (error %d)" % error)
-	var completed: Array = await request.request_completed
+
+	var deadline := Time.get_ticks_msec() + 15_000
+	while completed.is_empty() and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	if completed.is_empty():
+		request.cancel_request()
+		request.queue_free()
+		return _error("RobTop did not respond within 15 seconds")
+
 	request.queue_free()
 	var result: int = completed[0]
 	var status: int = completed[1]
