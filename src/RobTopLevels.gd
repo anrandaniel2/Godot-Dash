@@ -6,14 +6,14 @@ extends Node
 ## levels. Requests are deliberately one-shot and uncached at the HTTP layer;
 ## downloaded levels are converted into the normal local Godot Dash format.
 
-# RobTop's game API is an HTTP service. Although some documentation mirrors
-# can reach it over HTTPS, the actual Geometry Dash client protocol and older
-# server routes use cleartext HTTP; attempting TLS can stall indefinitely on
-# Android instead of returning a response.
-const BASE_URL := "http://www.boomlings.com/database/"
+# boomlings.dev's current endpoint examples use HTTPS, the mandatory `www.`
+# subdomain, form-encoded POST bodies, and an empty User-Agent. Keep this exact
+# shape: Cloudflare blocks non-www requests and non-empty user agents.
+const BASE_URL := "https://www.boomlings.com/database/"
 const COMMON_SECRET := "Wmfd2893gb7"
 const GAME_VERSION := "22"
-const BINARY_VERSION := "47"
+const PC_BINARY_VERSION := "47"
+const MOBILE_BINARY_VERSION := "48"
 const PAGE_SIZE := 10
 
 
@@ -22,22 +22,13 @@ func search(query: String, page: int = 0, category: int = 4) -> Dictionary:
 	var fields := {
 		"secret": COMMON_SECRET,
 		"gameVersion": GAME_VERSION,
-		"binaryVersion": BINARY_VERSION,
+		"binaryVersion": _binary_version(),
 		"type": str(category) if clean_query.is_empty() else "0",
 		"str": clean_query,
 		"page": str(maxi(0, page)),
 		"total": "0",
-		"accountID": "0",
-		"gdw": "0",
 		"len": "-",
 		"diff": "-",
-		"featured": "0",
-		"original": "0",
-		"twoPlayer": "0",
-		"coins": "0",
-		"epic": "0",
-		"star": "0",
-		"noStar": "0",
 	}
 	var response := await _post("getGJLevels21.php", fields)
 	if not response.ok:
@@ -93,7 +84,8 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var response := await _post("downloadGJLevel22.php", {
 		"secret": COMMON_SECRET,
 		"gameVersion": GAME_VERSION,
-		"binaryVersion": BINARY_VERSION,
+		"binaryVersion": _binary_version(),
+		"dvs": _platform_id(),
 		"levelID": str(level_id),
 		"inc": "0",
 		"extras": "0",
@@ -121,6 +113,22 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	level_data["robtop_downloads"] = int(values.get("10", summary.get("downloads", 0)))
 	level_data["robtop_likes"] = int(values.get("14", summary.get("likes", 0)))
 	return {"ok": true, "level_data": level_data, "report": report}
+
+
+static func _binary_version() -> String:
+	return MOBILE_BINARY_VERSION if OS.has_feature("android") or OS.has_feature("ios") else PC_BINARY_VERSION
+
+
+static func _platform_id() -> String:
+	if OS.has_feature("android"):
+		return "2"
+	if OS.has_feature("windows"):
+		return "3"
+	if OS.has_feature("macos"):
+		return "8"
+	# RobTop has no Linux platform value. Anonymous reads do not require dvs;
+	# Windows is the closest desktop wire format and the field is optional.
+	return "3"
 
 
 func _post(endpoint: String, fields: Dictionary) -> Dictionary:
@@ -196,7 +204,7 @@ static func _difficulty(values: Dictionary[String, String]) -> String:
 			4: return "Medium Demon"
 			5: return "Insane Demon"
 			6: return "Extreme Demon"
-			_: return "Demon"
+			_: return "Hard Demon"
 	match int(values.get("9", "0")):
 		10: return "Easy"
 		20: return "Normal"
