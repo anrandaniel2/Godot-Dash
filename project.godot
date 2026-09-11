@@ -53,7 +53,7 @@ config/name="godot-dash"
 config/version="1.0.0-alpha.5"
 run/main_scene="res://scenes/TitleScreen.tscn"
 config/use_custom_user_dir=true
-config/features=PackedStringArray("4.7", "Forward Plus")
+config/features=PackedStringArray("4.7", "Mobile")
 run/max_fps=0
 boot_splash/image="uid://c1mj3e3vvh1h0"
 config/icon="uid://c8auew2txgxb5"
@@ -425,6 +425,12 @@ common/physics_interpolation=true
 
 [rendering]
 
+; All CanvasItem, atlas-batch and particle rendering remains GPU-backed, but
+; the Mobile Vulkan renderer avoids Forward+'s desktop 3D pass overhead. This
+; project is 2D, so the visible output and HDR canvas path are retained while
+; Android submits substantially less render setup work.
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
 textures/canvas_textures/default_texture_filter=2
 textures/vram_compression/import_etc2_astc=true
 viewport/hdr_2d=true
