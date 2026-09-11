@@ -45,6 +45,9 @@ class AndroidNativeManifestExport extends EditorExportPlugin:
 			push_error("Could not read %s for Android export" % MANIFEST_PATH)
 			return
 		# Add the exact text instead of the resource pipeline's stripped copy.
-		add_file(MANIFEST_PATH, bytes, true)
+		# This is a replacement at the SAME path, not a resource remap. Passing
+		# true here makes Godot emit a .remap entry and the runtime follows that
+		# back into the stripped resource representation.
+		add_file(MANIFEST_PATH, bytes, false)
 		skip()
 		print("[gdash export] preserved raw GDExtension manifest (%d bytes)" % bytes.size())

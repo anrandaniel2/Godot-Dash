@@ -393,6 +393,10 @@ jobs:
           if [ $status -ne 0 ]; then
             exit $status
           fi
+          grep -Fq "[gdash export] preserved raw GDExtension manifest" godot_export.log || {
+            echo "ERROR: Android export plugin did not preserve the raw native manifest"
+            exit 1
+          }
           ls -lh "$APK_PATH"
 
       # Godot's own bundling path: copy_gradle_so writes the extension library
