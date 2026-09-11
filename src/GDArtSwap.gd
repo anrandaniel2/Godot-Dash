@@ -109,8 +109,26 @@ static func apply(object: Node2D, gd_id: int) -> bool:
 		_clear_art(detail_node)
 	_drop_absolute_size(object)
 
+	# Godot Dash's authored pad SVG occupies the bottom of a full-cell texture,
+	# so its hitbox sits at y=+53..57. Geometry Dash's atlas pad is a tightly
+	# trimmed 8–13 px sprite centred directly on the object origin. Once the art
+	# is swapped, leaving gameplay at +57 makes the visible pad and its Area2D
+	# disjoint: imported yellow/pink/red/gravity/spider pads look correct but never fire.
+	# Align all pad effects and collision with the replacement sprite. This only
+	# runs for imported objects whose atlas swap succeeded; authored local pads
+	# retain their original full-cell layout.
+	if gd_id in [35, 67, 140, 1332, 3005]:
+		_align_imported_pad(object)
+
 	object.set_meta(&"gd_art_swapped", true)
 	return true
+
+
+static func _align_imported_pad(object: Node2D) -> void:
+	for child_name: StringName in [&"Hitbox", &"ParticleEmitter", &"PulseCircle"]:
+		var child := object.get_node_or_null(NodePath(child_name)) as Node2D
+		if child != null:
+			child.position.y = 0.0
 
 
 ## Objects whose swap failed, reported once each. A failed swap leaves the

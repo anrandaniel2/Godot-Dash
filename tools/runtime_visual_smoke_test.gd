@@ -161,6 +161,23 @@ func _test_native_core() -> void:
 	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
 	assert(converted.get("layers", [{}])[0].get("objects", []).size() == 2, "native smoke: online conversion produced an empty level")
 	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
+	# Imported pads keep their hand-authored Area2D behaviour but replace the
+	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
+	# hitbox must follow that sprite to the object origin.
+	var pad_report := GMDConverter.ImportReport.new()
+	var pad_level := GMDConverter.import_online_level_string(
+			"kA2,0,kA4,0;1,35,2,30,3,30;1,67,2,60,3,30;",
+			"Native pad smoke",
+			pad_report,
+	)
+	var pad_entries: Array = pad_level.get("layers", [{}])[0].get("objects", [])
+	assert(pad_entries.size() == 2, "native smoke: jump/gravity pads were not converted")
+	for pad_data: Dictionary in pad_entries:
+		var pad := Level.instantiate_object_from_data(pad_data) as PadInteractable
+		assert(pad != null, "native smoke: imported pad lost interactive scene")
+		assert(pad.get_node_or_null(^"JumpBoostComponent") != null, "native smoke: imported pad lost jump behavior")
+		assert((pad.get_node(^"Hitbox") as CollisionShape2D).position.y == 0.0, "native smoke: imported pad hitbox does not match GD art")
+		pad.free()
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()
