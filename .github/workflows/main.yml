@@ -465,7 +465,9 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE_TAG="android-debug"
-          APK_NAME="godot-dash-android-debug.apk"
+          # A unique asset name prevents browsers/CDNs from serving an older
+          # rolling APK after the release tag is recreated.
+          APK_NAME="godot-dash-android-debug-${GITHUB_SHA::8}.apk"
           cp "$APK_PATH" "$APK_NAME"
           NOTES_FILE="$(mktemp)"
           {
@@ -473,7 +475,7 @@ jobs:
             echo ""
             echo "Sideload this APK for device testing (debug-signed, largeHeap enabled)."
             echo ""
-            echo "Constant download URL:"
+            echo "Commit-specific download URL (avoids stale APK caches):"
             echo "\`https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_NAME}\`"
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

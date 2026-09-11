@@ -27,3 +27,8 @@ android.template_debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdas
 android.release.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
 android.template_release.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
 android.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
+# Last-resort runtime match. Android itself is guaranteed to be an active
+# feature even on engine builds whose OS feature set fails to expose the
+# architecture tag to GDExtensionLibraryLoader. The APK is arm64-only, so this
+# cannot select the library for an incompatible ABI.
+android = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
