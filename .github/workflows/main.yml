@@ -24,7 +24,7 @@ name: Build Android APK
 # Android NDK against a pinned godot-cpp master commit (the Godot 4.7 API;
 # no godot-cpp 4.6/4.7 tag exists). The resulting .so is bundled into the APK
 # two ways: Godot's exporter normally copies it into the gradle project via
-# native/gdash_native.gdextension (checkpointed below), and independently the
+# native/bin/gdash_native.gdextension (checkpointed below), and independently the
 # .so is dropped straight into the gradle debug jniLibs so the APK contains it
 # even if the exporter path fails.
 
@@ -134,7 +134,7 @@ jobs:
 
       # ------------------------------------------------- Native GDExtension
       # Builds native/src/gdash_native.cpp into the .so bundled into the APK by
-      # native/gdash_native.gdextension. The extension only registers a boot
+      # native/bin/gdash_native.gdextension. The extension only registers a boot
       # probe class today (Config.use_native_core); game systems port to C++
       # behind that flag incrementally.
       - name: Install scons
@@ -163,14 +163,14 @@ jobs:
           export SCONS_CACHE="$(pwd)/native/scons-cache"
           cd native
           scons platform=linux target=template_debug arch=x86_64 api_version=4.7 -j2
-          mkdir -p bin/linux_debug/x86_64
-          cp bin/libgdash_native.linux.template_debug.x86_64.so \
-            bin/linux_debug/x86_64/libgdash_native.so
-          ls -lh bin/linux_debug/x86_64/
-          # Our extension object path is shared between SCons platforms. Remove
-          # Linux intermediates before the Android invocation so the ARM linker
-          # can never consume an apparently up-to-date x86_64 .os file.
+          test -f bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          # Preserve the host library while cleaning shared intermediates before
+          # the ARM build. Restore it for the visual smoke test afterward.
+          cp bin/linux/libgdash_native.linux.template_debug.x86_64.so /tmp/libgdash_native.linux.so
           scons -c platform=linux target=template_debug arch=x86_64 api_version=4.7
+          mkdir -p bin/linux
+          cp /tmp/libgdash_native.linux.so bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          ls -lh bin/linux/
 
       - name: Locate or install Android NDK
         run: |
@@ -199,9 +199,8 @@ jobs:
           cd native
           scons platform=android target=template_debug arch=arm64 \
             api_version=4.7 ndk_version="$NDK_VERSION" -j2
-          mkdir -p bin/android_debug/arm64-v8a
-          cp bin/libgdash_native*.so bin/android_debug/arm64-v8a/libgdash_native.so
-          ls -lh bin/android_debug/arm64-v8a/
+          test -f bin/android/libgdash_native.android.template_debug.arm64.so
+          ls -lh bin/android/
 
       # ------------------------------------------------- Android build template
       - name: Install Android build template (res://android/build)
@@ -263,10 +262,10 @@ jobs:
       # under that module is packaged by gradle as lib/arm64-v8a/ in the APK -
       # no Godot exporter cooperation needed. This fallback bundling path is
       # redundant with the exporter's own copy (checkpointed after export).
-      - name: Drop libgdash_native.so into gradle debug jniLibs
+      - name: Drop libgdash_native.android.template_debug.arm64.so into gradle debug jniLibs
         run: |
           set -euo pipefail
-          SO="$PWD/native/bin/android_debug/arm64-v8a/libgdash_native.so"
+          SO="$PWD/native/bin/android/libgdash_native.android.template_debug.arm64.so"
           test -f "$SO" || { echo "built .so missing at $SO"; exit 1; }
           if [ -f android/build/app/build.gradle ]; then
             MODULE="android/build/app"
@@ -279,8 +278,8 @@ jobs:
           fi
           TARGET="$MODULE/libs/debug/arm64-v8a"
           mkdir -p "$TARGET"
-          cp "$SO" "$TARGET/libgdash_native.so"
-          echo "dropped libgdash_native.so into $TARGET"
+          cp "$SO" "$TARGET/$(basename "$SO")"
+          echo "dropped $(basename "$SO") into $TARGET"
           ls -R "$MODULE/libs" | head -20
 
       # ------------------------------------------------------- Godot project
@@ -327,7 +326,7 @@ jobs:
             exit 1
           fi
 
-      # If the import-time scan never registered native/gdash_native.gdextension,
+      # If the import-time scan never registered native/bin/gdash_native.gdextension,
       # the exporter has nothing to attach the .so to (and the exported app's
       # runtime loader would not know the extension either). This check turns
       # that into an explicit pass/fail instead of a silent omission.
@@ -393,8 +392,9 @@ jobs:
           if [ $status -ne 0 ]; then
             exit $status
           fi
-          grep -Fq "[gdash export] preserved raw GDExtension manifest" godot_export.log || {
-            echo "ERROR: Android export plugin did not preserve the raw native manifest"
+          grep -Fq 'android.arm64.single.debug = "./android/libgdash_native.android.template_debug.arm64.so"' \
+            native/bin/gdash_native.gdextension || {
+            echo "ERROR: native descriptor no longer matches the official godot-cpp Android layout"
             exit 1
           }
           ls -lh "$APK_PATH"
@@ -403,11 +403,11 @@ jobs:
       # to <gradle_build>/libs/<debug|release>/<abi>/. If this file is missing,
       # the exporter skipped the GDExtension (file not exported/typed/loaded),
       # independently of the jniLibs fallback above.
-      - name: "Check exporter copied libgdash_native.so into gradle libs"
+      - name: "Check exporter copied libgdash_native.android.template_debug.arm64.so into gradle libs"
         run: |
-          echo "--- libgdash_native.so under android/build (exporter target) ---"
-          find android/build -name "libgdash_native.so" 2>/dev/null || true
-          if [ -f android/build/libs/debug/arm64-v8a/libgdash_native.so ]; then
+          echo "--- libgdash_native.android.template_debug.arm64.so under android/build (exporter target) ---"
+          find android/build -name "libgdash_native.android.template_debug.arm64.so" 2>/dev/null || true
+          if [ -f android/build/libs/debug/arm64-v8a/libgdash_native.android.template_debug.arm64.so ]; then
             echo "EXPORTED: exporter copy present at android/build/libs/debug/arm64-v8a/"
           else
             echo "ERROR: no .so at android/build/libs/debug/arm64-v8a/; the manual jniLibs copy can put bytes in the APK but cannot create Godot's runtime GDExtension resource mapping"
@@ -437,11 +437,11 @@ jobs:
             exit 1
           fi
 
-          unzip -t "$APK_PATH" "lib/arm64-v8a/libgdash_native.so" >/dev/null || {
-            echo "ERROR: libgdash_native.so is not inside the arm64-v8a APK"
+          unzip -t "$APK_PATH" "lib/arm64-v8a/libgdash_native.android.template_debug.arm64.so" >/dev/null || {
+            echo "ERROR: libgdash_native.android.template_debug.arm64.so is not inside the arm64-v8a APK"
             exit 1
           }
-          echo "verified: arm64-v8a only, libgdash_native.so present"
+          echo "verified: arm64-v8a only, libgdash_native.android.template_debug.arm64.so present"
 
       # -------------------------------------------------------------- Outputs
       - name: Upload APK artifact

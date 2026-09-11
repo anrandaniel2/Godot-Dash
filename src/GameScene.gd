@@ -172,7 +172,7 @@ func _on_leave_pressed() -> PauseMenu.Leave:
 
 ## Verifies the compiled C++ runtime when Config.use_native_core is on.
 ##
-## GdashNative only exists inside the CI Android APK (native/gdash_native.gdextension;
+## GdashNative only exists inside the CI Android APK (native/bin/gdash_native.gdextension;
 ## desktop/editor builds never load the library), so it is looked up through
 ## ClassDB rather than a typed reference - a static type would stop the whole
 ## script from parsing on platforms without the library.

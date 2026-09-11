@@ -1,36 +1,22 @@
 #!/usr/bin/env python
-"""Builds the gdash_native GDExtension shared library.
+"""Build gdash_native using the official godot-cpp project layout.
 
-godot-cpp must be checked out next to this file (native/godot-cpp) at the
-pinned revision - see .github/workflows/main.yml, which also installs the
-Android NDK and runs:
-
-    scons platform=android target=template_debug arch=arm64 \
-          api_version=4.7 ndk_version=28.1.13356709
-
-api_version pins the Godot extension API (project.godot is 4.7); godot-cpp
-master (v10) is required because no 4.6/4.7 godot-cpp tag exists yet. The
-built library lands in native/bin as
-libgdash_native.<platform>.<target>.<arch>.so; CI copies it to the
-res://native/bin/android_debug/arm64-v8a/ path the .gdextension file
-references.
-
-A desktop smoke build works too (no NDK needed):
-
-    scons platform=linux target=template_debug
+The generated filename retains godot-cpp's platform/target/architecture suffix
+and is installed below bin/<platform>/ beside bin/gdash_native.gdextension.
+This mirrors godot-cpp's own test project and godot-cpp-template instead of
+renaming the library into a custom ABI directory after compilation.
 """
 
-import os
-
-env = SConscript("godot-cpp/SConstruct")
-
+env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
 env.Append(CPPPATH=["src/"])
 
 sources = Glob("src/*.cpp")
-
 library = env.SharedLibrary(
-    "bin/libgdash_native{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    "bin/{}/libgdash_native{}{}".format(
+        env["platform"], env["suffix"], env["SHLIBSUFFIX"]
+    ),
     source=sources,
 )
 
+env.NoCache(library)
 Default(library)
