@@ -3,32 +3,11 @@
 entry_symbol = "gdash_native_library_init"
 compatibility_minimum = "4.1"
 
-# The library itself is compiled in CI (Android NDK + godot-cpp pinned in
-# .github/workflows/main.yml) into native/bin/android_debug/arm64-v8a/ and is
-# not committed. Building it needs the NDK, so a local Android export without
-# running that build first will fail with a missing-library error - expected.
-#
-# CI builds Linux debug as well as Android so import/render tests execute the
-# real native path instead of merely proving it compiles. A developer checkout
-# without the Linux binary simply uses the feature-checked GDScript fallback.
-#
-# The key's third tag is the engine's export feature tag for the ABI, which on
-# Android is "arm64" for the arm64-v8a ABI (not "arm64-v8a" - Godot's export
-# feature set uses the former, and GDExtensionExportPlugin matches on it).
-
+# Keep the runtime selector deliberately minimal. The Android APK is arm64-only,
+# so the guaranteed `android` feature is sufficient and avoids relying on ABI or
+# template feature tags that are not reaching GDExtensionLibraryLoader on the
+# tested Godot 4.7 Android runtime.
 [libraries]
 
-linux.debug.x86_64 = "res://native/bin/linux_debug/x86_64/libgdash_native.so"
-# Export templates expose debug/release in addition to android + arm64. Keep
-# explicit variants: relying on the generic android.arm64 match produced an APK
-# containing the .so but no runtime resource mapping to it.
-android.debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
-android.template_debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
-android.release.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
-android.template_release.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
-android.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
-# Last-resort runtime match. Android itself is guaranteed to be an active
-# feature even on engine builds whose OS feature set fails to expose the
-# architecture tag to GDExtensionLibraryLoader. The APK is arm64-only, so this
-# cannot select the library for an incompatible ABI.
+linux = "res://native/bin/linux_debug/x86_64/libgdash_native.so"
 android = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
