@@ -22,9 +22,10 @@ static func backend() -> Object:
 			# manifest from a feature-selection failure without dumping user data.
 			var manifest := ConfigFile.new()
 			var manifest_error := manifest.load("res://native/gdash_native.gdextension")
-			print("[gdash] native unavailable diagnostic=v2 manifest_error=%d libraries=%s os=%s arch=%s features(android=%s arm64=%s arm64-v8a=%s debug=%s template_debug=%s)" % [
+			var library_keys := manifest.get_section_keys("libraries") if manifest.has_section("libraries") else PackedStringArray()
+			print("[gdash] native unavailable diagnostic=v3 manifest_error=%d libraries=%s os=%s arch=%s features(android=%s arm64=%s arm64-v8a=%s debug=%s template_debug=%s)" % [
 				manifest_error,
-				str(manifest.get_section_keys("libraries")) if manifest_error == OK else "[]",
+				str(library_keys),
 				OS.get_name(), Engine.get_architecture_name(),
 				OS.has_feature("android"), OS.has_feature("arm64"),
 				OS.has_feature("arm64-v8a"), OS.has_feature("debug"),
