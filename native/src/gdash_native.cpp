@@ -102,9 +102,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.6.0 / online level parser / exact viewport culling / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.7.0 / robust online decoder and parser / exact viewport culling / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 6; }
+	int64_t version() const { return 7; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	Dictionary parse_gd_pairs(const String &chunk) const {
@@ -134,27 +134,78 @@ public:
 		}
 
 		parsed["header"] = parse_gd_pairs(chunks[0]);
+		int64_t valid_objects = 0;
+		int64_t malformed_objects = 0;
+		double min_x = INFINITY;
+		double max_x = -INFINITY;
 		for (int64_t i = 1; i < chunks.size(); ++i) {
 			if (chunks[i].strip_edges().is_empty()) continue;
-			objects.append(parse_gd_pairs(chunks[i]));
+			const Dictionary properties = parse_gd_pairs(chunks[i]);
+			objects.append(properties);
+			if (!properties.has("1") || !properties.has("2") || !properties.has("3")) {
+				++malformed_objects;
+				continue;
+			}
+			++valid_objects;
+			const double x = String(properties["2"]).to_float();
+			min_x = std::min(min_x, x);
+			max_x = std::max(max_x, x);
 		}
 		parsed["objects"] = objects;
 		parsed["source_chunks"] = chunks.size() - 1;
+		parsed["valid_objects"] = valid_objects;
+		parsed["malformed_objects"] = malformed_objects;
+		parsed["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
+		parsed["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
 		return parsed;
 	}
 
 	String decode_level_string(const String &encoded) const {
 		String data = encoded.strip_edges();
 		if (data.is_empty()) return String();
-		if (data.begins_with("kS") || data.begins_with("1,") || data.contains(";1,")) return data;
-		if (!data.begins_with("H4sI")) data = String("H4sIAAAAAAAAA") + data;
+		if (data.begins_with("kS") || data.begins_with("kA") || data.begins_with("1,") || data.contains(";1,")) return data;
+
 		Marshalls *marshalls = Marshalls::get_singleton();
 		if (!marshalls) return String();
-		const PackedByteArray bytes = marshalls->base64_to_raw(standard_base64(data));
-		if (bytes.is_empty()) return String();
-		if (bytes.size() < 2 || bytes[0] != 0x1f || bytes[1] != 0x8b) return bytes.get_string_from_utf8();
-		const PackedByteArray inflated = bytes.decompress_dynamic(-1, 3); // FileAccess::COMPRESSION_GZIP
-		return inflated.get_string_from_utf8();
+
+		// Downloaded user levels carry a complete URL-safe Base64 payload.  The
+		// 13-character H4sIAAAAAAAAA prefix is omitted ONLY by bundled official
+		// levels.  Prefixing every payload whose text did not happen to begin
+		// with H4sI corrupted valid user levels with a different gzip timestamp or
+		// a zlib wrapper.  Decode first, inspect the binary wrapper, and use the
+		// official-level compatibility prefix only as a final fallback.
+		auto decode_payload = [&](const String &payload) -> String {
+			const PackedByteArray bytes = marshalls->base64_to_raw(standard_base64(payload));
+			if (bytes.is_empty()) return String();
+
+			PackedByteArray inflated;
+			if (bytes.size() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+				inflated = bytes.decompress_dynamic(-1, 3); // FileAccess::COMPRESSION_GZIP
+			} else if (bytes.size() >= 2 && (bytes[0] & 0x0f) == 8 &&
+					(((static_cast<int>(bytes[0]) << 8) | bytes[1]) % 31) == 0) {
+				// GD documentation describes the format as zlib and recommends
+				// inflateInit2(15|32), which accepts either zlib or gzip wrappers.
+				inflated = bytes.decompress_dynamic(-1, 1); // FileAccess::COMPRESSION_DEFLATE
+			} else {
+				const String plain = bytes.get_string_from_utf8();
+				if (plain.begins_with("kS") || plain.begins_with("kA") || plain.contains(";1,")) return plain;
+				return String();
+			}
+			if (inflated.is_empty()) return String();
+			const String plain = inflated.get_string_from_utf8();
+			// A successful inflate is not sufficient: reject binary garbage before
+			// it reaches the object parser.
+			if (!plain.begins_with("kS") && !plain.begins_with("kA") &&
+					!plain.begins_with("1,") && !plain.contains(";1,")) return String();
+			return plain;
+		};
+
+		String plain = decode_payload(data);
+		if (!plain.is_empty()) return plain;
+		if (!data.begins_with("H4sI")) {
+			plain = decode_payload(String("H4sIAAAAAAAAA") + data);
+		}
+		return plain;
 	}
 
 	String encode_level_string(const String &plain) const {

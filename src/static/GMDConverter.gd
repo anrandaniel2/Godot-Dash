@@ -291,6 +291,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			var parsed: Dictionary = native.call(&"parse_online_level", level_string)
 			header = parsed.get("header", { })
 			native_objects = parsed.get("objects", [])
+			print("[RobTop] C++ parse: chars=%d header_keys=%d chunks=%d valid=%d malformed=%d x=%s..%s" % [
+				level_string.length(), header.size(), int(parsed.get("source_chunks", 0)),
+				int(parsed.get("valid_objects", 0)), int(parsed.get("malformed_objects", 0)),
+				str(parsed.get("min_x", 0.0)), str(parsed.get("max_x", 0.0)),
+			])
 			if native_objects.size() != maxi(0, chunks.size() - 1):
 				push_warning("Online C++ parser retained %d/%d object chunks" % [native_objects.size(), maxi(0, chunks.size() - 1)])
 
@@ -313,13 +318,6 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# triggers point at, so the report can explain empty triggers.
 	var populated_groups: Dictionary[String, int] = { }
 	var targeted_groups: Dictionary[String, int] = { }
-
-	# Geometry Dash fires the triggers placed behind the spawn point as soon as
-	# a level loads, to establish its starting state. A Toggle trigger there
-	# with "activate group" off means those objects begin hidden - several of
-	# this level's biggest additive sprites rely on it, and showing them all at
-	# once stacks a dozen glows into a solid white wall.
-	var hidden_groups: Dictionary[String, bool] = _setup_hidden_groups(chunks)
 
 	for chunk_idx in range(1, chunks.size()):
 		var chunk: String = chunks[chunk_idx]
@@ -348,12 +346,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		#   3. a plain block, for solid IDs with neither of the above
 		# The plain block deliberately ranks below the atlas sprite: a featureless
 		# placeholder is a worse outcome than the object's actual artwork.
-		# Objects a setup trigger hides never appear until something re-enables
-		# them, so they are not imported as visible geometry.
-		if not hidden_groups.is_empty() and _in_hidden_group(properties, hidden_groups):
-			report.note_skipped(gd_id)
-			continue
-
+		# Never delete grouped artwork based on a toggle near X=0. The documented
+		# object string stores toggle state as a runtime action, not an import-time
+		# visibility flag; the old heuristic permanently removed every member and
+		# could turn effect-heavy 2.2 levels into an empty black screen.
 		var object_data: Dictionary = { }
 		var kind: int = 0 # 0 = scene, 1 = decoration, 2 = substituted block
 
@@ -766,48 +762,6 @@ static func _z_layer_from_properties(properties: Dictionary[String, String], gd_
 	return 0
 
 
-## Groups that a setup Toggle trigger switches off before the level begins.
-##
-## Geometry Dash places these triggers behind the spawn point (a negative or
-## near-zero X) and runs them the moment the level loads. Key 56 is "activate
-## group"; when it is absent or zero the trigger is hiding the group.
-static func _setup_hidden_groups(chunks: PackedStringArray) -> Dictionary[String, bool]:
-	const TOGGLE_TRIGGER_ID: String = "1049"
-	const SETUP_X_LIMIT: float = 200.0
-
-	var hidden: Dictionary[String, bool] = { }
-	for index in range(1, chunks.size()):
-		var chunk: String = chunks[index]
-		if chunk.is_empty():
-			continue
-		var properties: Dictionary[String, String] = _parse_pairs(chunk)
-		if properties.get(Prop.ID, "") != TOGGLE_TRIGGER_ID:
-			continue
-		# A spawn-triggered toggle runs on cue, not at load.
-		if properties.get(Prop.SPAWN_TRIGGERED, "0") == "1":
-			continue
-		if float(properties.get(Prop.X, "0")) >= SETUP_X_LIMIT:
-			continue
-		if properties.get(Prop.ACTIVATE_GROUP, "0") == "1":
-			continue
-		var group: String = properties.get(Prop.TARGET_GROUP, "")
-		if group.is_valid_int():
-			hidden[group] = true
-	return hidden
-
-
-## [code]true[/code] when an object belongs to a group hidden at load.
-static func _in_hidden_group(
-		properties: Dictionary[String, String],
-		hidden_groups: Dictionary[String, bool],
-) -> bool:
-	for group_id: String in properties.get(Prop.GROUPS, "").split(".", false):
-		if hidden_groups.has(group_id.strip_edges()):
-			return true
-	var single: String = properties.get(Prop.SINGLE_GROUP, "").strip_edges()
-	return not single.is_empty() and hidden_groups.has(single)
-
-
 ## Reads the group IDs an object belongs to.
 ##
 ## Modern levels store these in key [code]57[/code] as a dot separated list,
@@ -1053,6 +1007,14 @@ static func _components_from_properties(
 				components["AlphaChangerComponent"] = {
 					"mode": AlphaChangerComponent.Mode.SET,
 					"alpha": clampf(float(properties.get(Prop.OPACITY, "1")), 0.0, 1.0),
+				}
+		1049: # Toggle trigger
+			if "ToggleComponent" in supported and target_group.is_valid_int() and int(target_group) > 0:
+				components["ToggleComponent"] = {
+					"toggled_groups": [{
+						"group": StringName(target_group),
+						"state": ToggledGroup.ToggleState.ON if properties.get(Prop.ACTIVATE_GROUP, "0") == "1" else ToggledGroup.ToggleState.OFF,
+					}],
 				}
 		1346: # Rotate trigger
 			if "RotationChangerComponent" in supported:

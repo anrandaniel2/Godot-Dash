@@ -128,13 +128,16 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 6, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 7, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
 	)
 	assert(parsed_online.get("header", {}).get("kA2") == "0", "native smoke: online header parser failed")
 	assert(parsed_online.get("objects", []).size() == 2, "native smoke: online object parser failed")
+	assert(parsed_online.get("valid_objects", 0) == 2, "native smoke: online parser validity count failed")
+	assert(parsed_online.get("malformed_objects", 0) == 0, "native smoke: valid objects marked malformed")
+	assert(parsed_online.get("min_x", 0.0) == 30.0 and parsed_online.get("max_x", 0.0) == 60.0, "native smoke: online parser bounds failed")
 	assert(parsed_online.get("objects", [])[1].get("1") == "8", "native smoke: online parser lost source order")
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
@@ -186,6 +189,9 @@ func _test_native_core() -> void:
 	var encoded: String = native.call(&"encode_level_string", plain)
 	assert(not encoded.is_empty(), "native smoke: GMD encode")
 	assert(native.call(&"decode_level_string", encoded) == plain, "native smoke: GMD round trip")
+	var zlib_encoded := Marshalls.raw_to_base64(plain.to_utf8_buffer().compress(FileAccess.COMPRESSION_DEFLATE)) \
+			.replace("+", "-").replace("/", "_")
+	assert(native.call(&"decode_level_string", zlib_encoded) == plain, "native smoke: documented zlib level decode")
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
 
 

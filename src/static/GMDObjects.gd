@@ -152,8 +152,11 @@ const MAP: Dictionary[int, Dictionary] = {
 		"name": "AlphaTrigger",
 		"components": ["TargetGroupComponent", "AlphaChangerComponent", "EasingComponent"],
 	},
-	# Same as the toggle orb: toggled groups are configured by hand.
-	1049: { "scene": TRIGGERS + "ToggleTrigger.tscn", "name": "ToggleTrigger" },
+	1049: {
+		"scene": TRIGGERS + "ToggleTrigger.tscn",
+		"name": "ToggleTrigger",
+		"components": ["ToggleComponent"],
+	},
 	# SpawnTriggerComponent holds SpawnedTrigger resources rather than a plain
 	# target group, so it keeps its defaults too.
 	1268: { "scene": TRIGGERS + "SpawnTrigger.tscn", "name": "SpawnTrigger" },

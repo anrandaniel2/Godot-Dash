@@ -166,27 +166,41 @@ static func decode_level_string(encoded: String) -> String:
 	if data.is_empty():
 		return ""
 	# Already plain text (some editors save uncompressed level strings).
-	if data.begins_with("kS") or data.begins_with("1,") or data.contains(";1,"):
+	if data.begins_with("kS") or data.begins_with("kA") or data.begins_with("1,") or data.contains(";1,"):
 		return data
-	# Official levels drop the shared gzip header.
-	if not data.begins_with("H4sI"):
-		data = _OFFICIAL_LEVEL_PREFIX + data
 
+	# Downloaded user levels contain the complete URL-safe Base64 payload. The
+	# H4sIAAAAAAAAA prefix is omitted only by bundled official levels. Decode the
+	# payload as supplied first and inspect its binary wrapper; otherwise valid
+	# zlib streams and gzip streams with a nonzero timestamp get corrupted.
+	var plain := _decode_level_payload(data)
+	if not plain.is_empty():
+		return plain
+	if not data.begins_with("H4sI"):
+		plain = _decode_level_payload(_OFFICIAL_LEVEL_PREFIX + data)
+	if plain.is_empty():
+		push_error("GMD: level data is neither plain text nor valid Base64 zlib/gzip")
+	return plain
+
+
+static func _decode_level_payload(data: String) -> String:
 	var bytes: PackedByteArray = Marshalls.base64_to_raw(_to_standard_base64(data))
 	if bytes.is_empty():
-		push_error("GMD: level string is not valid base64")
 		return ""
-	if bytes.size() < 2 or bytes[0] != _GZIP_MAGIC_0 or bytes[1] != _GZIP_MAGIC_1:
-		# Not gzipped after all, treat as plain text.
-		return bytes.get_string_from_utf8()
-
-	# `decompress_dynamic` doesn't need the final size up front, which we don't
-	# know for a foreign file.
-	var inflated: PackedByteArray = bytes.decompress_dynamic(-1, FileAccess.COMPRESSION_GZIP)
+	var inflated := PackedByteArray()
+	if bytes.size() >= 2 and bytes[0] == _GZIP_MAGIC_0 and bytes[1] == _GZIP_MAGIC_1:
+		inflated = bytes.decompress_dynamic(-1, FileAccess.COMPRESSION_GZIP)
+	elif bytes.size() >= 2 and (bytes[0] & 0x0f) == 8 and (((bytes[0] << 8) | bytes[1]) % 31) == 0:
+		# The documented inflateInit2(15 | 32) accepts either zlib or gzip.
+		inflated = bytes.decompress_dynamic(-1, FileAccess.COMPRESSION_DEFLATE)
+	else:
+		inflated = bytes
 	if inflated.is_empty():
-		push_error("GMD: failed to gunzip the level string")
 		return ""
-	return inflated.get_string_from_utf8()
+	var plain := inflated.get_string_from_utf8()
+	if not plain.begins_with("kS") and not plain.begins_with("kA") and not plain.begins_with("1,") and not plain.contains(";1,"):
+		return ""
+	return plain
 
 
 ## Encodes a plain level string the way GDShare expects it in [code]k4[/code].
