@@ -283,7 +283,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		report = ImportReport.new()
 
 	var chunks: PackedStringArray = level_string.split(";", false)
-	var header: Dictionary[String, String] = _parse_pairs(chunks[0]) if chunks.size() > 0 else { }
+	var header: Dictionary = _parse_pairs(chunks[0]) if chunks.size() > 0 else { }
 	var native_objects: Array = []
 	if use_online_parser:
 		var native := NativeCore.backend()
@@ -325,7 +325,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			continue
 		# Each object is isolated: a malformed or unsupported one is dropped and
 		# the loop continues with the next.
-		var properties: Dictionary[String, String]
+		var properties: Dictionary
 		if use_online_parser and chunk_idx - 1 < native_objects.size():
 			properties = native_objects[chunk_idx - 1]
 		else:
@@ -457,7 +457,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 ## the caller skip it.
 static func _object_from_properties(
 		gd_id: int,
-		properties: Dictionary[String, String],
+		properties: Dictionary,
 		index: int,
 		channel_style: Dictionary[int, Dictionary],
 		used_channels: Dictionary[int, bool],
@@ -532,7 +532,7 @@ static func _object_from_properties(
 ## the caller skips it exactly as before.
 static func _decoration_from_properties(
 		gd_id: int,
-		properties: Dictionary[String, String],
+		properties: Dictionary,
 		index: int,
 		channel_style: Dictionary[int, Dictionary],
 		used_channels: Dictionary[int, bool],
@@ -681,7 +681,7 @@ static func _decoration_channels(
 ## Sprites Geometry Dash always draws black - pits, sawblades, the "b" block
 ## set - resolve to the Black channel whatever key 21 says, as they do in
 ## the game.
-static func _base_channel_id(gd_id: int, properties: Dictionary[String, String]) -> int:
+static func _base_channel_id(gd_id: int, properties: Dictionary) -> int:
 	if GMDDefaultChannels.is_base_black(gd_id):
 		return CHANNEL_BLACK
 	var raw: String = properties.get(Prop.MAIN_COLOR_ID, "").strip_edges()
@@ -693,7 +693,7 @@ static func _base_channel_id(gd_id: int, properties: Dictionary[String, String])
 ## The detail colour channel an object uses: key 22 when set, otherwise the
 ## object's built-in default. Objects whose whole artwork is a "detail" sprite
 ## follow the base channel, as they do in Geometry Dash.
-static func _detail_channel_id(gd_id: int, properties: Dictionary[String, String], base_id: int) -> int:
+static func _detail_channel_id(gd_id: int, properties: Dictionary, base_id: int) -> int:
 	if GMDDefaultChannels.is_detail_black(gd_id):
 		return CHANNEL_BLACK
 	var raw: String = properties.get(Prop.SECONDARY_COLOR_ID, "").strip_edges()
@@ -740,7 +740,7 @@ static func _style_for(channel_style: Dictionary[int, Dictionary], channel_id: i
 ## The coarse layer (key 24) is carried separately rather than being packed into
 ## the same integer: combining them meant a negative fine order could push an
 ## object into the layer below, which visibly scrambled the draw order.
-static func _z_order_from_properties(properties: Dictionary[String, String], gd_id: int = 0) -> int:
+static func _z_order_from_properties(properties: Dictionary, gd_id: int = 0) -> int:
 	if properties.has(Prop.Z_ORDER):
 		return clampi(int(properties.get(Prop.Z_ORDER, "0")), -9999, 9999)
 	# Geometry Dash omits the key when the object sits at its built-in order.
@@ -753,7 +753,7 @@ static func _z_order_from_properties(properties: Dictionary[String, String], gd_
 ## The coarse z layer (key 24), or the object's built-in layer when the level
 ## string omits it: Geometry Dash only writes the key for objects moved off
 ## their default layer, so a missing key does not mean layer 0.
-static func _z_layer_from_properties(properties: Dictionary[String, String], gd_id: int = 0) -> int:
+static func _z_layer_from_properties(properties: Dictionary, gd_id: int = 0) -> int:
 	if properties.has(Prop.Z_LAYER):
 		return int(properties.get(Prop.Z_LAYER, "0"))
 	var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
@@ -768,7 +768,7 @@ static func _z_layer_from_properties(properties: Dictionary[String, String], gd_
 ## while older ones use the single group key [code]33[/code]. Both are read, so
 ## a trigger doesn't end up pointing at a group that looks empty just because
 ## its members used the legacy key.
-static func _groups_from_properties(properties: Dictionary[String, String]) -> Array:
+static func _groups_from_properties(properties: Dictionary) -> Array:
 	var group_ids: Array[String] = []
 	for group_id: String in properties.get(Prop.GROUPS, "").split(".", false):
 		group_ids.append(group_id.strip_edges())
@@ -794,7 +794,7 @@ static func _groups_from_properties(properties: Dictionary[String, String]) -> A
 ## Geometry Dash, instead of keeping its scene's white placeholder texture.
 static func _color_channels_from_properties(
 		gd_id: int,
-		properties: Dictionary[String, String],
+		properties: Dictionary,
 		description: Dictionary,
 		channel_style: Dictionary[int, Dictionary],
 		used_channels: Dictionary[int, bool],
@@ -833,7 +833,7 @@ static func _color_channels_from_properties(
 ## so a batch can reapply it when its channel colour changes. Empty when the
 ## object has no shift.
 static func _hsv_shift_array(
-		properties: Dictionary[String, String],
+		properties: Dictionary,
 		enabled_key: String,
 		hsv_key: String,
 ) -> PackedFloat32Array:
@@ -858,7 +858,7 @@ static func _hsv_shift_array(
 ## [i]multiplied[/i] - Geometry Dash offers both and they look very different.
 static func _apply_hsv_shift(
 		color: Color,
-		properties: Dictionary[String, String],
+		properties: Dictionary,
 		enabled_key: String,
 		hsv_key: String,
 ) -> Color:
@@ -885,7 +885,7 @@ static func _apply_hsv_shift(
 
 ## Parses key [code]43[/code], the [code]h a s a v a s_checked a v_checked[/code]
 ## HSV string.
-static func _hsv_shift_from_properties(properties: Dictionary[String, String]) -> Array:
+static func _hsv_shift_from_properties(properties: Dictionary) -> Array:
 	if properties.get(Prop.MAIN_HSV_ENABLED, "0") != "1":
 		return [0.0, 0.0, 0.0]
 	var raw: String = properties.get(Prop.MAIN_HSV, "")
@@ -931,7 +931,7 @@ static func _easing_from_property(easing: int) -> Array:
 ## equivalent keep their scene defaults.
 static func _components_from_properties(
 		gd_id: int,
-		properties: Dictionary[String, String],
+		properties: Dictionary,
 		description: Dictionary,
 ) -> Dictionary:
 	var supported: Array = description.get("components", [])
@@ -1287,15 +1287,15 @@ static func _special_channel_color(raw: String, channel_id: int, fallback: Color
 	return fallback
 
 
-static func _background_color(header: Dictionary[String, String], _channels: Array) -> Color:
+static func _background_color(header: Dictionary, _channels: Array) -> Color:
 	return _special_channel_color(header.get(HeaderKey.COLORS, ""), 1000, Constants.DEFAULT_BACKGROUND_COLOR)
 
 
-static func _ground_color(header: Dictionary[String, String], _channels: Array) -> Color:
+static func _ground_color(header: Dictionary, _channels: Array) -> Color:
 	return _special_channel_color(header.get(HeaderKey.COLORS, ""), 1001, Constants.DEFAULT_GROUND_COLOR)
 
 
-static func _line_color(header: Dictionary[String, String], _channels: Array) -> Color:
+static func _line_color(header: Dictionary, _channels: Array) -> Color:
 	return _special_channel_color(header.get(HeaderKey.COLORS, ""), 1002, Constants.DEFAULT_LINE_COLOR)
 
 

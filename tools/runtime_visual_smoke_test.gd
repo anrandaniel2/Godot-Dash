@@ -139,6 +139,17 @@ func _test_native_core() -> void:
 	assert(parsed_online.get("malformed_objects", 0) == 0, "native smoke: valid objects marked malformed")
 	assert(parsed_online.get("min_x", 0.0) == 30.0 and parsed_online.get("max_x", 0.0) == 60.0, "native smoke: online parser bounds failed")
 	assert(parsed_online.get("objects", [])[1].get("1") == "8", "native smoke: online parser lost source order")
+	# Exercise the actual typed GDScript/C++ boundary, not only the C++ return
+	# value. Native dictionaries do not carry GDScript's typed Dictionary
+	# metadata, so the converter must accept them without a typed assignment.
+	var conversion_report := GMDConverter.ImportReport.new()
+	var converted := GMDConverter.import_online_level_string(
+			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
+			"Native conversion smoke",
+			conversion_report,
+	)
+	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
+	assert(converted.get("layers", [{}])[0].get("objects", []).size() == 2, "native smoke: online conversion produced an empty level")
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()
