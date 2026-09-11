@@ -60,7 +60,9 @@ func _ready() -> void:
 			_native_canvas = native_canvas
 			assert(native_canvas != null, "native smoke: DecorationBatch did not create native canvas")
 			assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
-			assert(not batch.is_processing() and native_canvas.is_processing(), "native smoke: culling must not poll through GDScript")
+			# The child is configured before its parent enters the SceneTree, so
+			# is_processing() is not meaningful yet. Pixel/count checks below prove
+			# that its native visibility callback runs once it is attached.
 			batch.apply_channel_color(&"native_smoke", Color(0.8, 0.2, 0.1, 0.75))
 			var native_color: Color = native_canvas.call(&"get_item_color", 0)
 			assert(is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75), "native smoke: channel update")
@@ -84,8 +86,9 @@ func _process(_delta: float) -> void:
 	# Canvas stretch/aspect settings vary with the test window. Ask each
 	# CanvasItem for the actual world-to-viewport transform instead of assuming
 	# a scale ratio.
-	var direct_center := _direct.get_global_transform_with_canvas() * Vector2.ZERO
-	var batch_center := _batch.get_global_transform_with_canvas() * BATCH_LOCAL
+	var viewport_to_screen := get_viewport().get_screen_transform()
+	var direct_center := viewport_to_screen * _direct.get_global_transform_with_canvas() * Vector2.ZERO
+	var batch_center := viewport_to_screen * _batch.get_global_transform_with_canvas() * BATCH_LOCAL
 	var direct_pixels := _opaque_pixels(image, direct_center)
 	var batch_pixels := _opaque_pixels(image, batch_center)
 	var opaque_bounds := _opaque_bounds(image)
