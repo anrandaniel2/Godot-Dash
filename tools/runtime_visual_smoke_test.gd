@@ -128,7 +128,14 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 5, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 6, "native smoke: old kernel ABI")
+	var parsed_online: Dictionary = native.call(
+			&"parse_online_level",
+			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
+	)
+	assert(parsed_online.get("header", {}).get("kA2") == "0", "native smoke: online header parser failed")
+	assert(parsed_online.get("objects", []).size() == 2, "native smoke: online object parser failed")
+	assert(parsed_online.get("objects", [])[1].get("1") == "8", "native smoke: online parser lost source order")
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()

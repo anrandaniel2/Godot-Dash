@@ -105,7 +105,11 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 
 	var level_name: String = values.get("2", summary.get("name", "Level %d" % level_id))
 	var report := GMDConverter.ImportReport.new()
-	var level_data := GMDConverter.import_level_string(level_string, level_name, report)
+	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
+	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
+	print("[RobTop] native conversion: %s" % report.summary())
+	if imported_objects.is_empty():
+		return _error("Level %d contains no objects supported by the online C++ parser (%s)" % [level_id, report.summary()])
 	level_data.name = level_name
 	level_data.creator = summary.get("creator", "Unknown")
 	level_data.description = _decode_base64(values.get("3", ""))

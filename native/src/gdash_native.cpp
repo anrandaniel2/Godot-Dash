@@ -90,6 +90,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("version"), &GdashNative::version);
 		ClassDB::bind_method(D_METHOD("add", "a", "b"), &GdashNative::add);
 		ClassDB::bind_method(D_METHOD("parse_gd_pairs", "chunk"), &GdashNative::parse_gd_pairs);
+		ClassDB::bind_method(D_METHOD("parse_online_level", "level_string"), &GdashNative::parse_online_level);
 		ClassDB::bind_method(D_METHOD("decode_level_string", "encoded"), &GdashNative::decode_level_string);
 		ClassDB::bind_method(D_METHOD("encode_level_string", "plain"), &GdashNative::encode_level_string);
 		ClassDB::bind_method(D_METHOD("sort_decoration_indices", "z_orders", "draw_orders", "texture_ids"), &GdashNative::sort_decoration_indices);
@@ -101,9 +102,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.5.0 / exact viewport culling / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.6.0 / online level parser / exact viewport culling / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 5; }
+	int64_t version() const { return 6; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	Dictionary parse_gd_pairs(const String &chunk) const {
@@ -114,6 +115,32 @@ public:
 			result[fields[i]] = fields[i + 1];
 		}
 		return result;
+	}
+
+	// Parses one complete decompressed server level in a single native pass.
+	// The online download response can contain hundreds of thousands of comma
+	// pairs; crossing the GDScript/native boundary once per object was both
+	// expensive and made partial parsing harder to diagnose. Keep one entry per
+	// source chunk so converter indices and draw order remain exact.
+	Dictionary parse_online_level(const String &level_string) const {
+		Dictionary parsed;
+		Array objects;
+		const PackedStringArray chunks = level_string.split(";", false);
+		if (chunks.is_empty()) {
+			parsed["header"] = Dictionary();
+			parsed["objects"] = objects;
+			parsed["source_chunks"] = 0;
+			return parsed;
+		}
+
+		parsed["header"] = parse_gd_pairs(chunks[0]);
+		for (int64_t i = 1; i < chunks.size(); ++i) {
+			if (chunks[i].strip_edges().is_empty()) continue;
+			objects.append(parse_gd_pairs(chunks[i]));
+		}
+		parsed["objects"] = objects;
+		parsed["source_chunks"] = chunks.size() - 1;
+		return parsed;
 	}
 
 	String decode_level_string(const String &encoded) const {

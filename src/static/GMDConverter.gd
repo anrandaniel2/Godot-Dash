@@ -268,11 +268,31 @@ class ImportReport:
 ## [param report] is filled in with per object results. Objects Godot Dash has
 ## no equivalent for are skipped individually.
 static func import_level_string(level_string: String, level_name: String, report: ImportReport = null) -> Dictionary:
+	return _import_level_string(level_string, level_name, report, false)
+
+
+## Server downloads use the bulk C++ parser. Conversion to Godot Dash object
+## dictionaries still shares the proven mapping below, but all GD tokenization
+## happens in one native call and preserves exact source order.
+static func import_online_level_string(level_string: String, level_name: String, report: ImportReport = null) -> Dictionary:
+	return _import_level_string(level_string, level_name, report, true)
+
+
+static func _import_level_string(level_string: String, level_name: String, report: ImportReport, use_online_parser: bool) -> Dictionary:
 	if report == null:
 		report = ImportReport.new()
 
 	var chunks: PackedStringArray = level_string.split(";", false)
 	var header: Dictionary[String, String] = _parse_pairs(chunks[0]) if chunks.size() > 0 else { }
+	var native_objects: Array = []
+	if use_online_parser:
+		var native := NativeCore.backend()
+		if native != null and native.has_method(&"parse_online_level"):
+			var parsed: Dictionary = native.call(&"parse_online_level", level_string)
+			header = parsed.get("header", { })
+			native_objects = parsed.get("objects", [])
+			if native_objects.size() != maxi(0, chunks.size() - 1):
+				push_warning("Online C++ parser retained %d/%d object chunks" % [native_objects.size(), maxi(0, chunks.size() - 1)])
 
 	# Per-channel appearance: colour, opacity (key 7) and the additive
 	# "blending" flag (key 5). This covers every channel an object can name -
@@ -307,7 +327,11 @@ static func import_level_string(level_string: String, level_name: String, report
 			continue
 		# Each object is isolated: a malformed or unsupported one is dropped and
 		# the loop continues with the next.
-		var properties: Dictionary[String, String] = _parse_pairs(chunk)
+		var properties: Dictionary[String, String]
+		if use_online_parser and chunk_idx - 1 < native_objects.size():
+			properties = native_objects[chunk_idx - 1]
+		else:
+			properties = _parse_pairs(chunk)
 		if not properties.has(Prop.ID):
 			continue
 		var gd_id: int = int(properties[Prop.ID])
