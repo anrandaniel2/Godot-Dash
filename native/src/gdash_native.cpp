@@ -313,6 +313,7 @@ class NativeFrustumIndex : public RefCounted {
 	std::map<int64_t, std::vector<size_t>> sections;
 	std::vector<uint32_t> visited;
 	uint32_t visit_generation = 0;
+	double section_width = 1024.0;
 	std::set<uint64_t> hidden;
 	int64_t current_first = INT64_MAX;
 	int64_t current_last = INT64_MIN;
@@ -376,6 +377,7 @@ public:
 		sections.clear();
 		const int64_t count = std::min(objects.size(), std::min(lefts.size(), rights.size()));
 		if (bucket_width <= 0.0) return;
+		section_width = bucket_width;
 		entries.reserve(static_cast<size_t>(count));
 		for (int64_t i = 0; i < count; ++i) {
 			Object *object = objects[i];
@@ -402,8 +404,8 @@ public:
 	void set_view(double left, double right) {
 		if (right < left) std::swap(left, right);
 		if (left == current_left && right == current_right) return;
-		const int64_t first = sections.empty() ? 0 : static_cast<int64_t>(std::floor(left / bucket_width));
-		const int64_t last = sections.empty() ? -1 : static_cast<int64_t>(std::floor(right / bucket_width));
+		const int64_t first = sections.empty() ? 0 : static_cast<int64_t>(std::floor(left / section_width));
+		const int64_t last = sections.empty() ? -1 : static_cast<int64_t>(std::floor(right / section_width));
 		if (current_first > current_last) {
 			// One complete reconciliation at level start. Later frames inspect only
 			// the old and new screen sections, but retain exact world-coordinate
@@ -674,7 +676,7 @@ protected:
 			local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen.size.y)));
 			local_view = local_view.grow(max_local_radius + cull_margin);
 			const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
-			const int64_t last = static_cast<int64_t>(std::floor(local_view.end.x / bucket_width));
+			const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
 			auto section = sections.lower_bound(first);
 			while (section != sections.end() && section->first <= last) {
 				for (size_t index : section->second) draw_record(records[index]);
