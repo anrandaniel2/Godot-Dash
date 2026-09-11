@@ -11,7 +11,11 @@ func _ready() -> void:
 	%"Max FPS".default = refresh_rate if refresh_rate > 0 else 60
 	Engine.max_fps = int(Config.max_fps)
 	DisplayServer.window_set_vsync_mode(Config.vsync)
-	AudioServer.set_bus_layout(load("user://default_bus_layout.tres"))
+	var saved_bus_layout: AudioBusLayout
+	if ResourceLoader.exists("user://default_bus_layout.tres"):
+		saved_bus_layout = load("user://default_bus_layout.tres") as AudioBusLayout
+	if saved_bus_layout != null:
+		AudioServer.set_bus_layout(saved_bus_layout)
 	_on_menu_blur_value_changed(Config.menu_blur)
 	_on_blur_strength_value_changed(Config.blur_strength)
 	_on_ui_color_value_changed(Config.ui_color)

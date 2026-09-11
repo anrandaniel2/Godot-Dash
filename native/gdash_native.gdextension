@@ -19,4 +19,11 @@ compatibility_minimum = "4.1"
 [libraries]
 
 linux.debug.x86_64 = "res://native/bin/linux_debug/x86_64/libgdash_native.so"
+# Export templates expose debug/release in addition to android + arm64. Keep
+# explicit variants: relying on the generic android.arm64 match produced an APK
+# containing the .so but no runtime resource mapping to it.
+android.debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
+android.template_debug.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
+android.release.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
+android.template_release.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"
 android.arm64 = "res://native/bin/android_debug/arm64-v8a/libgdash_native.so"

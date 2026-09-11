@@ -332,7 +332,6 @@ jobs:
       # runtime loader would not know the extension either). This check turns
       # that into an explicit pass/fail instead of a silent omission.
       - name: "Check extension_list.cfg lists gdash_native"
-        continue-on-error: true
         run: |
           echo "--- .godot/extension_list.cfg ---"
           cat .godot/extension_list.cfg 2>/dev/null || echo "(no extension_list.cfg)"
@@ -407,7 +406,8 @@ jobs:
           if [ -f android/build/libs/debug/arm64-v8a/libgdash_native.so ]; then
             echo "EXPORTED: exporter copy present at android/build/libs/debug/arm64-v8a/"
           else
-            echo "NOT EXPORTED: no .so at android/build/libs/debug/arm64-v8a/ (exporter skipped the extension)"
+            echo "ERROR: no .so at android/build/libs/debug/arm64-v8a/; the manual jniLibs copy can put bytes in the APK but cannot create Godot's runtime GDExtension resource mapping"
+            exit 1
           fi
           echo "--- export log GDExtension/gdash lines ---"
           grep -in "gdextension\|gdash\|no .* library\|Copying .so" godot_export.log || echo "(no matches)"

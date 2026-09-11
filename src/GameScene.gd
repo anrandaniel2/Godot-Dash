@@ -60,6 +60,11 @@ func _open_level_paced() -> void:
 
 	var open_started_ms: int = Time.get_ticks_msec()
 	var job := LevelBuildJob.new(level_data)
+	# Component setters and player initialization legitimately consult the
+	# current level while LevelBuildJob performs its final use_data pass. Publish
+	# the new instance before stepping the job; previously current_level stayed
+	# null until after construction, causing thousands of color-trigger errors.
+	LevelManager.current_level = job.level
 	if Config.paced_level_open:
 		while not job.finished:
 			job.step(Config.level_open_frame_budget_ms)

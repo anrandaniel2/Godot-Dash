@@ -96,9 +96,22 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var text: String = response.text
 	if text == "-1" or text.is_empty():
 		return _error("Level %d was not found or is unavailable" % level_id)
+	# downloadGJLevel22 is documented as
+	#   level#hash1#hash2#user#songs#extraArtistNames
+	# (only the first three sections on older binary versions). Reject a
+	# truncated response instead of accidentally treating metadata as level data.
 	var sections := text.split("#", true)
+	if sections.size() < 3 or not _looks_like_sha1(sections[1]) or not _looks_like_sha1(sections[2]):
+		return _error("RobTop returned a malformed or incomplete level download")
 	var values := _pairs(sections[0], ":")
 	var encoded: String = values.get("4", "")
+	if encoded.is_empty():
+		return _error("RobTop returned level %d without compressed object data" % level_id)
+	# Online imports are required to use the dedicated C++ decoder/parser. Do
+	# not silently fall back to GDScript when an APK packaged its native library
+	# incorrectly; that hid the actual deployment fault in earlier device logs.
+	if not NativeCore.available():
+		return _error("The online C++ level parser is unavailable in this build. Reinstall the latest APK.")
 	var level_string := GMD.decode_level_string(encoded)
 	if level_string.is_empty():
 		return _error("RobTop returned level %d without readable object data" % level_id)
@@ -199,6 +212,15 @@ static func _pairs(text: String, separator: String) -> Dictionary[String, String
 	for index in range(0, fields.size() - 1, 2):
 		result[fields[index]] = fields[index + 1]
 	return result
+
+
+static func _looks_like_sha1(value: String) -> bool:
+	if value.length() != 40:
+		return false
+	for character: String in value.to_lower():
+		if character not in "0123456789abcdef":
+			return false
+	return true
 
 
 static func _decode_base64(encoded: String) -> String:

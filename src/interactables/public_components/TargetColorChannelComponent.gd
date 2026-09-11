@@ -21,7 +21,14 @@ enum Type {
 		notify_property_list_changed()
 @export_placeholder("Color channel name") var target_color_channel: String:
 	set(value):
-		var color_channel_exists: bool = value in LevelManager.current_level.color_channels.map(func(data: ColorChannelData): return data.associated_group)
+		# LevelBuildJob deserializes components while the new Level is still
+		# detached and before GameScene publishes it as current_level. Imported
+		# channel names were already validated by GMDConverter, so retain the
+		# value during that construction window instead of dereferencing null.
+		var current := LevelManager.current_level
+		var color_channel_exists := current == null or value in current.color_channels.map(
+				func(data: ColorChannelData): return data.associated_group
+		)
 		target_color_channel = value if color_channel_exists else ""
 		if channel_type == Type.CUSTOM:
 			changed.emit(target_color_channel)
