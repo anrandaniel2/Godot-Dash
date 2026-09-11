@@ -418,7 +418,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"flashing_lights": false,
 		"is_editable": true,
 		"song_path": "",
-		"song_start_time": 0.0,
+		# kA13 is the creator-authored synchronization offset in seconds.
+		# Negative offsets require delayed playback, which Level does not model;
+		# preserve every playable (non-negative) offset rather than dropping all
+		# online timing information as before.
+		"song_start_time": maxf(0.0, float(header.get(HeaderKey.SONG_OFFSET, "0"))),
 		"platformer": header.get(HeaderKey.PLATFORMER, "0") == "1",
 		"start_position": Constants.DEFAULT_PLAYER_POSITION,
 		"start_internal_gamemode": gamemode,

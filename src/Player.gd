@@ -1245,7 +1245,7 @@ func _player_death() -> void:
 	$DashParticles.emitting = false
 	%GroundParticles.emitting = false
 	$Trail.clear_points()
-	SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3")
+	SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3", &"In Level SFX")
 
 
 func _on_death_restart() -> void:

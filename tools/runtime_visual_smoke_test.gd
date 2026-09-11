@@ -154,12 +154,13 @@ func _test_native_core() -> void:
 	# metadata, so the converter must accept them without a typed assignment.
 	var conversion_report := GMDConverter.ImportReport.new()
 	var converted := GMDConverter.import_online_level_string(
-			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
+			"kA2,0,kA4,0,kA13,1.75;1,1,2,30,3,30;1,8,2,60,3,30;",
 			"Native conversion smoke",
 			conversion_report,
 	)
 	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
 	assert(converted.get("layers", [{}])[0].get("objects", []).size() == 2, "native smoke: online conversion produced an empty level")
+	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()

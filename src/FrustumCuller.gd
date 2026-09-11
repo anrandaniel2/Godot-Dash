@@ -48,6 +48,9 @@ const BUCKET_CELLS: int = 8
 ## through, so a small buffer is enough (a teleport or backward camera move
 ## still cannot pop more than this much in one step).
 const BEHIND_BUFFER_CELLS: float = 8.0
+## Covers floating-point edge rounding without retaining meaningfully off-screen
+## art. The actual visual bounds, not this epsilon, provide the conservatism.
+const EDGE_EPSILON: float = 2.0
 
 var level: Level
 
@@ -154,17 +157,48 @@ func _bucket_of(x: float) -> int:
 ## Leftmost and rightmost world x this object can cover, at its current
 ## transform.
 func _horizontal_span(object: Node2D) -> Vector2:
-	var rect: Rect2
+	# Authored bounds can lag behind multi-part/generated artwork (especially
+	# glow and offset child sprites). Merge them with the actual Sprite2D quads
+	# once at index-build time. This prevents a parent from being hidden while
+	# one of its children is still visibly crossing either screen edge.
+	var rect := Rect2()
+	var has_rect := false
 	if object is GDObject:
-		rect = object.get_world_bounds()
+		rect = object.global_transform * object.bounds
+		has_rect = rect.has_area()
 	elif object.has_method("get_bounds"):
-		rect = object.transform * object.get_bounds()
-	else:
-		# Hand-made scenes are at most a few cells; a generous fixed box
-		# covers rotated and scaled ones too.
-		var half: float = Constants.CELL_SIZE * 2.0 * maxf(absf(object.scale.x), absf(object.scale.y))
-		rect = Rect2(object.position - Vector2(half, half), Vector2(half, half) * 2.0)
-	return Vector2(rect.position.x, rect.end.x)
+		rect = object.global_transform * object.get_bounds()
+		has_rect = rect.has_area()
+	var visual := _sprite_tree_bounds(object)
+	if visual.has_area():
+		rect = rect.merge(visual) if has_rect else visual
+		has_rect = true
+	if not has_rect:
+		# Unknown handmade nodes get a conservative fallback. This is only used
+		# when the scene contains no Sprite2D from which exact visual bounds can
+		# be calculated.
+		var global_scale := object.global_transform.get_scale().abs()
+		var half: float = Constants.CELL_SIZE * 2.0 * maxf(global_scale.x, global_scale.y)
+		rect = Rect2(object.global_position - Vector2(half, half), Vector2(half, half) * 2.0)
+	return Vector2(rect.position.x - EDGE_EPSILON, rect.end.x + EDGE_EPSILON)
+
+
+## Global AABB of every sprite below one placement. Called only while rebuilding
+## the native index, never per frame.
+static func _sprite_tree_bounds(root: Node) -> Rect2:
+	var result := Rect2()
+	var found := false
+	var pending: Array[Node] = [root]
+	while not pending.is_empty():
+		var node := pending.pop_back()
+		if node is Sprite2D and node.texture != null:
+			var sprite_rect: Rect2 = node.global_transform * node.get_rect()
+			if sprite_rect.has_area():
+				result = result.merge(sprite_rect) if found else sprite_rect
+				found = true
+		for child: Node in node.get_children():
+			pending.append(child)
+	return result if found else Rect2()
 
 
 func _on_level_started() -> void:

@@ -11,7 +11,9 @@ extends Node
 # of RobTop's protocol (`21` for search and `22` for level downloads).
 const SEARCH_URL := "https://www.boomlings.com/database/getGJLevels21.php"
 const DOWNLOAD_URL := "https://www.boomlings.com/database/downloadGJLevel22.php"
+const SONG_INFO_URL := "https://www.boomlings.com/database/getGJSongInfo.php"
 const COMMON_SECRET := "Wmfd2893gb7"
+const MAX_SONG_BYTES := 64 * 1024 * 1024
 const GAME_VERSION := "22"
 const PC_BINARY_VERSION := "47"
 const MOBILE_BINARY_VERSION := "48"
@@ -130,7 +132,134 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	level_data["robtop_level_id"] = level_id
 	level_data["robtop_downloads"] = int(values.get("10", summary.get("downloads", 0)))
 	level_data["robtop_likes"] = int(values.get("14", summary.get("likes", 0)))
-	return {"ok": true, "level_data": level_data, "report": report}
+
+	# The object string only contains timing. Song identity lives in the level
+	# response (12 = built-in song, 35 = custom/Newgrounds song), so importing
+	# objects alone necessarily produced silent online levels. Download custom
+	# music anonymously from the URL RobTop returns and point the ordinary level
+	# player at the cached file. A music failure does not discard a valid level.
+	level_data.song_start_time = maxf(0.0, float(level_data.get("song_start_time", 0.0)))
+	var audio_warning := ""
+	var custom_song_id := int(values.get("35", summary.get("custom_song_id", 0)))
+	var official_song_id := int(values.get("12", "0"))
+	if custom_song_id > 0:
+		var song := await _download_custom_song(custom_song_id)
+		if song.ok:
+			level_data.song_path = song.file_name
+		else:
+			audio_warning = song.error
+	elif official_song_id > 0:
+		audio_warning = "This level uses built-in Geometry Dash song %d, which is not included in Godot Dash." % official_song_id
+
+	return {
+		"ok": true,
+		"level_data": level_data,
+		"report": report,
+		"audio_warning": audio_warning,
+	}
+
+
+## Resolves and caches a custom song without account credentials. RobTop's song
+## object provides a percent-encoded HTTPS media URL in field 10.
+func _download_custom_song(song_id: int) -> Dictionary:
+	var info := await _post(SONG_INFO_URL, {
+		"secret": COMMON_SECRET,
+		"gameVersion": GAME_VERSION,
+		"binaryVersion": _binary_version(),
+		"songID": str(song_id),
+	})
+	if not info.ok:
+		return _error("Music %d could not be resolved: %s" % [song_id, info.error])
+	if info.text == "-1" or info.text == "-2":
+		return _error("Music %d is unavailable or not permitted by its host." % song_id)
+	var song_values := _pairs(info.text, "~|~")
+	var media_url: String = song_values.get("10", "").uri_decode()
+	if media_url.begins_with("http://"):
+		media_url = "https://" + media_url.trim_prefix("http://")
+	if not media_url.begins_with("https://"):
+		return _error("Music %d has no secure download URL." % song_id)
+	var url_path := media_url.get_slice("?", 0)
+	var extension := url_path.get_extension().to_lower()
+	if extension not in ["mp3", "ogg", "wav"]:
+		extension = "mp3"
+	var file_name := "robtop_%d.%s" % [song_id, extension]
+	var final_path := Constants.SONG_DIR + file_name
+	if FileAccess.file_exists(final_path):
+		var cached := FileAccess.open(final_path, FileAccess.READ)
+		if cached != null and cached.get_length() > 0:
+			return {"ok": true, "file_name": file_name}
+
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(Constants.SONG_DIR))
+	var temporary_path := final_path + ".download"
+	if FileAccess.file_exists(temporary_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
+	var downloaded := await _download_audio(media_url, temporary_path)
+	if not downloaded.ok:
+		if FileAccess.file_exists(temporary_path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
+		return downloaded
+	var downloaded_file := FileAccess.open(temporary_path, FileAccess.READ)
+	var downloaded_size := downloaded_file.get_length() if downloaded_file != null else 0
+	if downloaded_size <= 0 or downloaded_size > MAX_SONG_BYTES:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
+		return _error("Music %d returned an empty or oversized audio file." % song_id)
+	var bytes := downloaded_file.get_buffer(downloaded_size)
+	if not _looks_like_audio(bytes, extension):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
+		return _error("Music %d returned an invalid or oversized audio file." % song_id)
+	var rename_error := DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(temporary_path),
+			ProjectSettings.globalize_path(final_path),
+	)
+	if rename_error != OK:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
+		return _error("Music %d could not be saved (error %d)." % [song_id, rename_error])
+	print("[RobTop] cached song %d: %s (%d bytes)" % [song_id, file_name, bytes.size()])
+	return {"ok": true, "file_name": file_name}
+
+
+func _download_audio(url: String, destination: String) -> Dictionary:
+	print("[RobTop] GET custom song")
+	var request := HTTPRequest.new()
+	request.use_threads = true
+	request.timeout = 30.0
+	request.max_redirects = 5
+	request.download_file = destination
+	request.body_size_limit = MAX_SONG_BYTES
+	add_child(request)
+	var completed: Array = []
+	request.request_completed.connect(func(result: int, status: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
+		completed.assign([result, status])
+	)
+	var error := request.request(url, PackedStringArray(["User-Agent: Godot-Dash/1", "Accept: audio/*"]))
+	if error != OK:
+		request.queue_free()
+		return _error("Could not start the music download (error %d)." % error)
+	var deadline := Time.get_ticks_msec() + 30_000
+	while completed.is_empty() and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	if completed.is_empty():
+		request.cancel_request()
+		request.queue_free()
+		return _error("Music download timed out after 30 seconds.")
+	request.queue_free()
+	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
+		return _error("Music download failed (result %d)." % int(completed[0]))
+	var status := int(completed[1])
+	if status < 200 or status >= 300:
+		return _error("Music host returned HTTP %d." % status)
+	return {"ok": true}
+
+
+static func _looks_like_audio(bytes: PackedByteArray, extension: String) -> bool:
+	if bytes.size() < 4:
+		return false
+	if extension == "ogg":
+		return bytes.slice(0, 4).get_string_from_ascii() == "OggS"
+	if extension == "wav":
+		return bytes.slice(0, 4).get_string_from_ascii() == "RIFF"
+	# MP3 may start with ID3 metadata or directly with an MPEG frame sync.
+	return bytes.slice(0, 3).get_string_from_ascii() == "ID3" or (bytes[0] == 0xff and (bytes[1] & 0xe0) == 0xe0)
 
 
 static func _binary_version() -> String:

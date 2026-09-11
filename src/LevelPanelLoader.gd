@@ -317,6 +317,9 @@ func _download_online_level(summary: Dictionary, edit_after: bool, panel: LevelP
 	if error != OK:
 		_show_transient_error("Could not save the downloaded level (error %d)." % error)
 		return
+	var audio_warning: String = response.get("audio_warning", "")
+	if not audio_warning.is_empty():
+		Toasts.warning("Level downloaded, but audio is unavailable: %s" % audio_warning, 7.0)
 	if edit_after:
 		_edit_level(file_name, "")
 	else:
