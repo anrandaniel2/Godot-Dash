@@ -102,9 +102,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.7.0 / robust online decoder and parser / exact viewport culling / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.8.0 / hierarchy-correct section culling / robust online parser / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 7; }
+	int64_t version() const { return 8; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	Dictionary parse_gd_pairs(const String &chunk) const {
@@ -301,23 +301,68 @@ class NativeFrustumIndex : public RefCounted {
 
 	struct Entry {
 		uint64_t id = 0;
+		double left = 0.0;
+		double right = 0.0;
 		int64_t first = 0;
 		int64_t last = 0;
 	};
 	std::vector<Entry> entries;
+	// OpenGD also partitions the level into fixed horizontal sections. Keep an
+	// index from section to entry here so normal camera motion touches only the
+	// sections leaving/entering the view instead of scanning the full level.
+	std::map<int64_t, std::vector<size_t>> sections;
+	std::vector<uint32_t> visited;
+	uint32_t visit_generation = 0;
 	std::set<uint64_t> hidden;
 	int64_t current_first = INT64_MAX;
 	int64_t current_last = INT64_MIN;
+	double current_left = INFINITY;
+	double current_right = -INFINITY;
 
 	CanvasItem *canvas_for(uint64_t id) const {
 		Object *object = ObjectDB::get_instance(ObjectID(id));
 		return Object::cast_to<CanvasItem>(object);
 	}
 
+	void apply_visibility(size_t index, double left, double right) {
+		if (index >= entries.size()) return;
+		const Entry &entry = entries[index];
+		CanvasItem *canvas = canvas_for(entry.id);
+		if (!canvas) {
+			hidden.erase(entry.id);
+			return;
+		}
+		const bool desired = entry.right >= left && entry.left <= right;
+		if (desired) {
+			auto found = hidden.find(entry.id);
+			if (found != hidden.end()) {
+				Node *node = Object::cast_to<Node>(canvas);
+				if (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED) canvas->set_visible(true);
+				hidden.erase(found);
+			}
+		} else if (canvas->is_visible()) {
+			canvas->set_visible(false);
+			hidden.insert(entry.id);
+		}
+	}
+
+	void visit_sections(int64_t first, int64_t last, double desired_left, double desired_right) {
+		if (first > last) return;
+		auto section = sections.lower_bound(first);
+		while (section != sections.end() && section->first <= last) {
+			for (size_t index : section->second) {
+				if (visited[index] == visit_generation) continue;
+				visited[index] = visit_generation;
+				apply_visibility(index, desired_left, desired_right);
+			}
+			++section;
+		}
+	}
+
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "objects", "lefts", "rights", "bucket_width"), &NativeFrustumIndex::configure);
-		ClassDB::bind_method(D_METHOD("set_range", "first", "last"), &NativeFrustumIndex::set_range);
+		ClassDB::bind_method(D_METHOD("set_view", "left", "right"), &NativeFrustumIndex::set_view);
 		ClassDB::bind_method(D_METHOD("show_all"), &NativeFrustumIndex::show_all);
 		ClassDB::bind_method(D_METHOD("tracked_count"), &NativeFrustumIndex::tracked_count);
 		ClassDB::bind_method(D_METHOD("hidden_count"), &NativeFrustumIndex::hidden_count);
@@ -328,6 +373,7 @@ public:
 			const PackedFloat32Array &rights, double bucket_width) {
 		show_all();
 		entries.clear();
+		sections.clear();
 		const int64_t count = std::min(objects.size(), std::min(lefts.size(), rights.size()));
 		if (bucket_width <= 0.0) return;
 		entries.reserve(static_cast<size_t>(count));
@@ -337,37 +383,44 @@ public:
 			if (!canvas) continue;
 			Entry entry;
 			entry.id = canvas->get_instance_id();
-			entry.first = static_cast<int64_t>(std::floor(lefts[i] / bucket_width));
-			entry.last = static_cast<int64_t>(std::floor(rights[i] / bucket_width));
+			entry.left = std::min(static_cast<double>(lefts[i]), static_cast<double>(rights[i]));
+			entry.right = std::max(static_cast<double>(lefts[i]), static_cast<double>(rights[i]));
+			entry.first = static_cast<int64_t>(std::floor(entry.left / bucket_width));
+			entry.last = static_cast<int64_t>(std::floor(entry.right / bucket_width));
+			const size_t index = entries.size();
 			entries.push_back(entry);
+			for (int64_t key = entry.first; key <= entry.last; ++key) sections[key].push_back(index);
 		}
+		visited.assign(entries.size(), 0);
+		visit_generation = 0;
 		current_first = INT64_MAX;
 		current_last = INT64_MIN;
+		current_left = INFINITY;
+		current_right = -INFINITY;
 	}
 
-	void set_range(int64_t first, int64_t last) {
-		if (first == current_first && last == current_last) return;
+	void set_view(double left, double right) {
+		if (right < left) std::swap(left, right);
+		if (left == current_left && right == current_right) return;
+		const int64_t first = sections.empty() ? 0 : static_cast<int64_t>(std::floor(left / bucket_width));
+		const int64_t last = sections.empty() ? -1 : static_cast<int64_t>(std::floor(right / bucket_width));
+		if (current_first > current_last) {
+			// One complete reconciliation at level start. Later frames inspect only
+			// the old and new screen sections, but retain exact world-coordinate
+			// bounds so an object disappears precisely after its final pixel exits.
+			for (size_t index = 0; index < entries.size(); ++index) apply_visibility(index, left, right);
+		} else {
+			if (++visit_generation == 0) {
+				std::fill(visited.begin(), visited.end(), 0);
+				visit_generation = 1;
+			}
+			visit_sections(current_first, current_last, left, right);
+			visit_sections(first, last, left, right);
+		}
 		current_first = first;
 		current_last = last;
-		for (const Entry &entry : entries) {
-			CanvasItem *canvas = canvas_for(entry.id);
-			if (!canvas) {
-				hidden.erase(entry.id);
-				continue;
-			}
-			const bool desired = entry.last >= first && entry.first <= last;
-			if (desired) {
-				auto found = hidden.find(entry.id);
-				if (found != hidden.end()) {
-					Node *node = Object::cast_to<Node>(canvas);
-					if (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED) canvas->set_visible(true);
-					hidden.erase(found);
-				}
-			} else if (canvas->is_visible()) {
-				canvas->set_visible(false);
-				hidden.insert(entry.id);
-			}
-		}
+		current_left = left;
+		current_right = right;
 	}
 
 	void show_all() {
@@ -379,6 +432,8 @@ public:
 		hidden.clear();
 		current_first = INT64_MAX;
 		current_last = INT64_MIN;
+		current_left = INFINITY;
+		current_right = -INFINITY;
 	}
 
 	int64_t tracked_count() const { return static_cast<int64_t>(entries.size()); }
@@ -540,9 +595,14 @@ class NativeDecorationCanvas : public Node2D {
 	};
 
 	std::vector<Record> records;
+	// One origin section per record, modelled after OpenGD's _sectionObjects.
+	// Exact transformed bounds still make the final decision, while this index
+	// avoids testing every sprite in the level on every scrolling frame.
+	std::map<int64_t, std::vector<size_t>> sections;
 	bool cull = false;
-	double bucket_width = 1024.0; // Retained for ABI compatibility/fallback tools.
+	double bucket_width = 1024.0;
 	double cull_margin = 0.0;
+	double max_local_radius = 0.0;
 	int64_t first_bucket = INT64_MIN;
 	int64_t last_bucket = INT64_MAX;
 	Rect2 local_bounds;
@@ -568,7 +628,7 @@ protected:
 			// A retained CanvasItem draw list does not otherwise know that a sprite
 			// inside it crossed the screen edge. Rebuild only when the actual
 			// world-to-viewport transform or viewport size changes.
-			const Transform2D current_transform = get_viewport_transform();
+			const Transform2D current_transform = get_global_transform_with_canvas();
 			const Vector2 current_size = get_viewport_rect().size;
 			if (!view_initialized || current_transform != last_viewport_transform || current_size != last_viewport_size) {
 				last_viewport_transform = current_transform;
@@ -581,25 +641,45 @@ protected:
 		if (what != CanvasItem::NOTIFICATION_DRAW) return;
 
 		last_drawn_items = 0;
-		const Transform2D to_viewport = get_viewport_transform();
+		// get_viewport_transform() only maps the Canvas to the Viewport. It omits
+		// this node, its DecorationBatch parent, and the Level's ground offset.
+		// That made visible sprites look off-screen to C++ and was the main cause
+		// of artwork missing only in native builds.
+		const Transform2D to_screen = get_global_transform_with_canvas();
 		const Rect2 screen(Vector2(), get_viewport_rect().size);
 		if (cull && !local_bounds.has_area()) return;
-		// Whole-batch rejection makes the common off-screen group cost one AABB
-		// test, not one test per record.
-		if (cull && !screen.intersects(to_viewport.xform(local_bounds), true)) return;
+		if (cull && !screen.intersects(to_screen.xform(local_bounds), true)) return;
 
-		for (const Record &record : records) {
+		auto draw_record = [&](const Record &record) {
 			const Rect2 quad(-record.region.size * 0.5, record.region.size);
 			if (cull) {
-				// Exact transformed sprite bounds: no look-ahead margin and no
-				// origin-only approximation. Off-screen artwork never enters the
-				// retained Canvas command list.
-				const Rect2 viewport_bounds = (to_viewport * record.transform).xform(quad);
-				if (!screen.intersects(viewport_bounds, true)) continue;
+				const Rect2 viewport_bounds = (to_screen * record.transform).xform(quad);
+				if (!screen.intersects(viewport_bounds, true)) return;
 			}
 			draw_set_transform_matrix(record.transform);
 			draw_texture_rect_region(record.texture, quad, record.region, record.color);
 			++last_drawn_items;
+		};
+
+		if (!cull) {
+			for (const Record &record : records) draw_record(record);
+		} else {
+			// Convert all four viewport corners to local space. Rotation, zoom,
+			// level offsets and moved/rotated group batches are therefore handled
+			// conservatively before the exact per-sprite screen test.
+			const Transform2D from_screen = to_screen.affine_inverse();
+			Rect2 local_view(from_screen.xform(Vector2()), Vector2());
+			local_view = local_view.expand(from_screen.xform(Vector2(screen.size.x, 0.0)));
+			local_view = local_view.expand(from_screen.xform(screen.size));
+			local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen.size.y)));
+			local_view = local_view.grow(max_local_radius + cull_margin);
+			const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
+			const int64_t last = static_cast<int64_t>(std::floor(local_view.end.x / bucket_width));
+			auto section = sections.lower_bound(first);
+			while (section != sections.end() && section->first <= last) {
+				for (size_t index : section->second) draw_record(records[index]);
+				++section;
+			}
 		}
 		draw_set_transform_matrix(Transform2D());
 	}
@@ -613,8 +693,11 @@ public:
 			bool enable_culling, double width, double margin) {
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear();
+		sections.clear();
 		records.reserve(static_cast<size_t>(count));
 		local_bounds = Rect2();
+		max_local_radius = 0.0;
+		bucket_width = width > 0.0 ? width : 1024.0;
 		bool first_bounds = true;
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
@@ -632,10 +715,15 @@ public:
 			const Rect2 bounds = record.transform.xform(quad);
 			local_bounds = first_bounds ? bounds : local_bounds.merge(bounds);
 			first_bounds = false;
+			// Radius is conservative under rotation. It expands the local section
+			// query, while the exact screen AABB below prevents off-screen draws.
+			const Vector2 extent = bounds.size * 0.5;
+			max_local_radius = std::max(max_local_radius, static_cast<double>(extent.length()));
+			const size_t index = records.size();
 			records.push_back(record);
+			sections[static_cast<int64_t>(std::floor(record.origin_x / bucket_width))].push_back(index);
 		}
 		cull = enable_culling;
-		bucket_width = width > 0.0 ? width : 1024.0;
 		cull_margin = std::max(0.0, margin);
 		view_initialized = false;
 		set_process(cull);

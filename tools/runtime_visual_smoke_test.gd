@@ -9,7 +9,12 @@ const VIEW_SIZE := Vector2i(640, 256)
 # window, so render placements use logical coordinates while samples use
 # captured-image coordinates (3:1 here).
 const DIRECT_WORLD := Vector2(480, 384)
-const BATCH_WORLD := Vector2(1440, 384)
+# Native culling must compose the full CanvasItem hierarchy. Keep the sprite far
+# outside the viewport in batch-local coordinates, then move its parent back on
+# screen; using get_viewport_transform() instead of the global canvas transform
+# incorrectly rejects this visible artwork.
+const BATCH_LOCAL := Vector2(1440, -2000)
+const BATCH_PARENT_OFFSET := Vector2(0, 2384)
 const SAMPLE_RADIUS := 90
 
 var _frames := 0
@@ -34,17 +39,19 @@ func _ready() -> void:
 	add_child(direct)
 	_direct = direct
 
-	data = _object_data(BATCH_WORLD)
+	data = _object_data(BATCH_LOCAL)
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		data.color_channels = {"base": "native_smoke"}
 	var batch_objects: Array = [data]
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
-		var offscreen := _object_data(Vector2(100000, BATCH_WORLD.y))
+		var offscreen := _object_data(Vector2(100000, BATCH_LOCAL.y))
 		offscreen.color_channels = {"base": "native_smoke"}
 		batch_objects.append(offscreen)
 	var batches := GDDecorationLoader.build_batches(batch_objects, GDDecorationLoader.art_scale())
 	assert(not batches.is_empty(), "visual smoke: decoration produced no batch")
 	for batch: DecorationBatch in batches:
+		if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+			batch.position = BATCH_PARENT_OFFSET
 		add_child(batch)
 		_batch = batch
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
@@ -77,8 +84,8 @@ func _process(_delta: float) -> void:
 	# Canvas stretch/aspect settings vary with the test window. Ask each
 	# CanvasItem for the actual world-to-viewport transform instead of assuming
 	# a scale ratio.
-	var direct_center := _direct.get_viewport_transform() * DIRECT_WORLD
-	var batch_center := _batch.get_viewport_transform() * BATCH_WORLD
+	var direct_center := _direct.get_global_transform_with_canvas() * Vector2.ZERO
+	var batch_center := _batch.get_global_transform_with_canvas() * BATCH_LOCAL
 	var direct_pixels := _opaque_pixels(image, direct_center)
 	var batch_pixels := _opaque_pixels(image, batch_center)
 	var opaque_bounds := _opaque_bounds(image)
@@ -128,7 +135,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 7, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 8, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -158,13 +165,18 @@ func _test_native_core() -> void:
 	add_child(far)
 	var frustum: Object = ClassDB.instantiate(&"NativeFrustumIndex")
 	frustum.call(
-			&"configure", [near, far], PackedFloat32Array([0.0, 100.0]),
-			PackedFloat32Array([5.0, 105.0]), 10.0,
+			&"configure", [near, far], PackedFloat32Array([0.0, 8.0]),
+			PackedFloat32Array([5.0, 9.0]), 10.0,
 	)
-	frustum.call(&"set_range", 0, 1)
+	frustum.call(&"set_view", 0.0, 6.0)
 	assert(near.visible and not far.visible, "native smoke: frustum rejection")
+	# Both views are inside the same coarse 10-unit section boundaries at their
+	# edges; visibility must still follow exact coordinates, not wait for a
+	# section transition.
+	frustum.call(&"set_view", 8.0, 9.5)
+	assert(not near.visible and far.visible, "native smoke: exact in-section visibility update")
 	frustum.call(&"show_all")
-	assert(far.visible, "native smoke: frustum restore")
+	assert(near.visible and far.visible, "native smoke: frustum restore")
 	near.queue_free()
 	far.queue_free()
 	var collision_body := Node2D.new()

@@ -224,11 +224,18 @@ func _update() -> void:
 		return
 	var cell: float = Constants.CELL_SIZE
 	var view: Rect2 = _camera_rect(camera)
+	if _native_index != null:
+		# Native sections are only a candidate index. The final comparison uses
+		# exact world coordinates every camera frame, so visible objects behind
+		# the player remain until their last pixel exits and already-offscreen
+		# objects are not retained by a coarse eight-cell bucket.
+		_native_index.call(&"set_view", view.position.x, view.end.x)
+		_last_first = _bucket_of(view.position.x)
+		_last_last = _bucket_of(view.end.x)
+		return
 	if not LevelManager.platformer:
-		# A level scrolls one way; keep the full buffer where objects scroll
-		# in (ahead of the camera) and barely any where they have already
-		# passed, so far fewer objects stay live at once. Free-roaming
-		# platformer levels move both ways and keep the symmetric buffer.
+		# Portable fallback keeps a look-ahead buffer to avoid GDScript bucket
+		# popping. Native builds do not need it because their final test is exact.
 		var behind: float = minf(BEHIND_BUFFER_CELLS * cell, Config.culling_buffer_cells * cell)
 		var ahead: float = Config.culling_buffer_cells * cell
 		view = view.grow_individual(behind, ahead, ahead, ahead)
@@ -238,11 +245,6 @@ func _update() -> void:
 	var last: int = _bucket_of(view.end.x)
 	var had_range: bool = _last_first <= _last_last
 	if had_range and first == _last_first and last == _last_last:
-		return
-	if _native_index != null:
-		_native_index.call(&"set_range", first, last)
-		_last_first = first
-		_last_last = last
 		return
 
 	if not had_range:
