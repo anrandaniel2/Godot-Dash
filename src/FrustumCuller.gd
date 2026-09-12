@@ -195,7 +195,7 @@ static func _sprite_tree_bounds(root: Node) -> Rect2:
 	var found := false
 	var pending: Array[Node] = [root]
 	while not pending.is_empty():
-		var node := pending.pop_back()
+		var node: Node = pending.pop_back()
 		if node is Sprite2D and node.texture != null:
 			var sprite_rect: Rect2 = node.global_transform * node.get_rect()
 			if sprite_rect.has_area():
