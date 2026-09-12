@@ -1045,6 +1045,7 @@ protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
 		ClassDB::bind_method(D_METHOD("queue_redraw"), &NativeDecorationRenderer::rebuild_commands);
+		ClassDB::bind_method(D_METHOD("update_camera_range"), &NativeDecorationRenderer::update_camera_range);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationRenderer::set_visible_buckets);
 		ClassDB::bind_method(D_METHOD("apply_channel_color", "indices", "color"), &NativeDecorationRenderer::apply_channel_color);
 		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationRenderer::get_item_color);

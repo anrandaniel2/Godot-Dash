@@ -77,6 +77,11 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_frames += 1
+	# The production NativeLevelRuntime performs this centralized update. Call
+	# it explicitly here as well because this isolated smoke tree intentionally
+	# creates and destroys temporary levels/runtimes during setup.
+	if _native_canvas != null:
+		_native_canvas.call(&"update_camera_range")
 	if _frames < 8:
 		return
 	var image := get_viewport().get_texture().get_image()
