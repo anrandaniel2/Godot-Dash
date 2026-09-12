@@ -22,6 +22,7 @@
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/classes/window.hpp>
+#include <godot_cpp/classes/worker_thread_pool.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/core/object.hpp>
@@ -238,9 +239,50 @@ public:
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
 };
 
-// Decoration canvases register in a native global render list. One
-// NativeLevelRuntime notification updates all of them, avoiding thousands of
-// SceneTree process callbacks in heavily group-fragmented 2.2 levels.
+struct DecorationCullJob {
+	uint64_t renderer_id = 0;
+	Transform2D from_screen;
+	Vector2 screen_size;
+	double radius = 0.0;
+	double cell_size = 256.0;
+	int64_t first = 0;
+	int64_t last = -1;
+	int64_t top = 0;
+	int64_t bottom = -1;
+};
+static std::vector<DecorationCullJob> decoration_cull_jobs;
+
+// WorkerThreadPool invokes one element per renderer and automatically spreads
+// the group across the engine's worker pool (not a hard-coded two-thread cap).
+// Jobs contain only copied transforms/numbers: workers never touch SceneTree,
+// ObjectDB, textures, RIDs, or RenderingServer.
+class NativeDecorationCullWorker : public RefCounted {
+	GDCLASS(NativeDecorationCullWorker, RefCounted)
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("compute", "index"), &NativeDecorationCullWorker::compute);
+	}
+public:
+	void compute(int64_t index) {
+		if (index < 0 || index >= static_cast<int64_t>(decoration_cull_jobs.size())) return;
+		DecorationCullJob &job = decoration_cull_jobs[static_cast<size_t>(index)];
+		Rect2 local_view(job.from_screen.xform(Vector2()), Vector2());
+		local_view = local_view.expand(job.from_screen.xform(Vector2(job.screen_size.x, 0.0)));
+		local_view = local_view.expand(job.from_screen.xform(job.screen_size));
+		local_view = local_view.expand(job.from_screen.xform(Vector2(0.0, job.screen_size.y)));
+		// One additional cell covers camera movement while this asynchronous
+		// result is in flight, preventing one-frame streaming gaps.
+		local_view = local_view.grow(job.radius + job.cell_size);
+		job.first = static_cast<int64_t>(std::floor(local_view.position.x / job.cell_size));
+		job.last = static_cast<int64_t>(std::floor(local_view.get_end().x / job.cell_size));
+		job.top = static_cast<int64_t>(std::floor(local_view.position.y / job.cell_size));
+		job.bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / job.cell_size));
+	}
+};
+
+// Decoration renderers register in a native global list. NativeLevelRuntime
+// snapshots thread-unsafe scene transforms on the main thread, then delegates
+// all spatial range math to WorkerThreadPool.
 static void decoration_coordinator_enter();
 static void decoration_coordinator_exit();
 static void update_registered_decoration_renderers();
@@ -394,9 +436,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.6.0 / node-free RenderingServer batches / NativeLevelRuntime / profiled LTO / api 4.7");
+		return String("gdash_native 1.7.0 / async worker-pool culling / node-free RenderingServer / api 4.7");
 	}
-	int64_t version() const { return 16; }
+	int64_t version() const { return 17; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -1103,6 +1145,30 @@ public:
 		if (!cull) rebuild_commands();
 	}
 
+	bool capture_cull_job(DecorationCullJob &job) const {
+		CanvasItem *owner_canvas = owner();
+		if (!cull || !owner_canvas || !owner_canvas->is_inside_tree()) return false;
+		job.renderer_id = get_instance_id();
+		job.from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
+		job.screen_size = owner_canvas->get_viewport_rect().size;
+		job.radius = max_local_radius + cull_margin;
+		job.cell_size = bucket_width;
+		return true;
+	}
+
+	void apply_cull_job(const DecorationCullJob &job) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server || !canvas_item.is_valid()) return;
+		if (view_initialized && job.first == first_bucket && job.last == last_bucket &&
+				job.top == first_row && job.bottom == last_row && job.screen_size == last_viewport_size) return;
+		first_bucket = job.first; last_bucket = job.last;
+		first_row = job.top; last_row = job.bottom;
+		last_viewport_size = job.screen_size; view_initialized = true;
+		range_has_records = selected_range_has_records();
+		server->canvas_item_set_visible(canvas_item, range_has_records);
+		rebuild_commands();
+	}
+
 	void update_camera_range() {
 		CanvasItem *owner_canvas = owner();
 		RenderingServer *server = RenderingServer::get_singleton();
@@ -1157,13 +1223,41 @@ static void decoration_coordinator_exit() {
 }
 
 static void update_registered_decoration_renderers() {
-	// Several level runtimes can briefly coexist during scene replacement and
-	// smoke tests. Never traverse the registry more than once per rendered frame.
+	// Several level runtimes can briefly coexist during scene replacement.
 	const uint64_t frame = Engine::get_singleton()->get_process_frames();
 	if (frame == decoration_last_update_frame) return;
 	decoration_last_update_frame = frame;
-	for (NativeDecorationRenderer *canvas : registered_decoration_renderers) {
-		if (canvas) canvas->update_camera_range();
+	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+	static Ref<NativeDecorationCullWorker> worker;
+	static int64_t active_group = -1;
+	if (!pool) return;
+	if (worker.is_null()) worker.instantiate();
+
+	// Never wait on the game thread. Apply a completed previous-frame result;
+	// if workers are still busy, retain the conservative old cells and try next
+	// frame. This makes culling incapable of becoming a new frame-time spike.
+	if (active_group >= 0) {
+		if (!pool->is_group_task_completed(active_group)) return;
+		pool->wait_for_group_task_completion(active_group);
+		for (const DecorationCullJob &job : decoration_cull_jobs) {
+			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
+			NativeDecorationRenderer *renderer = Object::cast_to<NativeDecorationRenderer>(object);
+			if (renderer) renderer->apply_cull_job(job);
+		}
+		active_group = -1;
+	}
+
+	decoration_cull_jobs.clear();
+	decoration_cull_jobs.reserve(registered_decoration_renderers.size());
+	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
+		if (!renderer) continue;
+		DecorationCullJob job;
+		if (renderer->capture_cull_job(job)) decoration_cull_jobs.push_back(job);
+	}
+	if (!decoration_cull_jobs.empty()) {
+		active_group = pool->add_group_task(
+				Callable(worker.ptr(), "compute"), static_cast<int32_t>(decoration_cull_jobs.size()),
+				-1, true, "GD visible-cell culling");
 	}
 }
 
@@ -1194,6 +1288,7 @@ namespace {
 void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(godot::NativeTriggerRuntime);
+		GDREGISTER_CLASS(godot::NativeDecorationCullWorker);
 		GDREGISTER_CLASS(godot::NativeLevelRuntime);
 		GDREGISTER_CLASS(godot::GdashNative);
 		GDREGISTER_CLASS(godot::NativeFrustumIndex);

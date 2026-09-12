@@ -158,7 +158,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 16, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 17, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -241,6 +241,7 @@ func _test_native_core() -> void:
 		assert((pad.get_node(^"Hitbox") as CollisionShape2D).position.y == 0.0, "native smoke: imported pad hitbox does not match GD art")
 		pad.free()
 	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
+	assert(ClassDB.class_exists(&"NativeDecorationCullWorker"), "native smoke: worker-pool culler missing")
 	assert(ClassDB.class_exists(&"NativeLevelRuntime"), "native smoke: level runtime missing")
 	_level_runtime = ClassDB.instantiate(&"NativeLevelRuntime") as Node
 	assert(_level_runtime != null, "native smoke: NativeLevelRuntime did not instantiate")

@@ -17,6 +17,7 @@
     "Texture2D",
     "Time",
     "Viewport",
-    "Window"
+    "Window",
+    "WorkerThreadPool"
   ]
 }
