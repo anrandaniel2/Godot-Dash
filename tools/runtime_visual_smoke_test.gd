@@ -84,6 +84,9 @@ func _process(_delta: float) -> void:
 		var drawn := int(_native_canvas.call(&"last_drawn_count"))
 		var total := int(_native_canvas.call(&"item_count"))
 		assert(drawn > 0 and drawn < total, "native smoke: off-screen grid rejection (%d/%d)" % [drawn, total])
+		if _level_runtime == null:
+			_level_runtime = ClassDB.instantiate(&"NativeLevelRuntime") as Node
+			add_child(_level_runtime)
 		var render_stats: Dictionary = _level_runtime.call(&"render_stats")
 		print("NATIVE_RENDER_STATS %s" % render_stats)
 		if (
