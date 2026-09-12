@@ -236,7 +236,11 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 	# still land in the same batch.
 	var group_key: Array = groups.duplicate()
 	group_key.sort()
-	var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending)
+	# Keep animated artwork out of the overwhelmingly larger static renderer.
+	# A CanvasItem's retained command list is immutable per draw command, so one
+	# spinning saw otherwise forces every visible static decoration sharing this
+	# batch to be resubmitted on every frame.
+	var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending, not is_zero_approx(spin))
 
 	# Geometry Dash draws an object as a small tree of sprites: the parts
 	# with a negative order behind the root sprite, then the root, then the
@@ -306,17 +310,17 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 				batch, sheet, frames.detail, transform, z_order, gd_id,
 				_channel_for(channels, "detail"), "detail", art_scale_factor,
 				detail_tint, detail_hsv, base_alpha, spin,
-				DRAW_ORDER_DETAIL,
+				DRAW_ORDER_DETAIL, transform.origin,
 		)
 	base_item.detail = detail_item
 	if frames.has_glow() and wants_glow:
 		# Glow layers are always additive, whatever the channel says, and
 		# sit behind the object.
 		_add_layer(
-				_batch_for(batches, group_key, z_layer, true),
+				_batch_for(batches, group_key, z_layer, true, not is_zero_approx(spin)),
 				sheet, frames.glow, transform, z_order, gd_id,
 				_channel_for(channels, "base"), "glow", art_scale_factor, tint, hsv_shift, base_alpha,
-				spin, DRAW_ORDER_GLOW,
+				spin, DRAW_ORDER_GLOW, transform.origin,
 		)
 
 ## Finalises a batch set accumulated by [method add_object]: sorts each
@@ -380,7 +384,7 @@ static func _add_root(
 	return _add_layer(
 			batch, sheet, frames.base, transform, z_order, gd_id, root_channel, "base",
 			art_scale_factor, root_tint, root_hsv, base_alpha * frames.opacity, spin,
-			DRAW_ORDER_ROOT,
+			DRAW_ORDER_ROOT, transform.origin,
 	)
 
 
@@ -447,7 +451,7 @@ static func _add_part(
 	return _add_layer(
 			batch, sheet, frame_name, transform * local, z_order, gd_id, channel, layer,
 			art_scale_factor, part_tint, part_hsv, base_alpha * opacity, spin,
-			int(part.get("order", 0)),
+			int(part.get("order", 0)), transform.origin,
 	)
 
 
@@ -494,10 +498,11 @@ static func _batch_for(
 		group_key: Array,
 		z_layer: int,
 		additive: bool,
+		dynamic: bool,
 ) -> DecorationBatch:
 	# The coarse layer decides the batch; ordering within a layer is handled by
 	# sorting inside the batch.
-	var key: String = "%s|%d|%d" % [",".join(PackedStringArray(group_key)), z_layer, int(additive)]
+	var key: String = "%s|%d|%d|%d" % [",".join(PackedStringArray(group_key)), z_layer, int(additive), int(dynamic)]
 	if batches.has(key):
 		return batches[key]
 
@@ -546,6 +551,7 @@ static func _add_layer(
 		base_alpha: float = 1.0,
 		spin: float = 0.0,
 		draw_order: int = 0,
+		spin_pivot: Vector2 = Vector2.ZERO,
 ) -> DecorationBatch.Item:
 	var frame: GDSpriteSheet.Frame = sheet.get_frame(frame_name)
 	if frame == null or frame.atlas == null:
@@ -563,6 +569,7 @@ static func _add_layer(
 	item.hsv_shift = hsv_shift
 	item.base_alpha = base_alpha
 	item.spin = spin
+	item.spin_pivot = spin_pivot
 
 	# The object transform is in world units and the art is in atlas pixels, so
 	# the conversion is folded in here rather than paid at draw time. The trim

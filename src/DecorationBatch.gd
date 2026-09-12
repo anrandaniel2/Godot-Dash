@@ -84,6 +84,11 @@ class Item:
 	## Degrees per second this item spins, from Geometry Dash's key 97. Zero for
 	## the overwhelming majority of objects, which are static.
 	var spin: float = 0.0
+	## Object-space centre shared by every sprite in one composite object. Atlas
+	## trimming means an individual half/quarter-saw's sprite origin is not the
+	## centre of the completed saw, so spinning each sprite about its own origin
+	## tears the reconstructed artwork apart.
+	var spin_pivot: Vector2 = Vector2.ZERO
 	## Base items only: whether the object asked for its glow layer (key 96).
 	## Saving used to assume every object with a glow frame wanted it drawn,
 	## so a re-opened import stacked additive glow over the whole level.
@@ -403,7 +408,13 @@ func _process(delta: float) -> void:
 	# speed in Geometry Dash's key 97.
 	if not _spinning.is_empty():
 		for item: Item in _spinning:
-			item.transform = item.transform.rotated_local(deg_to_rad(item.spin * delta))
+			var angle := deg_to_rad(item.spin * delta)
+			var old_origin := item.transform.origin
+			item.transform = item.transform.rotated_local(angle)
+			# Rotate the trimmed sprite's placement around the complete object's
+			# centre as well as rotating its basis. This keeps all duplicated saw
+			# wedges locked together around one shared axle.
+			item.transform.origin = item.spin_pivot + (old_origin - item.spin_pivot).rotated(angle)
 			if _native_canvas != null and item.render_index >= 0:
 				_native_canvas.call(&"set_item_transform", item.render_index, item.transform)
 		_request_redraw()

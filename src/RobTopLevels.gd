@@ -12,12 +12,18 @@ extends Node
 const SEARCH_URL := "https://www.boomlings.com/database/getGJLevels21.php"
 const DOWNLOAD_URL := "https://www.boomlings.com/database/downloadGJLevel22.php"
 const SONG_INFO_URL := "https://www.boomlings.com/database/getGJSongInfo.php"
+# The bare host follows a distinct CDN route on some mobile networks. Use it
+# only after bounded retries on the canonical endpoint; permanent 4xx protocol
+# failures must remain visible rather than being hidden by host switching.
+const SONG_INFO_FALLBACK_URL := "https://boomlings.com/database/getGJSongInfo.php"
 const COMMON_SECRET := "Wmfd2893gb7"
 const MAX_SONG_BYTES := 64 * 1024 * 1024
 const GAME_VERSION := "22"
 const PC_BINARY_VERSION := "47"
 const MOBILE_BINARY_VERSION := "48"
 const PAGE_SIZE := 10
+const TRANSIENT_HTTP_STATUSES := [408, 425, 429, 500, 502, 503, 504]
+const NETWORK_ATTEMPTS := 3
 
 
 func search(query: String, page: int = 0, category: int = 4) -> Dictionary:
@@ -162,12 +168,16 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 ## Resolves and caches a custom song without account credentials. RobTop's song
 ## object provides a percent-encoded HTTPS media URL in field 10.
 func _download_custom_song(song_id: int) -> Dictionary:
-	var info := await _post(SONG_INFO_URL, {
+	var song_fields := {
 		"secret": COMMON_SECRET,
 		"gameVersion": GAME_VERSION,
 		"binaryVersion": _binary_version(),
 		"songID": str(song_id),
-	})
+	}
+	var info := await _post(SONG_INFO_URL, song_fields)
+	if not info.ok and bool(info.get("retryable", false)):
+		push_warning("[RobTop] canonical song-info route unavailable; trying fallback host")
+		info = await _post(SONG_INFO_FALLBACK_URL, song_fields)
 	if not info.ok:
 		return _error("Music %d could not be resolved: %s" % [song_id, info.error])
 	if info.text == "-1" or info.text == "-2":
@@ -219,6 +229,21 @@ func _download_custom_song(song_id: int) -> Dictionary:
 
 
 func _download_audio(url: String, destination: String) -> Dictionary:
+	var last: Dictionary = _error("Music download failed.")
+	for attempt in NETWORK_ATTEMPTS:
+		if FileAccess.file_exists(destination):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(destination))
+		last = await _download_audio_once(url, destination)
+		if last.ok or not bool(last.get("retryable", false)):
+			return last
+		if attempt + 1 < NETWORK_ATTEMPTS:
+			var delay := 0.5 * pow(2.0, attempt)
+			push_warning("[RobTop] transient music failure; retry %d/%d in %.1fs" % [attempt + 2, NETWORK_ATTEMPTS, delay])
+			await get_tree().create_timer(delay).timeout
+	return last
+
+
+func _download_audio_once(url: String, destination: String) -> Dictionary:
 	print("[RobTop] GET custom song")
 	var request := HTTPRequest.new()
 	request.use_threads = true
@@ -241,13 +266,13 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return _error("Music download timed out after 30 seconds.")
+		return {"ok": false, "error": "Music download timed out after 30 seconds.", "retryable": true}
 	request.queue_free()
 	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
-		return _error("Music download failed (result %d)." % int(completed[0]))
+		return {"ok": false, "error": "Music download failed (result %d)." % int(completed[0]), "retryable": true}
 	var status := int(completed[1])
 	if status < 200 or status >= 300:
-		return _error("Music host returned HTTP %d." % status)
+		return {"ok": false, "error": "Music host returned HTTP %d." % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
 	return {"ok": true}
 
 
@@ -279,6 +304,19 @@ static func _platform_id() -> String:
 
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
+	var last: Dictionary = _error("RobTop request failed.")
+	for attempt in NETWORK_ATTEMPTS:
+		last = await _post_once(url, fields)
+		if last.ok or not bool(last.get("retryable", false)):
+			return last
+		if attempt + 1 < NETWORK_ATTEMPTS:
+			var delay := 0.5 * pow(2.0, attempt)
+			push_warning("[RobTop] transient HTTP failure; retry %d/%d in %.1fs" % [attempt + 2, NETWORK_ATTEMPTS, delay])
+			await get_tree().create_timer(delay).timeout
+	return last
+
+
+func _post_once(url: String, fields: Dictionary) -> Dictionary:
 	# Keep diagnostics metadata-only: never log request bodies or credentials.
 	# Android logcat tags Godot's print output as `godot`, making these lines
 	# usable even when package-name filtering only captures system messages.
@@ -321,7 +359,7 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		request.cancel_request()
 		request.queue_free()
 		push_warning("[RobTop] timed out after 15 seconds: %s" % url)
-		return _error("RobTop did not respond within 15 seconds")
+		return {"ok": false, "error": "RobTop did not respond within 15 seconds", "retryable": true}
 
 	request.queue_free()
 	var result: int = completed[0]
@@ -329,9 +367,9 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 	var bytes: PackedByteArray = completed[3]
 	print("[RobTop] result=%d HTTP=%d bytes=%d" % [result, status, bytes.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
-		return _error("RobTop connection failed (result %d)" % result)
+		return {"ok": false, "error": "RobTop connection failed (result %d)" % result, "retryable": true}
 	if status < 200 or status >= 300:
-		return _error("RobTop server returned HTTP %d" % status)
+		return {"ok": false, "error": "RobTop server returned HTTP %d" % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
 	return {"ok": true, "text": bytes.get_string_from_utf8().strip_edges()}
 
 

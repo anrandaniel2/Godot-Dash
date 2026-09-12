@@ -27,6 +27,7 @@ var _level_runtime: Node
 func _ready() -> void:
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
+	_test_composite_saw()
 	get_window().size = VIEW_SIZE
 	get_viewport().transparent_bg = true
 	RenderingServer.set_default_clear_color(Color(0, 0, 0, 0))
@@ -344,6 +345,34 @@ func _test_native_core() -> void:
 			.replace("+", "-").replace("/", "_")
 	assert(native.call(&"decode_level_string", zlib_encoded) == plain, "native smoke: documented zlib level decode")
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
+
+
+func _test_composite_saw() -> void:
+	var data := _object_data(Vector2(321.0, 222.0))
+	data.gd_object_id = 88 # intentionally atlas-packed as two half-saw copies
+	data.spin = 180.0
+	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
+	var saw_items: Array[DecorationBatch.Item] = []
+	var saw_batch: DecorationBatch
+	for batch: DecorationBatch in batches:
+		for item: DecorationBatch.Item in batch.items:
+			if item.gd_id == 88:
+				saw_items.append(item)
+				saw_batch = batch
+	assert(saw_items.size() == 2, "visual smoke: half-saw was not reconstructed from two pieces")
+	var pivot: Vector2 = data.transform.origin
+	for item: DecorationBatch.Item in saw_items:
+		assert(item.spin_pivot.is_equal_approx(pivot), "visual smoke: composite saw has split spin pivots")
+	var before_a: Vector2 = saw_items[0].transform.origin - pivot
+	var before_b: Vector2 = saw_items[1].transform.origin - pivot
+	assert(before_a.dot(before_b) < 0.0, "visual smoke: reconstructed saw halves are not opposite")
+	# Half a second at 180 degrees/second must orbit both trimmed sprite origins
+	# by 90 degrees around the complete saw's centre, not around each half.
+	saw_batch.call(&"_process", 0.5)
+	assert((saw_items[0].transform.origin - pivot).is_equal_approx(before_a.rotated(PI * 0.5)), "visual smoke: saw does not rotate around full centre")
+	assert((saw_items[1].transform.origin - pivot).is_equal_approx(before_b.rotated(PI * 0.5)), "visual smoke: second saw half left shared centre")
+	for batch: DecorationBatch in batches:
+		batch.free()
 
 
 func _object_data(position: Vector2) -> Dictionary:
