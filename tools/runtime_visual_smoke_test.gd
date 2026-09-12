@@ -138,7 +138,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 9, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 10, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -170,6 +170,17 @@ func _test_native_core() -> void:
 	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
 	assert(converted.get("layers", [{}])[0].get("objects", []).size() == 2, "native smoke: online conversion produced an empty level")
 	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
+	# Every 2.2 trigger ID must survive import. Dedicated families retain their
+	# component scenes; newer families use the packed native trigger shell.
+	var trigger_chunks := PackedStringArray(["kA2,0,kA4,0"])
+	for trigger_id: int in GMDObjects.TRIGGER_IDS:
+		trigger_chunks.append("1,%d,2,%d,3,30,62,1,57,7" % [trigger_id, 30 + trigger_chunks.size() * 30])
+	var trigger_report := GMDConverter.ImportReport.new()
+	var trigger_level := GMDConverter.import_online_level_string(";".join(trigger_chunks) + ";", "2.2 trigger inventory", trigger_report)
+	var trigger_entries: Array = trigger_level.get("layers", [{}])[0].get("objects", [])
+	assert(trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(), "native smoke: one or more 2.2 trigger IDs were dropped")
+	for trigger_data: Dictionary in trigger_entries:
+		assert(trigger_data.has("gd_trigger_flags") and trigger_data.has("gd_properties"), "native smoke: trigger metadata missing")
 	# Imported pads keep their hand-authored Area2D behaviour but replace the
 	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
 	# hitbox must follow that sprite to the object origin.
@@ -187,6 +198,35 @@ func _test_native_core() -> void:
 		assert(pad.get_node_or_null(^"JumpBoostComponent") != null, "native smoke: imported pad lost jump behavior")
 		assert((pad.get_node(^"Hitbox") as CollisionShape2D).position.y == 0.0, "native smoke: imported pad hitbox does not match GD art")
 		pad.free()
+	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
+	var scheduler: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
+	var scheduler_player := Node.new()
+	var trigger_a := Node.new()
+	var trigger_b := Node.new()
+	trigger_a.add_user_signal(&"interacted", [{"name": "player", "type": TYPE_OBJECT}])
+	trigger_b.add_user_signal(&"interacted", [{"name": "player", "type": TYPE_OBJECT}])
+	var fired: Array[int] = []
+	trigger_a.connect(&"interacted", func(_player: Object): fired.append(1))
+	trigger_b.connect(&"interacted", func(_player: Object): fired.append(2))
+	# Register out of X order. The native spatial index must activate by X and
+	# source order, and a normal trigger may only activate once.
+	scheduler.call(&"register_trigger", trigger_b, 20.0, 0, 2, PackedStringArray(["g_7"]), 0, {})
+	scheduler.call(&"register_trigger", trigger_a, 10.0, 0, 1, PackedStringArray(), 0, {})
+	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
+	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
+	assert(fired == [1, 2], "native smoke: trigger crossing order/one-shot state")
+	scheduler.call(&"reset")
+	fired.clear()
+	scheduler.call(&"schedule_group", &"g_7", 0.25, scheduler_player)
+	scheduler.call(&"tick", 0.2)
+	assert(fired.is_empty(), "native smoke: spawn group fired before delay")
+	scheduler.call(&"tick", 0.05)
+	assert(fired == [2], "native smoke: delayed spawn group did not fire")
+	var trigger_state: Dictionary = scheduler.call(&"snapshot")
+	assert(trigger_state.get("active", PackedByteArray()).size() == 2, "native smoke: trigger checkpoint state")
+	trigger_a.free()
+	trigger_b.free()
+	scheduler_player.free()
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()

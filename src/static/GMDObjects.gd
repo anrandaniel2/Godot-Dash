@@ -200,28 +200,65 @@ const MAP: Dictionary[int, Dictionary] = {
 		"name": "CameraEdgeTrigger",
 		"components": ["TargetObjectComponent"],
 	},
-	1611: { "scene": TRIGGERS + "EndLevelTrigger.tscn", "name": "EndLevelTrigger" },
-	1912: {
-		"scene": TRIGGERS + "TeleportTrigger.tscn",
-		"name": "TeleportTrigger",
-		"components": ["TeleportComponent"],
+	1934: {
+		"scene": TRIGGERS + "SongTrigger.tscn",
+		"name": "SongTrigger",
+		"components": ["SongChangerComponent", "EasingComponent"],
 	},
 	1935: {
 		"scene": TRIGGERS + "TimewarpTrigger.tscn",
 		"name": "TimewarpTrigger",
 		"components": ["TimescaleChangerComponent", "EasingComponent"],
 	},
-	2899: {
+	2066: {
 		"scene": TRIGGERS + "GravityTrigger.tscn",
 		"name": "GravityTrigger",
 		"components": ["GravityMultiplierChangerComponent", "EasingComponent"],
 	},
+	2900: {
+		"scene": TRIGGERS + "GameplayRotateTrigger.tscn",
+		"name": "GameplayRotateTrigger",
+		"components": ["GameplayRotationChangerComponent", "EasingComponent"],
+	},
+	2901: {
+		"scene": TRIGGERS + "CameraGameplayOffsetTrigger.tscn",
+		"name": "CameraGameplayOffsetTrigger",
+		"components": ["CameraGameplayOffsetChangerComponent", "EasingComponent"],
+	},
+	3022: {
+		"scene": TRIGGERS + "TeleportTrigger.tscn",
+		"name": "TeleportTrigger",
+		"components": ["TeleportComponent"],
+	},
+	3600: { "scene": TRIGGERS + "EndLevelTrigger.tscn", "name": "EndLevelTrigger" },
 	#endregion
 
 	#region Misc
 	914: { "scene": LEVEL_COMPONENTS + "Text.tscn", "name": "Text", "components": ["TextComponent"] },
 	#endregion
 }
+
+## Complete Geometry Dash 2.2 effect-trigger object ID inventory. Families that
+## do not yet have a dedicated Godot component scene use one inert trigger shell
+## and are still retained by the packed native scheduler instead of being
+## silently discarded as decoration.
+const TRIGGER_IDS: Array[int] = [
+	34, 899, 901, 1006, 1007, 1049, 1268, 1346, 1347, 1520, 1585, 1595,
+	1611, 1612, 1613, 1616, 1811, 1812, 1814, 1815, 1817, 1818, 1819,
+	1912, 1913, 1914, 1915, 1916, 1917, 1931, 1932, 1934, 1935, 2015,
+	2062, 2066, 2067, 2068, 2899, 2900, 2901, 2903, 2904, 2905, 2907,
+	2909, 2910, 2911, 2912, 2913, 2914, 2915, 2916, 2917, 2919, 2920,
+	2921, 2922, 2923, 2924, 2925, 2999, 3006, 3007, 3008, 3009, 3010,
+	3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018, 3019, 3020, 3021,
+	3022, 3023, 3024, 3029, 3030, 3031, 3033, 3600, 3602, 3603, 3604,
+	3605, 3606, 3607, 3608, 3609, 3612, 3613, 3614, 3615, 3617, 3618,
+	3619, 3620, 3641, 3642, 3655, 3660, 3661, 3662,
+]
+const GENERIC_TRIGGER: Dictionary = {
+	"scene": TRIGGERS + "NativeGenericTrigger.tscn",
+	"name": "NativeTrigger",
+}
+
 
 ## Geometry Dash object ID ranges that are [i]solid square blocks[/i].
 ##
@@ -319,6 +356,8 @@ static var _export_map: Dictionary[String, int]
 static func get_object(gd_id: int) -> Dictionary:
 	if MAP.has(gd_id):
 		return MAP[gd_id]
+	if gd_id in TRIGGER_IDS:
+		return GENERIC_TRIGGER
 	if is_fallback_block(gd_id):
 		return FALLBACK_BLOCK
 	return { }
@@ -327,7 +366,7 @@ static func get_object(gd_id: int) -> Dictionary:
 ## [code]true[/code] when the object ID can be imported, either because it has a
 ## dedicated scene or because it's a block that falls back to a plain one.
 static func is_supported(gd_id: int) -> bool:
-	return MAP.has(gd_id) or is_fallback_block(gd_id)
+	return MAP.has(gd_id) or gd_id in TRIGGER_IDS or is_fallback_block(gd_id)
 
 
 ## The generated scene for [param gd_id] as a relative path

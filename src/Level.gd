@@ -599,6 +599,12 @@ static func instantiate_object_from_data(
 	if object_data.has("gd_object_id"):
 		object.set_meta(&"gd_object_id", int(object_data.gd_object_id))
 		GDArtSwap.apply(object, int(object_data.gd_object_id))
+	# Runtime-only Geometry Dash trigger metadata is intentionally kept on the
+	# root Interactable instead of being expanded into one scheduler node per
+	# property. NativeTriggerBridge packs these records after level construction.
+	for key: StringName in [&"gd_trigger_flags", &"gd_source_order", &"gd_properties"]:
+		if object_data.has(key):
+			object.set_meta(key, object_data[key])
 	return object
 
 

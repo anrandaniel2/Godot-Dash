@@ -532,6 +532,22 @@ static func _object_from_properties(
 		},
 	}
 
+	# Keep the complete trigger record. The packed native scheduler consumes the
+	# activation flags directly, while family adapters can read new 2.2 fields
+	# without another lossy converter release.
+	if scene_path.begins_with(GMDObjects.TRIGGERS):
+		var trigger_flags: int = 0
+		if properties.get(Prop.SPAWN_TRIGGERED, "0") == "1":
+			trigger_flags |= 1
+		if properties.get(Prop.TOUCH_TRIGGERED, "0") == "1":
+			trigger_flags |= 2
+		# Key 87 is Geometry Dash's multi-activate option.
+		if properties.get("87", "0") == "1":
+			trigger_flags |= 4
+		object_data["gd_trigger_flags"] = trigger_flags
+		object_data["gd_source_order"] = index
+		object_data["gd_properties"] = properties.duplicate()
+
 	var components: Dictionary = _components_from_properties(gd_id, properties, description)
 	if not components.is_empty():
 		object_data["components"] = components

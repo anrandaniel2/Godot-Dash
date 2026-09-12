@@ -42,6 +42,172 @@
 
 namespace godot {
 
+// Packed trigger scheduler. One instance replaces thousands of Area2D broad-
+// phase checks: trigger crossings, spawn/event delays, activation state and
+// checkpoint snapshots stay in C++. Trigger effects are still emitted through
+// the existing Interactable signal so families can migrate incrementally
+// without changing their observable behaviour.
+class NativeTriggerRuntime : public RefCounted {
+	GDCLASS(NativeTriggerRuntime, RefCounted)
+
+	enum Flags : int32_t {
+		SPAWN_ONLY = 1,
+		TOUCH_ONLY = 2,
+		MULTI_ACTIVATE = 4,
+	};
+	struct Record {
+		double x = 0.0;
+		ObjectID object;
+		int64_t source_order = 0;
+		int32_t flags = 0;
+		int64_t gd_id = 0;
+		Dictionary properties;
+		bool activated = false;
+		std::vector<StringName> groups;
+	};
+	struct Event {
+		double due = 0.0;
+		uint64_t sequence = 0;
+		StringName group;
+		ObjectID player;
+	};
+	std::vector<Record> records;
+	std::vector<size_t> x_order;
+	std::vector<Event> events;
+	double clock = 0.0;
+	uint64_t event_sequence = 0;
+	bool index_dirty = false;
+
+	void ensure_index() {
+		if (!index_dirty) return;
+		x_order.resize(records.size());
+		std::iota(x_order.begin(), x_order.end(), 0);
+		std::stable_sort(x_order.begin(), x_order.end(), [&](size_t a, size_t b) {
+			if (records[a].x != records[b].x) return records[a].x < records[b].x;
+			return records[a].source_order < records[b].source_order;
+		});
+		index_dirty = false;
+	}
+
+	void activate(size_t index, Object *player, bool forced = false) {
+		if (index >= records.size()) return;
+		Record &record = records[index];
+		if (record.activated && !(record.flags & MULTI_ACTIVATE)) return;
+		if (!forced && (record.flags & (SPAWN_ONLY | TOUCH_ONLY))) return;
+		Object *target = ObjectDB::get_instance(record.object);
+		if (!target || !player) return;
+		// Spawn is scheduled entirely here. The old component has no faithful
+		// representation for GD's target-group property and otherwise warns with
+		// an empty authored resource list.
+		if (record.gd_id == 1268) {
+			const String target_id = String(record.properties.get("51", "")).strip_edges();
+			const String delay_text = String(record.properties.get("63", "0")).strip_edges();
+			if (target_id.is_valid_int() && target_id.to_int() > 0)
+				schedule_group(StringName("g_" + target_id), delay_text.is_valid_float() ? delay_text.to_float() : 0.0, player);
+		} else {
+			target->call("emit_signal", StringName("interacted"), player);
+		}
+		if (!(record.flags & MULTI_ACTIVATE)) record.activated = true;
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
+		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger);
+		ClassDB::bind_method(D_METHOD("advance", "player", "previous_x", "current_x"), &NativeTriggerRuntime::advance);
+		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
+		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
+		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
+		ClassDB::bind_method(D_METHOD("reset"), &NativeTriggerRuntime::reset);
+		ClassDB::bind_method(D_METHOD("snapshot"), &NativeTriggerRuntime::snapshot);
+		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeTriggerRuntime::restore);
+		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeTriggerRuntime::trigger_count);
+		ClassDB::bind_integer_constant(get_class_static(), "Flags", "SPAWN_ONLY", SPAWN_ONLY);
+		ClassDB::bind_integer_constant(get_class_static(), "Flags", "TOUCH_ONLY", TOUCH_ONLY);
+		ClassDB::bind_integer_constant(get_class_static(), "Flags", "MULTI_ACTIVATE", MULTI_ACTIVATE);
+	}
+
+public:
+	void clear() {
+		records.clear(); x_order.clear(); events.clear(); clock = 0.0;
+		event_sequence = 0; index_dirty = false;
+	}
+	int64_t register_trigger(Object *trigger, double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		if (!trigger) return -1;
+		Record record;
+		record.x = x; record.object = trigger->get_instance_id();
+		record.flags = static_cast<int32_t>(flags); record.source_order = source_order;
+		record.gd_id = gd_id; record.properties = properties;
+		for (int64_t i = 0; i < groups.size(); ++i) record.groups.push_back(StringName(groups[i]));
+		records.push_back(std::move(record)); index_dirty = true;
+		return static_cast<int64_t>(records.size() - 1);
+	}
+	void advance(Object *player, double previous_x, double current_x) {
+		if (!player || Math::is_equal_approx(previous_x, current_x)) return;
+		ensure_index();
+		if (current_x > previous_x) {
+			for (size_t idx : x_order) {
+				const double x = records[idx].x;
+				if (x <= previous_x) continue;
+				if (x > current_x) break;
+				activate(idx, player);
+			}
+		} else {
+			for (auto it = x_order.rbegin(); it != x_order.rend(); ++it) {
+				const double x = records[*it].x;
+				if (x >= previous_x) continue;
+				if (x < current_x) break;
+				activate(*it, player);
+			}
+		}
+	}
+	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
+	void schedule_group(const StringName &group, double delay, Object *player) {
+		if (!player || group.is_empty()) return;
+		Event event;
+		event.due = clock + std::max(0.0, delay);
+		event.sequence = event_sequence++;
+		event.group = group;
+		event.player = player->get_instance_id();
+		events.push_back(std::move(event));
+		std::stable_sort(events.begin(), events.end(), [](const Event &a, const Event &b) {
+			return a.due == b.due ? a.sequence < b.sequence : a.due < b.due;
+		});
+	}
+	void tick(double delta) {
+		clock += std::max(0.0, delta);
+		size_t consumed = 0;
+		while (consumed < events.size() && events[consumed].due <= clock) {
+			const Event &event = events[consumed];
+			Object *player = ObjectDB::get_instance(event.player);
+			if (player) {
+				for (size_t i = 0; i < records.size(); ++i) {
+					if (std::find(records[i].groups.begin(), records[i].groups.end(), event.group) != records[i].groups.end()) activate(i, player, true);
+				}
+			}
+			++consumed;
+		}
+		if (consumed) events.erase(events.begin(), events.begin() + consumed);
+	}
+	void reset() {
+		for (Record &record : records) record.activated = false;
+		events.clear(); clock = 0.0; event_sequence = 0;
+	}
+	Dictionary snapshot() const {
+		Dictionary state; PackedByteArray active;
+		active.resize(records.size());
+		for (size_t i = 0; i < records.size(); ++i) active.set(i, records[i].activated ? 1 : 0);
+		state["active"] = active; state["clock"] = clock;
+		return state;
+	}
+	void restore(const Dictionary &state) {
+		const PackedByteArray active = state.get("active", PackedByteArray());
+		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
+		clock = state.get("clock", 0.0); events.clear();
+	}
+	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
+};
+
 class GdashNative : public RefCounted {
 	GDCLASS(GdashNative, RefCounted)
 
@@ -102,9 +268,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.9.0 / lossless GD pair parser / native trigger groundwork / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 1.0.0 / packed trigger scheduler / lossless GD parser / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 9; }
+	int64_t version() const { return 10; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -850,6 +1016,7 @@ public:
 namespace {
 void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
+		GDREGISTER_CLASS(godot::NativeTriggerRuntime);
 		GDREGISTER_CLASS(godot::GdashNative);
 		GDREGISTER_CLASS(godot::NativeFrustumIndex);
 		GDREGISTER_CLASS(godot::NativeLevelBuildJob);

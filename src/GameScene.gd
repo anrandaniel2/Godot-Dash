@@ -7,6 +7,7 @@ extends Node2D
 
 var cached_level_data: Dictionary
 var cached_level_path: String
+var native_trigger_bridge: NativeTriggerBridge
 
 
 func _ready() -> void:
@@ -109,6 +110,15 @@ func add_loaded_level(level: Level) -> Level:
 	TextComponent.DEFAULT_TEXT_SETTINGS.set_font_path()
 	if level.get_parent() != $Level:
 		$Level.add_child(level, true)
+	if not Editor.in_editor and NativeCore.available():
+		if native_trigger_bridge != null:
+			native_trigger_bridge.queue_free()
+		native_trigger_bridge = NativeTriggerBridge.new()
+		native_trigger_bridge.name = "NativeTriggerBridge"
+		add_child(native_trigger_bridge)
+		if not native_trigger_bridge.setup(level):
+			native_trigger_bridge.queue_free()
+			native_trigger_bridge = null
 	return level
 
 
@@ -149,6 +159,8 @@ func free_current_level() -> void:
 
 func reset() -> void:
 	Engine.time_scale = 1.0
+	if native_trigger_bridge != null:
+		native_trigger_bridge.reset_runtime()
 	if LevelManager.current_level:
 		LevelManager.current_level.stop_level()
 	LevelManager.ground_up.hide()
