@@ -436,9 +436,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.7.0 / async worker-pool culling / node-free RenderingServer / api 4.7");
+		return String("gdash_native 1.8.0 / per-record coverage / coalesced RID rebuilds / worker culling / api 4.7");
 	}
-	int64_t version() const { return 17; }
+	int64_t version() const { return 18; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -1031,7 +1031,6 @@ class NativeDecorationRenderer : public RefCounted {
 	bool cull = true;
 	double bucket_width = 256.0;
 	double cull_margin = 0.0;
-	double max_local_radius = 0.0;
 	int64_t first_bucket = INT64_MIN;
 	int64_t last_bucket = INT64_MAX;
 	int64_t first_row = INT64_MIN;
@@ -1039,6 +1038,7 @@ class NativeDecorationRenderer : public RefCounted {
 	Vector2 last_viewport_size;
 	bool view_initialized = false;
 	bool range_has_records = false;
+	bool commands_dirty = false;
 	int64_t last_drawn_items = 0;
 
 	CanvasItem *owner() const {
@@ -1056,6 +1056,7 @@ class NativeDecorationRenderer : public RefCounted {
 	}
 
 	void rebuild_commands() {
+		commands_dirty = false;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
 		server->canvas_item_clear(canvas_item);
@@ -1072,11 +1073,18 @@ class NativeDecorationRenderer : public RefCounted {
 			for (const Record &record : records) draw_record(record);
 			return;
 		}
+		// Records spanning several cells are indexed into each touched cell.
+		// Emit them once even when several of those cells are visible.
+		std::vector<uint8_t> emitted(records.size(), 0);
 		auto column = sections.lower_bound(first_bucket);
 		while (column != sections.end() && column->first <= last_bucket) {
 			auto row = column->second.lower_bound(first_row);
 			while (row != column->second.end() && row->first <= last_row) {
-				for (size_t index : row->second) draw_record(records[index]);
+				for (size_t index : row->second) {
+					if (emitted[index]) continue;
+					emitted[index] = 1;
+					draw_record(records[index]);
+				}
 				++row;
 			}
 			++column;
@@ -1086,7 +1094,7 @@ class NativeDecorationRenderer : public RefCounted {
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
-		ClassDB::bind_method(D_METHOD("queue_redraw"), &NativeDecorationRenderer::rebuild_commands);
+		ClassDB::bind_method(D_METHOD("queue_redraw"), &NativeDecorationRenderer::request_redraw);
 		ClassDB::bind_method(D_METHOD("update_camera_range"), &NativeDecorationRenderer::update_camera_range);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationRenderer::set_visible_buckets);
 		ClassDB::bind_method(D_METHOD("apply_channel_color", "indices", "color"), &NativeDecorationRenderer::apply_channel_color);
@@ -1109,6 +1117,13 @@ public:
 		if (server && canvas_item.is_valid()) server->free_rid(canvas_item);
 	}
 
+	void request_redraw() { commands_dirty = true; }
+	void flush_commands() {
+		if (!commands_dirty || (cull && !view_initialized)) return;
+		rebuild_commands();
+		commands_dirty = false;
+	}
+
 	void configure(Object *p_owner, const Array &textures, const Array &regions, const Array &transforms,
 			const PackedColorArray &colors, const PackedFloat32Array &origins,
 			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
@@ -1123,7 +1138,6 @@ public:
 		}
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
-		max_local_radius = 0.0;
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
@@ -1135,10 +1149,22 @@ public:
 				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_data[i * 5 + component];
 			}
 			const Rect2 bounds = record.transform.xform(Rect2(-record.region.size * 0.5, record.region.size));
-			max_local_radius = std::max(max_local_radius, static_cast<double>((bounds.size * 0.5).length()));
+			// Index the complete conservative rotation circle, not only the origin.
+			// The previous batch-wide maximum radius let one giant background sprite
+			// expand the query for every ordinary object and effectively submitted
+			// the whole level. Per-record coverage keeps large art correct without
+			// poisoning culling for its neighbours.
+			const Vector2 center = record.transform.get_origin();
+			const double radius = (bounds.size * 0.5).length();
+			const Rect2 coverage(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0));
 			const size_t index = records.size(); records.push_back(record);
-			sections[static_cast<int64_t>(std::floor(origins[i] / bucket_width))]
-					[static_cast<int64_t>(std::floor(record.transform.get_origin().y / bucket_width))].push_back(index);
+			const int64_t first_column = static_cast<int64_t>(std::floor(coverage.position.x / bucket_width));
+			const int64_t last_column = static_cast<int64_t>(std::floor(coverage.get_end().x / bucket_width));
+			const int64_t top_row = static_cast<int64_t>(std::floor(coverage.position.y / bucket_width));
+			const int64_t bottom_row = static_cast<int64_t>(std::floor(coverage.get_end().y / bucket_width));
+			for (int64_t column = first_column; column <= last_column; ++column) {
+				for (int64_t row = top_row; row <= bottom_row; ++row) sections[column][row].push_back(index);
+			}
 		}
 		cull = enable_culling; cull_margin = std::max(0.0, margin);
 		view_initialized = false; range_has_records = !cull;
@@ -1151,7 +1177,7 @@ public:
 		job.renderer_id = get_instance_id();
 		job.from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
 		job.screen_size = owner_canvas->get_viewport_rect().size;
-		job.radius = max_local_radius + cull_margin;
+		job.radius = cull_margin;
 		job.cell_size = bucket_width;
 		return true;
 	}
@@ -1179,7 +1205,7 @@ public:
 		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0)));
 		local_view = local_view.expand(from_screen.xform(screen_size));
 		local_view = local_view.expand(from_screen.xform(Vector2(0, screen_size.y)));
-		local_view = local_view.grow(max_local_radius + cull_margin);
+		local_view = local_view.grow(cull_margin);
 		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
 		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
 		const int64_t top = static_cast<int64_t>(std::floor(local_view.position.y / bucket_width));
@@ -1205,11 +1231,11 @@ public:
 			}
 			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
 		}
-		rebuild_commands();
+		commands_dirty = true;
 	}
 	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }
-	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].color = color; rebuild_commands(); } }
-	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].transform = transform; rebuild_commands(); } }
+	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].color = color; commands_dirty = true; } }
+	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].transform = transform; commands_dirty = true; } }
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
 	bool is_spatially_culled() const { return cull; }
@@ -1230,6 +1256,11 @@ static void update_registered_decoration_renderers() {
 	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
 	static Ref<NativeDecorationCullWorker> worker;
 	static int64_t active_group = -1;
+	// Coalesce any number of channel/spin updates into one RID command rebuild
+	// per renderer per frame instead of clearing/re-emitting after every item.
+	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
+		if (renderer) renderer->flush_commands();
+	}
 	if (!pool) return;
 	if (worker.is_null()) worker.instantiate();
 
