@@ -432,7 +432,10 @@ common/physics_interpolation=true
 ; Direct NativeDecorationRenderer RID commands are queued to Godot's dedicated
 ; render thread. This overlaps canvas submission/rasterization with gameplay
 ; instead of attempting unsafe SceneTree access from an application worker.
-driver/threads/thread_model=2
+; Keep desktop/editor compatibility mode safe (the Linux llvmpipe smoke driver
+; cannot initialize Separate reliably), while trialling overlap on mobile GPUs.
+driver/threads/thread_model=0
+driver/threads/thread_model.mobile=2
 renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="mobile"
 textures/canvas_textures/default_texture_filter=2
