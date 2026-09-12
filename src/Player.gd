@@ -574,7 +574,7 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 				var shape := _collided_shared_shape(collision)
 				if shape != null:
 					shape.set_deferred(&"disabled", true)
-				if _spider_dash_frames == 0:
+				if _spider_dash_frames == 0 and not Config.noclip:
 					_death_animator.play("DeathAnimation")
 			else:
 				# Per-object body (kept for trigger-animated or pushable
@@ -1254,6 +1254,11 @@ func _get_spider_dash_data() -> PackedFloat64Array:
 	dash_height -= (default_collider.size.y * 0.5 * scale.y)
 	dash_height *= gravity_flip
 	if not raycast.is_colliding():
+		if Config.noclip:
+			# Noclip: no surface to dash to neither kills nor teleports the
+			# spider off-level; callers still flip gravity, so it simply
+			# reverses direction in mid-air.
+			return [0.0, 0.0]
 		_death_animator.play("DeathAnimation")
 		return [dash_height * 32, floor_angle]
 	return [dash_height, floor_angle]
@@ -1336,12 +1341,12 @@ func _handle_checkpoint_placement(practice_mode: bool = LevelManager.practice_mo
 
 
 func _on_kill_collider_solid_body_entered(_body: Node2D) -> void:
-	if _spider_dash_frames == 0:
+	if _spider_dash_frames == 0 and not Config.noclip:
 		_death_animator.play("DeathAnimation")
 
 
 func _on_kill_collider_hazard_area_entered(_area: Area2D) -> void:
-	if _spider_dash_frames == 0:
+	if _spider_dash_frames == 0 and not Config.noclip:
 		_death_animator.play("DeathAnimation")
 
 

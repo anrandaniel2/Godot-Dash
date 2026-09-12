@@ -534,6 +534,19 @@ script = ExtResource("6_p6jor")
 config_property = &"click_on_steps"
 metadata/_custom_type_script = "uid://ckqgnvpbftev7"
 
+[node name="Noclip" type="BoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=2200000001]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Noclip" unique_id=2200000002]
+script = ExtResource("6_p6jor")
+config_property = &"noclip"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
 [node name="Practice" type="FoldableContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=884159843]
 layout_mode = 2
 mouse_filter = 1

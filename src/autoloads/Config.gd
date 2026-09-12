@@ -109,6 +109,7 @@ enum ParticlePreprocessing {
 @export_group("Gameplay")
 @export var show_percentage: bool = true
 @export var click_on_steps: bool = true
+@export var noclip: bool = false
 
 # Practice
 @export_subgroup("Practice")
@@ -245,6 +246,7 @@ func _init():
 
 	# Gameplay
 	click_on_steps = config_file.get_value("Gameplay", "click_on_steps", click_on_steps)
+	noclip = config_file.get_value("Gameplay", "noclip", noclip)
 
 	# Practice
 	automatic_checkpoints = config_file.get_value("Practice", "automatic_checkpoints", automatic_checkpoints)
@@ -340,6 +342,7 @@ func save() -> void:
 
 	# Gameplay
 	config_file.set_value("Gameplay", "click_on_steps", click_on_steps)
+	config_file.set_value("Gameplay", "noclip", noclip)
 
 	# Practice
 	config_file.set_value("Practice", "automatic_checkpoints", automatic_checkpoints)
