@@ -176,21 +176,21 @@ public:
 	}
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
-		// Pop before dispatch: dispatching another spawn can append and sort the
-		// queue, which must not invalidate a reference to the current event.
-		// The guard also turns a malformed zero-delay spawn cycle into deferred
-		// work instead of hanging the game thread forever.
-		int64_t dispatched = 0;
-		while (!events.empty() && events.front().due <= clock && dispatched < 10000) {
-			const Event event = events.front();
-			events.erase(events.begin());
+		// Detach this tick's due batch before dispatch. Spawn chains append to the
+		// live queue and are deliberately handled by the bridge's following
+		// zero-delta flush; malformed zero-delay cycles therefore yield between
+		// bounded batches instead of invalidating this vector or hanging.
+		size_t due_count = 0;
+		while (due_count < events.size() && events[due_count].due <= clock && due_count < 10000) ++due_count;
+		if (!due_count) return;
+		const std::vector<Event> due(events.begin(), events.begin() + due_count);
+		events.erase(events.begin(), events.begin() + due_count);
+		for (const Event &event : due) {
 			Object *player = ObjectDB::get_instance(event.player);
-			if (player) {
-				for (size_t i = 0; i < records.size(); ++i) {
-					if (std::find(records[i].groups.begin(), records[i].groups.end(), event.group) != records[i].groups.end()) activate(i, player, true);
-				}
+			if (!player) continue;
+			for (size_t i = 0; i < records.size(); ++i) {
+				if (std::find(records[i].groups.begin(), records[i].groups.end(), event.group) != records[i].groups.end()) activate(i, player, true);
 			}
-			++dispatched;
 		}
 	}
 	void reset() {
