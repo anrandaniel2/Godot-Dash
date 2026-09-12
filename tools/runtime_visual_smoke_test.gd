@@ -84,9 +84,6 @@ func _process(_delta: float) -> void:
 		_native_canvas.call(&"update_camera_range")
 	if _frames < 8:
 		return
-	# Separate rendering is asynchronous; synchronize before readback so the
-	# captured frame includes all RID commands queued by prior process frames.
-	RenderingServer.sync()
 	var image := get_viewport().get_texture().get_image()
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
 	if _native_canvas != null:
