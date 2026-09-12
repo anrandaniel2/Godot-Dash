@@ -1055,10 +1055,26 @@ static func _components_from_properties(
 					"rotation": degrees,
 					"rotate_around_self": properties.get(Prop.LOCK_OBJECT_ROTATION, "0") != "1",
 				}
+		2067: # 2.2 Scale trigger
+			if "ScaleChangerComponent" in supported:
+				components["ScaleChangerComponent"] = {
+					"mode": ScaleChangerComponent.Mode.MULTIPLY,
+					"scale": Vector2(
+							float(properties.get("150", "1")),
+							float(properties.get("151", "1")),
+					),
+					"scale_around_self": int(properties.get("71", "0")) <= 0,
+				}
 		1520: # Shake trigger
 			if "CameraShakeComponent" in supported:
 				components["CameraShakeComponent"] = {
 					"strength": maxf(0.01, float(properties.get(Prop.STRENGTH, "5"))),
+				}
+		1913: # Camera zoom trigger
+			if "CameraZoomChangerComponent" in supported:
+				components["CameraZoomChangerComponent"] = {
+					"mode": CameraZoomChangerComponent.Mode.SET,
+					"zoom": Vector2.ONE * maxf(0.01, float(properties.get("371", "1"))) * 100.0,
 				}
 		1916: # Camera offset trigger
 			if "CameraOffsetChangerComponent" in supported:
@@ -1074,6 +1090,28 @@ static func _components_from_properties(
 				components["CameraRotationChangerComponent"] = {
 					"mode": CameraRotationChangerComponent.Mode.ADD,
 					"rotation_degrees": float(properties.get(Prop.DEGREES, "0")),
+				}
+		2066: # Gravity multiplier trigger
+			if "GravityMultiplierChangerComponent" in supported:
+				components["GravityMultiplierChangerComponent"] = {
+					"gravity_multiplier": clampf(float(properties.get("148", "1")), -2.0, 2.0),
+				}
+		2900: # Gameplay direction/rotation trigger
+			if "GameplayRotationChangerComponent" in supported:
+				var gameplay_rotation := 0.0
+				if properties.has("167"):
+					gameplay_rotation = 0.0 if properties.get("167", "1") == "1" else 180.0
+				else:
+					gameplay_rotation = -90.0 if properties.get("166", "0") == "1" else 90.0
+				components["GameplayRotationChangerComponent"] = { "gameplay_rotation": gameplay_rotation }
+		2901: # Gameplay camera offset trigger
+			if "CameraGameplayOffsetChangerComponent" in supported:
+				components["CameraGameplayOffsetChangerComponent"] = {
+					"mode": CameraGameplayOffsetChangerComponent.Mode.SET,
+					"gameplay_offset": Vector2(
+							float(properties.get(Prop.MOVE_X, "0")),
+							float(properties.get(Prop.MOVE_Y, "0")),
+					),
 				}
 		1935: # Timewarp trigger
 			if "TimescaleChangerComponent" in supported:

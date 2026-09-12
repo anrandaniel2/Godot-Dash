@@ -183,7 +183,7 @@ const MAP: Dictionary[int, Dictionary] = {
 	1914: {
 		"scene": TRIGGERS + "CameraStaticTrigger.tscn",
 		"name": "CameraStaticTrigger",
-		"components": ["EasingComponent"],
+		"components": ["TargetObjectComponent", "CameraStaticComponent", "EasingComponent"],
 	},
 	1916: {
 		"scene": TRIGGERS + "CameraOffsetTrigger.tscn",

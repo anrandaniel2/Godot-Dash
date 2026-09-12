@@ -176,18 +176,22 @@ public:
 	}
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
-		size_t consumed = 0;
-		while (consumed < events.size() && events[consumed].due <= clock) {
-			const Event &event = events[consumed];
+		// Pop before dispatch: dispatching another spawn can append and sort the
+		// queue, which must not invalidate a reference to the current event.
+		// The guard also turns a malformed zero-delay spawn cycle into deferred
+		// work instead of hanging the game thread forever.
+		int64_t dispatched = 0;
+		while (!events.empty() && events.front().due <= clock && dispatched < 10000) {
+			const Event event = events.front();
+			events.erase(events.begin());
 			Object *player = ObjectDB::get_instance(event.player);
 			if (player) {
 				for (size_t i = 0; i < records.size(); ++i) {
 					if (std::find(records[i].groups.begin(), records[i].groups.end(), event.group) != records[i].groups.end()) activate(i, player, true);
 				}
 			}
-			++consumed;
+			++dispatched;
 		}
-		if (consumed) events.erase(events.begin(), events.begin() + consumed);
 	}
 	void reset() {
 		for (Record &record : records) record.activated = false;
