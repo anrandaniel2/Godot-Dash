@@ -27,6 +27,17 @@ name: Build Android APK
 # native/bin/gdash_native.gdextension (checkpointed below), and independently the
 # .so is dropped straight into the gradle debug jniLibs so the APK contains it
 # even if the exporter path fails.
+#
+# The APK's ENGINE is also custom: two jobs compile slim Godot 4.7.2-stable
+# export templates from source with scons (SLIM_ENGINE_FLAGS removes unused
+# modules - 3D physics, XR, navigation, codec/importer modules, multiplayer,
+# regex, ... - keeping everything the game uses). The stock template's gradle
+# project is still installed from the official TPZ (so the editor's import and
+# export flow is untouched), then the stock engine library inside
+# godot-lib.template_debug.aar is replaced with the slim arm64 build before the
+# gradle export runs. The visual smoke test runs the slim LINUX template
+# instead of the stock editor, proving the game loads and renders on the
+# stripped engine before the APK is built.
 
 on:
   workflow_dispatch:
@@ -52,9 +63,201 @@ env:
   # name sdkmanager installs under $ANDROID_HOME/ndk/.
   GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
   NDK_VERSION: 28.1.13356709
+  # ----------------------------------------------------------- Slim engine
+  # Engine sources + the NDK version pinned by platform/android/detect.py at
+  # this ref. Building the engine needs exactly that NDK (detect.py would
+  # install it via sdkmanager itself, but without license pre-acceptance).
+  GODOT_SRC_REF: 4.7.2-stable
+  ENGINE_NDK_VERSION: 29.0.14206865
+  # Modules removed from the custom engine build. Every name is verified
+  # against modules/ at GODOT_SRC_REF, and every KEEP is backed by usage:
+  #   kept: gdscript, freetype, text_server_adv, msdfgen (MSDF fonts via
+  #   AssetManager), webp, ogg, vorbis, mp3, noise (FastNoiseLite), mbedtls
+  #   (HTTPS), glslang (mobile/Vulkan renderer), zip (ZIPReader),
+  #   godot_physics_2d.
+  # NOT used here: disable_3d - GameScene.tscn needs WorldEnvironment (2D
+  # glow), which is only registered when 3D is compiled in.
+  # debug_symbols=no: template_debug defaults to embedding symbols; the game
+  # never reads them and they are the single biggest size cost.
+  SLIM_ENGINE_FLAGS: >-
+    debug_symbols=no
+    disable_physics_3d=yes
+    disable_navigation_2d=yes
+    disable_navigation_3d=yes
+    disable_xr=yes
+    module_godot_physics_3d_enabled=no
+    module_jolt_physics_enabled=no
+    module_navigation_2d_enabled=no
+    module_navigation_3d_enabled=no
+    module_openxr_enabled=no
+    module_webxr_enabled=no
+    module_mobile_vr_enabled=no
+    module_camera_enabled=no
+    module_csg_enabled=no
+    module_gridmap_enabled=no
+    module_gltf_enabled=no
+    module_fbx_enabled=no
+    module_lightmapper_rd_enabled=no
+    module_meshoptimizer_enabled=no
+    module_vhacd_enabled=no
+    module_xatlas_unwrap_enabled=no
+    module_raycast_enabled=no
+    module_visual_shader_enabled=no
+    module_objectdb_profiler_enabled=no
+    module_astcenc_enabled=no
+    module_etcpak_enabled=no
+    module_bcdec_enabled=no
+    module_betsy_enabled=no
+    module_cvtt_enabled=no
+    module_basis_universal_enabled=no
+    module_ktx_enabled=no
+    module_bmp_enabled=no
+    module_dds_enabled=no
+    module_tga_enabled=no
+    module_hdr_enabled=no
+    module_tinyexr_enabled=no
+    module_jpg_enabled=no
+    module_svg_enabled=no
+    module_theora_enabled=no
+    module_enet_enabled=no
+    module_websocket_enabled=no
+    module_webrtc_enabled=no
+    module_upnp_enabled=no
+    module_multiplayer_enabled=no
+    module_regex_enabled=no
+    module_interactive_music_enabled=no
+    module_jsonrpc_enabled=no
+    module_mono_enabled=no
 
 jobs:
+  # ------------------------------------------------------- Slim engine jobs
+  # Both build a stripped Godot template from the same pinned source ref with
+  # the same SLIM_ENGINE_FLAGS (see env above). Android's .so is spliced into
+  # the stock template AAR by the android-debug job; the Linux template
+  # binary runs the visual smoke test so the slim configuration is proven
+  # before an APK is produced.
+  slim-engine-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout Godot engine source
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: ${{ env.GODOT_SRC_REF }}
+          path: godot-src
+          fetch-depth: 1
+
+      - name: Free disk space
+        # godot-src + NDK + build objects + scons cache is ~9 GB; drop the
+        # shallow .git (~300 MB) and preinstalled NDKs we do not use.
+        run: |
+          rm -rf godot-src/.git
+          for d in "$ANDROID_HOME"/ndk/*; do
+            [ "$(basename "$d")" = "${{ env.ENGINE_NDK_VERSION }}" ] || rm -rf "$d"
+          done
+          df -h / | tail -1
+
+      - name: Install scons
+        run: pip3 install --break-system-packages -q scons
+
+      - name: Cache engine scons build cache
+        uses: actions/cache@v4
+        with:
+          path: engine-scons-cache
+          # Bump the -flags1 suffix whenever SLIM_ENGINE_FLAGS changes.
+          key: slim-engine-android-${{ env.GODOT_SRC_REF }}-flags1
+
+      - name: Install the NDK version pinned by Godot 4.7.2
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
+          NDK_DIR="$ANDROID_HOME/ndk/${{ env.ENGINE_NDK_VERSION }}"
+          if [ ! -d "$NDK_DIR" ]; then
+            SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;${{ env.ENGINE_NDK_VERSION }}" >/dev/null
+          fi
+          test -d "$NDK_DIR" || { echo "NDK ${{ env.ENGINE_NDK_VERSION }} not installed:"; ls "$ANDROID_HOME/ndk"; exit 1; }
+          echo "NDK ready: $NDK_DIR"
+
+      - name: Build slim Android arm64 template library
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$GITHUB_WORKSPACE/engine-scons-cache"
+          export SCONS_CACHE_LIMIT=2500
+          cd godot-src
+          scons platform=android target=template_debug arch=arm64 $SLIM_ENGINE_FLAGS -j3
+          OUT="bin/libgodot_android.template_debug.arm64.so"
+          if [ ! -f "$OUT" ]; then
+            echo "ERROR: expected engine library $OUT is missing; bin/ contains:"
+            ls -la bin/ || true
+            exit 1
+          fi
+          echo "slim android engine: $(stat -c%s "$OUT") bytes"
+          ls -lh "$OUT"
+
+      - name: Upload slim Android engine library
+        uses: actions/upload-artifact@v4
+        with:
+          name: slim-godot-android-arm64
+          path: godot-src/bin/libgodot_android.template_debug.arm64.so
+          if-no-files-found: error
+          retention-days: 7
+
+  slim-engine-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout Godot engine source
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: ${{ env.GODOT_SRC_REF }}
+          path: godot-src
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          rm -rf godot-src/.git
+          df -h / | tail -1
+
+      - name: Install scons
+        run: pip3 install --break-system-packages -q scons
+
+      - name: Cache engine scons build cache
+        uses: actions/cache@v4
+        with:
+          path: engine-scons-cache
+          key: slim-engine-linux-${{ env.GODOT_SRC_REF }}-flags1
+
+      - name: Build slim Linux x86_64 template
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$GITHUB_WORKSPACE/engine-scons-cache"
+          export SCONS_CACHE_LIMIT=2500
+          cd godot-src
+          scons platform=linuxbsd target=template_debug arch=x86_64 $SLIM_ENGINE_FLAGS -j3
+          OUT="bin/godot.linuxbsd.template_debug.x86_64"
+          if [ ! -f "$OUT" ]; then
+            echo "ERROR: expected engine binary $OUT is missing; bin/ contains:"
+            ls -la bin/ || true
+            exit 1
+          fi
+          echo "slim linux engine: $(stat -c%s "$OUT") bytes"
+          ls -lh "$OUT"
+
+      - name: Upload slim Linux engine binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: slim-godot-linux-x86_64
+          path: godot-src/bin/godot.linuxbsd.template_debug.x86_64
+          if-no-files-found: error
+          retention-days: 7
+
   android-debug:
+    needs: [slim-engine-android, slim-engine-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -259,6 +462,76 @@ jobs:
               print("android:largeHeap=\"true\" added to", path)
           PYEOF
 
+      # ------------------------------------------------- Slim engine swap
+      # The gradle template installed above still contains the STOCK engine
+      # library inside godot-lib.template_debug.aar (app/libs/debug/*.aar is a
+      # gradle fileTree dependency; the exporter never touches the AAR at
+      # export time). Replace jni/arm64-v8a/libgodot_android.template_debug.
+      # arm64.so inside every debug AAR with the slim CI build so the exported
+      # APK runs the stripped engine, while the gradle/Java template and the
+      # editor-side export flow stay stock.
+      - name: Download slim engine builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: slim-godot-*
+          path: slim-engine
+          merge-multiple: true
+
+      - name: Swap slim engine library into the template AAR
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import glob
+          import hashlib
+          import os
+          import sys
+          import zipfile
+
+          slim_path = "slim-engine/libgodot_android.template_debug.arm64.so"
+          entry = "jni/arm64-v8a/libgodot_android.template_debug.arm64.so"
+          with open(slim_path, "rb") as fh:
+              slim = fh.read()
+          slim_sha = hashlib.sha256(slim).hexdigest()
+          print(f"slim engine: {len(slim)} bytes sha256={slim_sha}")
+
+          aars = sorted(glob.glob("android/build/**/godot-lib.template_debug.aar", recursive=True))
+          if not aars:
+              sys.exit("no godot-lib.template_debug.aar found under android/build")
+
+          replaced = []
+          for aar in aars:
+              with zipfile.ZipFile(aar) as zin:
+                  if entry not in zin.namelist():
+                      so_entries = [n for n in zin.namelist() if n.endswith(".so")]
+                      print(f"WARN: {aar} does not contain {entry}; .so entries: {so_entries}")
+                      continue
+                  tmp = aar + ".slim"
+                  with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+                      for info in zin.infolist():
+                          if info.filename == entry:
+                              # Force deflate so the on-disk AAR stays small;
+                              # gradle repackages the .so into the APK anyway.
+                              new_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                              new_info.compress_type = zipfile.ZIP_DEFLATED
+                              new_info.external_attr = info.external_attr
+                              zout.writestr(new_info, slim)
+                          else:
+                              zout.writestr(info, zin.read(info.filename))
+              os.replace(tmp, aar)
+              with zipfile.ZipFile(aar) as z:
+                  got = z.read(entry)
+              if hashlib.sha256(got).hexdigest() != slim_sha:
+                  sys.exit(f"verification failed: {aar} does not contain the slim engine library")
+              replaced.append(aar)
+              print(f"replaced {entry} in {aar}")
+
+          if not replaced:
+              sys.exit("engine swap failed: no AAR was modified")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"SLIM_ENGINE_SHA256={slim_sha}\n")
+              env.write(f"SLIM_ENGINE_BYTES={len(slim)}\n")
+          PYEOF
+
       # The gradle template declares debug.jniLibs.srcDirs = ['libs/debug', ...]
       # (sourceSets in the app module's build.gradle). The template is a
       # single-module project whose build.gradle sits at android/build/ (flat)
@@ -297,16 +570,22 @@ jobs:
 
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
-      # ship an APK in which levels load but every object is invisible.
-      - name: Render generated and batched GD artwork smoke test
+      # ship an APK in which levels load but every object is invisible. This
+      # runs the SLIM Linux template (not the stock editor), so it also proves
+      # the game loads, instantiates its scenes and renders on the exact
+      # stripped engine configuration that ships inside the APK.
+      - name: Render generated and batched GD artwork smoke test (slim engine)
         run: |
           set -euo pipefail
+          SLIM_LINUX="$PWD/slim-engine/godot.linuxbsd.template_debug.x86_64"
+          test -x "$SLIM_LINUX" || chmod +x "$SLIM_LINUX"
+          test -f "$SLIM_LINUX" || { echo "slim linux template missing at $SLIM_LINUX"; ls -l slim-engine/; exit 1; }
           command -v xvfb-run >/dev/null || {
             sudo apt-get update -qq
             sudo apt-get install -y -qq xvfb
           }
           set +e
-          timeout 90s env GDASH_REQUIRE_NATIVE=1 xvfb-run -a "$GODOT_BIN" --path . \
+          timeout 180s env GDASH_REQUIRE_NATIVE=1 xvfb-run -a "$SLIM_LINUX" --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/runtime_visual_smoke_test.tscn \
@@ -447,7 +726,50 @@ jobs:
           }
           echo "verified: arm64-v8a only, libgdash_native.android.template_debug.arm64.so present"
 
+          # The engine library in the APK must be the slim CI build spliced
+          # into the template AAR, not the stock one (a template re-install or
+          # exporter change would silently bring the stock library back).
+          SLIM_SO="slim-engine/libgodot_android.template_debug.arm64.so"
+          unzip -p "$APK_PATH" "lib/arm64-v8a/libgodot_android.template_debug.arm64.so" > /tmp/apk_engine.so
+          if ! cmp -s /tmp/apk_engine.so "$SLIM_SO"; then
+            echo "ERROR: engine library inside the APK is not the slim build:"
+            ls -l /tmp/apk_engine.so "$SLIM_SO"
+            exit 1
+          fi
+          echo "verified: APK engine library is the slim build ($(stat -c%s "$SLIM_SO") bytes)"
+
       # -------------------------------------------------------------- Outputs
+      - name: Build size report
+        run: |
+          set -euo pipefail
+          SLIM_SO="slim-engine/libgodot_android.template_debug.arm64.so"
+          STOCK_AAR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable/godot-lib.template_debug.aar"
+          STOCK_BYTES=$(python3 - "$STOCK_AAR" <<'PYEOF'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              print(z.getinfo("jni/arm64-v8a/libgodot_android.template_debug.arm64.so").file_size)
+          PYEOF
+          )
+          SLIM_BYTES=$(stat -c%s "$SLIM_SO")
+          APK_BYTES=$(stat -c%s "$APK_PATH")
+          {
+            echo "## APK size report"
+            echo ""
+            echo "| Component | Bytes |"
+            echo "| --- | --- |"
+            echo "| APK total | $APK_BYTES |"
+            echo "| Engine library in APK (slim 4.7.2-stable, modules stripped) | $SLIM_BYTES |"
+            echo "| Engine library in stock template (reference) | $STOCK_BYTES |"
+            echo ""
+            echo "Engine size reduction: $(( (STOCK_BYTES - SLIM_BYTES) / 1048576 )) MiB \
+          ($(( 100 * (STOCK_BYTES - SLIM_BYTES) / STOCK_BYTES ))% smaller than stock)."
+            echo "Removed modules: 3D + XR + navigation (2D/3D), jolt/godot 3D physics, \
+          visual shader, glTF/FBX/CSG/gridmap/mesh tools, texture codecs (astc/etc/basis/ktx/bmp/dds/tga/hdr/exr/jpg/svg), \
+          theora video, enet/websocket/webrtc/upnp/multiplayer, regex, interactive music, jsonrpc, mono."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "APK_BYTES=$APK_BYTES" >> "$GITHUB_ENV"
+          echo "SLIM_ENGINE_BYTES_REPORT=$SLIM_BYTES" >> "$GITHUB_ENV"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -482,6 +804,7 @@ jobs:
             echo "Automatic debug build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
             echo ""
             echo "Sideload this APK for device testing (debug-signed, largeHeap enabled)."
+            echo "Engine: custom slim Godot 4.7.2 build (unused modules stripped; APK ${{ env.APK_BYTES }} bytes, engine library ${{ env.SLIM_ENGINE_BYTES_REPORT }} bytes)."
             echo ""
             echo "Commit-specific download URL (avoids stale APK caches):"
             echo "\`https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_NAME}\`"

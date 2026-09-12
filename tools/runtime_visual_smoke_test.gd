@@ -25,6 +25,9 @@ var _level_runtime: Node
 
 
 func _ready() -> void:
+	# Run the engine-compatibility gate first: if the slim build compiled out
+	# something load-bearing, fail before the long artwork setup below.
+	_test_slim_engine_scene_compat()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()
@@ -385,6 +388,42 @@ func _test_composite_saw() -> void:
 	assert(after_b.is_equal_approx(before_b.rotated(PI * 0.5)), "visual smoke: second saw half left shared centre")
 	for batch: DecorationBatch in batches:
 		batch.free()
+
+
+func _test_slim_engine_scene_compat() -> void:
+	## The APK ships a custom engine build with most optional modules compiled
+	## out (scons module_*_enabled=no). The artwork paths exercised elsewhere in
+	## this test do not touch every load-bearing class, so parse every
+	## hand-authored scene that relies on one and assert the engine classes the
+	## game needs still exist. A too-aggressive module removal then fails this
+	## test loudly instead of shipping an APK that cannot boot.
+	for required in [
+		"WorldEnvironment",  # 2D glow pipeline (GameScene)
+		"Environment",
+		"CameraAttributesPractical",
+		"AnimationPlayer",
+		"Skeleton2D",  # Player rig (Bone2D + IK modifications)
+		"GPUParticles2D",
+		"FastNoiseLite",  # module_noise (CameraShakeComponent)
+		"ZIPReader",  # module_zip (GMD level loading)
+		"HTTPRequest",  # module_mbedtls behind UpdateManager
+		"AudioStreamMP3",  # module_mp3
+		"AudioStreamOggVorbis",  # module_ogg + module_vorbis
+	]:
+		assert(
+			ClassDB.class_exists(StringName(required)),
+			"slim engine: required class %s was compiled out" % required
+		)
+	for scene_path in [
+		"res://scenes/TitleScreen.tscn",  # project.godot run/main_scene
+		"res://scenes/GameScene.tscn",  # WorldEnvironment glow + level container
+		"res://scenes/EditorScene.tscn",
+		"res://scenes/components/game_components/Player.tscn",
+		"res://scenes/components/level_components/LevelCheckpoint.tscn",
+	]:
+		var packed := load(scene_path) as PackedScene
+		assert(packed != null, "slim engine: %s failed to load (class compiled out?)" % scene_path)
+		print("SLIM_ENGINE_SCENE_OK %s" % scene_path)
 
 
 func _object_data(position: Vector2) -> Dictionary:
