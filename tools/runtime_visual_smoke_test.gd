@@ -85,9 +85,15 @@ func _process(_delta: float) -> void:
 		var total := int(_native_canvas.call(&"item_count"))
 		assert(drawn > 0 and drawn < total, "native smoke: off-screen grid rejection (%d/%d)" % [drawn, total])
 		var render_stats: Dictionary = _level_runtime.call(&"render_stats")
-		assert(int(render_stats.get("canvases", 0)) > 0, "native smoke: render coordinator registry empty")
-		assert(render_stats.get("culled_canvases") == render_stats.get("canvases"), "native smoke: an uncullable packed batch survived")
-		assert(int(render_stats.get("submitted_records", 0)) < int(render_stats.get("records", 0)), "native smoke: coordinator retained offscreen records")
+		print("NATIVE_RENDER_STATS %s" % render_stats)
+		if (
+				int(render_stats.get("canvases", 0)) <= 0
+				or render_stats.get("culled_canvases") != render_stats.get("canvases")
+				or int(render_stats.get("submitted_records", 0)) >= int(render_stats.get("records", 0))
+		):
+			push_error("native smoke: render coordinator/culling invariant failed: %s" % render_stats)
+			get_tree().quit(1)
+			return
 	# Canvas stretch/aspect settings vary with the test window. Ask each
 	# CanvasItem for the actual world-to-viewport transform instead of assuming
 	# a scale ratio.
