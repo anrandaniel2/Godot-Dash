@@ -43,7 +43,7 @@ offset = Vector2(-32, -32)
 collision_layer = 2
 collision_mask = 0
 metadata/_editor_description_ = "Collision for this Geometry Dash object type. tools/build_gd_object_scenes.py writes the hitbox for gameplay object types here automatically. Keep the node named Hitbox - gameplay and the level's shared physics builder look it up. To hand-edit a hitbox, edit the shapes below and DELETE the _editor_auto_collision_ metadata line on the Collision node: once the marker is gone a regeneration preserves your subtree instead of overwriting it."
-metadata/_editor_auto_collision_ = "gd-hitboxes-1"
+metadata/_editor_auto_collision_ = "gd-hitboxes-2"
 
 [node name="Hitbox" type="CollisionShape2D" parent="Collision"]
 debug_color = Color(0, 0.07, 0.7, 0.25)

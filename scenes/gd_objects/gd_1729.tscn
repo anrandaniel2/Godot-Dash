@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3 uid="uid://cl3afoq2g82gy"]
+[gd_scene load_steps=7 format=3 uid="uid://cl3afoq2g82gy"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
@@ -10,6 +10,9 @@ size = Vector2(113.066667, 76.8)
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
 region = Rect2(815, 1237, 53, 36)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
+size = Vector2(22.186667, 30.72)
 
 [node name="GD1729" type="Node2D"]
 texture_filter = 1
@@ -27,14 +30,16 @@ scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-4, 0)
 
-[node name="Collision" type="StaticBody2D" parent="."]
-collision_layer = 2
+[node name="Collision" type="Area2D" parent="."]
+collision_layer = 4
 collision_mask = 0
 metadata/_editor_description_ = "Collision for this Geometry Dash object type. tools/build_gd_object_scenes.py writes the hitbox for gameplay object types here automatically. Keep the node named Hitbox - gameplay and the level's shared physics builder look it up. To hand-edit a hitbox, edit the shapes below and DELETE the _editor_auto_collision_ metadata line on the Collision node: once the marker is gone a regeneration preserves your subtree instead of overwriting it."
-metadata/_editor_auto_collision_ = "gd-hitboxes-1"
+metadata/_editor_auto_collision_ = "gd-hitboxes-2"
 
 [node name="Hitbox" type="CollisionShape2D" parent="Collision"]
-debug_color = Color(0, 0.07, 0.7, 0.25)
+position = Vector2(-21.333333, 0)
+shape = SubResource("RectangleShape2D_gdc0")
+debug_color = Color(0.96, 0, 0, 0.25)
 
 [node name="EditorSelectionCollider" type="Area2D" parent="."]
 collision_layer = 256

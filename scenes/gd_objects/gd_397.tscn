@@ -21,7 +21,7 @@ atlas = ExtResource("gd_page0")
 region = Rect2(3492, 230, 87, 86)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
-radius = 140.35669
+radius = 123.306667
 
 [node name="GD397" type="Node2D"]
 texture_filter = 1
@@ -83,7 +83,7 @@ offset = Vector2(-41, -42)
 collision_layer = 2048
 collision_mask = 0
 metadata/_editor_description_ = "Collision for this Geometry Dash object type. tools/build_gd_object_scenes.py writes the hitbox for gameplay object types here automatically. Keep the node named Hitbox - gameplay and the level's shared physics builder look it up. To hand-edit a hitbox, edit the shapes below and DELETE the _editor_auto_collision_ metadata line on the Collision node: once the marker is gone a regeneration preserves your subtree instead of overwriting it."
-metadata/_editor_auto_collision_ = "gd-hitboxes-1"
+metadata/_editor_auto_collision_ = "gd-hitboxes-2"
 
 [node name="Hitbox" type="CollisionShape2D" parent="Collision"]
 shape = SubResource("CircleShape2D_gdc0")

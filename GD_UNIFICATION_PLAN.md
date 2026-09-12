@@ -151,12 +151,22 @@ Player death semantics after merge:
 
 `tools/gd_collision_specs.py` is the single source of per-object collision data
 (scene-px geometry, layer/kind, provenance). Policy, in order:
-1. IDs with an old-scene hitbox in `GMDObjects.MAP` reuse those numbers verbatim
-   (user-sanctioned), expressed as rect/circle/polygon + position relative to
-   the gd scene origin.
-2. IDs in the solid-block ranges without an old equivalent get the exact
-   content rect derived from the atlas frame source size (GD's own
-   content-size hitbox rule): w = src_w_hd/2 GD units, converted at 128/30.
+1. **Game-extracted hitbox data** (`tools/gd_hitbox_data.json`, built by
+   `tools/extract_gd_hitboxes.py` from the OpenGD project's preservation of
+   Geometry Dash's own hitbox tables and object classification): every solid,
+   slope, hazard and breakable-brick ID gets its exact GD geometry —
+   rects/circle radii in GD units converted at 128/30, slopes as exact
+   triangles inside their GD rect bounds with orientation derived from the
+   game artwork (alpha IoU over the bounds). 148 solids, 74 slopes (incl. the
+   derived mirrors 290/292), 87 hazards. IDs the game classifies as
+   decoration/interactable carry no static collision (45 former
+   solid-range IDs were demoted, 17 reclassified as slopes/hazards — see the
+   module's report); interactables keep their hand-made scenes, with their GD
+   trigger rects stored in the data file for the M4 pass.
+2. IDs in the solid-block ranges that the game data does not cover at all
+   (GD 2.2-only objects, IDs > 1911) keep the content rect derived from the
+   atlas frame source size (GD's own content-size hitbox rule):
+   w = src_w_hd/2 GD units, converted at 128/30.
 3. Everything else carries no gameplay collision (decoration).
 The generator writes these into `Collision` and stamps the subtree with a
 metadata marker so regenerations can update values but real hand edits still
@@ -165,7 +175,8 @@ win.
 ## Milestones
 
 - **M1 — Collision data + generator** (this pass):
-  `tools/gd_collision_specs.py` (spec table + auto block rule + provenance),
+  `tools/gd_collision_specs.py` (game-extracted spec table via
+  `gd_hitbox_data.json` + legacy block rule + provenance),
   generator emits real shapes for gameplay IDs into `Collision`, keeping the
   subtree replaceable-until-hand-edited. Runs for the static gameplay ID set;
   scenes for interactable IDs are filled in the same milestone where the old
@@ -193,14 +204,25 @@ win.
 
 ## Known data-quality TODOs (pristine pass)
 
-- 1202-1205 / 1220-1222 (`blockOutlineThick_*`): frame sources are thin bars,
-  not squares — whether GD treats them as solid bars, hollow outlines or
-  decoration needs GD hitbox-viewer confirmation; current table keeps their
-  exact content boxes.
-- Saw radii: copied from old scenes (140.36/96.1/64.0); sawblade_01's frame
-  spans 167×164 hd px while its hitbox is ~0.8× that; needs GD measurement.
-- Spike tip margins: old scenes use inset hitboxes (e.g. Spike 20×31 at y+27.5);
-  kept verbatim, to be cross-checked against GD hitbox-viewer dumps.
+Resolved 2026-09-12 by the game-extracted hitbox table
+(`tools/gd_hitbox_data.json`, see §4):
+
+- 1202-1205 / 1220-1222 (`blockOutlineThick_*`): the GD hitbox table settles
+  it — 1202/1220 are solid thin bars (30×3 / 30×6 GD-unit strips), 1203/1204
+  and 1221/1222 are solid full squares, 1205 is decoration.
+- Saw radii: exact GD values (sawblade family radii 32.3/21.6/12 GD units →
+  137.8/92.2/51.2 scene px), replacing the old scene's approximations.
+- Spike tip margins: the real GD spike hitbox is a thin box centred in the
+  spike (6×12 GD units for id 8), not the old inset base box (20×31 px at
+  y+27.5); the old hand-measured values were replaced wholesale.
+
+Remaining, lower priority:
+
+- Slope orientations for stroke-only artwork (invisible slopes 1344/1345) were
+  resolved by homology with their sibling family (1341/1342); a GD
+  hitbox-viewer double-check would confirm.
+- 1561-1569 (2.1 persp blocks) are solids per the game data but have no
+  artwork in the atlas, so no scenes exist for them yet.
 
 ## M2 implementation notes (2026-09-07) — carved-out decision now recorded
 

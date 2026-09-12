@@ -89,7 +89,7 @@ COLLISION_DESCRIPTION = (
 # is preserved verbatim, exactly like hand-authored collision before this
 # feature existed.
 COLLISION_AUTO_META = "_editor_auto_collision_"
-COLLISION_AUTO_VERSION = "gd-hitboxes-1"
+COLLISION_AUTO_VERSION = "gd-hitboxes-2"
 
 # Body kinds -> node type / collision layer, matching gd_collision_specs and the
 # old level-component scenes' roots.
