@@ -318,6 +318,9 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# converted, so ColorChannelData is only created for channels with a user.
 	var used_channels: Dictionary[int, bool] = { }
 	var objects: Array[Dictionary] = []
+	# Compact side index consumed directly by NativeTriggerBridge, avoiding a
+	# second GDScript scan across every decoration in large downloaded levels.
+	var native_trigger_records: Array[Dictionary] = []
 	# Which groups actually ended up with a member object, and which groups
 	# triggers point at, so the report can explain empty triggers.
 	var populated_groups: Dictionary[String, int] = { }
@@ -362,7 +365,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		var object_data: Dictionary = { }
 		var kind: int = 0 # 0 = scene, 1 = decoration, 2 = substituted block
 
-		if GMDObjects.MAP.has(gd_id):
+		if GMDObjects.MAP.has(gd_id) or gd_id in GMDObjects.TRIGGER_IDS:
 			object_data = _object_from_properties(gd_id, properties, chunk_idx, channel_style, used_channels)
 		else:
 			object_data = _decoration_from_properties(
@@ -398,6 +401,8 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			populated_groups[group_id] = populated_groups.get(group_id, 0) + 1
 
 		objects.append(object_data)
+		if object_data.get("native_only_trigger", false):
+			native_trigger_records.append(object_data)
 		report.imported += 1
 
 	# A trigger whose whole target group was made of unsupported objects will
@@ -452,6 +457,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"scale_power": 0.0,
 		"color_channels": color_channels.map(ColorChannelData.to_data),
 		"duration": 0.0,
+		"native_trigger_records": native_trigger_records,
 		"layers": [{
 			"name": "Imported Layer",
 			"objects": objects,
@@ -536,6 +542,12 @@ static func _object_from_properties(
 	# activation flags directly, while family adapters can read new 2.2 fields
 	# without another lossy converter release.
 	if scene_path.begins_with(GMDObjects.TRIGGERS):
+		# Generic 2.2 families have no component node to execute yet. Runtime
+		# builds keep them exclusively as C++ records, avoiding an Area2D plus
+		# child nodes for every inert trigger; editor/fallback builds still use
+		# the lightweight scene for selection and forward compatibility.
+		if scene_path == GMDObjects.GENERIC_TRIGGER.scene:
+			object_data["native_only_trigger"] = true
 		var trigger_flags: int = 0
 		if properties.get(Prop.SPAWN_TRIGGERED, "0") == "1":
 			trigger_flags |= 1

@@ -138,7 +138,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 11, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 12, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -229,6 +229,12 @@ func _test_native_core() -> void:
 	assert(fired == [2], "native smoke: delayed spawn group did not fire")
 	var trigger_state: Dictionary = scheduler.call(&"snapshot")
 	assert(trigger_state.get("active", PackedByteArray()).size() == 2, "native smoke: trigger checkpoint state")
+	var packed_scheduler: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
+	packed_scheduler.call(&"register_packed_trigger", 12.0, 0, 0, PackedStringArray(["g_9"]), 2904, {"1": "2904"})
+	packed_scheduler.call(&"finalize")
+	packed_scheduler.call(&"advance", scheduler_player, 0.0, 20.0)
+	var packed_state: Dictionary = packed_scheduler.call(&"snapshot")
+	assert(packed_state.get("active", PackedByteArray()) == PackedByteArray([1]), "native smoke: node-free trigger record")
 	trigger_a.free()
 	trigger_b.free()
 	scheduler_player.free()

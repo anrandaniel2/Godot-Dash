@@ -102,8 +102,7 @@ class NativeTriggerRuntime : public RefCounted {
 		Record &record = records[index];
 		if (record.activated && !(record.flags & MULTI_ACTIVATE)) return;
 		if (!forced && (record.flags & (SPAWN_ONLY | TOUCH_ONLY))) return;
-		Object *target = ObjectDB::get_instance(record.object);
-		if (!target || !player) return;
+		if (!player) return;
 		// Spawn is scheduled entirely here. The old component has no faithful
 		// representation for GD's target-group property and otherwise warns with
 		// an empty authored resource list.
@@ -113,7 +112,8 @@ class NativeTriggerRuntime : public RefCounted {
 			if (target_id.is_valid_int() && target_id.to_int() > 0)
 				schedule_group(StringName("g_" + target_id), delay_text.is_valid_float() ? delay_text.to_float() : 0.0, player);
 		} else {
-			target->call("emit_signal", StringName("interacted"), player);
+			Object *target = ObjectDB::get_instance(record.object);
+			if (target) target->call("emit_signal", StringName("interacted"), player);
 		}
 		if (!(record.flags & MULTI_ACTIVATE)) record.activated = true;
 	}
@@ -122,6 +122,7 @@ protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger);
+		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("advance", "player", "previous_x", "current_x"), &NativeTriggerRuntime::advance);
 		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
@@ -142,9 +143,9 @@ public:
 		event_sequence = 0; index_dirty = false;
 	}
 	int64_t register_trigger(Object *trigger, double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
-		if (!trigger) return -1;
 		Record record;
-		record.x = x; record.object = trigger->get_instance_id();
+		record.x = x;
+		if (trigger) record.object = trigger->get_instance_id();
 		record.flags = static_cast<int32_t>(flags); record.source_order = source_order;
 		record.gd_id = gd_id; record.properties = properties;
 		const size_t index = records.size();
@@ -153,11 +154,19 @@ public:
 		records.push_back(std::move(record)); index_dirty = true;
 		return static_cast<int64_t>(index);
 	}
+	int64_t register_packed_trigger(double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return register_trigger(nullptr, x, flags, source_order, groups, gd_id, properties);
+	}
 	void finalize() {
 		ensure_index();
 		records.shrink_to_fit();
 		x_order.shrink_to_fit();
-		for (auto &entry : group_index) entry.second.shrink_to_fit();
+		for (auto &entry : group_index) {
+			std::stable_sort(entry.second.begin(), entry.second.end(), [&](size_t a, size_t b) {
+				return records[a].source_order < records[b].source_order;
+			});
+			entry.second.shrink_to_fit();
+		}
 	}
 	void advance(Object *player, double previous_x, double current_x) {
 		if (!player || Math::is_equal_approx(previous_x, current_x)) return;
@@ -285,9 +294,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.1.0 / indexed trigger scheduler / lossless GD parser / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 1.2.0 / node-elided trigger scheduler / lossless GD parser / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 11; }
+	int64_t version() const { return 12; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -736,6 +745,10 @@ class NativeLevelBuildJob : public RefCounted {
 	}
 
 	void place(const Dictionary &object_data) {
+		// Generic 2.2 triggers are already complete packed records for
+		// NativeTriggerRuntime. Instantiating an Area2D, CollisionShape and script
+		// shell for each one wastes the majority of trigger-heavy level memory.
+		if (static_cast<bool>(object_data.get("native_only_trigger", false))) return;
 		if (static_cast<bool>(object_data.get("decoration", false))) {
 			if (!drop_decoration) decoration_data.append(object_data);
 			return;

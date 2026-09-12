@@ -79,7 +79,7 @@ func _open_level_paced() -> void:
 	var level: Level = job.level
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
-	add_loaded_level(level)
+	add_loaded_level(level, level_data)
 
 	var open_ms: int = Time.get_ticks_msec() - open_started_ms
 	await start_level()
@@ -105,7 +105,7 @@ func _open_level_paced() -> void:
 		)
 
 
-func add_loaded_level(level: Level) -> Level:
+func add_loaded_level(level: Level, level_data: Dictionary = {}) -> Level:
 	LevelManager.current_level = level
 	TextComponent.DEFAULT_TEXT_SETTINGS.set_font_path()
 	if level.get_parent() != $Level:
@@ -116,7 +116,7 @@ func add_loaded_level(level: Level) -> Level:
 		native_trigger_bridge = NativeTriggerBridge.new()
 		native_trigger_bridge.name = "NativeTriggerBridge"
 		add_child(native_trigger_bridge)
-		if not native_trigger_bridge.setup(level):
+		if not native_trigger_bridge.setup(level, level_data):
 			native_trigger_bridge.queue_free()
 			native_trigger_bridge = null
 	return level

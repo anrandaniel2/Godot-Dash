@@ -6,10 +6,11 @@ extends Node
 
 var _runtime: Object
 var _previous_x: Dictionary[int, float] = {}
+var _target_cache: Dictionary[String, Node2D] = {}
 var _level: Level
 
 
-func setup(level: Level) -> bool:
+func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	_level = level
 	if not NativeCore.available() or not ClassDB.class_exists(&"NativeTriggerRuntime"):
 		return false
@@ -17,7 +18,9 @@ func setup(level: Level) -> bool:
 	if _runtime == null:
 		return false
 	var records: Array[TriggerInteractable] = []
-	_collect_triggers(level, records)
+	for node: Node in get_tree().get_nodes_in_group(&"_gd_native_trigger"):
+		if node is TriggerInteractable and level.is_ancestor_of(node):
+			records.append(node as TriggerInteractable)
 	records.sort_custom(func(a: TriggerInteractable, b: TriggerInteractable) -> bool:
 		return int(a.get_meta(&"gd_source_order", 0)) < int(b.get_meta(&"gd_source_order", 0))
 	)
@@ -44,12 +47,36 @@ func setup(level: Level) -> bool:
 			var hitbox := trigger.get_node_or_null(^"TriggerHitboxComponent") as TriggerHitboxComponent
 			if hitbox != null and hitbox._hitbox != null:
 				hitbox._hitbox.set_deferred(&"disabled", true)
+	_register_packed_triggers(level_data)
 	# Build and compact the X/group indexes during level loading rather than on
 	# the first gameplay physics frame, eliminating a visible first-jump hitch.
 	_runtime.call(&"finalize")
 	set_physics_process(true)
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
 	return true
+
+
+func _register_packed_triggers(level_data: Dictionary) -> void:
+	var packed_records: Array = level_data.get("native_trigger_records", [])
+	# Compatibility for levels imported before the side index existed.
+	if packed_records.is_empty():
+		for layer_data: Dictionary in level_data.get("layers", []):
+			for object_data: Dictionary in layer_data.get("objects", []):
+				if object_data.get("native_only_trigger", false):
+					packed_records.append(object_data)
+	for value: Variant in packed_records:
+		var object_data: Dictionary = value
+		var transform: Transform2D = object_data.get("transform", Transform2D.IDENTITY)
+		var groups := PackedStringArray()
+		for group: Variant in object_data.get("groups", []):
+			groups.append(str(group))
+		_runtime.call(
+				&"register_packed_trigger", transform.origin.x,
+				int(object_data.get("gd_trigger_flags", 0)),
+				int(object_data.get("gd_source_order", 0)), groups,
+				int(object_data.get("gd_object_id", 0)),
+				object_data.get("gd_properties", {}),
+		)
 
 
 func _configure_runtime_targets(trigger: TriggerInteractable) -> void:
@@ -61,12 +88,14 @@ func _configure_runtime_targets(trigger: TriggerInteractable) -> void:
 	var target_key := "71"
 	var target_id := str(properties.get(target_key, "")).strip_edges()
 	if target_id.is_valid_int() and int(target_id) > 0:
-		var candidates := get_tree().get_nodes_in_group(Constants.GROUP_PREFIX + target_id)
-		var target: Node2D
-		for candidate: Node in candidates:
-			if candidate is Node2D and _level.is_ancestor_of(candidate):
-				target = candidate as Node2D
-				break
+		var target_group := Constants.GROUP_PREFIX + target_id
+		var target: Node2D = _target_cache.get(target_group)
+		if not _target_cache.has(target_group):
+			for candidate: Node in get_tree().get_nodes_in_group(target_group):
+				if candidate is Node2D and _level.is_ancestor_of(candidate):
+					target = candidate as Node2D
+					break
+			_target_cache[target_group] = target
 		if target != null:
 			var target_component := trigger.get_node_or_null(^"TargetObjectComponent") as TargetObjectComponent
 			if target_component != null:
@@ -82,13 +111,6 @@ func _configure_runtime_targets(trigger: TriggerInteractable) -> void:
 		if static_component != null:
 			static_component.mode = CameraStaticComponent.Mode.EXIT if properties.get("110", "0") == "1" else CameraStaticComponent.Mode.ENTER
 			static_component.axis = clampi(int(properties.get("101", "0")), Constants.Axis.BOTH, Constants.Axis.Y)
-
-
-func _collect_triggers(node: Node, output: Array[TriggerInteractable]) -> void:
-	for child: Node in node.get_children():
-		if child is TriggerInteractable and child.has_meta(&"gd_trigger_flags"):
-			output.append(child as TriggerInteractable)
-		_collect_triggers(child, output)
 
 
 func _physics_process(delta: float) -> void:

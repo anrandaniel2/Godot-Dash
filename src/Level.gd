@@ -112,6 +112,9 @@ var stopwatch: Stopwatch
 ## Hides objects far outside the camera while the level plays (see FrustumCuller).
 var culler: FrustumCuller
 var layers: Array[Layer]
+## Generic 2.2 triggers elided from the runtime SceneTree, retained for saves,
+## practice rebuilds, and NativeTriggerRuntime registration.
+var native_trigger_records: Array[Dictionary] = []
 var active_layer_idx: int
 var music_scale: float = 1.0
 var required_songs: Dictionary[String, int] # HashMap<SongPath, SongUsers>
@@ -394,6 +397,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"scale_power": scale_power,
 		"color_channels": color_channels.map(ColorChannelData.to_data),
 		"duration": duration,
+		"native_trigger_records": native_trigger_records,
 		"layers": [],
 		"active_layer_idx": active_layer_idx,
 		"player_data": {
@@ -422,6 +426,11 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 				continue
 			layer_data.objects.append(serialize_object(object, reason))
 		data.layers.append(layer_data)
+	# The native runtime omitted these nodes. Put their records back into the
+	# serialized layer so switching to the editor/non-native fallback remains
+	# lossless; the top-level side index avoids rediscovering them later.
+	if not Editor.in_editor and NativeCore.available() and not native_trigger_records.is_empty() and not data.layers.is_empty():
+		data.layers[0].objects.append_array(native_trigger_records)
 	return data
 
 
@@ -462,6 +471,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	scale_power = data.scale_power
 	color_channels.assign(data.color_channels.map(ColorChannelData.from_data))
 	duration = data.duration
+	native_trigger_records.assign(data.get("native_trigger_records", []))
 	active_layer_idx = data.active_layer_idx
 
 	LevelManager.player.global_position = start_position
@@ -605,6 +615,10 @@ static func instantiate_object_from_data(
 	for key: StringName in [&"gd_trigger_flags", &"gd_source_order", &"gd_properties"]:
 		if object_data.has(key):
 			object.set_meta(key, object_data[key])
+	if object.has_meta(&"gd_trigger_flags"):
+		# Lets NativeTriggerBridge enumerate only trigger roots instead of walking
+		# every gameplay/decorative descendant after a large level is built.
+		object.add_to_group(&"_gd_native_trigger")
 	return object
 
 
