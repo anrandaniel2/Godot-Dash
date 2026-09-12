@@ -291,6 +291,8 @@ func _build_native_canvas(native: Object) -> void:
 	var origins := PackedFloat32Array()
 	var base_alphas := PackedFloat32Array()
 	var hsv_data := PackedFloat32Array()
+	var spins := PackedFloat32Array()
+	var spin_pivots := PackedFloat32Array()
 	textures.resize(items.size())
 	regions.resize(items.size())
 	transforms.resize(items.size())
@@ -298,6 +300,8 @@ func _build_native_canvas(native: Object) -> void:
 	origins.resize(items.size())
 	base_alphas.resize(items.size())
 	hsv_data.resize(items.size() * 5)
+	spins.resize(items.size())
+	spin_pivots.resize(items.size() * 2)
 	hsv_data.fill(-1.0)
 	for index in items.size():
 		var item: Item = items[index]
@@ -308,6 +312,9 @@ func _build_native_canvas(native: Object) -> void:
 		colors[index] = item.modulate
 		origins[index] = item.origin_x
 		base_alphas[index] = item.base_alpha
+		spins[index] = item.spin
+		spin_pivots[index * 2] = item.spin_pivot.x
+		spin_pivots[index * 2 + 1] = item.spin_pivot.y
 		if item.hsv_shift.size() >= 5:
 			for component in 5:
 				hsv_data[index * 5 + component] = item.hsv_shift[component]
@@ -319,7 +326,8 @@ func _build_native_canvas(native: Object) -> void:
 			&"configure", self, textures, regions, transforms, colors, origins,
 			# Keep culling explicit for every node-free renderer, including tiny
 			# group-addressable batches common in Thinking Space II.
-			base_alphas, hsv_data, not items.is_empty(), BUCKET_WIDTH, CULL_MARGIN,
+			base_alphas, hsv_data, spins, spin_pivots,
+			not items.is_empty(), BUCKET_WIDTH, CULL_MARGIN,
 	)
 
 
@@ -406,7 +414,9 @@ func _process(delta: float) -> void:
 
 	# Rotating objects - sawblades and the like - carry a degrees-per-second
 	# speed in Geometry Dash's key 97.
-	if not _spinning.is_empty():
+	# Native renderers retain spin state and advance the dense animated index in
+	# C++; do not cross the Variant boundary once per sprite per frame.
+	if _native_canvas == null and not _spinning.is_empty():
 		for item: Item in _spinning:
 			var angle := deg_to_rad(item.spin * delta)
 			var old_origin := item.transform.origin
@@ -415,8 +425,6 @@ func _process(delta: float) -> void:
 			# centre as well as rotating its basis. This keeps all duplicated saw
 			# wedges locked together around one shared axle.
 			item.transform.origin = item.spin_pivot + (old_origin - item.spin_pivot).rotated(angle)
-			if _native_canvas != null and item.render_index >= 0:
-				_native_canvas.call(&"set_item_transform", item.render_index, item.transform)
 		_request_redraw()
 
 	if _native_canvas != null or not _cull:

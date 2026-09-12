@@ -285,7 +285,7 @@ public:
 // all spatial range math to WorkerThreadPool.
 static void decoration_coordinator_enter();
 static void decoration_coordinator_exit();
-static void update_registered_decoration_renderers();
+static void update_registered_decoration_renderers(double delta);
 static Dictionary registered_decoration_stats();
 
 // Native owner for the packed runtime. Besides being the migration point for
@@ -342,7 +342,7 @@ protected:
 			return;
 		}
 		if (what == Node::NOTIFICATION_PROCESS) {
-			update_registered_decoration_renderers();
+			update_registered_decoration_renderers(get_process_delta_time());
 			return;
 		}
 		if (what != Node::NOTIFICATION_PHYSICS_PROCESS || !level_manager || !triggers.is_valid()) return;
@@ -436,9 +436,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.8.0 / per-record coverage / coalesced RID rebuilds / worker culling / api 4.7");
+		return String("gdash_native 1.9.0 / native animation / spatial retained RIDs / worker culling / api 4.7");
 	}
-	int64_t version() const { return 18; }
+	int64_t version() const { return 19; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -1022,11 +1022,16 @@ class NativeDecorationRenderer : public RefCounted {
 		float base_alpha = 1.0f;
 		float hsv[5] = {0, 0, 0, 0, 0};
 		bool has_hsv = false;
+		float spin_radians = 0.0f;
+		Vector2 spin_pivot;
 	};
 
 	uint64_t owner_id = 0;
 	RID canvas_item;
 	std::vector<Record> records;
+	// Dense indices are effectively a small SoA hot set: animation touches only
+	// transform/spin data for rotating records, never every static Record.
+	std::vector<size_t> spinning_indices;
 	std::map<int64_t, std::map<int64_t, std::vector<size_t>>> sections;
 	bool cull = true;
 	double bucket_width = 256.0;
@@ -1093,7 +1098,7 @@ class NativeDecorationRenderer : public RefCounted {
 
 protected:
 	static void _bind_methods() {
-		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
+		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
 		ClassDB::bind_method(D_METHOD("queue_redraw"), &NativeDecorationRenderer::request_redraw);
 		ClassDB::bind_method(D_METHOD("update_camera_range"), &NativeDecorationRenderer::update_camera_range);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationRenderer::set_visible_buckets);
@@ -1101,6 +1106,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationRenderer::get_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationRenderer::set_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationRenderer::set_item_transform);
+		ClassDB::bind_method(D_METHOD("advance_animation", "delta"), &NativeDecorationRenderer::advance_animation);
+		ClassDB::bind_method(D_METHOD("get_item_transform", "index"), &NativeDecorationRenderer::get_item_transform);
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationRenderer::item_count);
 		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
 	}
@@ -1127,6 +1134,7 @@ public:
 	void configure(Object *p_owner, const Array &textures, const Array &regions, const Array &transforms,
 			const PackedColorArray &colors, const PackedFloat32Array &origins,
 			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
+			const PackedFloat32Array &spins, const PackedFloat32Array &spin_pivots,
 			bool enable_culling, double width, double margin) {
 		CanvasItem *owner_canvas = Object::cast_to<CanvasItem>(p_owner);
 		owner_id = owner_canvas ? owner_canvas->get_instance_id() : 0;
@@ -1137,7 +1145,7 @@ public:
 			server->canvas_item_set_visible(canvas_item, false);
 		}
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
-		records.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
+		records.clear(); spinning_indices.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
@@ -1148,16 +1156,20 @@ public:
 				record.has_hsv = hsv_data[i * 5 + 4] >= 0.0f;
 				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_data[i * 5 + component];
 			}
+			if (spins.size() > i) record.spin_radians = spins[i] * 0.01745329251994329577f;
+			if (spin_pivots.size() >= (i + 1) * 2) record.spin_pivot = Vector2(spin_pivots[i * 2], spin_pivots[i * 2 + 1]);
+			else record.spin_pivot = record.transform.get_origin();
 			const Rect2 bounds = record.transform.xform(Rect2(-record.region.size * 0.5, record.region.size));
 			// Index the complete conservative rotation circle, not only the origin.
 			// The previous batch-wide maximum radius let one giant background sprite
 			// expand the query for every ordinary object and effectively submitted
 			// the whole level. Per-record coverage keeps large art correct without
 			// poisoning culling for its neighbours.
-			const Vector2 center = record.transform.get_origin();
-			const double radius = (bounds.size * 0.5).length();
+			const Vector2 center = record.spin_pivot;
+			const double radius = record.transform.get_origin().distance_to(center) + (bounds.size * 0.5).length();
 			const Rect2 coverage(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0));
 			const size_t index = records.size(); records.push_back(record);
+			if (record.spin_radians != 0.0f) spinning_indices.push_back(index);
 			const int64_t first_column = static_cast<int64_t>(std::floor(coverage.position.x / bucket_width));
 			const int64_t last_column = static_cast<int64_t>(std::floor(coverage.get_end().x / bucket_width));
 			const int64_t top_row = static_cast<int64_t>(std::floor(coverage.position.y / bucket_width));
@@ -1169,6 +1181,18 @@ public:
 		cull = enable_culling; cull_margin = std::max(0.0, margin);
 		view_initialized = false; range_has_records = !cull;
 		if (!cull) rebuild_commands();
+	}
+
+	void advance_animation(double delta) {
+		if (spinning_indices.empty() || delta <= 0.0) return;
+		for (size_t index : spinning_indices) {
+			Record &record = records[index];
+			const double angle = static_cast<double>(record.spin_radians) * delta;
+			const Vector2 old_origin = record.transform.get_origin();
+			record.transform = record.transform.rotated_local(angle);
+			record.transform.set_origin(record.spin_pivot + (old_origin - record.spin_pivot).rotated(angle));
+		}
+		commands_dirty = true;
 	}
 
 	bool capture_cull_job(DecorationCullJob &job) const {
@@ -1236,6 +1260,7 @@ public:
 	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }
 	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].color = color; commands_dirty = true; } }
 	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].transform = transform; commands_dirty = true; } }
+	Transform2D get_item_transform(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].transform : Transform2D(); }
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
 	bool is_spatially_culled() const { return cull; }
@@ -1248,7 +1273,7 @@ static void decoration_coordinator_exit() {
 	decoration_coordinator_count = std::max(0, decoration_coordinator_count - 1);
 }
 
-static void update_registered_decoration_renderers() {
+static void update_registered_decoration_renderers(double delta) {
 	// Several level runtimes can briefly coexist during scene replacement.
 	const uint64_t frame = Engine::get_singleton()->get_process_frames();
 	if (frame == decoration_last_update_frame) return;
@@ -1259,7 +1284,9 @@ static void update_registered_decoration_renderers() {
 	// Coalesce any number of channel/spin updates into one RID command rebuild
 	// per renderer per frame instead of clearing/re-emitting after every item.
 	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
-		if (renderer) renderer->flush_commands();
+		if (!renderer) continue;
+		renderer->advance_animation(delta);
+		renderer->flush_commands();
 	}
 	if (!pool) return;
 	if (worker.is_null()) worker.instantiate();

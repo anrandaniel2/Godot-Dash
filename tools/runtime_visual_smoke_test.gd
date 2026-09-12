@@ -159,7 +159,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 18, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 19, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -368,9 +368,21 @@ func _test_composite_saw() -> void:
 	assert(before_a.dot(before_b) < 0.0, "visual smoke: reconstructed saw halves are not opposite")
 	# Half a second at 180 degrees/second must orbit both trimmed sprite origins
 	# by 90 degrees around the complete saw's centre, not around each half.
-	saw_batch.call(&"_process", 0.5)
-	assert((saw_items[0].transform.origin - pivot).is_equal_approx(before_a.rotated(PI * 0.5)), "visual smoke: saw does not rotate around full centre")
-	assert((saw_items[1].transform.origin - pivot).is_equal_approx(before_b.rotated(PI * 0.5)), "visual smoke: second saw half left shared centre")
+	var saw_native: Object = saw_batch.get("_native_canvas")
+	var after_a: Vector2
+	var after_b: Vector2
+	if saw_native != null:
+		saw_native.call(&"advance_animation", 0.5)
+		var native_a: Transform2D = saw_native.call(&"get_item_transform", saw_items[0].render_index)
+		var native_b: Transform2D = saw_native.call(&"get_item_transform", saw_items[1].render_index)
+		after_a = native_a.origin - pivot
+		after_b = native_b.origin - pivot
+	else:
+		saw_batch.call(&"_process", 0.5)
+		after_a = saw_items[0].transform.origin - pivot
+		after_b = saw_items[1].transform.origin - pivot
+	assert(after_a.is_equal_approx(before_a.rotated(PI * 0.5)), "visual smoke: saw does not rotate around full centre")
+	assert(after_b.is_equal_approx(before_b.rotated(PI * 0.5)), "visual smoke: second saw half left shared centre")
 	for batch: DecorationBatch in batches:
 		batch.free()
 
