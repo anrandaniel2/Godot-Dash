@@ -37,9 +37,16 @@ func setup(level: Level) -> bool:
 		# Physical line crossings are now indexed in C++. Square/touch triggers
 		# retain their Area2D because overlap semantics depend on both axes.
 		if (flags & 2) == 0:
+			# Remove the entire Area from broad-phase participation, not only its
+			# shape. This is the material win on trigger-dense levels.
+			trigger.set_deferred(&"monitoring", false)
+			trigger.set_deferred(&"monitorable", false)
 			var hitbox := trigger.get_node_or_null(^"TriggerHitboxComponent") as TriggerHitboxComponent
 			if hitbox != null and hitbox._hitbox != null:
 				hitbox._hitbox.set_deferred(&"disabled", true)
+	# Build and compact the X/group indexes during level loading rather than on
+	# the first gameplay physics frame, eliminating a visible first-jump hitch.
+	_runtime.call(&"finalize")
 	set_physics_process(true)
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
 	return true
@@ -87,20 +94,22 @@ func _collect_triggers(node: Node, output: Array[TriggerInteractable]) -> void:
 func _physics_process(delta: float) -> void:
 	if _runtime == null or not LevelManager.level_playing:
 		return
+	_advance_player(LevelManager.player)
+	for player: Player in LevelManager.player_duals:
+		_advance_player(player)
+	# Advance the native clock after crossings. Newly-created zero-delay spawn
+	# events execute in this frame; delayed events retain an exact native time.
 	_runtime.call(&"tick", delta)
-	var players: Array[Player] = [LevelManager.player]
-	players.append_array(LevelManager.player_duals)
-	for player: Player in players:
-		if player == null or not is_instance_valid(player):
-			continue
-		var id := int(player.get_instance_id())
-		var current_x := player.global_position.x
-		if _previous_x.has(id):
-			_runtime.call(&"advance", player, _previous_x[id], current_x)
-		_previous_x[id] = current_x
-	# Flush zero-delay spawn events created by this frame's crossings without
-	# recursively processing delayed work or waiting an extra physics frame.
-	_runtime.call(&"tick", 0.0)
+
+
+func _advance_player(player: Player) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var id := int(player.get_instance_id())
+	var current_x := player.global_position.x
+	if _previous_x.has(id):
+		_runtime.call(&"advance", player, _previous_x[id], current_x)
+	_previous_x[id] = current_x
 
 
 func reset_runtime() -> void:

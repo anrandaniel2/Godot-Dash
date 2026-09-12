@@ -138,7 +138,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 10, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 11, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -212,9 +212,14 @@ func _test_native_core() -> void:
 	# source order, and a normal trigger may only activate once.
 	scheduler.call(&"register_trigger", trigger_b, 20.0, 0, 2, PackedStringArray(["g_7"]), 0, {})
 	scheduler.call(&"register_trigger", trigger_a, 10.0, 0, 1, PackedStringArray(), 0, {})
+	scheduler.call(&"finalize")
 	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
 	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
 	assert(fired == [1, 2], "native smoke: trigger crossing order/one-shot state")
+	scheduler.call(&"reset")
+	fired.clear()
+	scheduler.call(&"advance", scheduler_player, 30.0, 0.0)
+	assert(fired == [2, 1], "native smoke: reverse trigger range order")
 	scheduler.call(&"reset")
 	fired.clear()
 	scheduler.call(&"schedule_group", &"g_7", 0.25, scheduler_player)

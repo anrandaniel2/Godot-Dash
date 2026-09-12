@@ -63,7 +63,6 @@ class NativeTriggerRuntime : public RefCounted {
 		int64_t gd_id = 0;
 		Dictionary properties;
 		bool activated = false;
-		std::vector<StringName> groups;
 	};
 	struct Event {
 		double due = 0.0;
@@ -73,10 +72,19 @@ class NativeTriggerRuntime : public RefCounted {
 	};
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
+	// Direct group -> record index lookup makes spawn/event dispatch proportional
+	// to the target group, not to every trigger in a 100k-object level.
+	std::map<String, std::vector<size_t>> group_index;
+	// Min-heap ordered by due time/source sequence. Inserting a spawn event is
+	// O(log n), replacing the old full stable_sort after every insertion.
 	std::vector<Event> events;
 	double clock = 0.0;
 	uint64_t event_sequence = 0;
 	bool index_dirty = false;
+
+	static bool event_later(const Event &a, const Event &b) {
+		return a.due == b.due ? a.sequence > b.sequence : a.due > b.due;
+	}
 
 	void ensure_index() {
 		if (!index_dirty) return;
@@ -114,6 +122,7 @@ protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger);
+		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("advance", "player", "previous_x", "current_x"), &NativeTriggerRuntime::advance);
 		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
 		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
@@ -129,7 +138,7 @@ protected:
 
 public:
 	void clear() {
-		records.clear(); x_order.clear(); events.clear(); clock = 0.0;
+		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false;
 	}
 	int64_t register_trigger(Object *trigger, double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
@@ -138,27 +147,35 @@ public:
 		record.x = x; record.object = trigger->get_instance_id();
 		record.flags = static_cast<int32_t>(flags); record.source_order = source_order;
 		record.gd_id = gd_id; record.properties = properties;
-		for (int64_t i = 0; i < groups.size(); ++i) record.groups.push_back(StringName(groups[i]));
+		const size_t index = records.size();
+		for (int64_t i = 0; i < groups.size(); ++i)
+			group_index[String(groups[i])].push_back(index);
 		records.push_back(std::move(record)); index_dirty = true;
-		return static_cast<int64_t>(records.size() - 1);
+		return static_cast<int64_t>(index);
+	}
+	void finalize() {
+		ensure_index();
+		records.shrink_to_fit();
+		x_order.shrink_to_fit();
+		for (auto &entry : group_index) entry.second.shrink_to_fit();
 	}
 	void advance(Object *player, double previous_x, double current_x) {
 		if (!player || Math::is_equal_approx(previous_x, current_x)) return;
 		ensure_index();
+		auto index_before_value = [&](size_t index, double value) { return records[index].x < value; };
 		if (current_x > previous_x) {
-			for (size_t idx : x_order) {
-				const double x = records[idx].x;
-				if (x <= previous_x) continue;
-				if (x > current_x) break;
-				activate(idx, player);
-			}
+			// (previous_x, current_x] in O(log n + crossed), rather than scanning
+			// every trigger from the start once per player and physics frame.
+			auto first = std::upper_bound(x_order.begin(), x_order.end(), previous_x,
+				[&](double value, size_t index) { return value < records[index].x; });
+			auto last = std::upper_bound(x_order.begin(), x_order.end(), current_x,
+				[&](double value, size_t index) { return value < records[index].x; });
+			for (auto it = first; it != last; ++it) activate(*it, player);
 		} else {
-			for (auto it = x_order.rbegin(); it != x_order.rend(); ++it) {
-				const double x = records[*it].x;
-				if (x >= previous_x) continue;
-				if (x < current_x) break;
-				activate(*it, player);
-			}
+			// [current_x, previous_x), preserving descending spatial/source order.
+			auto first = std::lower_bound(x_order.begin(), x_order.end(), current_x, index_before_value);
+			auto last = std::lower_bound(x_order.begin(), x_order.end(), previous_x, index_before_value);
+			for (auto it = std::make_reverse_iterator(last); it != std::make_reverse_iterator(first); ++it) activate(*it, player);
 		}
 	}
 	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
@@ -170,27 +187,23 @@ public:
 		event.group = group;
 		event.player = player->get_instance_id();
 		events.push_back(std::move(event));
-		std::stable_sort(events.begin(), events.end(), [](const Event &a, const Event &b) {
-			return a.due == b.due ? a.sequence < b.sequence : a.due < b.due;
-		});
+		std::push_heap(events.begin(), events.end(), event_later);
 	}
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
-		// Detach this tick's due batch before dispatch. Spawn chains append to the
-		// live queue and are deliberately handled by the bridge's following
-		// zero-delta flush; malformed zero-delay cycles therefore yield between
-		// bounded batches instead of invalidating this vector or hanging.
-		size_t due_count = 0;
-		while (due_count < events.size() && events[due_count].due <= clock && due_count < 10000) ++due_count;
-		if (!due_count) return;
-		const std::vector<Event> due(events.begin(), events.begin() + due_count);
-		events.erase(events.begin(), events.begin() + due_count);
-		for (const Event &event : due) {
+		int64_t dispatched = 0;
+		while (!events.empty() && events.front().due <= clock && dispatched < 10000) {
+			std::pop_heap(events.begin(), events.end(), event_later);
+			const Event event = std::move(events.back());
+			events.pop_back();
 			Object *player = ObjectDB::get_instance(event.player);
-			if (!player) continue;
-			for (size_t i = 0; i < records.size(); ++i) {
-				if (std::find(records[i].groups.begin(), records[i].groups.end(), event.group) != records[i].groups.end()) activate(i, player, true);
+			if (player) {
+				auto group = group_index.find(String(event.group));
+				if (group != group_index.end()) {
+					for (size_t index : group->second) activate(index, player, true);
+				}
 			}
+			++dispatched;
 		}
 	}
 	void reset() {
@@ -272,9 +285,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.0.0 / packed trigger scheduler / lossless GD parser / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 1.1.0 / indexed trigger scheduler / lossless GD parser / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 10; }
+	int64_t version() const { return 11; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
