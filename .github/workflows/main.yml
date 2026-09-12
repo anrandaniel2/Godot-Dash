@@ -202,12 +202,14 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           if [ $status -ne 0 ]; then
+            # Nothing in the failure path may abort early (a grep with no
+            # matches returns 1 and would trip set -e).
+            set +e
             echo "scons exited with $status"
             echo "disk after failure:"; df -h / | tail -1
             free -m | head -2
             sanitize() { sed 's/\x1b\[[0-9;]*[mGK]//g' | iconv -f UTF-8 -t UTF-8 -c | cut -c1-200; }
-            # Small, sanitized annotations (check-runs API readable).
-            err_summary=$(grep -aiE "error:|fatal error|killed|no space|undefined reference|internal compiler|Argument list" scons_build.log | sanitize | head -n 10)
+            err_summary=$(grep -aiE "error:|fatal error|killed|no space|undefined|internal compiler|Exception" scons_build.log | sanitize | head -n 10)
             tail_lines=$(tail -n 20 scons_build.log | sanitize)
             esc() { local s="$1"; s=${s//'%'/'%25'}; s=${s//$'\r'/'%0D'}; printf '%s' "${s//$'\n'/'%0A'}"; }
             if [ -n "$err_summary" ]; then
@@ -242,20 +244,37 @@ jobs:
             || true
             exit 1
           fi
-          OUT="bin/libgodot_android.template_debug.arm64.so"
-          if [ ! -f "$OUT" ]; then
-            echo "ERROR: expected engine library $OUT is missing; bin/ contains:"
-            ls -la bin/ || true
+          # The scons target name carries the platform suffix
+          # (bin/libgodot.android.template_debug.arm64.so); scons also
+          # registers a Move of the built library into the gradle template
+          # tree as libgodot_android.so. Accept either location and
+          # canonicalize the file name for the artifact so the APK job can
+          # splice it into the AAR entry of the stock template
+          # (jni/arm64-v8a/libgodot_android.template_debug.arm64.so).
+          ENGINE_SO=""
+          for CAND in \
+            "bin/libgodot.android.template_debug.arm64.so" \
+            "platform/android/java/lib/libs/debug/arm64-v8a/libgodot_android.so"; do
+            if [ -f "$CAND" ]; then ENGINE_SO="$CAND"; break; fi
+          done
+          if [ -z "$ENGINE_SO" ]; then
+            echo "ERROR: engine library not found after a successful scons run."
+            echo "--- bin/ ---"; ls -la bin/ || true
+            echo "--- java libs ---"; ls -laR platform/android/java/lib/libs/ 2>/dev/null || true
+            echo "--- any libgodot .so ---"
+            find . -name 'libgodot*.so' -not -path './.git/*' 2>/dev/null | head || true
+            echo "::error title=Engine library not found::scons succeeded but no libgodot .so was found in bin/ or platform/android/java/lib/libs/"
             exit 1
           fi
-          echo "slim android engine: $(stat -c%s "$OUT") bytes"
-          ls -lh "$OUT"
+          echo "slim android engine: $ENGINE_SO ($(stat -c%s "$ENGINE_SO") bytes)"
+          ls -lh "$ENGINE_SO"
+          cp "$ENGINE_SO" "$GITHUB_WORKSPACE/libgodot_android.template_debug.arm64.so"
 
       - name: Upload slim Android engine library
         uses: actions/upload-artifact@v4
         with:
           name: slim-godot-android-arm64
-          path: godot-src/bin/libgodot_android.template_debug.arm64.so
+          path: libgodot_android.template_debug.arm64.so
           if-no-files-found: error
           retention-days: 7
 
@@ -302,10 +321,11 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           if [ $status -ne 0 ]; then
+            set +e # nothing in the failure path may abort early
             echo "scons exited with $status"
             df -h / | tail -1
             sanitize() { sed 's/\x1b\[[0-9;]*[mGK]//g' | iconv -f UTF-8 -t UTF-8 -c | cut -c1-200; }
-            err_summary=$(grep -aiE "error:|fatal error|killed|no space|undefined reference|internal compiler|Argument list" scons_build.log | sanitize | head -n 10)
+            err_summary=$(grep -aiE "error:|fatal error|killed|no space|undefined|internal compiler|Exception" scons_build.log | sanitize | head -n 10)
             tail_lines=$(tail -n 20 scons_build.log | sanitize)
             esc() { local s="$1"; s=${s//'%'/'%25'}; s=${s//$'\r'/'%0D'}; printf '%s' "${s//$'\n'/'%0A'}"; }
             if [ -n "$err_summary" ]; then
