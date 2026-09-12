@@ -138,7 +138,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 8, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 9, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -149,6 +149,15 @@ func _test_native_core() -> void:
 	assert(parsed_online.get("malformed_objects", 0) == 0, "native smoke: valid objects marked malformed")
 	assert(parsed_online.get("min_x", 0.0) == 30.0 and parsed_online.get("max_x", 0.0) == 60.0, "native smoke: online parser bounds failed")
 	assert(parsed_online.get("objects", [])[1].get("1") == "8", "native smoke: online parser lost source order")
+	# Empty trigger values must remain attached to their key. Dropping empties
+	# shifts the rest of the comma stream and can turn duration/group/activation
+	# fields into unrelated values.
+	var lossless_pairs: Dictionary = native.call(&"parse_gd_pairs", "1,901,51,,10,2.5,56,1")
+	assert(lossless_pairs == {"1": "901", "51": "", "10": "2.5", "56": "1"}, "native smoke: empty GD value shifted trigger properties")
+	var malformed: Dictionary = native.call(&"parse_online_level", "kA2,0;1,901,2,nope,3,30;1,35,2,60,3,30,51;")
+	assert(int(malformed.get("valid_objects", 0)) == 0, "native smoke: malformed objects accepted")
+	assert(int(malformed.get("invalid_numeric_objects", 0)) == 1, "native smoke: invalid numeric diagnostic missing")
+	assert(int(malformed.get("odd_pair_chunks", 0)) == 1, "native smoke: odd trigger pair diagnostic missing")
 	# Exercise the actual typed GDScript/C++ boundary, not only the C++ return
 	# value. Native dictionaries do not carry GDScript's typed Dictionary
 	# metadata, so the converter must accept them without a typed assignment.

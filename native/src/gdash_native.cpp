@@ -102,19 +102,48 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 0.8.0 / hierarchy-correct section culling / robust online parser / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 0.9.0 / lossless GD pair parser / native trigger groundwork / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 8; }
+	int64_t version() const { return 9; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
-	Dictionary parse_gd_pairs(const String &chunk) const {
+	// Geometry Dash values are allowed to be empty. String::split(..., false)
+	// discarded those fields and shifted every following key onto the previous
+	// value, silently changing trigger semantics. Scan pairs directly so empty
+	// values retain their position and large levels avoid a temporary token
+	// array for every object.
+	Dictionary parse_pairs(const String &chunk, int64_t *odd_fields = nullptr,
+			int64_t *duplicate_keys = nullptr, int64_t *empty_keys = nullptr) const {
 		Dictionary result;
-		const PackedStringArray fields = chunk.split(",", false);
-		const int64_t end = fields.size() - 1;
-		for (int64_t i = 0; i < end; i += 2) {
-			result[fields[i]] = fields[i + 1];
+		String key;
+		bool expecting_key = true;
+		int64_t token_start = 0;
+		const int64_t length = chunk.length();
+		for (int64_t cursor = 0; cursor <= length; ++cursor) {
+			if (cursor < length && chunk[cursor] != ',') continue;
+			const String token = chunk.substr(token_start, cursor - token_start);
+			token_start = cursor + 1;
+			if (expecting_key) {
+				key = token.strip_edges();
+				expecting_key = false;
+			} else {
+				if (key.is_empty()) {
+					if (empty_keys) ++*empty_keys;
+				} else {
+					if (result.has(key) && duplicate_keys) ++*duplicate_keys;
+					// Last value wins, matching Geometry Dash and the old Dictionary
+					// assignment behavior for duplicate properties.
+					result[key] = token;
+				}
+				expecting_key = true;
+			}
 		}
+		if (!expecting_key && odd_fields) ++*odd_fields;
 		return result;
+	}
+
+	Dictionary parse_gd_pairs(const String &chunk) const {
+		return parse_pairs(chunk);
 	}
 
 	// Parses one complete decompressed server level in a single native pass.
@@ -133,28 +162,61 @@ public:
 			return parsed;
 		}
 
-		parsed["header"] = parse_gd_pairs(chunks[0]);
+		int64_t odd_pair_chunks = 0;
+		int64_t duplicate_keys = 0;
+		int64_t empty_keys = 0;
+		int64_t header_odd = 0;
+		parsed["header"] = parse_pairs(chunks[0], &header_odd, &duplicate_keys, &empty_keys);
+		odd_pair_chunks += header_odd;
+		PackedByteArray object_validity;
 		int64_t valid_objects = 0;
 		int64_t malformed_objects = 0;
+		int64_t invalid_numeric_objects = 0;
+		Dictionary object_id_counts;
 		double min_x = INFINITY;
 		double max_x = -INFINITY;
 		for (int64_t i = 1; i < chunks.size(); ++i) {
 			if (chunks[i].strip_edges().is_empty()) continue;
-			const Dictionary properties = parse_gd_pairs(chunks[i]);
+			int64_t chunk_odd = 0;
+			const Dictionary properties = parse_pairs(chunks[i], &chunk_odd, &duplicate_keys, &empty_keys);
+			odd_pair_chunks += chunk_odd;
 			objects.append(properties);
-			if (!properties.has("1") || !properties.has("2") || !properties.has("3")) {
+			object_validity.append(0);
+			if (chunk_odd != 0 || !properties.has("1") || !properties.has("2") || !properties.has("3")) {
+				++malformed_objects;
+				continue;
+			}
+			const String id_text = String(properties["1"]).strip_edges();
+			const String x_text = String(properties["2"]).strip_edges();
+			const String y_text = String(properties["3"]).strip_edges();
+			if (!id_text.is_valid_int() || !x_text.is_valid_float() || !y_text.is_valid_float()) {
+				++invalid_numeric_objects;
+				++malformed_objects;
+				continue;
+			}
+			const int64_t object_id = id_text.to_int();
+			if (object_id <= 0) {
+				++invalid_numeric_objects;
 				++malformed_objects;
 				continue;
 			}
 			++valid_objects;
-			const double x = String(properties["2"]).to_float();
+			object_validity.set(object_validity.size() - 1, 1);
+			object_id_counts[object_id] = static_cast<int64_t>(object_id_counts.get(object_id, 0)) + 1;
+			const double x = x_text.to_float();
 			min_x = std::min(min_x, x);
 			max_x = std::max(max_x, x);
 		}
 		parsed["objects"] = objects;
+		parsed["object_validity"] = object_validity;
 		parsed["source_chunks"] = chunks.size() - 1;
 		parsed["valid_objects"] = valid_objects;
 		parsed["malformed_objects"] = malformed_objects;
+		parsed["invalid_numeric_objects"] = invalid_numeric_objects;
+		parsed["odd_pair_chunks"] = odd_pair_chunks;
+		parsed["duplicate_keys"] = duplicate_keys;
+		parsed["empty_keys"] = empty_keys;
+		parsed["object_id_counts"] = object_id_counts;
 		parsed["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
 		parsed["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
 		return parsed;

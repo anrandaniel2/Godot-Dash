@@ -285,15 +285,19 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var chunks: PackedStringArray = level_string.split(";", false)
 	var header: Dictionary = _parse_pairs(chunks[0]) if chunks.size() > 0 else { }
 	var native_objects: Array = []
+	var native_validity := PackedByteArray()
 	if use_online_parser:
 		var native := NativeCore.backend()
 		if native != null and native.has_method(&"parse_online_level"):
 			var parsed: Dictionary = native.call(&"parse_online_level", level_string)
 			header = parsed.get("header", { })
 			native_objects = parsed.get("objects", [])
-			print("[RobTop] C++ parse: chars=%d header_keys=%d chunks=%d valid=%d malformed=%d x=%s..%s" % [
+			native_validity = parsed.get("object_validity", PackedByteArray())
+			print("[RobTop] C++ parse: chars=%d header_keys=%d chunks=%d valid=%d malformed=%d invalid_numeric=%d odd_pairs=%d duplicate_keys=%d empty_keys=%d x=%s..%s" % [
 				level_string.length(), header.size(), int(parsed.get("source_chunks", 0)),
 				int(parsed.get("valid_objects", 0)), int(parsed.get("malformed_objects", 0)),
+				int(parsed.get("invalid_numeric_objects", 0)), int(parsed.get("odd_pair_chunks", 0)),
+				int(parsed.get("duplicate_keys", 0)), int(parsed.get("empty_keys", 0)),
 				str(parsed.get("min_x", 0.0)), str(parsed.get("max_x", 0.0)),
 			])
 			if native_objects.size() != maxi(0, chunks.size() - 1):
@@ -327,6 +331,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		# the loop continues with the next.
 		var properties: Dictionary
 		if use_online_parser and chunk_idx - 1 < native_objects.size():
+			# Native validity is aligned one-to-one with source chunks. Never
+			# reinterpret a malformed numeric coordinate as zero or an odd final
+			# trigger key as a valid object.
+			if chunk_idx - 1 < native_validity.size() and native_validity[chunk_idx - 1] == 0:
+				continue
 			properties = native_objects[chunk_idx - 1]
 		else:
 			properties = _parse_pairs(chunk)
