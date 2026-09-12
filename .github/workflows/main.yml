@@ -149,10 +149,14 @@ jobs:
           fetch-depth: 1
 
       - name: Free disk space
-        # godot-src + NDK + build objects + scons cache is ~9 GB; drop the
+        # godot-src + NDK + build objects + scons cache is ~9 GB; reclaim the
+        # big GitHub-runner payloads an engine build never uses, drop the
         # shallow .git (~300 MB) and preinstalled NDKs we do not use.
         run: |
+          set -euo pipefail
           rm -rf godot-src/.git
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf "$ANDROID_HOME/emulator" "$ANDROID_HOME/system-images" || true
           for d in "$ANDROID_HOME"/ndk/*; do
             [ "$(basename "$d")" = "${{ env.ENGINE_NDK_VERSION }}" ] || rm -rf "$d"
           done
@@ -187,7 +191,24 @@ jobs:
           export SCONS_CACHE="$GITHUB_WORKSPACE/engine-scons-cache"
           export SCONS_CACHE_LIMIT=2500
           cd godot-src
-          scons platform=android target=template_debug arch=arm64 $SLIM_ENGINE_FLAGS -j3
+          echo "disk before build:"; df -h / | tail -1
+          set +e
+          scons platform=android target=template_debug arch=arm64 $SLIM_ENGINE_FLAGS -j3 2>&1 | tee scons_build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ $status -ne 0 ]; then
+            echo "scons exited with $status"
+            echo "disk after failure:"; df -h / | tail -1
+            free -m | head -2
+            # Surface the log tail as a check annotation: the raw job logs
+            # are not always reachable from the sandbox.
+            details=$(tail -n 60 scons_build.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Slim Android engine build failed::${details}"
+            exit 1
+          fi
           OUT="bin/libgodot_android.template_debug.arm64.so"
           if [ ! -f "$OUT" ]; then
             echo "ERROR: expected engine library $OUT is missing; bin/ contains:"
@@ -238,7 +259,20 @@ jobs:
           export SCONS_CACHE="$GITHUB_WORKSPACE/engine-scons-cache"
           export SCONS_CACHE_LIMIT=2500
           cd godot-src
-          scons platform=linuxbsd target=template_debug arch=x86_64 $SLIM_ENGINE_FLAGS -j3
+          set +e
+          scons platform=linuxbsd target=template_debug arch=x86_64 $SLIM_ENGINE_FLAGS -j3 2>&1 | tee scons_build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ $status -ne 0 ]; then
+            echo "scons exited with $status"
+            df -h / | tail -1
+            details=$(tail -n 60 scons_build.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Slim Linux engine build failed::${details}"
+            exit 1
+          fi
           OUT="bin/godot.linuxbsd.template_debug.x86_64"
           if [ ! -f "$OUT" ]; then
             echo "ERROR: expected engine binary $OUT is missing; bin/ contains:"
