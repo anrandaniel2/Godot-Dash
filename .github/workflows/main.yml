@@ -139,6 +139,9 @@ jobs:
   slim-engine-android:
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout Godot engine source
         uses: actions/checkout@v4
@@ -185,6 +188,8 @@ jobs:
           echo "NDK ready: $NDK_DIR"
 
       - name: Build slim Android arm64 template library
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -200,13 +205,41 @@ jobs:
             echo "scons exited with $status"
             echo "disk after failure:"; df -h / | tail -1
             free -m | head -2
-            # Surface the log tail as a check annotation: the raw job logs
-            # are not always reachable from the sandbox.
-            details=$(tail -n 60 scons_build.log)
-            details=${details//'%'/'%25'}
-            details=${details//$'\r'/'%0D'}
-            details=${details//$'\n'/'%0A'}
-            echo "::error title=Slim Android engine build failed::${details}"
+            sanitize() { sed 's/\x1b\[[0-9;]*[mGK]//g' | iconv -f UTF-8 -t UTF-8 -c | cut -c1-200; }
+            # Small, sanitized annotations (check-runs API readable).
+            err_summary=$(grep -aiE "error:|fatal error|killed|no space|undefined reference|internal compiler|Argument list" scons_build.log | sanitize | head -n 10)
+            tail_lines=$(tail -n 20 scons_build.log | sanitize)
+            esc() { local s="$1"; s=${s//'%'/'%25'}; s=${s//$'\r'/'%0D'}; printf '%s' "${s//$'\n'/'%0A'}"; }
+            if [ -n "$err_summary" ]; then
+              echo "::error title=Scons errors::$(esc "$err_summary")"
+            fi
+            echo "::error title=Scons tail::$(esc "$tail_lines")"
+            {
+              echo "### scons failure tail (slim-engine-android)"
+              echo '```text'
+              tail -n 40 scons_build.log | sanitize
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            # Durable, API-readable record: the raw job logs live on Azure
+            # blob storage this sandbox cannot reach, so publish the full
+            # tail as a repository issue (read via the issues API).
+            {
+              echo "## Slim Android engine build failed"
+              echo ""
+              echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              echo ""
+              echo '```text'
+              tail -n 300 scons_build.log | sed 's/\x1b\[[0-9;]*[mGK]//g'
+              echo '```'
+            } > /tmp/issue_body.md
+            gh issue create \
+              --title "slim-engine-android build failed (run $GITHUB_RUN_ID)" \
+              --body-file /tmp/issue_body.md \
+              --label ci-failure 2>/dev/null \
+            || gh issue create \
+              --title "slim-engine-android build failed (run $GITHUB_RUN_ID)" \
+              --body-file /tmp/issue_body.md \
+            || true
             exit 1
           fi
           OUT="bin/libgodot_android.template_debug.arm64.so"
@@ -229,6 +262,9 @@ jobs:
   slim-engine-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout Godot engine source
         uses: actions/checkout@v4
@@ -253,6 +289,8 @@ jobs:
           key: slim-engine-linux-${{ env.GODOT_SRC_REF }}-flags1
 
       - name: Build slim Linux x86_64 template
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -266,11 +304,37 @@ jobs:
           if [ $status -ne 0 ]; then
             echo "scons exited with $status"
             df -h / | tail -1
-            details=$(tail -n 60 scons_build.log)
-            details=${details//'%'/'%25'}
-            details=${details//$'\r'/'%0D'}
-            details=${details//$'\n'/'%0A'}
-            echo "::error title=Slim Linux engine build failed::${details}"
+            sanitize() { sed 's/\x1b\[[0-9;]*[mGK]//g' | iconv -f UTF-8 -t UTF-8 -c | cut -c1-200; }
+            err_summary=$(grep -aiE "error:|fatal error|killed|no space|undefined reference|internal compiler|Argument list" scons_build.log | sanitize | head -n 10)
+            tail_lines=$(tail -n 20 scons_build.log | sanitize)
+            esc() { local s="$1"; s=${s//'%'/'%25'}; s=${s//$'\r'/'%0D'}; printf '%s' "${s//$'\n'/'%0A'}"; }
+            if [ -n "$err_summary" ]; then
+              echo "::error title=Scons errors::$(esc "$err_summary")"
+            fi
+            echo "::error title=Scons tail::$(esc "$tail_lines")"
+            {
+              echo "### scons failure tail (slim-engine-linux)"
+              echo '```text'
+              tail -n 40 scons_build.log | sanitize
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "## Slim Linux engine build failed"
+              echo ""
+              echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              echo ""
+              echo '```text'
+              tail -n 300 scons_build.log | sed 's/\x1b\[[0-9;]*[mGK]//g'
+              echo '```'
+            } > /tmp/issue_body.md
+            gh issue create \
+              --title "slim-engine-linux build failed (run $GITHUB_RUN_ID)" \
+              --body-file /tmp/issue_body.md \
+              --label ci-failure 2>/dev/null \
+            || gh issue create \
+              --title "slim-engine-linux build failed (run $GITHUB_RUN_ID)" \
+              --body-file /tmp/issue_body.md \
+            || true
             exit 1
           fi
           OUT="bin/godot.linuxbsd.template_debug.x86_64"
