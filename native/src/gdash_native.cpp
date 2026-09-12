@@ -367,9 +367,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.3.0 / NativeLevelRuntime / profiled LTO build / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 1.4.0 / retained section renderer / NativeLevelRuntime / profiled LTO / api 4.7");
 	}
-	int64_t version() const { return 13; }
+	int64_t version() const { return 14; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -419,31 +419,41 @@ public:
 	Dictionary parse_online_level(const String &level_string) const {
 		Dictionary parsed;
 		Array objects;
-		const PackedStringArray chunks = level_string.split(";", false);
-		if (chunks.is_empty()) {
-			parsed["header"] = Dictionary();
-			parsed["objects"] = objects;
-			parsed["source_chunks"] = 0;
-			return parsed;
-		}
-
+		PackedByteArray object_validity;
 		int64_t odd_pair_chunks = 0;
 		int64_t duplicate_keys = 0;
 		int64_t empty_keys = 0;
-		int64_t header_odd = 0;
-		parsed["header"] = parse_pairs(chunks[0], &header_odd, &duplicate_keys, &empty_keys);
-		odd_pair_chunks += header_odd;
-		PackedByteArray object_validity;
 		int64_t valid_objects = 0;
 		int64_t malformed_objects = 0;
 		int64_t invalid_numeric_objects = 0;
+		int64_t source_chunks = 0;
 		Dictionary object_id_counts;
+		Dictionary header;
 		double min_x = INFINITY;
 		double max_x = -INFINITY;
-		for (int64_t i = 1; i < chunks.size(); ++i) {
-			if (chunks[i].strip_edges().is_empty()) continue;
+		bool have_header = false;
+
+		// Scan semicolon chunks directly. String::split retained a second complete
+		// array of object strings until the entire parse ended, peaking badly on
+		// levels with hundreds of thousands of placements.
+		int64_t chunk_start = 0;
+		const int64_t length = level_string.length();
+		for (int64_t cursor = 0; cursor <= length; ++cursor) {
+			if (cursor < length && level_string[cursor] != ';') continue;
+			const String chunk = level_string.substr(chunk_start, cursor - chunk_start);
+			chunk_start = cursor + 1;
+			if (chunk.strip_edges().is_empty()) continue;
+			if (!have_header) {
+				int64_t header_odd = 0;
+				header = parse_pairs(chunk, &header_odd, &duplicate_keys, &empty_keys);
+				odd_pair_chunks += header_odd;
+				have_header = true;
+				continue;
+			}
+
+			++source_chunks;
 			int64_t chunk_odd = 0;
-			const Dictionary properties = parse_pairs(chunks[i], &chunk_odd, &duplicate_keys, &empty_keys);
+			const Dictionary properties = parse_pairs(chunk, &chunk_odd, &duplicate_keys, &empty_keys);
 			odd_pair_chunks += chunk_odd;
 			objects.append(properties);
 			object_validity.append(0);
@@ -472,9 +482,11 @@ public:
 			min_x = std::min(min_x, x);
 			max_x = std::max(max_x, x);
 		}
+
+		parsed["header"] = header;
 		parsed["objects"] = objects;
 		parsed["object_validity"] = object_validity;
-		parsed["source_chunks"] = chunks.size() - 1;
+		parsed["source_chunks"] = source_chunks;
 		parsed["valid_objects"] = valid_objects;
 		parsed["malformed_objects"] = malformed_objects;
 		parsed["invalid_numeric_objects"] = invalid_numeric_objects;
@@ -921,7 +933,6 @@ class NativeDecorationCanvas : public Node2D {
 		Rect2 region;
 		Transform2D transform;
 		Color color;
-		float origin_x = 0.0f;
 		float base_alpha = 1.0f;
 		float hsv[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 		bool has_hsv = false;
@@ -938,11 +949,28 @@ class NativeDecorationCanvas : public Node2D {
 	double max_local_radius = 0.0;
 	int64_t first_bucket = INT64_MIN;
 	int64_t last_bucket = INT64_MAX;
-	Rect2 local_bounds;
-	Transform2D last_viewport_transform;
 	Vector2 last_viewport_size;
 	bool view_initialized = false;
 	int64_t last_drawn_items = 0;
+
+	bool update_view_range() {
+		if (!cull || !is_inside_tree()) return false;
+		const Transform2D from_screen = get_global_transform_with_canvas().affine_inverse();
+		const Vector2 screen_size = get_viewport_rect().size;
+		Rect2 local_view(from_screen.xform(Vector2()), Vector2());
+		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0.0)));
+		local_view = local_view.expand(from_screen.xform(screen_size));
+		local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen_size.y)));
+		local_view = local_view.grow(max_local_radius + cull_margin);
+		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
+		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
+		const bool changed = !view_initialized || first != first_bucket || last != last_bucket || screen_size != last_viewport_size;
+		first_bucket = first;
+		last_bucket = last;
+		last_viewport_size = screen_size;
+		view_initialized = true;
+		return changed;
+	}
 
 protected:
 	static void _bind_methods() {
@@ -958,37 +986,18 @@ protected:
 
 	void _notification(int what) {
 		if (what == Node::NOTIFICATION_PROCESS && cull && is_inside_tree()) {
-			// A retained CanvasItem draw list does not otherwise know that a sprite
-			// inside it crossed the screen edge. Rebuild only when the actual
-			// world-to-viewport transform or viewport size changes.
-			const Transform2D current_transform = get_global_transform_with_canvas();
-			const Vector2 current_size = get_viewport_rect().size;
-			if (!view_initialized || current_transform != last_viewport_transform || current_size != last_viewport_size) {
-				last_viewport_transform = current_transform;
-				last_viewport_size = current_size;
-				view_initialized = true;
-				queue_redraw();
-			}
+			// Canvas commands are retained and automatically transformed/clipped by
+			// RenderingServer. Rebuild only when the conservative section range
+			// changes, not for every pixel of camera movement.
+			if (update_view_range()) queue_redraw();
 			return;
 		}
 		if (what != CanvasItem::NOTIFICATION_DRAW) return;
 
 		last_drawn_items = 0;
-		// get_viewport_transform() only maps the Canvas to the Viewport. It omits
-		// this node, its DecorationBatch parent, and the Level's ground offset.
-		// That made visible sprites look off-screen to C++ and was the main cause
-		// of artwork missing only in native builds.
-		const Transform2D to_screen = get_global_transform_with_canvas();
-		const Rect2 screen(Vector2(), get_viewport_rect().size);
-		if (cull && !local_bounds.has_area()) return;
-		if (cull && !screen.intersects(to_screen.xform(local_bounds), true)) return;
-
+		if (cull && !view_initialized) update_view_range();
 		auto draw_record = [&](const Record &record) {
 			const Rect2 quad(-record.region.size * 0.5, record.region.size);
-			if (cull) {
-				const Rect2 viewport_bounds = (to_screen * record.transform).xform(quad);
-				if (!screen.intersects(viewport_bounds, true)) return;
-			}
 			draw_set_transform_matrix(record.transform);
 			draw_texture_rect_region(record.texture, quad, record.region, record.color);
 			++last_drawn_items;
@@ -997,19 +1006,12 @@ protected:
 		if (!cull) {
 			for (const Record &record : records) draw_record(record);
 		} else {
-			// Convert all four viewport corners to local space. Rotation, zoom,
-			// level offsets and moved/rotated group batches are therefore handled
-			// conservatively before the exact per-sprite screen test.
-			const Transform2D from_screen = to_screen.affine_inverse();
-			Rect2 local_view(from_screen.xform(Vector2()), Vector2());
-			local_view = local_view.expand(from_screen.xform(Vector2(screen.size.x, 0.0)));
-			local_view = local_view.expand(from_screen.xform(screen.size));
-			local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen.size.y)));
-			local_view = local_view.grow(max_local_radius + cull_margin);
-			const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
-			const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
-			auto section = sections.lower_bound(first);
-			while (section != sections.end() && section->first <= last) {
+			// Objects in the selected sections become retained canvas commands.
+			// Off-screen quads are clipped by RenderingServer and never rasterized;
+			// avoiding CPU command regeneration each frame is far cheaper than an
+			// exact AABB test and redraw for every scrolling pixel.
+			auto section = sections.lower_bound(first_bucket);
+			while (section != sections.end() && section->first <= last_bucket) {
 				for (size_t index : section->second) draw_record(records[index]);
 				++section;
 			}
@@ -1028,17 +1030,14 @@ public:
 		records.clear();
 		sections.clear();
 		records.reserve(static_cast<size_t>(count));
-		local_bounds = Rect2();
 		max_local_radius = 0.0;
 		bucket_width = width > 0.0 ? width : 1024.0;
-		bool first_bounds = true;
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
 			record.texture = textures[i];
 			record.region = regions[i];
 			record.transform = transforms[i];
 			record.color = colors[i];
-			record.origin_x = origins[i];
 			record.base_alpha = base_alphas[i];
 			if (hsv_data.size() >= (i + 1) * 5) {
 				record.has_hsv = hsv_data[i * 5 + 4] >= 0.0f;
@@ -1046,15 +1045,13 @@ public:
 			}
 			const Rect2 quad(-record.region.size * 0.5, record.region.size);
 			const Rect2 bounds = record.transform.xform(quad);
-			local_bounds = first_bounds ? bounds : local_bounds.merge(bounds);
-			first_bounds = false;
-			// Radius is conservative under rotation. It expands the local section
-			// query, while the exact screen AABB below prevents off-screen draws.
+			// Radius conservatively includes artwork whose centre lies just outside
+			// the selected section range.
 			const Vector2 extent = bounds.size * 0.5;
 			max_local_radius = std::max(max_local_radius, static_cast<double>(extent.length()));
 			const size_t index = records.size();
 			records.push_back(record);
-			sections[static_cast<int64_t>(std::floor(record.origin_x / bucket_width))].push_back(index);
+			sections[static_cast<int64_t>(std::floor(origins[i] / bucket_width))].push_back(index);
 		}
 		cull = enable_culling;
 		cull_margin = std::max(0.0, margin);

@@ -252,6 +252,10 @@ func build() -> void:
 			_buckets[bucket].append(item)
 
 	_build_native_canvas(native)
+	if _native_canvas != null:
+		# Native channel indices supersede the Item-reference arrays. Retaining
+		# both duplicates one reference for every coloured sprite layer.
+		_by_channel.clear()
 	_built = true
 	_last_visible = PackedInt32Array()
 	# Native canvases poll their camera in C++; keep this GDScript callback only
@@ -326,13 +330,15 @@ func _request_redraw() -> void:
 ## This replaces the per-object [HSVWatcher] a node-based approach needs: one
 ## pass over an array instead of thousands of signal callbacks.
 func apply_channel_color(channel: StringName, color: Color) -> void:
-	# Only the items on this channel are touched, via the index built in
-	# build(); scanning the whole batch per channel does not scale.
+	# Native records use packed integer channel indices; do not retain or consult
+	# a parallel Array of Item references in that path.
+	if _native_canvas != null:
+		if _native_by_channel.has(channel):
+			_native_canvas.call(&"apply_channel_color", _native_by_channel[channel], color)
+		return
+	# GDScript fallback: only items on this channel are touched.
 	var affected: Array = _by_channel.get(channel, [])
 	if affected.is_empty():
-		return
-	if _native_canvas != null and _native_by_channel.has(channel):
-		_native_canvas.call(&"apply_channel_color", _native_by_channel[channel], color)
 		return
 	var changed: bool = false
 	for item: Item in affected:

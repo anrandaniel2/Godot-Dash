@@ -17,6 +17,8 @@ ARGUMENTS.setdefault("debug_symbols", "no")
 ARGUMENTS.setdefault("lto", "auto")
 ARGUMENTS.setdefault("disable_exceptions", "yes")
 ARGUMENTS.setdefault("deprecated", "no")
+ARGUMENTS.setdefault("use_hot_reload", "no")
+ARGUMENTS.setdefault("symbols_visibility", "hidden")
 
 env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
 env.Append(CPPPATH=["src/"])

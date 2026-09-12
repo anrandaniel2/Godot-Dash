@@ -282,10 +282,14 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	if report == null:
 		report = ImportReport.new()
 
-	var chunks: PackedStringArray = level_string.split(";", false)
-	var header: Dictionary = _parse_pairs(chunks[0]) if chunks.size() > 0 else { }
+	# Online levels are tokenized exactly once in C++. Previously GDScript also
+	# split the complete 100k+ object string just to drive this loop, retaining a
+	# second huge PackedStringArray alongside the native dictionaries.
+	var chunks := PackedStringArray()
+	var header: Dictionary = {}
 	var native_objects: Array = []
 	var native_validity := PackedByteArray()
+	var native_parsed := false
 	if use_online_parser:
 		var native := NativeCore.backend()
 		if native != null and native.has_method(&"parse_online_level"):
@@ -293,6 +297,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			header = parsed.get("header", { })
 			native_objects = parsed.get("objects", [])
 			native_validity = parsed.get("object_validity", PackedByteArray())
+			native_parsed = not header.is_empty() or int(parsed.get("source_chunks", 0)) > 0
 			print("[RobTop] C++ parse: chars=%d header_keys=%d chunks=%d valid=%d malformed=%d invalid_numeric=%d odd_pairs=%d duplicate_keys=%d empty_keys=%d x=%s..%s" % [
 				level_string.length(), header.size(), int(parsed.get("source_chunks", 0)),
 				int(parsed.get("valid_objects", 0)), int(parsed.get("malformed_objects", 0)),
@@ -300,8 +305,9 @@ static func _import_level_string(level_string: String, level_name: String, repor
 				int(parsed.get("duplicate_keys", 0)), int(parsed.get("empty_keys", 0)),
 				str(parsed.get("min_x", 0.0)), str(parsed.get("max_x", 0.0)),
 			])
-			if native_objects.size() != maxi(0, chunks.size() - 1):
-				push_warning("Online C++ parser retained %d/%d object chunks" % [native_objects.size(), maxi(0, chunks.size() - 1)])
+	if not native_parsed:
+		chunks = level_string.split(";", false)
+		header = _parse_pairs(chunks[0]) if not chunks.is_empty() else {}
 
 	# Per-channel appearance: colour, opacity (key 7) and the additive
 	# "blending" flag (key 5). This covers every channel an object can name -
@@ -326,21 +332,23 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var populated_groups: Dictionary[String, int] = { }
 	var targeted_groups: Dictionary[String, int] = { }
 
-	for chunk_idx in range(1, chunks.size()):
-		var chunk: String = chunks[chunk_idx]
-		if chunk.strip_edges().is_empty():
-			continue
+	var source_object_count := native_objects.size() if native_parsed else maxi(0, chunks.size() - 1)
+	for source_idx in source_object_count:
+		var chunk_idx := source_idx + 1 # Retain Geometry Dash source naming/order.
 		# Each object is isolated: a malformed or unsupported one is dropped and
 		# the loop continues with the next.
 		var properties: Dictionary
-		if use_online_parser and chunk_idx - 1 < native_objects.size():
+		if native_parsed:
 			# Native validity is aligned one-to-one with source chunks. Never
 			# reinterpret a malformed numeric coordinate as zero or an odd final
 			# trigger key as a valid object.
-			if chunk_idx - 1 < native_validity.size() and native_validity[chunk_idx - 1] == 0:
+			if source_idx < native_validity.size() and native_validity[source_idx] == 0:
 				continue
-			properties = native_objects[chunk_idx - 1]
+			properties = native_objects[source_idx]
 		else:
+			var chunk: String = chunks[chunk_idx]
+			if chunk.strip_edges().is_empty():
+				continue
 			properties = _parse_pairs(chunk)
 		if not properties.has(Prop.ID):
 			continue
