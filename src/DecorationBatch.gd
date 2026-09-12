@@ -141,7 +141,7 @@ var _cull: bool = false
 var _bounds: Rect2 = Rect2()
 ## C++ retained draw-command builder. Kept untyped so source/editor builds can
 ## parse without the optional platform library.
-var _native_canvas: Node2D
+var _native_canvas: Object
 var _native_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 
 
@@ -269,18 +269,16 @@ func build() -> void:
 ## and spatial rejection move native, so behaviour is unchanged.
 func _build_native_canvas(native: Object) -> void:
 	_native_by_channel.clear()
-	if _native_canvas != null:
-		_native_canvas.queue_free()
-		_native_canvas = null
+	# Dropping the Ref frees its RenderingServer RID immediately; no child Node is
+	# created or queued for deletion.
+	_native_canvas = null
 	for item: Item in items:
 		item.render_index = -1
-	if native == null or not ClassDB.class_exists(&"NativeDecorationCanvas"):
+	if native == null or not ClassDB.class_exists(&"NativeDecorationRenderer"):
 		return
-	_native_canvas = ClassDB.instantiate(&"NativeDecorationCanvas") as Node2D
+	_native_canvas = ClassDB.instantiate(&"NativeDecorationRenderer")
 	if _native_canvas == null:
 		return
-	_native_canvas.name = "NativeCanvas"
-	add_child(_native_canvas, false, INTERNAL_MODE_BACK)
 	var textures: Array = []
 	var regions: Array = []
 	var transforms: Array = []
@@ -313,10 +311,9 @@ func _build_native_canvas(native: Object) -> void:
 			channel_indices.append(index)
 			_native_by_channel[item.channel] = channel_indices
 	_native_canvas.call(
-			&"configure", textures, regions, transforms, colors, origins,
-			# Group-addressable batches in 2.2 levels are often tiny. Applying the
-			# old 48-item threshold made thousands of one-item offscreen batches draw
-			# continuously, which dominates levels such as Thinking Space II.
+			&"configure", self, textures, regions, transforms, colors, origins,
+			# Keep culling explicit for every node-free renderer, including tiny
+			# group-addressable batches common in Thinking Space II.
 			base_alphas, hsv_data, not items.is_empty(), BUCKET_WIDTH, CULL_MARGIN,
 	)
 

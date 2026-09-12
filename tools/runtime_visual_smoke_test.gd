@@ -20,7 +20,7 @@ const SAMPLE_RADIUS := 90
 var _frames := 0
 var _direct: Node2D
 var _batch: DecorationBatch
-var _native_canvas: Node2D
+var _native_canvas: Object
 var _level_runtime: Node
 
 
@@ -57,9 +57,10 @@ func _ready() -> void:
 		_batch = batch
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
 		if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
-			var native_canvas := batch.get_node_or_null("NativeCanvas")
+			var native_canvas: Object = batch.get("_native_canvas")
 			_native_canvas = native_canvas
-			assert(native_canvas != null, "native smoke: DecorationBatch did not create native canvas")
+			assert(native_canvas != null, "native smoke: DecorationBatch did not create native renderer")
+			assert(batch.get_node_or_null("NativeCanvas") == null, "native smoke: renderer still consumes a child Node")
 			assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
 			# The child is configured before its parent enters the SceneTree, so
 			# is_processing() is not meaningful yet. Pixel/count checks below prove
@@ -152,7 +153,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 15, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 16, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",

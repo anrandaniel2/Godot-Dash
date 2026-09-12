@@ -10,6 +10,7 @@
     "OS",
     "RefCounted",
     "ResourceLoader",
+    "RenderingServer",
     "SceneTree",
     "Script",
     "Shape2D",
