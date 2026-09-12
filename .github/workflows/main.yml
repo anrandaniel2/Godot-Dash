@@ -249,8 +249,7 @@ jobs:
           # registers a Move of the built library into the gradle template
           # tree as libgodot_android.so. Accept either location and
           # canonicalize the file name for the artifact so the APK job can
-          # splice it into the AAR entry of the stock template
-          # (jni/arm64-v8a/libgodot_android.template_debug.arm64.so).
+          # splice it into the template AAR's jni/arm64-v8a engine entry.
           ENGINE_SO=""
           for CAND in \
             "bin/libgodot.android.template_debug.arm64.so" \
@@ -584,10 +583,12 @@ jobs:
       # The gradle template installed above still contains the STOCK engine
       # library inside godot-lib.template_debug.aar (app/libs/debug/*.aar is a
       # gradle fileTree dependency; the exporter never touches the AAR at
-      # export time). Replace jni/arm64-v8a/libgodot_android.template_debug.
-      # arm64.so inside every debug AAR with the slim CI build so the exported
-      # APK runs the stripped engine, while the gradle/Java template and the
-      # editor-side export flow stay stock.
+      # export time). Replace the arm64 engine library inside every debug AAR
+      # with the slim CI build so the exported APK runs the stripped engine,
+      # while the gradle/Java template and the editor-side export flow stay
+      # stock. The entry name inside the AAR is whatever scons moved into the
+      # gradle tree (libgodot_android.so for 4.7.x) - discover it instead of
+      # assuming.
       - name: Download slim engine builds
         uses: actions/download-artifact@v4
         with:
@@ -603,51 +604,77 @@ jobs:
           import hashlib
           import os
           import sys
+          import traceback
           import zipfile
 
-          slim_path = "slim-engine/libgodot_android.template_debug.arm64.so"
-          entry = "jni/arm64-v8a/libgodot_android.template_debug.arm64.so"
-          with open(slim_path, "rb") as fh:
-              slim = fh.read()
-          slim_sha = hashlib.sha256(slim).hexdigest()
-          print(f"slim engine: {len(slim)} bytes sha256={slim_sha}")
+          def fail(msg):
+              # Emit as a check annotation too: job logs are unreachable
+              # from the sandbox that drives this workflow.
+              safe = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=AAR swap failed::{safe}")
+              sys.exit(msg)
 
-          aars = sorted(glob.glob("android/build/**/godot-lib.template_debug.aar", recursive=True))
-          if not aars:
-              sys.exit("no godot-lib.template_debug.aar found under android/build")
+          try:
+              slim_path = "slim-engine/libgodot_android.template_debug.arm64.so"
+              if not os.path.exists(slim_path):
+                  found = sorted(glob.glob("slim-engine/*"))
+                  fail(f"slim engine library missing at {slim_path}; slim-engine/ contains: {found}")
+              with open(slim_path, "rb") as fh:
+                  slim = fh.read()
+              slim_sha = hashlib.sha256(slim).hexdigest()
+              print(f"slim engine: {len(slim)} bytes sha256={slim_sha}")
 
-          replaced = []
-          for aar in aars:
-              with zipfile.ZipFile(aar) as zin:
-                  if entry not in zin.namelist():
-                      so_entries = [n for n in zin.namelist() if n.endswith(".so")]
-                      print(f"WARN: {aar} does not contain {entry}; .so entries: {so_entries}")
-                      continue
-                  tmp = aar + ".slim"
-                  with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-                      for info in zin.infolist():
-                          if info.filename == entry:
-                              # Force deflate so the on-disk AAR stays small;
-                              # gradle repackages the .so into the APK anyway.
-                              new_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
-                              new_info.compress_type = zipfile.ZIP_DEFLATED
-                              new_info.external_attr = info.external_attr
-                              zout.writestr(new_info, slim)
-                          else:
-                              zout.writestr(info, zin.read(info.filename))
-              os.replace(tmp, aar)
-              with zipfile.ZipFile(aar) as z:
-                  got = z.read(entry)
-              if hashlib.sha256(got).hexdigest() != slim_sha:
-                  sys.exit(f"verification failed: {aar} does not contain the slim engine library")
-              replaced.append(aar)
-              print(f"replaced {entry} in {aar}")
+              aars = sorted(glob.glob("android/build/**/godot-lib*.aar", recursive=True))
+              if not aars:
+                  fail("no godot-lib*.aar found under android/build")
 
-          if not replaced:
-              sys.exit("engine swap failed: no AAR was modified")
-          with open(os.environ["GITHUB_ENV"], "a") as env:
-              env.write(f"SLIM_ENGINE_SHA256={slim_sha}\n")
-              env.write(f"SLIM_ENGINE_BYTES={len(slim)}\n")
+              replaced = []
+              for aar in aars:
+                  with zipfile.ZipFile(aar) as zin:
+                      names = zin.namelist()
+                      jni_entries = [n for n in names if n.startswith("jni/arm64-v8a/") and n.endswith(".so")]
+                      print(f"{aar}: jni/arm64-v8a entries: {jni_entries}")
+                      # The engine library entry: libgodot* but not the NDK
+                      # runtime (libc++_shared.so) or the GDExtension.
+                      engine_entries = [
+                          n for n in jni_entries
+                          if "libgodot" in os.path.basename(n)
+                          and not os.path.basename(n).startswith("libc++")
+                      ]
+                      if len(engine_entries) != 1:
+                          print(f"WARN: {aar} has no unique engine entry ({engine_entries}); skipping")
+                          continue
+                      entry = engine_entries[0]
+                      tmp = aar + ".slim"
+                      with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+                          for info in zin.infolist():
+                              if info.filename == entry:
+                                  # Force deflate so the on-disk AAR stays
+                                  # small; gradle repackages the .so into the
+                                  # APK anyway.
+                                  new_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                                  new_info.compress_type = zipfile.ZIP_DEFLATED
+                                  new_info.external_attr = info.external_attr
+                                  zout.writestr(new_info, slim)
+                              else:
+                                  zout.writestr(info, zin.read(info.filename))
+                  os.replace(tmp, aar)
+                  with zipfile.ZipFile(aar) as z:
+                      got = z.read(entry)
+                  if hashlib.sha256(got).hexdigest() != slim_sha:
+                      fail(f"verification failed: {aar} does not contain the slim engine library")
+                  replaced.append((aar, entry))
+                  print(f"replaced {entry} in {aar}")
+
+              if not replaced:
+                  fail("engine swap failed: no AAR was modified")
+              with open(os.environ["GITHUB_ENV"], "a") as env:
+                  env.write(f"SLIM_ENGINE_SHA256={slim_sha}\n")
+                  env.write(f"SLIM_ENGINE_BYTES={len(slim)}\n")
+          except SystemExit:
+              raise
+          except Exception:
+              fail("AAR swap crashed:\n" + traceback.format_exc())
           PYEOF
 
       # The gradle template declares debug.jniLibs.srcDirs = ['libs/debug', ...]
@@ -847,14 +874,26 @@ jobs:
           # The engine library in the APK must be the slim CI build spliced
           # into the template AAR, not the stock one (a template re-install or
           # exporter change would silently bring the stock library back).
+          # Its packaged name follows the AAR's jni entry, so discover it by
+          # byte-identity and require exactly one match.
           SLIM_SO="slim-engine/libgodot_android.template_debug.arm64.so"
-          unzip -p "$APK_PATH" "lib/arm64-v8a/libgodot_android.template_debug.arm64.so" > /tmp/apk_engine.so
-          if ! cmp -s /tmp/apk_engine.so "$SLIM_SO"; then
-            echo "ERROR: engine library inside the APK is not the slim build:"
-            ls -l /tmp/apk_engine.so "$SLIM_SO"
+          ENGINE_MATCHES=0
+          for so in $(unzip -Z1 "$APK_PATH" | sed -n 's#^lib/arm64-v8a/\([^/]*\)$#\1#p'); do
+            case "$so" in
+              libgdash_native*|libc++*) continue ;;
+            esac
+            unzip -p "$APK_PATH" "lib/arm64-v8a/$so" > /tmp/apk_engine.so
+            if cmp -s /tmp/apk_engine.so "$SLIM_SO"; then
+              ENGINE_MATCHES=$((ENGINE_MATCHES + 1))
+              echo "engine library entry: lib/arm64-v8a/$so == slim build ($(stat -c%s "$SLIM_SO") bytes)"
+            fi
+          done
+          if [ "$ENGINE_MATCHES" -ne 1 ]; then
+            echo "ERROR: expected exactly one lib/arm64-v8a entry byte-identical to the slim engine build, found $ENGINE_MATCHES"
+            echo "native libs inside APK:"
+            unzip -l "$APK_PATH" | grep -E "lib/" || true
             exit 1
           fi
-          echo "verified: APK engine library is the slim build ($(stat -c%s "$SLIM_SO") bytes)"
 
       # -------------------------------------------------------------- Outputs
       - name: Build size report
@@ -863,9 +902,17 @@ jobs:
           SLIM_SO="slim-engine/libgodot_android.template_debug.arm64.so"
           STOCK_AAR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable/godot-lib.template_debug.aar"
           STOCK_BYTES=$(python3 - "$STOCK_AAR" <<'PYEOF'
-          import sys, zipfile
+          import os, sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as z:
-              print(z.getinfo("jni/arm64-v8a/libgodot_android.template_debug.arm64.so").file_size)
+              entries = [
+                  n for n in z.namelist()
+                  if n.startswith("jni/arm64-v8a/") and n.endswith(".so")
+                  and "libgodot" in os.path.basename(n)
+                  and not os.path.basename(n).startswith("libc++")
+              ]
+              if len(entries) != 1:
+                  sys.exit(f"expected one stock engine entry, found {entries}")
+              print(z.getinfo(entries[0]).file_size)
           PYEOF
           )
           SLIM_BYTES=$(stat -c%s "$SLIM_SO")
