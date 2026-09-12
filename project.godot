@@ -429,13 +429,11 @@ common/physics_interpolation=true
 ; the Mobile Vulkan renderer avoids Forward+'s desktop 3D pass overhead. This
 ; project is 2D, so the visible output and HDR canvas path are retained while
 ; Android submits substantially less render setup work.
-; Direct NativeDecorationRenderer RID commands are queued to Godot's dedicated
-; render thread. This overlaps canvas submission/rasterization with gameplay
-; instead of attempting unsafe SceneTree access from an application worker.
-; Keep desktop/editor compatibility mode safe (the Linux llvmpipe smoke driver
-; cannot initialize Separate reliably), while trialling overlap on mobile GPUs.
+; RenderingServer commands remain node-free, but Android's display server does
+; not support Godot's experimental Separate thread model on all GPUs/devices.
+; Keep Safe mode: unsupported Separate startup can stall texture uploads before
+; the loading screen completes (confirmed on Samsung Xclipse 540).
 driver/threads/thread_model=0
-driver/threads/thread_model.mobile=2
 renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="mobile"
 textures/canvas_textures/default_texture_filter=2
