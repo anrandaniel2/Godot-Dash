@@ -838,10 +838,23 @@ class NativeLevelBuildJob : public RefCounted {
 			if (!drop_decoration) decoration_data.append(object_data);
 			return;
 		}
+		const Dictionary static_art = object_data.get("native_static_art", Dictionary());
+		if (!static_art.is_empty()) decoration_data.append(static_art);
 		Variant value = level_script->call("instantiate_object_from_data", object_data, level);
 		Object *object = value;
 		Node *node = Object::cast_to<Node>(object);
 		if (!node) return;
+		// Static gameplay art is now represented by NativeDecorationCanvas.
+		// Preserve the root/group transform and authored Collision subtree, while
+		// dropping Sprite2D descendants and their per-node render state.
+		if (!static_art.is_empty()) {
+			for (const char *name : {"Base", "Detail"}) {
+				Node *visual = node->get_node_or_null(NodePath(name));
+				if (!visual) continue;
+				node->remove_child(visual);
+				visual->queue_free();
+			}
+		}
 		node->set_meta("layer", layer);
 		layer->add_child(node);
 	}

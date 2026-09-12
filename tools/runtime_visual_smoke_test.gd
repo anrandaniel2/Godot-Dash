@@ -168,7 +168,24 @@ func _test_native_core() -> void:
 			conversion_report,
 	)
 	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
-	assert(converted.get("layers", [{}])[0].get("objects", []).size() == 2, "native smoke: online conversion produced an empty level")
+	var converted_objects: Array = converted.get("layers", [{}])[0].get("objects", [])
+	assert(converted_objects.size() == 2, "native smoke: online conversion produced an empty level")
+	for static_data: Dictionary in converted_objects:
+		assert(not static_data.get("native_static_art", {}).is_empty(), "native smoke: static gameplay art was not packed")
+	var static_job: Object = ClassDB.instantiate(&"NativeLevelBuildJob")
+	static_job.call(&"initialize", converted, false)
+	static_job.call(&"step", 1000)
+	assert(bool(static_job.call(&"is_finished")), "native smoke: packed static build did not finish")
+	var static_level := static_job.call(&"get_level") as Level
+	var static_layer := static_level.layers[0] as Layer
+	var found_static_batch := false
+	for built_child: Node in static_layer.get_children():
+		if built_child is DecorationBatch:
+			found_static_batch = true
+		elif built_child is GDObject:
+			assert(built_child.get_node_or_null(^"Base") == null, "native smoke: duplicate static Sprite2D tree retained")
+	assert(found_static_batch, "native smoke: packed static artwork batch missing")
+	static_level.free()
 	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
 	# Every 2.2 trigger ID must survive import. Dedicated families retain their
 	# component scenes; newer families use the packed native trigger shell.

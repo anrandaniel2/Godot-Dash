@@ -572,6 +572,17 @@ static func _object_from_properties(
 	if not components.is_empty():
 		object_data["components"] = components
 		object_data["markers"] = []
+	if GMDObjects.is_static_gameplay_object(gd_id):
+		# Runtime keeps the authored collision node, but sends the identical atlas
+		# artwork through the packed renderer instead of retaining Base/Detail
+		# Sprite2D subtrees for every block, spike and saw.
+		var static_art := _decoration_from_properties(
+				gd_id, properties, index, channel_style, used_channels
+		)
+		if not static_art.is_empty():
+			# Collision-bearing gameplay artwork is never optional LDM decoration.
+			static_art["high_detail"] = false
+			object_data["native_static_art"] = static_art
 	return object_data
 
 
