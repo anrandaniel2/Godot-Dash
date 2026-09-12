@@ -21,6 +21,7 @@ var _frames := 0
 var _direct: Node2D
 var _batch: DecorationBatch
 var _native_canvas: Node2D
+var _level_runtime: Node
 
 
 func _ready() -> void:
@@ -82,7 +83,11 @@ func _process(_delta: float) -> void:
 	if _native_canvas != null:
 		var drawn := int(_native_canvas.call(&"last_drawn_count"))
 		var total := int(_native_canvas.call(&"item_count"))
-		assert(drawn > 0 and drawn < total, "native smoke: exact off-screen rejection (%d/%d)" % [drawn, total])
+		assert(drawn > 0 and drawn < total, "native smoke: off-screen grid rejection (%d/%d)" % [drawn, total])
+		var render_stats: Dictionary = _level_runtime.call(&"render_stats")
+		assert(int(render_stats.get("canvases", 0)) > 0, "native smoke: render coordinator registry empty")
+		assert(render_stats.get("culled_canvases") == render_stats.get("canvases"), "native smoke: an uncullable packed batch survived")
+		assert(int(render_stats.get("submitted_records", 0)) < int(render_stats.get("records", 0)), "native smoke: coordinator retained offscreen records")
 	# Canvas stretch/aspect settings vary with the test window. Ask each
 	# CanvasItem for the actual world-to-viewport transform instead of assuming
 	# a scale ratio.
@@ -138,7 +143,7 @@ func _opaque_bounds(image: Image) -> Rect2i:
 func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
-	assert(int(native.call(&"version")) >= 14, "native smoke: old kernel ABI")
+	assert(int(native.call(&"version")) >= 15, "native smoke: old kernel ABI")
 	var parsed_online: Dictionary = native.call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
@@ -217,10 +222,9 @@ func _test_native_core() -> void:
 		pad.free()
 	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
 	assert(ClassDB.class_exists(&"NativeLevelRuntime"), "native smoke: level runtime missing")
-	var level_runtime := ClassDB.instantiate(&"NativeLevelRuntime") as Node
-	assert(level_runtime != null, "native smoke: NativeLevelRuntime did not instantiate")
-	add_child(level_runtime)
-	level_runtime.queue_free()
+	_level_runtime = ClassDB.instantiate(&"NativeLevelRuntime") as Node
+	assert(_level_runtime != null, "native smoke: NativeLevelRuntime did not instantiate")
+	add_child(_level_runtime)
 	var scheduler: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
 	var scheduler_player := Node.new()
 	var trigger_a := Node.new()

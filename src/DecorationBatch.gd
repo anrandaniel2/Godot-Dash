@@ -29,10 +29,10 @@ extends Node2D
 ## Width of one culling bucket, in local units. Wide enough that the bucket list
 ## stays short across a long level, narrow enough that a screen only touches a
 ## couple.
-const BUCKET_WIDTH: float = 1024.0
+const BUCKET_WIDTH: float = 256.0
 
-## Runtime native culling uses each transformed sprite's exact bounds, so no
-## off-screen look-ahead margin is submitted to the Canvas renderer.
+## Runtime native culling retains only the viewport's conservative 2D grid
+## cells. Godot clips edge-cell quads exactly before rasterization.
 const CULL_MARGIN: float = 0.0
 
 ## Every runtime batch is spatially filtered. Dense effect levels often have
@@ -314,7 +314,10 @@ func _build_native_canvas(native: Object) -> void:
 			_native_by_channel[item.channel] = channel_indices
 	_native_canvas.call(
 			&"configure", textures, regions, transforms, colors, origins,
-			base_alphas, hsv_data, _cull, BUCKET_WIDTH, CULL_MARGIN,
+			# Group-addressable batches in 2.2 levels are often tiny. Applying the
+			# old 48-item threshold made thousands of one-item offscreen batches draw
+			# continuously, which dominates levels such as Thinking Space II.
+			base_alphas, hsv_data, not items.is_empty(), BUCKET_WIDTH, CULL_MARGIN,
 	)
 
 

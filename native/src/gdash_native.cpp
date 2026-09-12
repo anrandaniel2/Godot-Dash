@@ -237,6 +237,14 @@ public:
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
 };
 
+// Decoration canvases register in a native global render list. One
+// NativeLevelRuntime notification updates all of them, avoiding thousands of
+// SceneTree process callbacks in heavily group-fragmented 2.2 levels.
+static void decoration_coordinator_enter();
+static void decoration_coordinator_exit();
+static void update_registered_decoration_canvases();
+static Dictionary registered_decoration_stats();
+
 // Native owner for the packed runtime. Besides being the migration point for
 // rendering/collision stores, this removes the last per-physics-frame
 // GDScript->GDExtension calls: player discovery, crossing queries and event
@@ -247,6 +255,7 @@ class NativeLevelRuntime : public Node {
 	Ref<NativeTriggerRuntime> triggers;
 	Node *level_manager = nullptr;
 	std::map<uint64_t, double> previous_x;
+	bool coordinates_rendering = false;
 
 	void advance_player(Object *object) {
 		Node2D *player = Object::cast_to<Node2D>(object);
@@ -268,13 +277,29 @@ protected:
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
 		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeLevelRuntime::trigger_count);
+		ClassDB::bind_method(D_METHOD("render_stats"), &NativeLevelRuntime::render_stats);
 	}
 
 	void _notification(int what) {
+		if (what == Node::NOTIFICATION_ENTER_TREE && !coordinates_rendering) {
+			coordinates_rendering = true;
+			decoration_coordinator_enter();
+			return;
+		}
+		if (what == Node::NOTIFICATION_EXIT_TREE && coordinates_rendering) {
+			coordinates_rendering = false;
+			decoration_coordinator_exit();
+			return;
+		}
 		if (what == Node::NOTIFICATION_READY) {
 			SceneTree *tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
 			if (tree) level_manager = tree->get_root()->get_node_or_null(NodePath("LevelManager"));
+			set_process(true);
 			set_physics_process(true);
+			return;
+		}
+		if (what == Node::NOTIFICATION_PROCESS) {
+			update_registered_decoration_canvases();
 			return;
 		}
 		if (what != Node::NOTIFICATION_PHYSICS_PROCESS || !level_manager || !triggers.is_valid()) return;
@@ -305,6 +330,7 @@ public:
 	Dictionary snapshot() const { return triggers->snapshot(); }
 	void restore(const Dictionary &state) { triggers->restore(state); previous_x.clear(); }
 	int64_t trigger_count() const { return triggers->trigger_count(); }
+	Dictionary render_stats() const { return registered_decoration_stats(); }
 };
 
 class GdashNative : public RefCounted {
@@ -367,9 +393,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.4.0 / retained section renderer / NativeLevelRuntime / profiled LTO / api 4.7");
+		return String("gdash_native 1.5.0 / centralized all-batch culling / NativeLevelRuntime / profiled LTO / api 4.7");
 	}
-	int64_t version() const { return 14; }
+	int64_t version() const { return 15; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -848,6 +874,7 @@ class NativeLevelBuildJob : public RefCounted {
 		// Preserve the root/group transform and authored Collision subtree, while
 		// dropping Sprite2D descendants and their per-node render state.
 		if (!static_art.is_empty()) {
+			node->set_meta("_gd_native_packed_art", true);
 			for (const char *name : {"Base", "Detail"}) {
 				Node *visual = node->get_node_or_null(NodePath(name));
 				if (!visual) continue;
@@ -933,6 +960,11 @@ public:
 	bool is_finished() const { return finished; }
 };
 
+class NativeDecorationCanvas;
+static std::set<NativeDecorationCanvas *> registered_decoration_canvases;
+static int decoration_coordinator_count = 0;
+static uint64_t decoration_last_update_frame = UINT64_MAX;
+
 // A retained CanvasItem command builder for decoration. DecorationBatch keeps
 // trigger/channel semantics in its compatibility facade, while this class
 // performs the expensive atlas command emission and spatial filtering in C++.
@@ -952,19 +984,32 @@ class NativeDecorationCanvas : public Node2D {
 	};
 
 	std::vector<Record> records;
-	// One origin section per record, modelled after OpenGD's _sectionObjects.
-	// Exact transformed bounds still make the final decision, while this index
-	// avoids testing every sprite in the level on every scrolling frame.
-	std::map<int64_t, std::vector<size_t>> sections;
+	// A two-dimensional retained grid, modelled after OpenGD's object sections.
+	// Only cells intersecting the conservative local viewport become draw
+	// commands; RenderingServer clips edge-cell quads exactly.
+	std::map<int64_t, std::map<int64_t, std::vector<size_t>>> sections;
 	bool cull = false;
 	double bucket_width = 1024.0;
 	double cull_margin = 0.0;
 	double max_local_radius = 0.0;
 	int64_t first_bucket = INT64_MIN;
 	int64_t last_bucket = INT64_MAX;
+	int64_t first_row = INT64_MIN;
+	int64_t last_row = INT64_MAX;
 	Vector2 last_viewport_size;
 	bool view_initialized = false;
+	bool range_has_records = true;
 	int64_t last_drawn_items = 0;
+
+	bool selected_range_has_records() const {
+		auto column = sections.lower_bound(first_bucket);
+		while (column != sections.end() && column->first <= last_bucket) {
+			auto row = column->second.lower_bound(first_row);
+			if (row != column->second.end() && row->first <= last_row && !row->second.empty()) return true;
+			++column;
+		}
+		return false;
+	}
 
 	bool update_view_range() {
 		if (!cull || !is_inside_tree()) return false;
@@ -977,11 +1022,23 @@ class NativeDecorationCanvas : public Node2D {
 		local_view = local_view.grow(max_local_radius + cull_margin);
 		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
 		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
-		const bool changed = !view_initialized || first != first_bucket || last != last_bucket || screen_size != last_viewport_size;
+		const int64_t top = static_cast<int64_t>(std::floor(local_view.position.y / bucket_width));
+		const int64_t bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / bucket_width));
+		const bool changed = !view_initialized || first != first_bucket || last != last_bucket ||
+				top != first_row || bottom != last_row || screen_size != last_viewport_size;
 		first_bucket = first;
 		last_bucket = last;
+		first_row = top;
+		last_row = bottom;
 		last_viewport_size = screen_size;
 		view_initialized = true;
+		if (changed) {
+			range_has_records = selected_range_has_records();
+			if (!range_has_records) last_drawn_items = 0;
+			// An empty retained CanvasItem need not participate in renderer canvas
+			// traversal at all. Parent batch visibility still controls triggers.
+			set_visible(range_has_records);
+		}
 		return changed;
 	}
 
@@ -998,11 +1055,18 @@ protected:
 	}
 
 	void _notification(int what) {
+		if (what == Node::NOTIFICATION_ENTER_TREE) {
+			registered_decoration_canvases.insert(this);
+			set_process(cull && decoration_coordinator_count == 0);
+			return;
+		}
+		if (what == Node::NOTIFICATION_EXIT_TREE) {
+			registered_decoration_canvases.erase(this);
+			return;
+		}
 		if (what == Node::NOTIFICATION_PROCESS && cull && is_inside_tree()) {
-			// Canvas commands are retained and automatically transformed/clipped by
-			// RenderingServer. Rebuild only when the conservative section range
-			// changes, not for every pixel of camera movement.
-			if (update_view_range()) queue_redraw();
+			// Fallback for editor/test trees without a NativeLevelRuntime owner.
+			update_camera_range();
 			return;
 		}
 		if (what != CanvasItem::NOTIFICATION_DRAW) return;
@@ -1023,10 +1087,14 @@ protected:
 			// Off-screen quads are clipped by RenderingServer and never rasterized;
 			// avoiding CPU command regeneration each frame is far cheaper than an
 			// exact AABB test and redraw for every scrolling pixel.
-			auto section = sections.lower_bound(first_bucket);
-			while (section != sections.end() && section->first <= last_bucket) {
-				for (size_t index : section->second) draw_record(records[index]);
-				++section;
+			auto column = sections.lower_bound(first_bucket);
+			while (column != sections.end() && column->first <= last_bucket) {
+				auto row = column->second.lower_bound(first_row);
+				while (row != column->second.end() && row->first <= last_row) {
+					for (size_t index : row->second) draw_record(records[index]);
+					++row;
+				}
+				++column;
 			}
 		}
 		draw_set_transform_matrix(Transform2D());
@@ -1034,6 +1102,14 @@ protected:
 
 public:
 	NativeDecorationCanvas() { set_use_parent_material(true); }
+
+	void update_camera_range() {
+		if (cull && is_inside_tree() && update_view_range()) queue_redraw();
+	}
+
+	void set_render_coordinated(bool coordinated) {
+		set_process(cull && !coordinated);
+	}
 
 	void configure(const Array &textures, const Array &regions, const Array &transforms,
 			const PackedColorArray &colors, const PackedFloat32Array &origins,
@@ -1064,12 +1140,14 @@ public:
 			max_local_radius = std::max(max_local_radius, static_cast<double>(extent.length()));
 			const size_t index = records.size();
 			records.push_back(record);
-			sections[static_cast<int64_t>(std::floor(origins[i] / bucket_width))].push_back(index);
+			const int64_t column = static_cast<int64_t>(std::floor(origins[i] / bucket_width));
+			const int64_t row = static_cast<int64_t>(std::floor(record.transform.get_origin().y / bucket_width));
+			sections[column][row].push_back(index);
 		}
 		cull = enable_culling;
 		cull_margin = std::max(0.0, margin);
 		view_initialized = false;
-		set_process(cull);
+		set_process(cull && decoration_coordinator_count == 0);
 		if (!cull) {
 			first_bucket = INT64_MIN;
 			last_bucket = INT64_MAX;
@@ -1122,7 +1200,55 @@ public:
 
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
+	bool is_spatially_culled() const { return cull; }
 };
+
+static void decoration_coordinator_enter() {
+	++decoration_coordinator_count;
+	for (NativeDecorationCanvas *canvas : registered_decoration_canvases) {
+		if (canvas) canvas->set_render_coordinated(true);
+	}
+}
+
+static void decoration_coordinator_exit() {
+	decoration_coordinator_count = std::max(0, decoration_coordinator_count - 1);
+	if (decoration_coordinator_count != 0) return;
+	for (NativeDecorationCanvas *canvas : registered_decoration_canvases) {
+		if (canvas) canvas->set_render_coordinated(false);
+	}
+}
+
+static void update_registered_decoration_canvases() {
+	// Several level runtimes can briefly coexist during scene replacement and
+	// smoke tests. Never traverse the registry more than once per rendered frame.
+	const uint64_t frame = Engine::get_singleton()->get_process_frames();
+	if (frame == decoration_last_update_frame) return;
+	decoration_last_update_frame = frame;
+	for (NativeDecorationCanvas *canvas : registered_decoration_canvases) {
+		if (canvas) canvas->update_camera_range();
+	}
+}
+
+static Dictionary registered_decoration_stats() {
+	Dictionary stats;
+	int64_t records = 0;
+	int64_t submitted = 0;
+	int64_t empty_canvases = 0;
+	int64_t culled_canvases = 0;
+	for (NativeDecorationCanvas *canvas : registered_decoration_canvases) {
+		if (!canvas) continue;
+		records += canvas->item_count();
+		submitted += canvas->last_drawn_count();
+		if (canvas->last_drawn_count() == 0) ++empty_canvases;
+		if (canvas->is_spatially_culled()) ++culled_canvases;
+	}
+	stats["canvases"] = static_cast<int64_t>(registered_decoration_canvases.size());
+	stats["culled_canvases"] = culled_canvases;
+	stats["empty_canvases"] = empty_canvases;
+	stats["records"] = records;
+	stats["submitted_records"] = submitted;
+	return stats;
+}
 
 } // namespace godot
 

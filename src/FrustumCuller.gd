@@ -140,6 +140,11 @@ func track(object: Node2D) -> void:
 static func is_cullable(object: Node2D) -> bool:
 	if object is Layer or object is Player or object is Interactable:
 		return false
+	# NativeLevelBuildJob removes these roots' Sprite2D trees after transferring
+	# identical artwork to NativeDecorationCanvas. Visibility cannot affect their
+	# collision, so indexing and exact-testing them every camera frame is waste.
+	if object.has_meta(&"_gd_native_packed_art"):
+		return false
 	if object is SolidObject and object.physics_object:
 		return false
 	# Anything a trigger can address may move, so its load-time bucket
