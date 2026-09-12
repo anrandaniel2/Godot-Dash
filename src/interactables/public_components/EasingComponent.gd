@@ -53,6 +53,11 @@ var _weight_derivatives: Dictionary[Player, float]
 
 func _ready() -> void:
 	parent.interacted.connect(start)
+	# Every placed trigger with an easing used to iterate tweens.keys() (an
+	# allocation) once per frame even while completely idle; thousands of
+	# inactive triggers paid that forever. Processing is enabled on demand and
+	# disabled again once no tween remains.
+	_set_processing_active(false)
 
 
 func _process(delta: float) -> void:
@@ -81,6 +86,17 @@ func _physics_process(delta: float) -> void:
 			progressed.emit(player, weight_delta)
 		elif player in _weight_derivatives:
 			_weight_derivatives.erase(player)
+
+
+## Toggles the per-frame/per-physics-tick driver loop. Only the tween itself
+## and this loop touch `weights`; with no tween there is nothing to emit.
+## Disabling also drops weight derivatives, matching the always-processing
+## behaviour where the entry was erased on the first inactive frame.
+func _set_processing_active(active: bool) -> void:
+	set_process(active and not _use_physics_process)
+	set_physics_process(active and _use_physics_process)
+	if not active:
+		_weight_derivatives.clear()
 
 
 func _validate_property(property: Dictionary) -> void:
@@ -170,6 +186,7 @@ func start(player: Player) -> void:
 		return
 	reset_player(player)
 	tweens[player] = create_tween()
+	_set_processing_active(true)
 	var tween_weight := func(value: float): weights[player] = value
 	tweens[player].set_process_mode(Tween.TWEEN_PROCESS_PHYSICS if _use_physics_process else Tween.TWEEN_PROCESS_IDLE)
 	tweens[player].set_ignore_time_scale(ignore_time_scale)
@@ -197,6 +214,8 @@ func start(player: Player) -> void:
 			if get_tree() != null:
 				await get_tree().process_frame
 			tweens.erase(player)
+			if tweens.is_empty():
+				_set_processing_active(false)
 	)
 
 
@@ -236,6 +255,8 @@ func reset_player(player: Player) -> void:
 	_previous_weights[player] = 0.0
 	if player in _weight_derivatives:
 		_weight_derivatives.erase(player)
+	if tweens.is_empty():
+		_set_processing_active(false)
 
 
 func start_preview() -> void:

@@ -173,7 +173,11 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	music_scale = 0.85 + MusicVolume.get_volume()
+	# The audio-spectrum query is only worth a frame when something reads the
+	# value; levels without any MusicScale component (no orbs or pads) skip it
+	# entirely. MusicScale keeps its own count of live instances.
+	if MusicScale.active_count > 0:
+		music_scale = 0.85 + MusicVolume.get_volume()
 
 
 ## The shared physics world mirrors the object tree; any object added to or

@@ -8,6 +8,12 @@ enum SelectionHighlight {
 	DUPLICATE,
 }
 
+## Bumped whenever any watcher's per-object state (shift / intensity / alpha)
+## changes, so ColorChannelWatcher's native channel index knows to rebuild its
+## snapshot. Static on purpose: comparing one integer is far cheaper than
+## re-reading every watcher's fields on each channel refresh.
+static var data_version: int = 0
+
 @export_storage var hsv_shift: Array[float]
 @export_storage var intensity: float = 1.0
 @export_storage var alpha: float = 1.0
@@ -49,6 +55,7 @@ func use_data(data: Dictionary) -> void:
 	hsv_shift.assign(data.hsv_shift)
 	intensity = data.intensity
 	alpha = data.alpha
+	data_version += 1
 
 
 func update_color() -> void:
@@ -80,6 +87,7 @@ func reset_color() -> void:
 	hsv_shift.resize(3)
 	intensity = 1.0
 	alpha = 1.0
+	data_version += 1
 	update_color()
 
 

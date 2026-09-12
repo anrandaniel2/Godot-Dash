@@ -31,3 +31,6 @@ native/godot-cpp/
 native/bin/
 native/.sconsign.dblite
 native/.scons-*
+
+# SCons object files dropped next to native sources
+*.os

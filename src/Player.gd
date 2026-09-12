@@ -166,6 +166,59 @@ var _just_spawned: bool = false
 
 @onready var last_automatic_checkpoint_position: Vector2 = position
 
+# Cached hot-path node references. The physics loop runs 240 times a second
+# and _update_sprites_rotation alone resolved ~50 $Icon/... NodePaths per tick;
+# these members turn all of that into plain pointer dereferences. Nodes are
+# never freed or reparented during play, so the cache stays valid.
+@onready var _window: Window = get_viewport().get_window()
+@onready var _icon: Node2D = $Icon
+@onready var _icon_cube: Node2D = $Icon/Cube
+@onready var _icon_ship: Node2D = $Icon/Ship
+@onready var _icon_ship_particles: GPUParticles2D = $Icon/Ship/ShipParticles
+@onready var _icon_swing: Node2D = $Icon/Swing
+@onready var _icon_wave: Node2D = $Icon/Wave
+@onready var _icon_ufo: Node2D = $Icon/UFO
+@onready var _icon_ufo_particles_origin: Node2D = $Icon/UFO/UFOParticlesOrigin
+@onready var _icon_jetpack: Node2D = $Icon/Jetpack
+@onready var _icon_jetpack_particles: GPUParticles2D = $Icon/Jetpack/JetpackParticles
+@onready var _icon_ball: Node2D = $Icon/Ball
+@onready var _icon_spider: Node2D = $Icon/Spider
+@onready var _icon_robot: Node2D = $Icon/Robot
+@onready var _swing_fire_top: Sprite2D = $Icon/Swing/FireBoostTop
+@onready var _swing_fire_middle: Sprite2D = $Icon/Swing/FireBoostMiddle
+@onready var _swing_fire_bottom: Sprite2D = $Icon/Swing/FireBoostBottom
+@onready var _swing_fire_top_particles: GPUParticles2D = $Icon/Swing/FireBoostTop/FireParticles
+@onready var _swing_fire_middle_particles: GPUParticles2D = $Icon/Swing/FireBoostMiddle/FireParticles
+@onready var _swing_fire_bottom_particles: GPUParticles2D = $Icon/Swing/FireBoostBottom/FireParticles
+@onready var _robot_fire_back: Sprite2D = $Icon/Robot/RobotSprites/Head/ConnectorBack/LegBack/FootBack/Fire
+@onready var _robot_fire_front: Sprite2D = $Icon/Robot/RobotSprites/Head/ConnectorFront/LegFront/FootFront/Fire
+@onready var _robot_fire_back_particles: GPUParticles2D = $Icon/Robot/RobotSprites/Head/ConnectorBack/LegBack/FootBack/Fire/FireParticles
+@onready var _robot_fire_front_particles: GPUParticles2D = $Icon/Robot/RobotSprites/Head/ConnectorFront/LegFront/FootFront/Fire/FireParticles
+@onready var _ground_collider: CollisionShape2D = $GroundCollider
+@onready var _solid_overlap_check: Area2D = $SolidOverlapCheck
+@onready var _solid_overlap_check_collider: CollisionShape2D = $SolidOverlapCheck/SolidOverlapCheckCollider
+@onready var _kill_collider_solid: Area2D = $KillColliderSolid
+@onready var _kill_collider_rectangular: Area2D = $KillColliderRectangularHazard
+@onready var _kill_collider_circular: Area2D = $KillColliderCircularHazard
+@onready var _corner_snapping: Node2D = $CornerSnapping
+@onready var _ground_cast: ShapeCast2D = $CornerSnapping/GroundCast
+@onready var _invalid_corner_cast: ShapeCast2D = $CornerSnapping/InvalidCornerCast
+@onready var _ground_snap_cast: ShapeCast2D = $CornerSnapping/GroundSnapCast
+@onready var _spider_cast: RayCast2D = $SpiderCast
+@onready var _ensure_velocity_redirect_cast: ShapeCast2D = $EnsureVelocityRedirect
+@onready var _robot_timer: Timer = $RobotTimer
+@onready var _idle_alt_cooldown: Timer = $IdleAltAnimationCooldown
+@onready var _death_animator: AnimationPlayer = $DeathAnimator
+@onready var _death_effect: AnimatedSprite2D = $DeathEffect
+@onready var _death_particles: GPUParticles2D = $DeathParticles
+@onready var _dash_particles: GPUParticles2D = $DashParticles
+@onready var _dash_flame: AnimatedSprite2D = $DashFlame
+@onready var _ground_particles_origin: Node2D = $GroundParticlesOrigin
+@onready var _ground_particles: GPUParticles2D = %GroundParticles
+@onready var _trail: Line2D = %Trail
+@onready var _wave_trail: Line2D = %WaveTrail
+@onready var _debug_trail: Line2D = $DebugTrail
+
 
 func _ready() -> void:
 	refresh_textures()
@@ -193,21 +246,21 @@ func _physics_process(delta: float) -> void:
 	up_direction = Vector2.UP.rotated(gameplay_rotation) * gravity_flip
 	var jump_state: int = _get_jump_state()
 
-	if get_viewport().get_window().has_focus():
+	if _window.has_focus():
 		InputUtils.update()
 
 	if not in_replay:
 		var replay_jump_state: int = int(InputUtils.is_action_pressed(&"jump")) if not InputUtils.is_action_pressed(&"platformer_wave_down") else -1
 		replay.data.append(PackedByteArray([replay_jump_state, get_direction()]))
 
-	velocity = _compute_velocity(delta, velocity, get_direction(), jump_state, $GroundCollider.shape is CircleShape2D)
+	velocity = _compute_velocity(delta, velocity, get_direction(), jump_state, _ground_collider.shape is CircleShape2D)
 
 	# Slope collision resolution
 	# Reset collision shape and set it back to the slope collider if needed
-	$GroundCollider.shape = default_collider
-	$GroundCollider.rotation = gameplay_rotation
-	$CornerSnapping/GroundSnapCast.shape = default_collider
-	$SolidOverlapCheck/SolidOverlapCheckCollider.shape = default_collider
+	_ground_collider.shape = default_collider
+	_ground_collider.rotation = gameplay_rotation
+	_ground_snap_cast.shape = default_collider
+	_solid_overlap_check_collider.shape = default_collider
 	last_collision = move_and_collide(speed.y * Vector2.DOWN * delta, true)
 	_handle_collision(last_collision, true)
 
@@ -224,13 +277,13 @@ func _physics_process(delta: float) -> void:
 
 	# Sprite updates
 	_update_sprites_rotation(delta, jump_state)
-	%GroundParticles.emitting = is_on_floor() and not is_zero_approx(velocity.rotated(-gameplay_rotation).x) and not dash_control
+	_ground_particles.emitting = is_on_floor() and not is_zero_approx(velocity.rotated(-gameplay_rotation).x) and not dash_control
 	if is_on_floor() and not dash_control or displayed_gamemode == Gamemode.WAVE:
-		%Trail.add_points = false
+		_trail.add_points = false
 	if displayed_gamemode in [Gamemode.SHIP, Gamemode.SWING, Gamemode.UFO]:
-		%Trail.add_points = true
-	if %Trail.add_points:
-		%Trail.material.set_shader_parameter(&"bias", float(%Trail.get_point_count()) / float(%Trail.length) * 1.2)
+		_trail.add_points = true
+	if _trail.add_points:
+		_trail.material.set_shader_parameter(&"bias", float(_trail.get_point_count()) / float(_trail.length) * 1.2)
 
 	match displayed_gamemode:
 		Gamemode.SPIDER:
@@ -243,9 +296,9 @@ func _physics_process(delta: float) -> void:
 	_update_wave_trail(delta)
 
 	if not is_on_floor():
-		$IdleAltAnimationCooldown.stop()
-	if is_on_floor() and displayed_gamemode in [Gamemode.SPIDER, Gamemode.ROBOT] and $IdleAltAnimationCooldown.is_stopped():
-		$IdleAltAnimationCooldown.start(randf_range(15.0, 30.0))
+		_idle_alt_cooldown.stop()
+	if is_on_floor() and displayed_gamemode in [Gamemode.SPIDER, Gamemode.ROBOT] and _idle_alt_cooldown.is_stopped():
+		_idle_alt_cooldown.start(randf_range(15.0, 30.0))
 
 	# 0x speed portal position nudge
 	if speed_0_portal_control:
@@ -497,7 +550,7 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 	var is_ceiling: bool = collision_angle >= deg_to_rad(180.0 - 10.0)
 	var is_wall: bool = collision_angle > floor_max_angle and collision_angle < PI - floor_max_angle
 	var is_slope: bool = not is_floor and not is_ceiling and not is_wall
-	var is_lower_corner: bool = $CornerSnapping/GroundCast.is_colliding() and not $CornerSnapping/InvalidCornerCast.is_colliding()
+	var is_lower_corner: bool = _ground_cast.is_colliding() and not _invalid_corner_cast.is_colliding()
 	var should_snap: bool = is_lower_corner and is_wall and not is_slope and internal_gamemode != Gamemode.WAVE
 
 	var is_lethal_ceiling_hit: bool = is_ceiling and allow_ceiling_hit_count == 0 and internal_gamemode not in [Gamemode.SHIP, Gamemode.UFO, Gamemode.SWING]
@@ -522,7 +575,7 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 				if shape != null:
 					shape.set_deferred(&"disabled", true)
 				if _spider_dash_frames == 0:
-					$DeathAnimator.play("DeathAnimation")
+					_death_animator.play("DeathAnimation")
 			else:
 				# Per-object body (kept for trigger-animated or pushable
 				# objects): move it to the solid_overlap_check layer (1 << 9)
@@ -535,11 +588,11 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 	if is_ceiling and allow_ceiling_hit_count > 0:
 		hit_ceiling.emit(self)
 	if is_slope:
-		$GroundCollider.shape = slope_collider
-		$SolidOverlapCheck/SolidOverlapCheckCollider.shape = slope_collider
-		$CornerSnapping/GroundSnapCast.shape = slope_collider
+		_ground_collider.shape = slope_collider
+		_solid_overlap_check_collider.shape = slope_collider
+		_ground_snap_cast.shape = slope_collider
 	if should_snap:
-		var down_shapecast: ShapeCast2D = $CornerSnapping/GroundSnapCast
+		var down_shapecast: ShapeCast2D = _ground_snap_cast
 		down_shapecast.force_shapecast_update()
 		if down_shapecast.is_colliding():
 			global_position = global_position.rotated(-gameplay_rotation)
@@ -549,7 +602,7 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 		if is_floor and not dash_control and not _just_spawned:
 			var ground_hit_particles: GPUParticles2D = GROUND_HIT_PARTICLE.instantiate()
 			ground_hit_particles.modulate = Config.secondary_color
-			%GroundParticles.add_child(ground_hit_particles)
+			_ground_particles.add_child(ground_hit_particles)
 
 
 ## The CollisionShape2D on the level's shared physics body that a collision
@@ -642,10 +695,10 @@ func _get_jump_state() -> int:
 				(is_jump_just_pressed and (is_on_floor() or coyote_time > 0) and orb_queue.is_empty())
 				or (_click_buffer_state == ClickBufferState.BUFFERING and is_on_floor())
 		):
-			$RobotTimer.start(0.25)
+			_robot_timer.start(0.25)
 		if is_on_ceiling() or is_jump_just_released or colliding_pad:
-			$RobotTimer.stop()
-		jump_state = 1 if is_jump_pressed and $RobotTimer.time_left > 0.0 else -1
+			_robot_timer.stop()
+		jump_state = 1 if is_jump_pressed and _robot_timer.time_left > 0.0 else -1
 	elif internal_gamemode == Gamemode.SHIP or (internal_gamemode == Gamemode.WAVE and not LevelManager.platformer):
 		jump_state = 1 if is_jump_pressed else -1
 	elif internal_gamemode == Gamemode.WAVE and LevelManager.platformer:
@@ -699,11 +752,11 @@ func _compute_velocity(
 	if (internal_gamemode == Gamemode.SWING or internal_gamemode == Gamemode.BALL) and jump_state == 1 and orb_queue.is_empty():
 		gravity_flip *= -1
 
-	$GroundCollider.rotation = gameplay_rotation
-	$SolidOverlapCheck.rotation = gameplay_rotation
-	$KillColliderSolid.rotation = gameplay_rotation
-	$KillColliderRectangularHazard.rotation = gameplay_rotation
-	$KillColliderCircularHazard.rotation = gameplay_rotation
+	_ground_collider.rotation = gameplay_rotation
+	_solid_overlap_check.rotation = gameplay_rotation
+	_kill_collider_solid.rotation = gameplay_rotation
+	_kill_collider_rectangular.rotation = gameplay_rotation
+	_kill_collider_circular.rotation = gameplay_rotation
 
 	#region Apply Gravity
 	if not dash_control:
@@ -747,13 +800,13 @@ func _compute_velocity(
 		local_velocity.y = slope_velocity.y
 
 	# Robot
-	if jump_state == 1 and $RobotTimer.time_left > 0.0 and internal_gamemode == Gamemode.ROBOT:
+	if jump_state == 1 and _robot_timer.time_left > 0.0 and internal_gamemode == Gamemode.ROBOT:
 		local_velocity.y = SPEED.x * gravity_flip * -1
 
 	#region Apply pads velocity
 	if colliding_pad:
 		local_velocity = _handle_velocity_interactable(local_velocity, colliding_pad, direction)
-		%Trail.add_points = true
+		_trail.add_points = true
 	#endregion
 
 	#region Handle jump.
@@ -775,7 +828,7 @@ func _compute_velocity(
 				# Force up direction update in order for _handle_collision to work properly
 				up_direction = Vector2.UP.rotated(gameplay_rotation) * sign(gravity_flip)
 				last_collision = move_and_collide(displacement.normalized() * Constants.CELL_SIZE, true)
-				$GroundCollider.rotation = gameplay_rotation
+				_ground_collider.rotation = gameplay_rotation
 				_handle_collision(last_collision, false)
 				allow_ceiling_hit_count -= 1
 				# Snap velocity to the ground
@@ -825,7 +878,7 @@ func _compute_velocity(
 		local_velocity = _handle_velocity_interactable(local_velocity, colliding_orb, direction)
 		if not colliding_orb.has(SingleUsageComponent):
 			orb_queue.append(colliding_orb)
-		%Trail.add_points = true
+		_trail.add_points = true
 	#endregion
 
 	#region Dash orb velocity
@@ -872,7 +925,7 @@ func _handle_velocity_interactable(local_velocity: Vector2, interactable: Intera
 				_spider_state_machine.travel(&"jump")
 		elif component is SpiderDashComponent:
 			var raycast_rotation: float = interactable.global_rotation
-			$SpiderCast.rotation = raycast_rotation
+			_spider_cast.rotation = raycast_rotation
 			var dash_data: PackedFloat64Array = _get_spider_dash_data()
 			var dash_height: float = dash_data[0]
 			var floor_angle: float = dash_data[1]
@@ -901,7 +954,7 @@ func _handle_velocity_interactable(local_velocity: Vector2, interactable: Intera
 			# Force up direction update in order for _handle_collision to work properly
 			up_direction = Vector2.UP.rotated(gameplay_rotation) * sign(gravity_flip)
 			last_collision = move_and_collide(displacement.normalized() * Constants.CELL_SIZE, true)
-			$GroundCollider.rotation = gameplay_rotation
+			_ground_collider.rotation = gameplay_rotation
 			_handle_collision(last_collision, false)
 			allow_ceiling_hit_count -= 1
 			_spider_dash_frames = 4
@@ -914,13 +967,14 @@ func _handle_velocity_interactable(local_velocity: Vector2, interactable: Intera
 
 ## Ensure velocity redirection can happen and the vertical velocity isn't reset by hitting the floor.
 func _ensure_velocity_redirect(delta: float, new_velocity: Vector2) -> bool:
-	$EnsureVelocityRedirect.shape = $GroundCollider.shape
-	$EnsureVelocityRedirect.target_position = new_velocity * delta * ENSURE_VELOCITY_REDIRECT_SAFE_MARGIN
-	$EnsureVelocityRedirect.force_shapecast_update()
-	if not $EnsureVelocityRedirect.is_colliding():
+	var redirect_cast: ShapeCast2D = _ensure_velocity_redirect_cast
+	redirect_cast.shape = _ground_collider.shape
+	redirect_cast.target_position = new_velocity * delta * ENSURE_VELOCITY_REDIRECT_SAFE_MARGIN
+	redirect_cast.force_shapecast_update()
+	if not redirect_cast.is_colliding():
 		return false
-	for i in $EnsureVelocityRedirect.get_collision_count():
-		var collided_area := $EnsureVelocityRedirect.get_collider(i) as Area2D
+	for i in redirect_cast.get_collision_count():
+		var collided_area := redirect_cast.get_collider(i) as Area2D
 		if not collided_area is Interactable:
 			return false
 		for component in collided_area.components:
@@ -934,7 +988,7 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 	var velocity_angle: float = atan2(local_velocity.y, abs(local_velocity.x)) + gameplay_rotation
 	var corrected_direction: int = horizontal_direction if not dash_control else dash_control.initial_direction
 	var direction: int = get_direction()
-	if $GroundCollider.shape is CircleShape2D:
+	if _ground_collider.shape is CircleShape2D:
 		var floor_angle_signed: float = _get_floor_angle_signed(false, jump_state)
 		if get_floor_normal() != Vector2.ZERO:
 			if not is_zero_approx(floor_angle_signed):
@@ -956,35 +1010,35 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 	else:
 		sprite_floor_angle = lerp_angle(sprite_floor_angle, gameplay_rotation, delta * 60 * ICON_LERP_FACTOR)
 
-	$GroundParticlesOrigin.scale.y = gravity_flip
-	$GroundParticlesOrigin.scale.x = horizontal_direction
-	$GroundParticlesOrigin.rotation = sprite_floor_angle
+	_ground_particles_origin.scale.y = gravity_flip
+	_ground_particles_origin.scale.x = horizontal_direction
+	_ground_particles_origin.rotation = sprite_floor_angle
 
 	#region flip
 	if corrected_direction != 0:
-		$Icon.transform = Transform2D.IDENTITY \
-				.rotated(-sprite_floor_angle) \
-				.scaled(Vector2(corrected_direction, 1)) \
-				.rotated(sprite_floor_angle) \
+		_icon.transform = Transform2D.IDENTITY \
+			.rotated(-sprite_floor_angle) \
+			.scaled(Vector2(corrected_direction, 1)) \
+			.rotated(sprite_floor_angle) \
 		if displayed_gamemode not in [Gamemode.CUBE, Gamemode.BALL] \
 		else Transform2D.IDENTITY
-		$CornerSnapping.rotation = gameplay_rotation
-		$CornerSnapping.scale.x = corrected_direction
-		$CornerSnapping.scale.y = gravity_flip
+		_corner_snapping.rotation = gameplay_rotation
+		_corner_snapping.scale.x = corrected_direction
+		_corner_snapping.scale.y = gravity_flip
 
-	$Icon/Cube.scale.y = 1.0
-	$Icon/Ship.scale.y = gravity_flip
-	$Icon/Ship/ShipParticles.emitting = $Icon/Ship.visible and jump_state > 0
-	$Icon/Ship/ShipParticles.interp_to_end = 0.0 if $Icon/Ship.visible else 1.0
-	$Icon/Swing.scale.y = 1.0
-	$Icon/Wave.scale.y = 1.0
-	$Icon/UFO.scale.y = gravity_flip
-	$Icon/Jetpack.scale.y = gravity_flip
-	$Icon/Jetpack/JetpackParticles.emitting = $Icon/Jetpack.visible and jump_state > 0
-	$Icon/Jetpack/JetpackParticles.interp_to_end = 0.0 if $Icon/Jetpack.visible else 1.0
-	$Icon/Ball.scale.y = 1.0
-	$Icon/Spider.scale.y = gravity_flip
-	$Icon/Robot.scale.y = gravity_flip
+	_icon_cube.scale.y = 1.0
+	_icon_ship.scale.y = gravity_flip
+	_icon_ship_particles.emitting = _icon_ship.visible and jump_state > 0
+	_icon_ship_particles.interp_to_end = 0.0 if _icon_ship.visible else 1.0
+	_icon_swing.scale.y = 1.0
+	_icon_wave.scale.y = 1.0
+	_icon_ufo.scale.y = gravity_flip
+	_icon_jetpack.scale.y = gravity_flip
+	_icon_jetpack_particles.emitting = _icon_jetpack.visible and jump_state > 0
+	_icon_jetpack_particles.interp_to_end = 0.0 if _icon_jetpack.visible else 1.0
+	_icon_ball.scale.y = 1.0
+	_icon_spider.scale.y = gravity_flip
+	_icon_robot.scale.y = gravity_flip
 	#endregion
 
 	#region ball
@@ -994,62 +1048,62 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 			rotation_delta *= gravity_flip
 		else:
 			rotation_delta *= 1.5
-		$Icon/Ball.rotation_degrees += rotation_delta
-	var ball_grounded_look_factor = $Icon/Ball.get_meta(&"ball_grounded_look_factor", 0.0)
+		_icon_ball.rotation_degrees += rotation_delta
+	var ball_grounded_look_factor = _icon_ball.get_meta(&"ball_grounded_look_factor", 0.0)
 	if (abs(velocity.rotated(-gameplay_rotation).x) / speed_multiplier) < speed.x * 0.5:
 		ball_grounded_look_factor = lerpf(ball_grounded_look_factor, 1.0, 10 * delta)
 	else:
 		ball_grounded_look_factor = lerpf(ball_grounded_look_factor, 0.0, 10 * delta)
-	$Icon/Ball.set_meta(&"ball_grounded_look_factor", ball_grounded_look_factor)
-	var ball_rotation_in_air: float = Math.polar_polygon_normalized($Icon/Ball.rotation + deg_to_rad(72.0 / 2.0), 5, 2.0)
-	$Icon/Ball.position = Vector2(0.0, lerpf(0.0, lerpf(0, 10, ball_rotation_in_air), ball_grounded_look_factor)).rotated(gameplay_rotation)
+	_icon_ball.set_meta(&"ball_grounded_look_factor", ball_grounded_look_factor)
+	var ball_rotation_in_air: float = Math.polar_polygon_normalized(_icon_ball.rotation + deg_to_rad(72.0 / 2.0), 5, 2.0)
+	_icon_ball.position = Vector2(0.0, lerpf(0.0, lerpf(0, 10, ball_rotation_in_air), ball_grounded_look_factor)).rotated(gameplay_rotation)
 	#endregion
 
 	#region dash
 	if dash_control:
 		var dash_angle: float = dash_control.get_velocity(self).angle()
-		$DashParticles.emitting = velocity.length() > 0.0
-		$DashParticles.rotation = velocity_angle
-		$DashParticles.process_material.angle_min = rad_to_deg(dash_angle)
-		$DashParticles.process_material.angle_max = rad_to_deg(dash_angle)
-		$DashFlame.rotation = dash_angle
-		$Icon/Cube.rotation_degrees += delta * 800 * corrected_direction * gravity_flip
-		$Icon/Ship.rotation = lerp_angle($Icon/Ship.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
-		$Icon/Swing.rotation = lerp_angle($Icon/Swing.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
-		$Icon/UFO.rotation = lerp_angle($Icon/UFO.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
-		$Icon/Jetpack.rotation = lerp_angle($Icon/Jetpack.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
-		$Icon/Spider.rotation = lerp_angle($Icon/Spider.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
-		$Icon/Robot.rotation = lerp_angle($Icon/Robot.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
-		$Icon/Wave.rotation = lerp_angle($Icon/Wave.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_dash_particles.emitting = velocity.length() > 0.0
+		_dash_particles.rotation = velocity_angle
+		_dash_particles.process_material.angle_min = rad_to_deg(dash_angle)
+		_dash_particles.process_material.angle_max = rad_to_deg(dash_angle)
+		_dash_flame.rotation = dash_angle
+		_icon_cube.rotation_degrees += delta * 800 * corrected_direction * gravity_flip
+		_icon_ship.rotation = lerp_angle(_icon_ship.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_icon_swing.rotation = lerp_angle(_icon_swing.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_icon_ufo.rotation = lerp_angle(_icon_ufo.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_icon_jetpack.rotation = lerp_angle(_icon_jetpack.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_icon_spider.rotation = lerp_angle(_icon_spider.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_icon_robot.rotation = lerp_angle(_icon_robot.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
+		_icon_wave.rotation = lerp_angle(_icon_wave.rotation, velocity_angle, ICON_LERP_FACTOR * delta * 60)
 		return
 	#endregion
 
 	#region cube
 	if not is_on_floor() and not is_on_ceiling() and speed_multiplier != 0.0:
-		$Icon/Cube.rotation_degrees += delta * gravity_flip * 390 * get_direction() * gravity_multiplier
+		_icon_cube.rotation_degrees += delta * gravity_flip * 390 * get_direction() * gravity_multiplier
 	else:
-		$Icon/Cube.rotation = lerp_angle(
-			$Icon/Cube.rotation,
-			snapped($Icon/Cube.rotation - sprite_floor_angle, PI / 2) + sprite_floor_angle,
+		_icon_cube.rotation = lerp_angle(
+			_icon_cube.rotation,
+			snapped(_icon_cube.rotation - sprite_floor_angle, PI / 2) + sprite_floor_angle,
 			ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
 		)
 	#endregion
 
 	#region ship/swing
 	if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
-		$Icon/Ship.rotation = lerp_angle(
-			$Icon/Ship.rotation,
+		_icon_ship.rotation = lerp_angle(
+			_icon_ship.rotation,
 			velocity_angle,
 			SHIP_ROTATION_LERP_FACTOR * delta * 60,
 		)
-		$Icon/Swing.rotation = lerp_angle(
-			$Icon/Swing.rotation,
+		_icon_swing.rotation = lerp_angle(
+			_icon_swing.rotation,
 			velocity_angle,
 			SHIP_ROTATION_LERP_FACTOR * delta * 60,
 		)
 	else:
-		$Icon/Ship.rotation = lerp_angle($Icon/Ship.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
-		$Icon/Swing.rotation = lerp_angle($Icon/Swing.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
+		_icon_ship.rotation = lerp_angle(_icon_ship.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
+		_icon_swing.rotation = lerp_angle(_icon_swing.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
 	#endregion
 
 	#region wave
@@ -1057,8 +1111,8 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 		_wave_rotation_goal = velocity_angle
 	if is_on_floor():
 		_wave_rotation_goal = sprite_floor_angle
-	$Icon/Wave.rotation = lerp_angle(
-		$Icon/Wave.rotation,
+	_icon_wave.rotation = lerp_angle(
+		_icon_wave.rotation,
 		_wave_rotation_goal,
 		0.25 * delta * 60,
 	)
@@ -1066,32 +1120,32 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 
 	#region ufo
 	if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
-		$Icon/UFO.rotation_degrees = lerpf(
-			$Icon/UFO.rotation_degrees,
+		_icon_ufo.rotation_degrees = lerpf(
+			_icon_ufo.rotation_degrees,
 			velocity.rotated(-gameplay_rotation).y * delta * direction * 0.5 + gameplay_rotation_degrees,
 			ICON_LERP_FACTOR * delta * 60,
 		)
 	else:
-		$Icon/UFO.rotation = lerp_angle($Icon/UFO.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
+		_icon_ufo.rotation = lerp_angle(_icon_ufo.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
 	var jetpack_rotation_target: float = deg_to_rad(absf(local_velocity.x) / speed_multiplier * delta * 5) if not is_zero_approx(speed_multiplier) else 0.0
-	$Icon/Jetpack.rotation = lerp_angle(
-		$Icon/Jetpack.rotation,
+	_icon_jetpack.rotation = lerp_angle(
+		_icon_jetpack.rotation,
 		jetpack_rotation_target + sprite_floor_angle,
 		ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
 	)
 	if jump_state > 0:
 		var ufo_particle := UFO_PARTICLE.instantiate()
-		$Icon/UFO/UFOParticlesOrigin.add_child(ufo_particle)
+		_icon_ufo_particles_origin.add_child(ufo_particle)
 	#endregion
 
 	#region spider/robot
-	$Icon/Spider.rotation = lerp_angle(
-		$Icon/Spider.rotation,
+	_icon_spider.rotation = lerp_angle(
+		_icon_spider.rotation,
 		sprite_floor_angle,
 		ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
 	)
-	$Icon/Robot.rotation = lerp_angle(
-		$Icon/Robot.rotation,
+	_icon_robot.rotation = lerp_angle(
+		_icon_robot.rotation,
 		sprite_floor_angle,
 		ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
 	)
@@ -1100,39 +1154,39 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 
 func _update_swing_fire(delta: float) -> void:
 	if displayed_gamemode != Gamemode.SWING:
-		$Icon/Swing/FireBoostTop/FireParticles.emitting = false
-		$Icon/Swing/FireBoostMiddle/FireParticles.emitting = false
-		$Icon/Swing/FireBoostBottom/FireParticles.emitting = false
-		$Icon/Swing/FireBoostTop/FireParticles.interp_to_end = 1.0
-		$Icon/Swing/FireBoostMiddle/FireParticles.interp_to_end = 1.0
-		$Icon/Swing/FireBoostBottom/FireParticles.interp_to_end = 1.0
+		_swing_fire_top_particles.emitting = false
+		_swing_fire_middle_particles.emitting = false
+		_swing_fire_bottom_particles.emitting = false
+		_swing_fire_top_particles.interp_to_end = 1.0
+		_swing_fire_middle_particles.interp_to_end = 1.0
+		_swing_fire_bottom_particles.interp_to_end = 1.0
 	else:
 		var fire_boosts: Array[Sprite2D]
-		fire_boosts.assign([$Icon/Swing/FireBoostTop, $Icon/Swing/FireBoostMiddle, $Icon/Swing/FireBoostBottom])
+		fire_boosts.assign([_swing_fire_top, _swing_fire_middle, _swing_fire_bottom])
 		for i: int in fire_boosts.size():
 			var fire_boost: Sprite2D = fire_boosts[i]
 			fire_boost.scale.x = remap(sin(PI * (_fire_sprite_time + float(i) / fire_boosts.size()) * 10), -1.0, 1.0, 0.95, 1.05) * 0.6
-		$Icon/Swing/FireBoostMiddle/FireParticles.emitting = true
-		$Icon/Swing/FireBoostTop/FireParticles.interp_to_end = 0.0
-		$Icon/Swing/FireBoostMiddle/FireParticles.interp_to_end = 0.0
-		$Icon/Swing/FireBoostBottom/FireParticles.interp_to_end = 0.0
+		_swing_fire_middle_particles.emitting = true
+		_swing_fire_top_particles.interp_to_end = 0.0
+		_swing_fire_middle_particles.interp_to_end = 0.0
+		_swing_fire_bottom_particles.interp_to_end = 0.0
 		if gravity_flip < 0.0:
-			$Icon/Swing/FireBoostTop.position = $Icon/Swing/FireBoostTop.position.lerp(Vector2.ZERO, 1 - exp(-delta * 12))
-			$Icon/Swing/FireBoostBottom.position = $Icon/Swing/FireBoostBottom.position.lerp(Vector2(-54.0, 63.0), 1 - exp(-delta * 12))
-			$Icon/Swing/FireBoostTop/FireParticles.emitting = false
-			$Icon/Swing/FireBoostBottom/FireParticles.emitting = true
+			_swing_fire_top.position = _swing_fire_top.position.lerp(Vector2.ZERO, 1 - exp(-delta * 12))
+			_swing_fire_bottom.position = _swing_fire_bottom.position.lerp(Vector2(-54.0, 63.0), 1 - exp(-delta * 12))
+			_swing_fire_top_particles.emitting = false
+			_swing_fire_bottom_particles.emitting = true
 		else:
-			$Icon/Swing/FireBoostTop.position = $Icon/Swing/FireBoostTop.position.lerp(Vector2(-54.0, -63.0), 1 - exp(-delta * 12))
-			$Icon/Swing/FireBoostBottom.position = $Icon/Swing/FireBoostBottom.position.lerp(Vector2.ZERO, 1 - exp(-delta * 12))
-			$Icon/Swing/FireBoostTop/FireParticles.emitting = true
-			$Icon/Swing/FireBoostBottom/FireParticles.emitting = false
+			_swing_fire_top.position = _swing_fire_top.position.lerp(Vector2(-54.0, -63.0), 1 - exp(-delta * 12))
+			_swing_fire_bottom.position = _swing_fire_bottom.position.lerp(Vector2.ZERO, 1 - exp(-delta * 12))
+			_swing_fire_top_particles.emitting = true
+			_swing_fire_bottom_particles.emitting = false
 
 
 func _update_robot_fire(delta: float, jump_state: int) -> void:
 	var fire_sprites: Array[Sprite2D]
 	var fire_particles: Array[GPUParticles2D]
-	fire_sprites.assign([$Icon/Robot/RobotSprites/Head/ConnectorBack/LegBack/FootBack/Fire, $Icon/Robot/RobotSprites/Head/ConnectorFront/LegFront/FootFront/Fire])
-	fire_particles.assign([$Icon/Robot/RobotSprites/Head/ConnectorBack/LegBack/FootBack/Fire/FireParticles, $Icon/Robot/RobotSprites/Head/ConnectorFront/LegFront/FootFront/Fire/FireParticles])
+	fire_sprites.assign([_robot_fire_back, _robot_fire_front])
+	fire_particles.assign([_robot_fire_back_particles, _robot_fire_front_particles])
 
 	for i: int in fire_sprites.size():
 		var fire_sprite: Sprite2D = fire_sprites[i]
@@ -1161,17 +1215,17 @@ func _update_wave_trail(delta: float) -> void:
 	elif player_scale == PlayerScale.BIG:
 		wave_trail_width *= PLAYER_SCALE_BIG.y
 	var trail_has_sharp_angles: bool = internal_gamemode == Gamemode.WAVE
-	%WaveTrail.use_physics_process = trail_has_sharp_angles
-	$DebugTrail.use_physics_process = trail_has_sharp_angles
-	%WaveTrail.width = lerpf(%WaveTrail.width, wave_trail_width, 0.25 * delta * 60)
+	_wave_trail.use_physics_process = trail_has_sharp_angles
+	_debug_trail.use_physics_process = trail_has_sharp_angles
+	_wave_trail.width = lerpf(_wave_trail.width, wave_trail_width, 0.25 * delta * 60)
 	if displayed_gamemode == Gamemode.WAVE:
-		%WaveTrail.modulate.a = 1.0
-		%WaveTrail.length = lerpf(%WaveTrail.length, WAVE_TRAIL_LENGTH / player_camera_zoom_x, delta * 60 * 0.2)
+		_wave_trail.modulate.a = 1.0
+		_wave_trail.length = lerpf(_wave_trail.length, WAVE_TRAIL_LENGTH / player_camera_zoom_x, delta * 60 * 0.2)
 	else:
-		%WaveTrail.length = 0
-		%WaveTrail.modulate.a = move_toward(%WaveTrail.modulate.a, 0.0, delta * 60 * 0.2)
-		if is_zero_approx(%WaveTrail.modulate.a):
-			%WaveTrail.clear_points()
+		_wave_trail.length = 0
+		_wave_trail.modulate.a = move_toward(_wave_trail.modulate.a, 0.0, delta * 60 * 0.2)
+		if is_zero_approx(_wave_trail.modulate.a):
+			_wave_trail.clear_points()
 
 
 func _set_particles_visibility() -> void:
@@ -1188,11 +1242,11 @@ func _set_particles_visibility() -> void:
 
 
 func _update_spider_cast_rotation() -> void:
-	$SpiderCast.rotation = gameplay_rotation + (PI if gravity_flip < 0 else 0.0)
+	_spider_cast.rotation = gameplay_rotation + (PI if gravity_flip < 0 else 0.0)
 
 
 func _get_spider_dash_data() -> PackedFloat64Array:
-	var raycast: RayCast2D = $SpiderCast
+	var raycast: RayCast2D = _spider_cast
 	raycast.force_raycast_update()
 	var target_position = raycast.get_collision_point()
 	var dash_height: float = (target_position - position).length()
@@ -1200,17 +1254,17 @@ func _get_spider_dash_data() -> PackedFloat64Array:
 	dash_height -= (default_collider.size.y * 0.5 * scale.y)
 	dash_height *= gravity_flip
 	if not raycast.is_colliding():
-		$DeathAnimator.play("DeathAnimation")
+		_death_animator.play("DeathAnimation")
 		return [dash_height * 32, floor_angle]
 	return [dash_height, floor_angle]
 
 
 func _update_spider_state_machine(jump_state: int) -> void:
 	var is_stopped: bool = velocity.rotated(-gameplay_rotation).x == 0.0
-	if dash_control or (jump_state == -1 and not is_on_floor() and not is_on_ceiling() and not is_on_wall() and not $GroundCollider.shape is CircleShape2D):
+	if dash_control or (jump_state == -1 and not is_on_floor() and not is_on_ceiling() and not is_on_wall() and not _ground_collider.shape is CircleShape2D):
 		_spider_state_machine.travel(&"fall")
 	elif is_stopped:
-		_spider_state_machine.travel(&"idle" if not $IdleAltAnimationCooldown.is_stopped() else &"idle_alt")
+		_spider_state_machine.travel(&"idle" if not _idle_alt_cooldown.is_stopped() else &"idle_alt")
 	elif speed_multiplier >= 1.849:
 		spider_animation_tree["parameters/run/PlayerSpeed/scale"] = speed_multiplier / 1.849
 		_spider_state_machine.travel(&"run")
@@ -1225,10 +1279,10 @@ func _update_robot_state_machine(jump_state: int) -> void:
 		_robot_state_machine.travel(&"dash")
 	elif jump_state == 1:
 		_robot_state_machine.travel(&"jump")
-	elif not is_on_floor() and not is_on_ceiling() and not is_on_wall() and not $GroundCollider.shape is CircleShape2D:
+	elif not is_on_floor() and not is_on_ceiling() and not is_on_wall() and not _ground_collider.shape is CircleShape2D:
 		_robot_state_machine.travel(&"fall")
 	elif is_stopped:
-		_robot_state_machine.travel(&"idle" if not $IdleAltAnimationCooldown.is_stopped() else &"idle_alt")
+		_robot_state_machine.travel(&"idle" if not _idle_alt_cooldown.is_stopped() else &"idle_alt")
 	else:
 		robot_animation_tree["parameters/walk/PlayerSpeed/scale"] = speed_multiplier
 		_robot_state_machine.travel(&"walk")
@@ -1238,13 +1292,13 @@ func _player_death() -> void:
 	AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), true)
 	dead = true
 	last_automatic_checkpoint_position = position
-	$Icon.hide()
-	$DeathEffect.frame = 0
-	$DeathEffect.play()
-	$DeathParticles.restart()
-	$DashParticles.emitting = false
-	%GroundParticles.emitting = false
-	$Trail.clear_points()
+	_icon.hide()
+	_death_effect.frame = 0
+	_death_effect.play()
+	_death_particles.restart()
+	_dash_particles.emitting = false
+	_ground_particles.emitting = false
+	_trail.clear_points()
 	SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3", &"In Level SFX")
 
 
@@ -1257,9 +1311,9 @@ func _on_death_restart() -> void:
 
 
 func _handle_checkpoint_placement(practice_mode: bool = LevelManager.practice_mode) -> void:
-	var checkpoint_parent: Node2D = LevelManager.game_scene.checkpoint_parent
 	if not practice_mode:
 		return
+	var checkpoint_parent: Node2D = LevelManager.game_scene.checkpoint_parent
 	if InputUtils.is_action_just_pressed(&"practice_create_checkpoint"):
 		place_checkpoint().use_normal_sprite().done()
 		last_automatic_checkpoint_position = position
@@ -1283,12 +1337,12 @@ func _handle_checkpoint_placement(practice_mode: bool = LevelManager.practice_mo
 
 func _on_kill_collider_solid_body_entered(_body: Node2D) -> void:
 	if _spider_dash_frames == 0:
-		$DeathAnimator.play("DeathAnimation")
+		_death_animator.play("DeathAnimation")
 
 
 func _on_kill_collider_hazard_area_entered(_area: Area2D) -> void:
 	if _spider_dash_frames == 0:
-		$DeathAnimator.play("DeathAnimation")
+		_death_animator.play("DeathAnimation")
 
 
 func _on_solid_overlap_check_body_exited(body: Node2D) -> void:

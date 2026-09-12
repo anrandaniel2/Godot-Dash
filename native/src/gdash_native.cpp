@@ -37,6 +37,8 @@
 #include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 
+#include <godot_cpp/templates/hash_map.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -78,8 +80,10 @@ class NativeTriggerRuntime : public RefCounted {
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
 	// Direct group -> record index lookup makes spawn/event dispatch proportional
-	// to the target group, not to every trigger in a 100k-object level.
-	std::map<String, std::vector<size_t>> group_index;
+	// to the target group, not to every trigger in a 100k-object level. Hashed:
+	// spawn-heavy levels look groups up for every scheduled event, and a
+	// red-black tree walk with full String compares showed up in those profiles.
+	HashMap<String, std::vector<size_t>> group_index;
 	// Min-heap ordered by due time/source sequence. Inserting a spawn event is
 	// O(log n), replacing the old full stable_sort after every insertion.
 	std::vector<Event> events;
@@ -167,10 +171,10 @@ public:
 		records.shrink_to_fit();
 		x_order.shrink_to_fit();
 		for (auto &entry : group_index) {
-			std::stable_sort(entry.second.begin(), entry.second.end(), [&](size_t a, size_t b) {
+			std::stable_sort(entry.value.begin(), entry.value.end(), [&](size_t a, size_t b) {
 				return records[a].source_order < records[b].source_order;
 			});
-			entry.second.shrink_to_fit();
+			entry.value.shrink_to_fit();
 		}
 	}
 	void advance(Object *player, double previous_x, double current_x) {
@@ -214,7 +218,7 @@ public:
 			if (player) {
 				auto group = group_index.find(String(event.group));
 				if (group != group_index.end()) {
-					for (size_t index : group->second) activate(index, player, true);
+					for (size_t index : group->value) activate(index, player, true);
 				}
 			}
 			++dispatched;
@@ -436,9 +440,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.9.0 / native animation / spatial retained RIDs / worker culling / api 4.7");
+		return String("gdash_native 1.10.0 / native animation / spatial retained RIDs / worker culling / native color channels / api 4.7");
 	}
-	int64_t version() const { return 19; }
+	int64_t version() const { return 20; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -850,6 +854,124 @@ public:
 	int64_t hidden_count() const { return static_cast<int64_t>(hidden.size()); }
 };
 
+// Native fast path for ColorChannelWatcher.refresh_objects_color. A colour
+// trigger (and every pulse-animation frame of one) repaints every HSVWatcher of
+// its channel: the old path cost a GDScript call plus ~15 Variant property
+// accesses per object, each frame, for channels with thousands of members.
+// The index snapshots the per-object state once and applies a channel update
+// with direct CanvasItem calls, skipping the interpreter entirely. The bridge
+// in ColorChannelWatcher.gd rebuilds the snapshot whenever watcher state or
+// group membership changes, and keeps the old loop for editor builds.
+class NativeColorChannelIndex : public RefCounted {
+	GDCLASS(NativeColorChannelIndex, RefCounted)
+
+	struct Record {
+		ObjectID watcher;
+		float hsv[3] = { 0.0f, 0.0f, 0.0f };
+		float intensity = 1.0f;
+		float alpha = 1.0f;
+		bool sat_multiplies = false;
+		bool val_multiplies = false;
+	};
+	std::vector<Record> records;
+	// base_intensity/base_alpha are channel-wide values mirrored onto every
+	// watcher for later GDScript reads (update_color, to_data). Skipping the
+	// property writes when the channel values did not change removes two
+	// hashed script-property sets per object on colour-only pulses.
+	bool base_valid = false;
+	double last_intensity = 0.0;
+	double last_alpha = 0.0;
+
+	static Node *node_for(ObjectID id) {
+		return Object::cast_to<Node>(ObjectDB::get_instance(id));
+	}
+
+public:
+	void clear() {
+		records.clear();
+		base_valid = false;
+	}
+
+	// watchers: the channel group's HSVWatcher nodes. Per-object shift,
+	// intensity, alpha and the multiply flags are read once; the caller is
+	// responsible for re-configuring when that state changes (the GDScript
+	// bridge tracks a generation counter for this).
+	void configure(const Array &watchers) {
+		clear();
+		records.reserve(static_cast<size_t>(watchers.size()));
+		for (int64_t i = 0; i < watchers.size(); ++i) {
+			Object *object = watchers[i];
+			Node *node = Object::cast_to<Node>(object);
+			if (!node || !node->get_parent()) continue;
+			// Selection highlights are an editor-only state that repaints to a
+			// fixed colour; leave those to the GDScript path.
+			if (static_cast<int64_t>(node->get("selection_highlight")) != 0) continue;
+			Record record;
+			record.watcher = node->get_instance_id();
+			const Array shift = node->get("hsv_shift");
+			for (int component = 0; component < 3 && component < shift.size(); ++component)
+				record.hsv[component] = static_cast<float>(static_cast<double>(shift[component]));
+			record.intensity = static_cast<float>(static_cast<double>(node->get("intensity")));
+			record.alpha = static_cast<float>(static_cast<double>(node->get("alpha")));
+			record.sat_multiplies = static_cast<bool>(node->get("saturation_multiplies"));
+			record.val_multiplies = static_cast<bool>(node->get("value_multiplies"));
+			records.push_back(record);
+		}
+	}
+
+	// Applies one channel update: the channel colour (already copy-resolved by
+	// the caller), the channel HSV shift, and the channel intensity/alpha.
+	// Mirrors ColorChannelWatcher.refresh_objects_color + HSVWatcher.update_color
+	// operation for operation, including the s, v, h apply order (each Color
+	// component write round-trips through RGB, so order is observable).
+	void apply(const Color &channel_color, double shift_h, double shift_s, double shift_v,
+			double intensity, double alpha) {
+		const bool write_base = !base_valid || intensity != last_intensity || alpha != last_alpha;
+		base_valid = true;
+		last_intensity = intensity;
+		last_alpha = alpha;
+		const float fh = static_cast<float>(shift_h);
+		const float fs = static_cast<float>(shift_s);
+		const float fv = static_cast<float>(shift_v);
+		for (const Record &record : records) {
+			CanvasItem *watcher = Object::cast_to<CanvasItem>(node_for(record.watcher));
+			if (!watcher) continue;
+			// watcher.modulate = channel colour + channel shift (s, v, h).
+			Color modulate = channel_color;
+			modulate.set_s(modulate.get_s() + fs);
+			modulate.set_v(modulate.get_v() + fv);
+			modulate.set_h(modulate.get_h() + fh);
+			// HSVWatcher.update_color: per-object shift on top (s, v, h), then
+			// intensity product and alpha override on the parent's modulate.
+			Color shifted = modulate;
+			if (record.sat_multiplies) shifted.set_s(shifted.get_s() * record.hsv[1]);
+			else shifted.set_s(shifted.get_s() + record.hsv[1]);
+			if (record.val_multiplies) shifted.set_v(shifted.get_v() * record.hsv[2]);
+			else shifted.set_v(shifted.get_v() + record.hsv[2]);
+			shifted.set_h(shifted.get_h() + record.hsv[0]);
+			Color parent_modulate = shifted * (record.intensity * static_cast<float>(intensity));
+			parent_modulate.a = modulate.a * record.alpha * static_cast<float>(alpha);
+			watcher->set_modulate(modulate);
+			CanvasItem *target = Object::cast_to<CanvasItem>(watcher->get_parent());
+			if (target) target->set_modulate(parent_modulate);
+			if (write_base) {
+				watcher->set("base_intensity", intensity);
+				watcher->set("base_alpha", alpha);
+			}
+		}
+	}
+
+	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("clear"), &NativeColorChannelIndex::clear);
+		ClassDB::bind_method(D_METHOD("configure", "watchers"), &NativeColorChannelIndex::configure);
+		ClassDB::bind_method(D_METHOD("apply", "color", "shift_h", "shift_s", "shift_v", "intensity", "alpha"), &NativeColorChannelIndex::apply);
+		ClassDB::bind_method(D_METHOD("item_count"), &NativeColorChannelIndex::item_count);
+	}
+};
+
 // Native state machine for runtime level construction. It owns iteration,
 // layer creation, placement dispatch and sealing; GDScript's LevelBuildJob is
 // only a source/editor fallback and stable API facade.
@@ -1032,6 +1154,11 @@ class NativeDecorationRenderer : public RefCounted {
 	// Dense indices are effectively a small SoA hot set: animation touches only
 	// transform/spin data for rotating records, never every static Record.
 	std::vector<size_t> spinning_indices;
+	// Generation stamps replace a per-rebuild "emitted" byte vector: a camera
+	// bucket change used to allocate and zero records.size() bytes on every
+	// rebuild, every renderer, every frame of a scrolling level.
+	std::vector<uint32_t> emitted_stamp;
+	uint32_t emit_stamp = 0;
 	std::map<int64_t, std::map<int64_t, std::vector<size_t>>> sections;
 	bool cull = true;
 	double bucket_width = 256.0;
@@ -1080,16 +1207,21 @@ class NativeDecorationRenderer : public RefCounted {
 		}
 		// Records spanning several cells are indexed into each touched cell.
 		// Emit them once even when several of those cells are visible.
-		std::vector<uint8_t> emitted(records.size(), 0);
+		if (records.size() != emitted_stamp.size()) emitted_stamp.assign(records.size(), 0);
+		uint32_t stamp = ++emit_stamp;
+		if (stamp == 0) { // wrapped: retire every old stamp at once
+			std::fill(emitted_stamp.begin(), emitted_stamp.end(), 0);
+			stamp = emit_stamp = 1;
+		}
 		auto column = sections.lower_bound(first_bucket);
 		while (column != sections.end() && column->first <= last_bucket) {
 			auto row = column->second.lower_bound(first_row);
 			while (row != column->second.end() && row->first <= last_row) {
-				for (size_t index : row->second) {
-					if (emitted[index]) continue;
-					emitted[index] = 1;
-					draw_record(records[index]);
-				}
+			for (size_t index : row->second) {
+				if (emitted_stamp[index] == stamp) continue;
+				emitted_stamp[index] = stamp;
+				draw_record(records[index]);
+			}
 				++row;
 			}
 			++column;
@@ -1146,6 +1278,7 @@ public:
 		}
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear(); spinning_indices.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
+		emitted_stamp.clear();
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
@@ -1356,6 +1489,7 @@ void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(godot::NativeFrustumIndex);
 		GDREGISTER_CLASS(godot::NativeLevelBuildJob);
 		GDREGISTER_CLASS(godot::NativeDecorationRenderer);
+		GDREGISTER_CLASS(godot::NativeColorChannelIndex);
 	}
 }
 void gdash_native_terminate(godot::ModuleInitializationLevel) {}

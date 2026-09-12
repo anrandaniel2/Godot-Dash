@@ -64,6 +64,19 @@ scene fall back to the batched renderer (`DecorationBatch`). While a level plays
 hides objects beyond a buffer around the camera (Settings → Graphics → Performance → *Culling buffer*,
 in cells) so a sudden speed change never shows a gap.
 
+## Runtime performance
+
+The optional GDExtension (`native/`) carries the hot paths that per-object GDScript cannot: the packed
+trigger scheduler, the retained-RID decoration renderer with worker-thread culling, the node visibility
+index, incremental level construction, shared-physics shape commits — and, since 1.10, colour-channel
+propagation (`NativeColorChannelIndex`): one native call repaints every `HSVWatcher` of a channel, which
+colour-pulse-heavy levels previously paid as a per-object GDScript call with ~15 property accesses each
+animation frame. Source/editor builds without the extension keep the equivalent GDScript paths.
+
+Per-frame GDScript is kept lean as well: the 240 Hz player loop resolves its scene nodes through cached
+references instead of `$Path` lookups, and idle interactable components (easings, rebounds, music-pulse
+scales, toggle sprites) only process while a tween is live or the player is within interaction range.
+
 Steps 1–2 need Python 3 and Pillow (`pip install pillow`).
 
 ## Contributing

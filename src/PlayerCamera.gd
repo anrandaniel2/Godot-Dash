@@ -18,6 +18,9 @@ var freefly := true
 ## Value in pixels of the gameplay offset. Smoothed over time.
 var gameplay_offset: Vector2
 var is_snapping_view: bool
+## Whether the last frame queued a debug-overlay redraw, so turning the
+## setting off mid-play still issues the one redraw that clears the overlay.
+var _debug_overlays_were_on: bool = false
 var player_speed_sign: int
 var static_offset_rotation: float ## Rotation used by the offset when static gets enabled.
 var smoothed_gameplay_rotation: float
@@ -32,7 +35,15 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not (LevelManager.level_playing or is_snapping_view) or player.dead:
 		return
-	queue_redraw()
+	# The debug overlay draw is the only reason this camera redraws; skip the
+	# queue_redraw (a canvas-item dirty pass every frame) when it is off. One
+	# final redraw on the true->false transition clears whatever was drawn.
+	if Config.draw_debug_overlays:
+		queue_redraw()
+		_debug_overlays_were_on = true
+	elif _debug_overlays_were_on:
+		queue_redraw()
+		_debug_overlays_were_on = false
 	var framerate_compensation: float = delta * 60.0
 	smoothed_gameplay_rotation = lerp_angle(smoothed_gameplay_rotation, player.gameplay_rotation, 0.1 * framerate_compensation if not is_snapping_view else 1.0)
 
