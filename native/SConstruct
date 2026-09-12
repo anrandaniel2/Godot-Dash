@@ -7,8 +7,23 @@ This mirrors godot-cpp's own test project and godot-cpp-template instead of
 renaming the library into a custom ABI directory after compilation.
 """
 
+# A GDExtension cannot remove modules from the prebuilt Godot executable, but
+# it can avoid linking godot-cpp bindings for hundreds of engine classes this
+# library never references. Keep production-oriented defaults overridable from
+# the command line for sanitizer/debug builds.
+ARGUMENTS.setdefault("build_profile", "build_profile.json")
+ARGUMENTS.setdefault("optimize", "speed")
+ARGUMENTS.setdefault("debug_symbols", "no")
+ARGUMENTS.setdefault("lto", "auto")
+ARGUMENTS.setdefault("disable_exceptions", "yes")
+ARGUMENTS.setdefault("deprecated", "no")
+
 env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
 env.Append(CPPPATH=["src/"])
+if env["platform"] in ("linux", "android"):
+    env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
+    env.Append(LINKFLAGS=["-Wl,--gc-sections", "-Wl,--as-needed"])
+
 
 sources = Glob("src/*.cpp")
 library = env.SharedLibrary(

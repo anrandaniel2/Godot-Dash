@@ -8,7 +8,9 @@
 #include <godot_cpp/classes/camera2d.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/collision_shape2d.hpp>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/shape2d.hpp>
 #include <godot_cpp/classes/marshalls.hpp>
 #include <godot_cpp/classes/node.hpp>
@@ -18,6 +20,7 @@
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
+#include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/core/object.hpp>
@@ -234,6 +237,76 @@ public:
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
 };
 
+// Native owner for the packed runtime. Besides being the migration point for
+// rendering/collision stores, this removes the last per-physics-frame
+// GDScript->GDExtension calls: player discovery, crossing queries and event
+// clock advancement happen in one C++ notification.
+class NativeLevelRuntime : public Node {
+	GDCLASS(NativeLevelRuntime, Node)
+
+	Ref<NativeTriggerRuntime> triggers;
+	Node *level_manager = nullptr;
+	std::map<uint64_t, double> previous_x;
+
+	void advance_player(Object *object) {
+		Node2D *player = Object::cast_to<Node2D>(object);
+		if (!player) return;
+		const uint64_t id = static_cast<uint64_t>(player->get_instance_id());
+		const double x = player->get_global_position().x;
+		auto previous = previous_x.find(id);
+		if (previous != previous_x.end()) triggers->advance(player, previous->second, x);
+		previous_x[id] = x;
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("clear"), &NativeLevelRuntime::clear);
+		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger);
+		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger);
+		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
+		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
+		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
+		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
+		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeLevelRuntime::trigger_count);
+	}
+
+	void _notification(int what) {
+		if (what == Node::NOTIFICATION_READY) {
+			SceneTree *tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+			if (tree) level_manager = tree->get_root()->get_node_or_null(NodePath("LevelManager"));
+			set_physics_process(true);
+			return;
+		}
+		if (what != Node::NOTIFICATION_PHYSICS_PROCESS || !level_manager || !triggers.is_valid()) return;
+		if (!static_cast<bool>(level_manager->get("level_playing"))) return;
+		Variant main_value = level_manager->get("player");
+		Object *main_player = main_value;
+		advance_player(main_player);
+		const Array duals = level_manager->get("player_duals");
+		for (int64_t i = 0; i < duals.size(); ++i) {
+			Object *dual = duals[i];
+			advance_player(dual);
+		}
+		triggers->tick(get_physics_process_delta_time());
+	}
+
+public:
+	NativeLevelRuntime() { triggers.instantiate(); }
+
+	void clear() { triggers->clear(); previous_x.clear(); }
+	int64_t register_trigger(Object *trigger, double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return triggers->register_trigger(trigger, x, flags, source_order, groups, gd_id, properties);
+	}
+	int64_t register_packed_trigger(double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return triggers->register_packed_trigger(x, flags, source_order, groups, gd_id, properties);
+	}
+	void finalize() { triggers->finalize(); }
+	void reset() { triggers->reset(); previous_x.clear(); }
+	Dictionary snapshot() const { return triggers->snapshot(); }
+	void restore(const Dictionary &state) { triggers->restore(state); previous_x.clear(); }
+	int64_t trigger_count() const { return triggers->trigger_count(); }
+};
+
 class GdashNative : public RefCounted {
 	GDCLASS(GdashNative, RefCounted)
 
@@ -294,9 +367,9 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.2.0 / node-elided trigger scheduler / lossless GD parser / godot-cpp 6cceaf6a5f8b / api 4.7");
+		return String("gdash_native 1.3.0 / NativeLevelRuntime / profiled LTO build / godot-cpp 6cceaf6a5f8b / api 4.7");
 	}
-	int64_t version() const { return 12; }
+	int64_t version() const { return 13; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -1047,6 +1120,7 @@ namespace {
 void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(godot::NativeTriggerRuntime);
+		GDREGISTER_CLASS(godot::NativeLevelRuntime);
 		GDREGISTER_CLASS(godot::GdashNative);
 		GDREGISTER_CLASS(godot::NativeFrustumIndex);
 		GDREGISTER_CLASS(godot::NativeLevelBuildJob);

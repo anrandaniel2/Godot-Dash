@@ -144,7 +144,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: native/scons-cache
-          key: native-scons-${{ env.GODOT_CPP_REF }}-api47
+          key: native-scons-${{ env.GODOT_CPP_REF }}-api47-profile-v1-lto
 
       # godot-cpp is cloned fresh each run (small, shallow) rather than cached:
       # caching it alongside the multi-GB NDK made cache restore unreliable.
@@ -164,6 +164,9 @@ jobs:
           cd native
           scons platform=linux target=template_debug arch=x86_64 api_version=4.7 -j2
           test -f bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          ls -lh bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          # Catch accidental return to the all-classes godot-cpp build.
+          test "$(stat -c%s bin/linux/libgdash_native.linux.template_debug.x86_64.so)" -lt 2000000
           # Preserve the host library while cleaning shared intermediates before
           # the ARM build. Restore it for the visual smoke test afterward.
           cp bin/linux/libgdash_native.linux.template_debug.x86_64.so /tmp/libgdash_native.linux.so
@@ -200,6 +203,7 @@ jobs:
           scons platform=android target=template_debug arch=arm64 \
             api_version=4.7 ndk_version="$NDK_VERSION" -j2
           test -f bin/android/libgdash_native.android.template_debug.arm64.so
+          test "$(stat -c%s bin/android/libgdash_native.android.template_debug.arm64.so)" -lt 2500000
           ls -lh bin/android/
 
       # ------------------------------------------------- Android build template

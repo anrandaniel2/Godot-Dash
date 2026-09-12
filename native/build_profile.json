@@ -1,0 +1,21 @@
+{
+  "enabled_classes": [
+    "Camera2D",
+    "CanvasItem",
+    "CollisionShape2D",
+    "Engine",
+    "Marshalls",
+    "Node",
+    "Node2D",
+    "OS",
+    "RefCounted",
+    "ResourceLoader",
+    "SceneTree",
+    "Script",
+    "Shape2D",
+    "Texture2D",
+    "Time",
+    "Viewport",
+    "Window"
+  ]
+}

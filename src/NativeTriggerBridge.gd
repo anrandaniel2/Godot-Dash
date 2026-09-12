@@ -5,18 +5,18 @@ extends Node
 ## the existing component signal when C++ reports a deterministic crossing.
 
 var _runtime: Object
-var _previous_x: Dictionary[int, float] = {}
 var _target_cache: Dictionary[String, Node2D] = {}
 var _level: Level
 
 
 func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	_level = level
-	if not NativeCore.available() or not ClassDB.class_exists(&"NativeTriggerRuntime"):
+	if not NativeCore.available() or not ClassDB.class_exists(&"NativeLevelRuntime"):
 		return false
-	_runtime = ClassDB.instantiate(&"NativeTriggerRuntime")
-	if _runtime == null:
+	_runtime = ClassDB.instantiate(&"NativeLevelRuntime")
+	if _runtime == null or _runtime is not Node:
 		return false
+	add_child(_runtime as Node)
 	var records: Array[TriggerInteractable] = []
 	for node: Node in get_tree().get_nodes_in_group(&"_gd_native_trigger"):
 		if node is TriggerInteractable and level.is_ancestor_of(node):
@@ -51,7 +51,6 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	# Build and compact the X/group indexes during level loading rather than on
 	# the first gameplay physics frame, eliminating a visible first-jump hitch.
 	_runtime.call(&"finalize")
-	set_physics_process(true)
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
 	return true
 
@@ -113,29 +112,7 @@ func _configure_runtime_targets(trigger: TriggerInteractable) -> void:
 			static_component.axis = clampi(int(properties.get("101", "0")), Constants.Axis.BOTH, Constants.Axis.Y)
 
 
-func _physics_process(delta: float) -> void:
-	if _runtime == null or not LevelManager.level_playing:
-		return
-	_advance_player(LevelManager.player)
-	for player: Player in LevelManager.player_duals:
-		_advance_player(player)
-	# Advance the native clock after crossings. Newly-created zero-delay spawn
-	# events execute in this frame; delayed events retain an exact native time.
-	_runtime.call(&"tick", delta)
-
-
-func _advance_player(player: Player) -> void:
-	if player == null or not is_instance_valid(player):
-		return
-	var id := int(player.get_instance_id())
-	var current_x := player.global_position.x
-	if _previous_x.has(id):
-		_runtime.call(&"advance", player, _previous_x[id], current_x)
-	_previous_x[id] = current_x
-
-
 func reset_runtime() -> void:
-	_previous_x.clear()
 	if _runtime != null:
 		_runtime.call(&"reset")
 
@@ -145,6 +122,5 @@ func snapshot() -> Dictionary:
 
 
 func restore(state: Dictionary) -> void:
-	_previous_x.clear()
 	if _runtime != null:
 		_runtime.call(&"restore", state)
