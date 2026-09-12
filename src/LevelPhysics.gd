@@ -208,6 +208,13 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 			added.append(shape_node)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
+	# Native online/static artwork lives in RenderingServer RIDs and this
+	# object's authored collision now lives in the shared chunk body. If its
+	# groups were dynamic _is_mergeable() would have rejected it above, so the
+	# empty GDObject root has no remaining runtime responsibility. Keeping tens
+	# of thousands of these roots was pure SceneTree traversal/memory overhead.
+	if object.has_meta(&"_gd_native_packed_art"):
+		object.free()
 
 
 ## Frees the shape nodes an object contributed to the shared bodies.

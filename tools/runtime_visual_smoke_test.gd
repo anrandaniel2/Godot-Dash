@@ -205,6 +205,11 @@ func _test_native_core() -> void:
 		elif built_child is GDObject:
 			assert(built_child.get_node_or_null(^"Base") == null, "native smoke: duplicate static Sprite2D tree retained")
 	assert(found_static_batch, "native smoke: packed static artwork batch missing")
+	LevelPhysics.rebuild(static_level)
+	for built_child: Node in static_layer.get_children():
+		assert(built_child is not GDObject, "native smoke: collision-only static root retained")
+	var physics_container := static_level.get_node_or_null(LevelPhysics.CONTAINER_NAME)
+	assert(physics_container != null and physics_container.get_child_count() > 0, "native smoke: shared static collision missing")
 	static_level.free()
 	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
 	# Every 2.2 trigger ID must survive import. Dedicated families retain their
