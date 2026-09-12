@@ -1262,6 +1262,7 @@ public:
 	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].transform = transform; commands_dirty = true; } }
 	Transform2D get_item_transform(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].transform : Transform2D(); }
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
+	int64_t animated_item_count() const { return static_cast<int64_t>(spinning_indices.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
 	bool is_spatially_culled() const { return cull; }
 };
@@ -1322,12 +1323,14 @@ static void update_registered_decoration_renderers(double delta) {
 static Dictionary registered_decoration_stats() {
 	Dictionary stats;
 	int64_t records = 0;
+	int64_t animated_records = 0;
 	int64_t submitted = 0;
 	int64_t empty_canvases = 0;
 	int64_t culled_canvases = 0;
 	for (NativeDecorationRenderer *canvas : registered_decoration_renderers) {
 		if (!canvas) continue;
 		records += canvas->item_count();
+		animated_records += canvas->animated_item_count();
 		submitted += canvas->last_drawn_count();
 		if (canvas->last_drawn_count() == 0) ++empty_canvases;
 		if (canvas->is_spatially_culled()) ++culled_canvases;
@@ -1336,6 +1339,7 @@ static Dictionary registered_decoration_stats() {
 	stats["culled_canvases"] = culled_canvases;
 	stats["empty_canvases"] = empty_canvases;
 	stats["records"] = records;
+	stats["animated_records"] = animated_records;
 	stats["submitted_records"] = submitted;
 	return stats;
 }
