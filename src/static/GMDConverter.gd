@@ -33,6 +33,8 @@ const Prop := {
 	MAIN_HSV_ENABLED = "41",
 	MAIN_HSV = "43",
 	TARGET_GROUP = "51",
+	CENTER_GROUP = "71", # Camera Static's followed group (and rotate/scale centre)
+	STATIC_EXIT = "110", # Camera Static's "exit static mode" toggle
 	DURATION = "10",
 	TEXT = "31",
 	SCALE_X = "128",
@@ -359,6 +361,12 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		var target_group: String = properties.get(Prop.TARGET_GROUP, "")
 		if target_group.is_valid_int():
 			targeted_groups[target_group] = targeted_groups.get(target_group, 0) + 1
+		# A Camera Static trigger follows its centre group (key 71) rather than
+		# the usual key 51.
+		if gd_id == 1914:
+			var center_group: String = properties.get(Prop.CENTER_GROUP, "")
+			if center_group.is_valid_int():
+				targeted_groups[center_group] = targeted_groups.get(center_group, 0) + 1
 
 		# Resolution order, best result first:
 		#   1. a real Godot Dash scene  - interactive, not just artwork
@@ -982,6 +990,23 @@ static func _easing_from_property(easing: int) -> Array:
 		_: return [Tween.EASE_IN_OUT, Tween.TRANS_LINEAR]
 
 
+## Parses a Geometry Dash group reference into the list of groups it names.
+##
+## A reference is usually a single group id, but Geometry Dash 2.2 lets several
+## groups be targeted at once as a dot separated list (commas are accepted
+## too). Empty, invalid and non-positive entries are dropped, duplicates kept
+## once.
+static func _group_list_from_property(raw: Variant) -> PackedStringArray:
+	var groups := PackedStringArray()
+	if raw == null:
+		return groups
+	for part: String in str(raw).replace(",", ".").split(".", false):
+		part = part.strip_edges()
+		if part.is_valid_int() and int(part) > 0 and not groups.has(part):
+			groups.append(part)
+	return groups
+
+
 ## Fills in the public components of triggers and interactables that Godot Dash
 ## understands.
 ##
@@ -999,10 +1024,21 @@ static func _components_from_properties(
 		return { }
 	var components: Dictionary = { }
 
-	# Target group, shared by every group based trigger.
-	var target_group: String = properties.get(Prop.TARGET_GROUP, "").strip_edges()
-	if "TargetGroupComponent" in supported and target_group.is_valid_int() and int(target_group) > 0:
-		components["TargetGroupComponent"] = { "target_group": Constants.GROUP_PREFIX + target_group }
+	# Target group, shared by every group based trigger. Geometry Dash 2.2 lets
+	# one trigger target several groups at once (key 51 becomes a dot or comma
+	# separated list): the first group stays the primary target the editor
+	# edits, the rest ride along as extras.
+	var target_groups: PackedStringArray = _group_list_from_property(properties.get(Prop.TARGET_GROUP, ""))
+	if "TargetGroupComponent" in supported and not target_groups.is_empty():
+		var target_group_data: Dictionary = {
+			"target_group": Constants.GROUP_PREFIX + target_groups[0],
+		}
+		if target_groups.size() > 1:
+			var extra_groups := PackedStringArray()
+			for group_idx in range(1, target_groups.size()):
+				extra_groups.append(Constants.GROUP_PREFIX + target_groups[group_idx])
+			target_group_data["extra_target_groups"] = extra_groups
+		components["TargetGroupComponent"] = target_group_data
 
 	# Easing, shared by every timed trigger.
 	if "EasingComponent" in supported:
@@ -1069,13 +1105,17 @@ static func _components_from_properties(
 					"alpha": clampf(float(properties.get(Prop.OPACITY, "1")), 0.0, 1.0),
 				}
 		1049: # Toggle trigger
-			if "ToggleComponent" in supported and target_group.is_valid_int() and int(target_group) > 0:
-				components["ToggleComponent"] = {
-					"toggled_groups": [{
-						"group": StringName(target_group),
-						"state": ToggledGroup.ToggleState.ON if properties.get(Prop.ACTIVATE_GROUP, "0") == "1" else ToggledGroup.ToggleState.OFF,
-					}],
-				}
+			if "ToggleComponent" in supported and not target_groups.is_empty():
+				var toggle_state: int = ToggledGroup.ToggleState.ON \
+						if properties.get(Prop.ACTIVATE_GROUP, "0") == "1" \
+						else ToggledGroup.ToggleState.OFF
+				var toggled_groups: Array = []
+				for group: String in target_groups:
+					toggled_groups.append({
+						"group": StringName(group),
+						"state": toggle_state,
+					})
+				components["ToggleComponent"] = { "toggled_groups": toggled_groups }
 		1346: # Rotate trigger
 			if "RotationChangerComponent" in supported:
 				# Full turns (key 69) are stored separately from the remainder.
@@ -1107,6 +1147,22 @@ static func _components_from_properties(
 					"mode": CameraZoomChangerComponent.Mode.SET,
 					"zoom": Vector2.ONE * maxf(0.01, float(properties.get("371", "1"))) * 100.0,
 				}
+		1914: # Camera static trigger
+			if "CameraStaticComponent" in supported:
+				var static_data: Dictionary = { }
+				# Key 110 is the "exit static mode" toggle; when it is unset the
+				# trigger enters static mode.
+				if properties.get(Prop.STATIC_EXIT, "0") == "1":
+					static_data["mode"] = CameraStaticComponent.Mode.EXIT
+				components["CameraStaticComponent"] = static_data
+			# Key 71 is the centre group the camera eases to and then follows
+			# (the camera guide technique: move the guide's group to pan).
+			if "TargetGroupComponent" in supported:
+				var center_groups := _group_list_from_property(properties.get(Prop.CENTER_GROUP, ""))
+				if not center_groups.is_empty():
+					components["TargetGroupComponent"] = {
+						"target_group": Constants.GROUP_PREFIX + center_groups[0],
+					}
 		1916: # Camera offset trigger
 			if "CameraOffsetChangerComponent" in supported:
 				components["CameraOffsetChangerComponent"] = {

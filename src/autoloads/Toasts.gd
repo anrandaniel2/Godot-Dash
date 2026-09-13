@@ -12,6 +12,10 @@ enum {
 var toast_layer: CanvasLayer
 var toast_container: VBoxContainer
 
+## Keys of warnings already shown once, so a repeated problem - one trigger
+## firing on every attempt, say - doesn't spam the screen with the same toast.
+var _warned_once: Dictionary = { }
+
 
 func new_toast(text: String, duration: float = 2.0, options: int = NONE) -> Toast:
 	if not get_tree().root.has_node("ToastLayer"):
@@ -39,3 +43,10 @@ func warning(text: String, duration: float = 2.0, options: int = NONE) -> Toast:
 	var toast = new_toast(text, duration, options)
 	toast.modulate = Color.YELLOW
 	return toast
+
+
+func warning_once(key: String, text: String, duration: float = 2.0, options: int = NONE) -> Toast:
+	if _warned_once.has(key):
+		return null
+	_warned_once[key] = true
+	return warning(text, duration, options)

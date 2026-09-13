@@ -1,0 +1,19 @@
+[gd_scene format=3 uid="uid://9v25jgw46tyo0"]
+
+[ext_resource type="Script" uid="uid://dnxmq664kbq3f" path="res://src/interactables/private_components/TriggerSprite.gd" id="1_guide"]
+[ext_resource type="Texture2D" uid="uid://cdliwusgrssq" path="res://assets/textures/triggers/CameraEdge.svg" id="2_guide"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="3_guide"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="4_guide"]
+
+[node name="GDCameraGuide" type="Node2D"]
+
+[node name="Sprite" type="Sprite2D" parent="."]
+scale = Vector2(0.2, 0.2)
+texture = ExtResource("2_guide")
+script = ExtResource("1_guide")
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="."]
+script = ExtResource("3_guide")
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("4_guide")]
+type = 8

@@ -183,7 +183,12 @@ const MAP: Dictionary[int, Dictionary] = {
 	1914: {
 		"scene": TRIGGERS + "CameraStaticTrigger.tscn",
 		"name": "CameraStaticTrigger",
-		"components": ["TargetObjectComponent", "CameraStaticComponent", "EasingComponent"],
+		"components": [
+			"TargetObjectComponent",
+			"TargetGroupComponent",
+			"CameraStaticComponent",
+			"EasingComponent",
+		],
 	},
 	1916: {
 		"scene": TRIGGERS + "CameraOffsetTrigger.tscn",
@@ -198,7 +203,7 @@ const MAP: Dictionary[int, Dictionary] = {
 	2062: {
 		"scene": TRIGGERS + "CameraEdgeTrigger.tscn",
 		"name": "CameraEdgeTrigger",
-		"components": ["TargetObjectComponent"],
+		"components": ["TargetObjectComponent", "TargetGroupComponent"],
 	},
 	1934: {
 		"scene": TRIGGERS + "SongTrigger.tscn",
@@ -231,6 +236,29 @@ const MAP: Dictionary[int, Dictionary] = {
 		"components": ["TeleportComponent"],
 	},
 	3600: { "scene": TRIGGERS + "EndLevelTrigger.tscn", "name": "EndLevelTrigger" },
+	#endregion
+
+	#region Invisible Geometry Dash gameplay objects
+	# Objects with no artwork at all that Geometry Dash levels use for
+	# gameplay: they were previously skipped entirely, which emptied every
+	# trigger group built out of them ("target group doesn't contain any
+	# objects") and dropped their collision.
+	# 1816 is Geometry Dash's collision block: an invisible solid rectangle
+	# scaled to the creator's chosen size.
+	1816: { "scene": SOLIDS + "GDInvisibleBlock.tscn", "name": "CollisionBlock" },
+	# 2.2 invisible hazards: kill zones sized by the object's scale.
+	3610: { "scene": HAZARDS + "GDDamageSquare.tscn", "name": "DamageSquare" },
+	3611: { "scene": HAZARDS + "GDDamageCircle.tscn", "name": "DamageCircle" },
+	# The camera guide a Camera: Static trigger focuses on (key 71); moving it
+	# with a move trigger pans the camera.
+	2016: { "scene": LEVEL_COMPONENTS + "GDCameraGuide.tscn", "name": "CameraGuide" },
+	# Force blocks and particle emitters: no Godot Dash equivalent behaviour,
+	# but they keep their group membership so triggers targeting them resolve.
+	2069: { "scene": LEVEL_COMPONENTS + "GDGroupMarker.tscn", "name": "ForceBlock" },
+	3645: { "scene": LEVEL_COMPONENTS + "GDGroupMarker.tscn", "name": "ForceCircle" },
+	1586: { "scene": LEVEL_COMPONENTS + "GDGroupMarker.tscn", "name": "ParticleEmitter" },
+	1700: { "scene": LEVEL_COMPONENTS + "GDGroupMarker.tscn", "name": "ParticleEmitter" },
+	2065: { "scene": LEVEL_COMPONENTS + "GDGroupMarker.tscn", "name": "ParticleEmitter" },
 	#endregion
 
 	#region Misc

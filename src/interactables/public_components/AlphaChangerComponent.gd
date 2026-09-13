@@ -85,13 +85,12 @@ func _field_from_data(field_name: String, field_data: Variant) -> void:
 func start(_player: Player) -> void:
 	# Not every node in a group owns an HSVWatcher - a DecorationBatch draws its
 	# sprites directly and has none - so the nulls are filtered out before use.
-	var targets: Array = get_tree() \
-			.get_nodes_in_group(parent.query(TargetGroupComponent).target_group) \
-			.filter(func(object): return object is Node2D)
+	var target_group_component := parent.query(TargetGroupComponent)
+	var targets: Array = target_group_component.all_members()
 	group_hsv_watchers.assign(
 		targets \
-				.map(BaseDetailHandler.use_hsv_watcher) \
-				.filter(func(hsv_watcher): return hsv_watcher != null),
+			.map(BaseDetailHandler.use_hsv_watcher) \
+			.filter(func(hsv_watcher): return hsv_watcher != null),
 	)
 	group_hsv_watchers.map(func(hsv_watcher: HSVWatcher): initial_alphas.set(hsv_watcher, hsv_watcher.alpha))
 
@@ -109,8 +108,13 @@ func start(_player: Player) -> void:
 		var batch: DecorationBatch = target
 		_group_batches.append(batch)
 		_initial_batch_alphas[batch] = batch.modulate.a
-	if group_hsv_watchers.is_empty():
-		Toasts.warning("In %s: target group doesn't contain any objects" % parent.name)
+	# Batched decoration fades through the batch, so only a group with neither
+	# watchers nor batches is actually empty.
+	if group_hsv_watchers.is_empty() and _group_batches.is_empty():
+		Toasts.warning_once(
+			"empty_group:" + ",".join(target_group_component.all_groups()),
+			"In %s: target group doesn't contain any objects" % parent.name,
+		)
 	if mode == Mode.COPY and copy_target == null and Editor.in_editor:
 		Toasts.error("In %s: copy target is unset" % parent.name)
 		if not copy_target.is_empty():

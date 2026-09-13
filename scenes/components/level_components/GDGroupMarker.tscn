@@ -1,0 +1,19 @@
+[gd_scene format=3 uid="uid://zlrrcy6zqyr6e"]
+
+[ext_resource type="Script" uid="uid://dnxmq664kbq3f" path="res://src/interactables/private_components/TriggerSprite.gd" id="1_marker"]
+[ext_resource type="Texture2D" uid="uid://clkd6k2ybkqv5" path="res://assets/textures/Circle.svg" id="2_marker"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="3_marker"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="4_marker"]
+
+[node name="GDGroupMarker" type="Node2D"]
+
+[node name="Sprite" type="Sprite2D" parent="."]
+scale = Vector2(0.2, 0.2)
+texture = ExtResource("2_marker")
+script = ExtResource("1_marker")
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="."]
+script = ExtResource("3_marker")
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("4_marker")]
+type = 8

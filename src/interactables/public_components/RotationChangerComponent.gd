@@ -67,14 +67,14 @@ func _field_from_data(field_name: String, field_data: Variant) -> void:
 
 
 func start(_player: Player) -> void:
-	group_objects.assign(
-		get_tree() \
-				.get_nodes_in_group(parent.query(TargetGroupComponent).target_group) \
-				.filter(func(object): return object is Node2D),
-	)
+	var target_group_component := parent.query(TargetGroupComponent)
+	group_objects.assign(target_group_component.all_members())
 	group_objects.map(func(object): initial_global_rotations_degrees.set(object, object.global_rotation))
 	if group_objects.is_empty():
-		Toasts.warning("In %s: target group doesn't contain any objects" % parent.name)
+		Toasts.warning_once(
+			"empty_group:" + ",".join(target_group_component.all_groups()),
+			"In %s: target group doesn't contain any objects" % parent.name,
+		)
 
 
 func _on_easing_progressed(_player: Player, weight_delta: float) -> void:

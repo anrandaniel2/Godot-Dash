@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://cq3vm0mtdhxgb" path="res://assets/textures/triggers/CameraStatic.svg" id="2_3p4ry"]
 [ext_resource type="Script" uid="uid://dnxmq664kbq3f" path="res://src/interactables/private_components/TriggerSprite.gd" id="3_8i2r2"]
 [ext_resource type="Script" uid="uid://b1h4lmrngdiim" path="res://src/interactables/public_components/TargetObjectComponent.gd" id="3_l83ao"]
+[ext_resource type="Script" uid="uid://bu1sqxc337su3" path="res://src/interactables/public_components/TargetGroupComponent.gd" id="12_l83ao"]
 [ext_resource type="Script" uid="uid://tfriwfc7uruu" path="res://src/interactables/public_components/EasingComponent.gd" id="4_ionrn"]
 [ext_resource type="Script" uid="uid://t87nu0a2md6y" path="res://src/interactables/public_components/CameraStaticComponent.gd" id="4_y3m6h"]
 [ext_resource type="Script" uid="uid://cilw18c36fh6" path="res://src/interactables/public_components/TriggerHitboxComponent.gd" id="5_ohg0h"]
@@ -50,6 +51,10 @@ metadata/_custom_type_script = "uid://78e8oeq1vi6k"
 [node name="TargetObjectComponent" type="Node" parent="." unique_id=1684842370]
 script = ExtResource("3_l83ao")
 metadata/_custom_type_script = "uid://b1h4lmrngdiim"
+
+[node name="TargetGroupComponent" type="Node" parent="."]
+script = ExtResource("12_l83ao")
+metadata/_custom_type_script = "uid://bu1sqxc337su3"
 
 [node name="CameraStaticComponent" type="Node" parent="." unique_id=1717192215]
 script = ExtResource("4_y3m6h")

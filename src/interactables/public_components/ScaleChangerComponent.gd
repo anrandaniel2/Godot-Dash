@@ -46,14 +46,14 @@ func _get_property_default_value(property: String) -> Variant:
 
 
 func start(_player: Player) -> void:
-	group_objects.assign(
-		get_tree() \
-				.get_nodes_in_group(parent.query(TargetGroupComponent).target_group) \
-				.filter(func(object): return object is Node2D),
-	)
+	var target_group_component := parent.query(TargetGroupComponent)
+	group_objects.assign(target_group_component.all_members())
 	group_objects.map(func(object): initial_global_scales.set(object, object.global_scale))
 	if group_objects.is_empty():
-		Toasts.warning("In %s: target group doesn't contain any objects" % parent.name)
+		Toasts.warning_once(
+			"empty_group:" + ",".join(target_group_component.all_groups()),
+			"In %s: target group doesn't contain any objects" % parent.name,
+		)
 	if not scale_around_self and pivot.is_empty():
 		Toasts.error("In %s: trying to scale around unset pivot")
 
