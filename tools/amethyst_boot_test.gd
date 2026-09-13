@@ -79,6 +79,13 @@ func _import_from_gdhistory() -> Dictionary:
 	if gmd.is_empty():
 		push_error("[amethyst-boot] GDHistory archive fetch failed")
 		return {}
+	if gmd.contains("Just a moment") or gmd.begins_with("<!DOCTYPE html>"):
+		# Cloudflare serves datacenter IPs an interstitial instead of the
+		# archive. Skip the repro rather than fail the pipeline; the device
+		# tombstone symbolication in the android build step covers diagnosis.
+		print("AMETHYST_BOOT_SKIPPED archive unreachable from this network (Cloudflare challenge)")
+		get_tree().quit(0)
+		return {}
 	# Whitespace-tolerant in case the exporter breaks lines between tags.
 	var pattern := RegEx.new()
 	var compile_error := pattern.compile("<k>\\s*k4\\s*</k>\\s*<s>")
