@@ -278,7 +278,20 @@ jobs:
           SO=bin/android/libgdash_native.android.template_debug.arm64.so
           test -f "$SO" || { echo "::error::android gdash_native .so missing after scons"; ls -R bin; exit 1; }
           cp "$SO" /tmp/libgdash_native_android_unstripped.so
-          strip "$SO"
+          chmod u+w "$SO" /tmp/libgdash_native_android_unstripped.so
+          # scons cache-retrieved artifacts can be read-only, and the NDK's
+          # lld output occasionally trips binutils strip; fall back to the
+          # NDK's own llvm-strip and annotate with diagnostics if both fail.
+          if ! strip "$SO" 2>/tmp/strip_error.log; then
+            STRIP_DETAILS="binutils strip: $(head -c 300 /tmp/strip_error.log)"
+            LLVM_STRIP=$(ls "$NDK_DIR"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -1 || true)
+            if [ -n "$LLVM_STRIP" ] && "$LLVM_STRIP" "$SO" 2>>/tmp/strip_error.log; then
+              echo "binutils strip failed, NDK llvm-strip succeeded"
+            else
+              echo "::error title=Android strip failed::${STRIP_DETAILS} | llvm-strip: $(ls "$NDK_DIR"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -1) | $(ls -l "$SO")"
+              exit 1
+            fi
+          fi
           ls -lh "$SO" /tmp/libgdash_native_android_unstripped.so
           # Symbolize the 2026-09-13 on-device tombstone (Amethyst level
           # start, APK 1fa4b8c): SIGSEGV in libgdash_native android arm64 at
