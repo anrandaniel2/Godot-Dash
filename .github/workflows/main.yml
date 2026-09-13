@@ -517,6 +517,20 @@ jobs:
             exit 1
           fi
 
+      # Level-data report for the missing-glow investigation: where glow
+      # objects and colour-copy channels sit in Amethyst. Downloaded through
+      # the same chain as the boot test; diagnostic only, never blocks the APK.
+      - name: Amethyst glow analysis (level data)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 tools/analyze_amethyst_glow.py > amethyst_glow.log 2>&1 || true
+          cat amethyst_glow.log
+          echo "### Amethyst glow analysis" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          cat amethyst_glow.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       # If the import-time scan never registered native/bin/gdash_native.gdextension,
       # the exporter has nothing to attach the .so to (and the exported app's
       # runtime loader would not know the extension either). This check turns
