@@ -9,6 +9,7 @@
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/fast_noise_lite.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/shape2d.hpp>
@@ -42,6 +43,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <numeric>
 #include <set>
@@ -49,11 +51,393 @@
 
 namespace godot {
 
+// ---------------------------------------------------------------------------
+// Native trigger effects.
+//
+// Every Geometry Dash trigger family this engine understands runs entirely in
+// C++ once its record is registered: properties are parsed into a compact
+// effect struct at load time, eased effects live in a small fade table ticked
+// with the physics clock, and changes are applied through direct engine calls
+// (transforms, modulate, process mode, ColorChannelData, camera, time scale).
+// No GDScript and no per-trigger scene nodes execute for packed records, which
+// is what keeps 5000-trigger effect levels playable. Records whose family has
+// no native behaviour still emit the Interactable signal so scene-backed
+// families (camera static, edge, end level) keep their components.
+// ---------------------------------------------------------------------------
+
+// Geometry Dash's editor grid is 30 units per cell; Godot Dash renders cells
+// 128 pixels wide with +Y pointing down, hence the negated Y conversion.
+static constexpr double GD_CELL_SIZE = 30.0;
+static constexpr double ENGINE_CELL_SIZE = 128.0;
+static constexpr double CELLS_TO_PX_X = ENGINE_CELL_SIZE / GD_CELL_SIZE;
+static constexpr double CELLS_TO_PX_Y = -ENGINE_CELL_SIZE / GD_CELL_SIZE;
+// PlayerCamera.DEFAULT_ZOOM; GD camera zoom percentages are relative to it.
+static constexpr double PLAYER_CAMERA_DEFAULT_ZOOM = 0.8;
+// A touch trigger's hitbox spans one GD cell, as does the player's icon
+// hitbox: their centres overlap while both axes are within one cell.
+static constexpr double TOUCH_HALF_EXTENT = ENGINE_CELL_SIZE;
+// NOTE: no godot-cpp String/StringName may be constructed in a static
+// initializer - the extension interface is only bound after the library is
+// loaded - so every constant below is spelled out at its use site.
+
+enum class TriggerEffectKind : int32_t {
+	NONE = 0,      // registered, spawnable, but no behaviour (matches the inert generic families)
+	MOVE,          // 901 Move
+	ROTATE,        // 1346 Rotate
+	SCALE,         // 2067 Scale
+	ALPHA,         // 1007 Alpha
+	TOGGLE,        // 1049 Toggle
+	COLOR,         // 899 Color
+	PULSE,         // 1006 Pulse (colour channel targets)
+	SPAWN,         // 1268 Spawn
+	STOP,          // 1616 Stop (cancel pending spawns for a group)
+	HIDE,          // 1612 Hide Player
+	SHOW,          // 1613 Show Player
+	TIMEWARP,      // 1935 Timewarp
+	CAMERA_ZOOM,   // 1913 Zoom Camera
+	CAMERA_OFFSET, // 1916 Offset Camera
+	CAMERA_ROTATE, // 2015 Rotate Camera
+	SHAKE,         // 1520 Shake
+	TELEPORT,      // 3022 Teleport
+};
+
+// GD easing index to curve, mirroring GMDConverter._easing_from_property:
+// 0 linear; 1-3 quad; 4-6 elastic; 7-9 bounce; 10-12 expo; 13-15 sine;
+// 16-18 back - each family as in-out / in / out. Unknown indices are linear.
+static double ease_bounce_out(double t) {
+	const double c1 = 7.5625;
+	const double c2 = 2.75;
+	if (t < 1.0 / c2) return c1 * t * t;
+	if (t < 2.0 / c2) return c1 * (t -= 1.5 / c2) * t + 0.75;
+	if (t < 2.5 / c2) return c1 * (t -= 2.25 / c2) * t + 0.9375;
+	return c1 * (t -= 2.625 / c2) * t + 0.984375;
+}
+static double ease_weight(int gd_easing, double t) {
+	if (gd_easing <= 0 || gd_easing > 18) return Math::clamp(t, 0.0, 1.0);
+	t = Math::clamp(t, 0.0, 1.0);
+	const int family = (gd_easing - 1) / 3; // 0 quad .. 5 back
+	const int mode = (gd_easing - 1) % 3;   // 0 in-out, 1 in, 2 out
+	const bool in_out = mode == 0;
+	const bool ease_in = mode != 2;
+	switch (family) {
+		case 0: { // quad
+			if (in_out) return t < 0.5 ? 2.0 * t * t : 1.0 - Math::pow(-2.0 * t + 2.0, 2.0) / 2.0;
+			return ease_in ? t * t : 1.0 - Math::pow(1.0 - t, 2.0);
+		}
+		case 1: { // elastic
+			const double c4 = (2.0 * Math::PI) / 3.0;
+			if (t == 0.0 || t == 1.0) return t;
+			if (in_out) {
+				return t < 0.5
+					? -Math::pow(2.0, 20.0 * t - 10.0) * Math::sin((20.0 * t - 11.125) * c4) / 2.0
+					: Math::pow(2.0, -20.0 * t + 10.0) * Math::sin((20.0 * t - 11.125) * c4) / 2.0 + 1.0;
+			}
+			return ease_in
+				? -Math::pow(2.0, 10.0 * t - 10.0) * Math::sin((10.0 * t - 10.75) * c4)
+				: Math::pow(2.0, -10.0 * t) * Math::sin((10.0 * t - 0.75) * c4) + 1.0;
+		}
+		case 2: { // bounce
+			if (in_out) {
+				return t < 0.5
+					? (1.0 - ease_bounce_out(1.0 - 2.0 * t)) / 2.0
+					: (1.0 + ease_bounce_out(2.0 * t - 1.0)) / 2.0;
+			}
+			return ease_in ? 1.0 - ease_bounce_out(1.0 - t) : ease_bounce_out(t);
+		}
+		case 3: { // expo
+			if (t == 0.0) return 0.0;
+			if (t == 1.0) return 1.0;
+			if (in_out) {
+				return t < 0.5
+					? Math::pow(2.0, 20.0 * t - 10.0) / 2.0
+					: (2.0 - Math::pow(2.0, -20.0 * t + 10.0)) / 2.0;
+			}
+			return ease_in ? Math::pow(2.0, 10.0 * t - 10.0) : 1.0 - Math::pow(2.0, -10.0 * t);
+		}
+		case 4: { // sine
+			if (in_out) return -Math::cos(t * Math::PI) * 0.5 + 0.5;
+			return ease_in ? 1.0 - Math::cos(t * Math::PI / 2.0) : Math::sin(t * Math::PI / 2.0);
+		}
+		default: { // back
+			double c1 = 1.70158;
+			const double c3 = c1 + 1.0;
+			if (in_out) {
+				c1 *= 1.525;
+				return t < 0.5
+					? (Math::pow(2.0 * t, 2.0) * ((c1 + 1.0) * 2.0 * t - c1)) / 2.0
+					: (Math::pow(2.0 * t - 2.0, 2.0) * ((c1 + 1.0) * (2.0 * t - 2.0) + c1) + 2.0) / 2.0;
+			}
+			return ease_in
+				? c3 * t * t * t - c1 * t * t
+				: 1.0 + c3 * Math::pow(t - 1.0, 3.0) + c1 * Math::pow(t - 1.0, 2.0);
+		}
+	}
+}
+
+// Property readers. GD serialises every value as a string, including empty
+// ones that must round-trip untouched (see the converter's lossless pairs).
+static double prop_float(const Dictionary &properties, const char *key, double fallback) {
+	const Variant value = properties.get(key, Variant());
+	switch (value.get_type()) {
+		case Variant::NIL:
+			return fallback;
+		case Variant::STRING:
+			return String(value).to_float();
+		default:
+			return static_cast<double>(value);
+	}
+}
+static int64_t prop_int(const Dictionary &properties, const char *key, int64_t fallback) {
+	const Variant value = properties.get(key, Variant());
+	switch (value.get_type()) {
+		case Variant::NIL:
+			return fallback;
+		case Variant::STRING: {
+			const String text = String(value).strip_edges();
+			return text.is_valid_int() ? text.to_int() : fallback;
+		}
+		default:
+			return static_cast<int64_t>(value);
+	}
+}
+
+// A trigger's effect, parsed once at registration. Field meanings follow the
+// converter's component arms so native execution is behaviour-identical.
+struct TriggerEffect {
+	TriggerEffectKind kind = TriggerEffectKind::NONE;
+	double duration = 0.0;       // key 10
+	int32_t easing = 0;          // key 30
+	bool pulse_envelope = false; // any of keys 45/46/47 present (pulse style)
+	double fade_in = 0.0;        // key 45
+	double hold = 0.0;           // key 46
+	double fade_out = 0.0;       // key 47
+	std::vector<String> target_groups; // key 51, "g_N" names (dot/comma lists)
+	String center_group;               // key 71, "g_N" (rotate/scale/teleport centre)
+	Vector2 move_px;             // 901: keys 28/29 in pixels
+	double degrees = 0.0;        // 1346: keys 68 + 69*360
+	bool allow_self_rotation = true; // 1346: key 70 != "1"
+	Vector2 scale_factor = Vector2(1.0, 1.0); // 2067: keys 150/151 (multiplied)
+	double alpha = 1.0;          // 1007: key 35
+	bool toggle_on = false;      // 1049: key 56 == "1"
+	int32_t target_channel = -1; // 899: key 23; 1006: key 51 when 52 != "1"
+	bool channel_is_level_color = false; // target is the level's own bg/ground/line
+	Color color = Color(1.0f, 1.0f, 1.0f);
+	bool has_color = false;      // 899/1006: any of keys 7/8/9 present
+	int32_t copy_channel = 0;    // key 50
+	bool copy_opacity = false;   // key 60
+	double copy_hue = 0.0, copy_saturation = 0.0, copy_value = 0.0; // key 49 HSV string
+	bool copy_saturation_additive = true, copy_value_additive = true;
+	int32_t player_color = 0;    // 0 none, 1 key 15, 2 key 16
+	double opacity = 1.0;        // 899: key 35
+	double shake_strength = 5.0; // 1520: key 75
+	double time_scale = 1.0;     // 1935: key 120
+	double camera_zoom = 1.0;    // 1913: key 371 (GD zoom percentage)
+	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
+	double camera_rotation_degrees = 0.0; // 2015: key 68
+};
+
+static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
+	std::vector<String> groups;
+	const String raw = String(properties.get(key, String())).strip_edges().replace(",", ".");
+	if (raw.is_empty()) return groups;
+	const PackedStringArray parts = raw.split(".", false);
+	for (int64_t i = 0; i < parts.size(); ++i) {
+		const String part = String(parts[i]).strip_edges();
+		if (!part.is_valid_int() || part.to_int() <= 0) continue;
+		const String name = String("g_") + part;
+		bool duplicate = false;
+		for (const String &existing : groups) {
+			if (existing == name) {
+				duplicate = true;
+				break;
+			}
+		}
+		if (!duplicate) groups.push_back(name);
+	}
+	return groups;
+}
+
+// Parses a "h a s a v a sat_additive a val_additive" copied-colour HSV string
+// (hue normalised from degrees), matching GMDConverter._hsv_values.
+static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) {
+	const String raw = String(properties.get("49", String()));
+	if (raw.is_empty()) return false;
+	const PackedStringArray parts = raw.split("a", false);
+	if (parts.size() < 3) return false;
+	effect.copy_hue = String(parts[0]).to_float() / 360.0;
+	effect.copy_saturation = String(parts[1]).to_float();
+	effect.copy_value = String(parts[2]).to_float();
+	effect.copy_saturation_additive = parts.size() > 3 && String(parts[3]) == "1";
+	effect.copy_value_additive = parts.size() > 4 && String(parts[4]) == "1";
+	return true;
+}
+
+// Resolves where a colour/pulse trigger's target colour comes from. Geometry
+// Dash always serialises the RGB keys of a hand-picked colour - even pure
+// white - so their absence means the colour comes from a copied channel
+// (key 50) or one of the player colours (keys 15/16). A trigger with none of
+// those only fades opacity (KEEP). Mirrors the Color trigger converter arm.
+static void parse_color_source(const Dictionary &properties, TriggerEffect &effect) {
+	effect.opacity = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+	const String copied = String(properties.get("50", String())).strip_edges();
+	if (copied.is_valid_int() && copied.to_int() > 0) {
+		effect.copy_channel = static_cast<int32_t>(copied.to_int());
+		effect.copy_opacity = String(properties.get("60", String("0"))) == "1";
+		parse_copy_hsv(properties, effect);
+		return;
+	}
+	if (String(properties.get("15", String("0"))) == "1") {
+		effect.player_color = 1;
+		return;
+	}
+	if (String(properties.get("16", String("0"))) == "1") {
+		effect.player_color = 2;
+		return;
+	}
+	if (properties.has("7") || properties.has("8") || properties.has("9")) {
+		effect.color = Color(
+			static_cast<real_t>(prop_float(properties, "7", 255.0) / 255.0),
+			static_cast<real_t>(prop_float(properties, "8", 255.0) / 255.0),
+			static_cast<real_t>(prop_float(properties, "9", 255.0) / 255.0));
+		effect.has_color = true;
+	}
+	// else KEEP: fade opacity only.
+}
+
+// Level colours the reserved channel IDs alias to; P1/P2/GLOW have no runtime
+// representation (matching TargetColorChannelComponent.Type.LEVEL no-ops).
+static String level_color_property_for_channel(int32_t channel) {
+	if (channel == 1000) return String("background_color");
+	if (channel == 1001 || channel == 1009) return String("ground_color");
+	if (channel == 1002) return String("line_color");
+	return String();
+}
+
+static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &properties) {
+	TriggerEffect effect;
+	switch (gd_id) {
+		case 901: effect.kind = TriggerEffectKind::MOVE; break;
+		case 1346: effect.kind = TriggerEffectKind::ROTATE; break;
+		case 2067: effect.kind = TriggerEffectKind::SCALE; break;
+		case 1007: effect.kind = TriggerEffectKind::ALPHA; break;
+		case 1049: effect.kind = TriggerEffectKind::TOGGLE; break;
+		case 899: effect.kind = TriggerEffectKind::COLOR; break;
+		case 1006: effect.kind = TriggerEffectKind::PULSE; break;
+		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
+		case 1616: effect.kind = TriggerEffectKind::STOP; break;
+		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
+		case 1613: effect.kind = TriggerEffectKind::SHOW; break;
+		case 1935: effect.kind = TriggerEffectKind::TIMEWARP; break;
+		case 1913: effect.kind = TriggerEffectKind::CAMERA_ZOOM; break;
+		case 1916: effect.kind = TriggerEffectKind::CAMERA_OFFSET; break;
+		case 2015: effect.kind = TriggerEffectKind::CAMERA_ROTATE; break;
+		case 1520: effect.kind = TriggerEffectKind::SHAKE; break;
+		case 3022: effect.kind = TriggerEffectKind::TELEPORT; break;
+		default: return effect; // inert
+	}
+	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
+	effect.easing = static_cast<int32_t>(prop_int(properties, "30", 0));
+	effect.target_groups = parse_group_list(properties, "51");
+	const String center = String(properties.get("71", String())).strip_edges();
+	if (center.is_valid_int() && center.to_int() > 0) effect.center_group = String("g_") + center;
+	if (properties.has("45") || properties.has("46") || properties.has("47")) {
+		effect.pulse_envelope = true;
+		effect.fade_in = Math::max(0.0, prop_float(properties, "45", 0.0));
+		effect.hold = Math::max(0.0, prop_float(properties, "46", 0.0));
+		effect.fade_out = Math::max(0.0, prop_float(properties, "47", 0.0));
+	}
+	switch (effect.kind) {
+		case TriggerEffectKind::MOVE:
+		case TriggerEffectKind::CAMERA_OFFSET:
+			// GD units to pixels; +Y in GD is up, +Y in Godot is down.
+			effect.move_px = Vector2(
+				static_cast<real_t>(prop_float(properties, "28", 0.0) * CELLS_TO_PX_X),
+				static_cast<real_t>(prop_float(properties, "29", 0.0) * CELLS_TO_PX_Y));
+			effect.camera_offset_px = effect.move_px;
+			break;
+		case TriggerEffectKind::ROTATE:
+		case TriggerEffectKind::CAMERA_ROTATE:
+			effect.degrees = prop_float(properties, "68", 0.0) + prop_float(properties, "69", 0.0) * 360.0;
+			effect.camera_rotation_degrees = effect.degrees;
+			effect.allow_self_rotation = String(properties.get("70", String("0"))) != "1";
+			break;
+		case TriggerEffectKind::SCALE:
+			effect.scale_factor = Vector2(
+				static_cast<real_t>(prop_float(properties, "150", 1.0)),
+				static_cast<real_t>(prop_float(properties, "151", 1.0)));
+			break;
+		case TriggerEffectKind::ALPHA:
+			effect.alpha = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+			break;
+		case TriggerEffectKind::TOGGLE:
+			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
+			break;
+		case TriggerEffectKind::COLOR: {
+			const String target = String(properties.get("23", String())).strip_edges();
+			if (!target.is_valid_int() || target.to_int() <= 0) {
+				effect.kind = TriggerEffectKind::NONE; // no target: nothing to fade
+				break;
+			}
+			const int32_t channel = static_cast<int32_t>(target.to_int());
+			const String level_property = level_color_property_for_channel(channel);
+			if (!level_property.is_empty()) {
+				effect.channel_is_level_color = true;
+				effect.target_channel = channel;
+			} else if (channel == 1005 || channel == 1006) {
+				effect.kind = TriggerEffectKind::NONE; // player channels: no-op, like the component
+				break;
+			} else {
+				effect.target_channel = channel;
+			}
+			parse_color_source(properties, effect);
+			break;
+		}
+		case TriggerEffectKind::PULSE: {
+			// Key 52 selects the target type: 0 = colour channel in key 51,
+			// 1 = object group. Group pulses and HSV pulses need per-object
+			// colour overrides this engine models differently, so they stay
+			// inert until that changes.
+			const String target_type = String(properties.get("52", String("0"))).strip_edges();
+			const String hsv_mode = String(properties.get("48", String("0"))).strip_edges();
+			const String target = String(properties.get("51", String())).strip_edges();
+			if (target_type == "1" || hsv_mode == "1" || !target.is_valid_int() || target.to_int() <= 0) {
+				effect.kind = TriggerEffectKind::NONE;
+				break;
+			}
+			const int32_t channel = static_cast<int32_t>(target.to_int());
+			const String level_property = level_color_property_for_channel(channel);
+			if (!level_property.is_empty()) {
+				effect.channel_is_level_color = true;
+				effect.target_channel = channel;
+			} else if (channel == 1005 || channel == 1006) {
+				effect.kind = TriggerEffectKind::NONE;
+				break;
+			} else {
+				effect.target_channel = channel;
+			}
+			parse_color_source(properties, effect);
+			break;
+		}
+		case TriggerEffectKind::SHAKE:
+			effect.shake_strength = Math::max(0.01, prop_float(properties, "75", 5.0));
+			break;
+		case TriggerEffectKind::TIMEWARP: {
+			const double time_mod = prop_float(properties, "120", 1.0);
+			effect.time_scale = Math::clamp(time_mod > 0.0 ? time_mod : 1.0, 0.01, 10.0);
+			break;
+		}
+		case TriggerEffectKind::CAMERA_ZOOM:
+			effect.camera_zoom = Math::max(0.01, prop_float(properties, "371", 1.0));
+			break;
+		default:
+			break;
+	}
+	return effect;
+}
+
 // Packed trigger scheduler. One instance replaces thousands of Area2D broad-
-// phase checks: trigger crossings, spawn/event delays, activation state and
-// checkpoint snapshots stay in C++. Trigger effects are still emitted through
-// the existing Interactable signal so families can migrate incrementally
-// without changing their observable behaviour.
+// phase checks: trigger crossings, spawn/event delays, activation state,
+// checkpoint snapshots AND the executed effect stay in C++.
 class NativeTriggerRuntime : public RefCounted {
 	GDCLASS(NativeTriggerRuntime, RefCounted)
 
@@ -64,11 +448,13 @@ class NativeTriggerRuntime : public RefCounted {
 	};
 	struct Record {
 		double x = 0.0;
+		double y = 0.0;
 		ObjectID object;
 		int64_t source_order = 0;
 		int32_t flags = 0;
 		int64_t gd_id = 0;
 		Dictionary properties;
+		TriggerEffect effect;
 		bool activated = false;
 	};
 	struct Event {
@@ -77,6 +463,32 @@ class NativeTriggerRuntime : public RefCounted {
 		StringName group;
 		ObjectID player;
 	};
+	// One running eased effect. Everything it needs was captured when the
+	// trigger fired, mirroring the components' export_storage initial values:
+	// restarting effects see the state at their own activation.
+	struct Fade {
+		size_t record_index = 0;
+		ObjectID player;
+		double start = 0.0;
+		double prev_weight = 0.0;
+		std::vector<ObjectID> members;        // union of the target groups
+		std::vector<Vector2> initial_scales;  // 2067 multiplies from these
+		std::vector<double> initial_alphas;   // 1007 fades from these
+		ObjectID pivot;                       // rotate/scale centre (key 71)
+		ObjectID channel_data;                // ColorChannelData resource
+		String level_color_property;          // set for bg/ground/line targets
+		Color from_color = Color(1.0f, 1.0f, 1.0f);
+		Color to_color = Color(1.0f, 1.0f, 1.0f);
+		double alpha_target = 1.0;            // resolved opacity (copied alpha included)
+		double initial_hue = 0.0, initial_saturation = 0.0, initial_value = 0.0;
+		double initial_intensity = 1.0, initial_alpha = 1.0;
+		Vector2 initial_camera_zoom;
+		Vector2 initial_camera_offset;
+		double initial_camera_rotation = 0.0;
+		double initial_time_scale = 1.0;
+		double linear_eased_weight = 0.0;     // shake noise position
+		Ref<FastNoiseLite> noise;
+	};
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
 	// Direct group -> record index lookup makes spawn/event dispatch proportional
@@ -84,6 +496,26 @@ class NativeTriggerRuntime : public RefCounted {
 	// spawn-heavy levels look groups up for every scheduled event, and a
 	// red-black tree walk with full String compares showed up in those profiles.
 	HashMap<String, std::vector<size_t>> group_index;
+	// Group membership captured at level finalisation: effect targets resolve
+	// against the members present when the level starts, exactly when the
+	// component path first queries them, without a SceneTree walk per fire.
+	HashMap<String, std::vector<ObjectID>> member_index;
+	// Colour channel table: "c_N" -> ColorChannelData resource.
+	HashMap<String, ObjectID> channel_index;
+	// Level/camera/Config objects for colour resolution and camera effects.
+	ObjectID level_id;
+	ObjectID camera_id;
+	ObjectID config_id;
+	// Records with the touch-only flag, in x order, for hitbox overlap checks.
+	std::vector<size_t> touch_order;
+	// Which touch records each player currently overlaps, so multi-activate
+	// variants re-fire on a fresh touch instead of every physics frame.
+	std::map<uint64_t, std::set<size_t>> touch_inside_players;
+	// Players advanced this physics frame; touch checks need stationary and
+	// vertically-moving players too, which x-crossing skips.
+	std::vector<ObjectID> frame_players;
+	// Running eased effects.
+	std::vector<Fade> fades;
 	// Min-heap ordered by due time/source sequence. Inserting a spawn event is
 	// O(log n), replacing the old full stable_sort after every insertion.
 	std::vector<Event> events;
@@ -112,26 +544,575 @@ class NativeTriggerRuntime : public RefCounted {
 		if (record.activated && !(record.flags & MULTI_ACTIVATE)) return;
 		if (!forced && (record.flags & (SPAWN_ONLY | TOUCH_ONLY))) return;
 		if (!player) return;
-		// Spawn is scheduled entirely here. The old component has no faithful
-		// representation for GD's target-group property and otherwise warns with
-		// an empty authored resource list.
-		if (record.gd_id == 1268) {
-			const String target_id = String(record.properties.get("51", "")).strip_edges();
-			const String delay_text = String(record.properties.get("63", "0")).strip_edges();
-			if (target_id.is_valid_int() && target_id.to_int() > 0)
-				schedule_group(StringName("g_" + target_id), delay_text.is_valid_float() ? delay_text.to_float() : 0.0, player);
-		} else {
+		// Families with a C++ effect run entirely here. Records without one
+		// keep emitting the Interactable signal so scene-backed families
+		// (camera static/edge, end level) execute their components.
+		if (record.effect.kind == TriggerEffectKind::NONE) {
 			Object *target = ObjectDB::get_instance(record.object);
 			if (target) target->call("emit_signal", StringName("interacted"), player);
+		} else {
+			execute_effect(record, index, player);
 		}
 		if (!(record.flags & MULTI_ACTIVATE)) record.activated = true;
+	}
+
+	// ---------------------------------------------------------------
+	// Effect execution. Immediate kinds run inline; eased kinds create a
+	// fade entry whose state was captured at fire time.
+	// ---------------------------------------------------------------
+
+	std::vector<ObjectID> resolve_effect_members(const TriggerEffect &effect) const {
+		std::vector<ObjectID> members;
+		for (const String &group : effect.target_groups) {
+			const auto found = member_index.find(group);
+			if (found == member_index.end()) continue;
+			members.insert(members.end(), found->value.begin(), found->value.end());
+		}
+		if (members.size() > 1) {
+			// Multi-group targets must not double-apply on shared members; sort
+			// and unique keeps this linearithmic for thousand-member groups.
+			std::sort(members.begin(), members.end());
+			members.erase(std::unique(members.begin(), members.end()), members.end());
+		}
+		return members;
+	}
+
+	Node2D *resolve_first_member(const String &group) const {
+		if (group.is_empty()) return nullptr;
+		const auto found = member_index.find(group);
+		if (found == member_index.end()) return nullptr;
+		for (ObjectID id : found->value) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+			if (node) return node;
+		}
+		return nullptr;
+	}
+
+	static bool is_decoration_batch(Node *node) {
+		if (!node) return false;
+		const Ref<Script> script = node->get_script();
+		return script.is_valid() && script->get_path() == String("res://src/DecorationBatch.gd");
+	}
+
+	// The live colour of a reserved channel ID.
+	Color live_special_color(int32_t channel) const {
+		Object *level = ObjectDB::get_instance(level_id);
+		Object *config = ObjectDB::get_instance(config_id);
+		const String property = level_color_property_for_channel(channel);
+		if (!property.is_empty() && level) return level->get(property);
+		if (!config) return Color(1.0f, 1.0f, 1.0f);
+		if (channel == 1005) return config->get("primary_color");
+		if (channel == 1006) return config->get("secondary_color");
+		return config->get("glow_color");
+	}
+	Dictionary resolve_copied_channel(int32_t copy_id) const {
+		Dictionary empty;
+		if (copy_id <= 0) return empty;
+		const String level_property = level_color_property_for_channel(copy_id);
+		if (!level_property.is_empty()) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (!level) return empty;
+			Dictionary result;
+			result["color"] = level->get(level_property);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1005 || copy_id == 1006) {
+			Object *config = ObjectDB::get_instance(config_id);
+			if (!config) return empty;
+			Dictionary result;
+			result["color"] = config->get(copy_id == 1005 ? "primary_color" : "secondary_color");
+			result["alpha"] = 1.0;
+			return result;
+		}
+		Object *data = channel_lookup(copy_id);
+		if (!data) return empty;
+		Dictionary result;
+		if (static_cast<bool>(data->get("copy"))) {
+			// A copying channel follows a reserved level/player colour.
+			const int32_t special = static_cast<int32_t>(data->get("copied_channel"));
+			switch (special) {
+				case 0: result["color"] = live_special_color(1000); break;
+				case 1: result["color"] = live_special_color(1001); break;
+				case 2: result["color"] = live_special_color(1002); break;
+				case 3: result["color"] = live_special_color(1005); break;
+				case 4: result["color"] = live_special_color(1006); break;
+				default: result["color"] = live_special_color(-1); break; // glow
+			}
+		} else {
+			result["color"] = data->get("color");
+		}
+		result["alpha"] = data->get("alpha");
+		return result;
+	}
+
+	Object *channel_lookup(int32_t channel) const {
+		const auto found = channel_index.find(String("c_") + String::num_int64(channel));
+		if (found == channel_index.end()) return nullptr;
+		return ObjectDB::get_instance(found->value);
+	}
+
+	// The colour this trigger fades its channel towards; copy and player
+	// sources resolve at activation so they track later recolours, and a
+	// copied opacity (key 60) replaces the trigger's own for this activation.
+	Color resolve_source_color(const TriggerEffect &effect, const Color &keep, double &alpha_target) const {
+		if (effect.has_color) return effect.color;
+		if (effect.copy_channel > 0) {
+			const Dictionary copied = resolve_copied_channel(effect.copy_channel);
+			if (copied.is_empty()) return keep;
+			if (effect.copy_opacity) alpha_target = copied["alpha"];
+			const Color base = copied["color"];
+			if (Math::is_zero_approx(effect.copy_hue) && Math::is_zero_approx(effect.copy_saturation)
+					&& Math::is_zero_approx(effect.copy_value)) {
+				return base;
+			}
+			double hue = static_cast<double>(base.get_h()) + effect.copy_hue;
+			hue -= Math::floor(hue);
+			const double saturation = effect.copy_saturation_additive
+				? Math::clamp(static_cast<double>(base.get_s()) + effect.copy_saturation, 0.0, 1.0)
+				: Math::clamp(static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
+			const double value = effect.copy_value_additive
+				? Math::clamp(static_cast<double>(base.get_v()) + effect.copy_value, 0.0, 1.0)
+				: Math::clamp(static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
+			return Color::from_hsv(
+				static_cast<real_t>(hue), static_cast<real_t>(saturation),
+				static_cast<real_t>(value), base.a);
+		}
+		if (effect.player_color == 1 || effect.player_color == 2) {
+			return live_special_color(effect.player_color == 1 ? 1005 : 1006);
+		}
+		return keep;
+	}
+
+	void execute_effect(Record &record, size_t index, Object *player) {
+		const TriggerEffect &effect = record.effect;
+		switch (effect.kind) {
+			case TriggerEffectKind::SPAWN: {
+				double delay = Math::max(0.0, prop_float(record.properties, "63", 0.0));
+				const double delay_pm = Math::max(0.0, prop_float(record.properties, "556", 0.0));
+				if (delay_pm > 0.0) {
+					delay += delay_pm * (2.0 * (static_cast<double>(std::rand() % 10000) / 9999.0) - 1.0);
+					delay = Math::max(0.0, delay);
+				}
+				for (const String &group : effect.target_groups) {
+					schedule_group(StringName(group), delay, player);
+				}
+				break;
+			}
+			case TriggerEffectKind::STOP:
+				// Cancels pending spawns targeting each group, cutting spawn loops.
+				for (const String &group : effect.target_groups) {
+					cancel_group_events(StringName(group));
+				}
+				break;
+			case TriggerEffectKind::HIDE:
+				set_player_visible(player, false);
+				break;
+			case TriggerEffectKind::SHOW:
+				set_player_visible(player, true);
+				break;
+			case TriggerEffectKind::TOGGLE:
+				apply_toggle(effect);
+				break;
+			case TriggerEffectKind::TELEPORT:
+				apply_teleport(record, player);
+				break;
+			case TriggerEffectKind::MOVE:
+			case TriggerEffectKind::ROTATE:
+			case TriggerEffectKind::SCALE:
+			case TriggerEffectKind::ALPHA:
+			case TriggerEffectKind::COLOR:
+			case TriggerEffectKind::PULSE:
+			case TriggerEffectKind::TIMEWARP:
+			case TriggerEffectKind::CAMERA_ZOOM:
+			case TriggerEffectKind::CAMERA_OFFSET:
+			case TriggerEffectKind::CAMERA_ROTATE:
+			case TriggerEffectKind::SHAKE:
+				start_fade(record, index, effect, player);
+				break;
+			default:
+				break;
+		}
+	}
+
+	static void set_player_visible(Object *player, bool visible) {
+		CanvasItem *item = Object::cast_to<CanvasItem>(player);
+		if (item) item->set_visible(visible);
+	}
+
+	void apply_toggle(const TriggerEffect &effect) {
+		for (ObjectID id : resolve_effect_members(effect)) {
+			Object *node = ObjectDB::get_instance(id);
+			if (!node) continue;
+			CanvasItem *item = Object::cast_to<CanvasItem>(node);
+			if (item) item->set_visible(effect.toggle_on);
+			// process_mode changes from the physics callback are deferred,
+			// exactly like ToggleComponent's set_deferred.
+			node->call_deferred("set_process_mode",
+				static_cast<int64_t>(effect.toggle_on ? Node::PROCESS_MODE_INHERIT : Node::PROCESS_MODE_DISABLED));
+		}
+	}
+
+	void apply_teleport(const Record &record, Object *player) {
+		Node2D *target = resolve_first_member(record.effect.center_group);
+		if (!target && !record.effect.target_groups.empty()) {
+			target = resolve_first_member(record.effect.target_groups[0]);
+		}
+		Node2D *player_node = Object::cast_to<Node2D>(player);
+		if (target && player_node) {
+			player_node->set_global_position(target->get_global_position());
+		}
+	}
+
+	void start_fade(Record &record, size_t index, const TriggerEffect &effect, Object *player) {
+		// prevent_restart_during_animation: re-activating a record mid-fade is
+		// ignored, like EasingComponent's default guard.
+		const ObjectID player_id = ObjectID(player->get_instance_id());
+		for (const Fade &existing : fades) {
+			if (existing.record_index == index && existing.player == player_id) return;
+		}
+		Fade fade;
+		fade.record_index = index;
+		fade.player = player_id;
+		fade.start = clock;
+		switch (effect.kind) {
+			case TriggerEffectKind::MOVE:
+			case TriggerEffectKind::ROTATE:
+				fade.members = resolve_effect_members(effect);
+				fade.pivot = resolve_pivot(effect);
+				break;
+			case TriggerEffectKind::SCALE: {
+				fade.members = resolve_effect_members(effect);
+				fade.pivot = resolve_pivot(effect);
+				fade.initial_scales.reserve(fade.members.size());
+				for (ObjectID id : fade.members) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					fade.initial_scales.push_back(node ? node->get_global_scale() : Vector2(1.0f, 1.0f));
+				}
+				break;
+			}
+			case TriggerEffectKind::ALPHA: {
+				fade.members = resolve_effect_members(effect);
+				fade.initial_alphas.reserve(fade.members.size());
+				for (ObjectID id : fade.members) {
+					Object *node = ObjectDB::get_instance(id);
+					double initial = 1.0;
+					if (node) {
+						if (is_decoration_batch(Object::cast_to<Node>(node))) {
+							CanvasItem *item = Object::cast_to<CanvasItem>(node);
+							initial = item ? item->get_modulate().a : 1.0;
+						} else if (node->has_meta(StringName("hsv_watcher"))) {
+							Object *watcher = node->get_meta(StringName("hsv_watcher"));
+							initial = static_cast<double>(watcher->get("alpha"));
+						}
+					}
+					fade.initial_alphas.push_back(initial);
+				}
+				break;
+			}
+			case TriggerEffectKind::COLOR:
+			case TriggerEffectKind::PULSE: {
+				if (!capture_color_target(effect, fade)) return; // missing channel: no-op, like the component
+				break;
+			}
+			case TriggerEffectKind::TIMEWARP:
+				fade.initial_time_scale = Engine::get_singleton()->get_time_scale();
+				break;
+			case TriggerEffectKind::CAMERA_ZOOM: {
+				Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) return;
+				fade.initial_camera_zoom = camera->get_zoom();
+				break;
+			}
+			case TriggerEffectKind::CAMERA_OFFSET: {
+				Object *camera = ObjectDB::get_instance(camera_id);
+				if (!camera) return;
+				fade.initial_camera_offset = camera->get("additional_offset");
+				break;
+			}
+			case TriggerEffectKind::CAMERA_ROTATE: {
+				Node2D *camera = Object::cast_to<Node2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) return;
+				fade.initial_camera_rotation = camera->get_rotation_degrees();
+				break;
+			}
+			case TriggerEffectKind::SHAKE:
+				fade.noise.instantiate();
+				if (fade.noise.is_valid()) fade.noise->set_seed(static_cast<int64_t>(std::rand()));
+				break;
+			default:
+				break;
+		}
+		if (!effect.pulse_envelope && effect.duration <= 0.0) {
+			// Instant triggers apply the full weight in one step, matching a
+			// zero-length tween completing on its first frame.
+			apply_fade(fade, 1.0, 1.0, 0.0);
+			return;
+		}
+		if (effect.pulse_envelope && effect.fade_in + effect.hold + effect.fade_out <= 0.0) {
+			// A zero-length pulse envelope never leaves weight 0.
+			return;
+		}
+		fades.push_back(std::move(fade));
+	}
+
+	ObjectID resolve_pivot(const TriggerEffect &effect) {
+		Node2D *pivot = resolve_first_member(effect.center_group);
+		return pivot ? ObjectID(pivot->get_instance_id()) : ObjectID();
+	}
+
+	// Captures the fade's channel target and from/to colours. Returns false
+	// when the target does not exist (the component path no-ops then).
+	bool capture_color_target(const TriggerEffect &effect, Fade &fade) {
+		if (effect.channel_is_level_color) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (!level) return false;
+			fade.level_color_property = level_color_property_for_channel(effect.target_channel);
+			const Color current = level->get(fade.level_color_property);
+			fade.from_color = current;
+			double alpha_target = effect.opacity;
+			fade.to_color = resolve_source_color(effect, current, alpha_target);
+			fade.alpha_target = alpha_target;
+			return true;
+		}
+		Object *data = channel_lookup(effect.target_channel);
+		if (!data) return false;
+		fade.channel_data = ObjectID(data->get_instance_id());
+		const Color current = data->get("color");
+		fade.from_color = current;
+		const Array hsv = data->get("hsv_shift");
+		if (hsv.size() >= 3) {
+			fade.initial_hue = hsv[0];
+			fade.initial_saturation = hsv[1];
+			fade.initial_value = hsv[2];
+		}
+		fade.initial_intensity = data->get("intensity");
+		fade.initial_alpha = data->get("alpha");
+		double alpha_target = effect.opacity;
+		fade.to_color = resolve_source_color(effect, current, alpha_target);
+		fade.alpha_target = alpha_target;
+		return true;
+	}
+
+	void apply_fade(Fade &fade, double weight, double weight_delta, double delta) {
+		const TriggerEffect &effect = records[fade.record_index].effect;
+		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE) return;
+		switch (effect.kind) {
+			case TriggerEffectKind::MOVE: {
+				const Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
+				if (offset == Vector2()) break;
+				for (ObjectID id : fade.members) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (node) node->set_global_position(node->get_global_position() + offset);
+				}
+				break;
+			}
+			case TriggerEffectKind::ROTATE: {
+				const double delta_degrees = effect.degrees * weight_delta;
+				Node2D *pivot = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				for (ObjectID id : fade.members) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (!node) continue;
+					// GD's "lock object rotation" keeps a member's own angle;
+					// unchecked members also spin while orbiting the centre.
+					if (effect.allow_self_rotation) {
+						node->set_global_rotation_degrees(node->get_global_rotation_degrees() + delta_degrees);
+					}
+					if (pivot) {
+						const Vector2 relative = node->get_global_position() - pivot->get_global_position();
+						const Vector2 rotated = relative.rotated(
+							static_cast<real_t>(Math::deg_to_rad(delta_degrees))) - relative;
+						node->set_global_position(node->get_global_position() + rotated);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SCALE: {
+				Node2D *pivot = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				for (size_t i = 0; i < fade.members.size(); ++i) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.members[i]));
+					if (!node) continue;
+					const Vector2 initial = fade.initial_scales[i];
+					const Vector2 scale_delta = (initial * effect.scale_factor - initial)
+						* static_cast<real_t>(weight_delta);
+					if (pivot) {
+						const Vector2 current = node->get_global_scale();
+						if (Math::is_zero_approx(current.x) || Math::is_zero_approx(current.y)) continue;
+						const Vector2 relative = node->get_global_position() - pivot->get_global_position();
+						const Vector2 position_delta = relative * ((current + scale_delta) / current) - relative;
+						node->set_global_position(node->get_global_position() + position_delta);
+					}
+					node->set_global_scale(node->get_global_scale() + scale_delta);
+					if (node->is_class("StaticBody2D") && scale_delta != Vector2()) {
+						if (Node *absolute_size = node->get_node_or_null(NodePath("NinePatchSprite2DAbsoluteSize"))) {
+							absolute_size->call("update_size");
+						}
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::ALPHA: {
+				for (size_t i = 0; i < fade.members.size(); ++i) {
+					Object *node = ObjectDB::get_instance(fade.members[i]);
+					if (!node) continue;
+					const double step = (effect.alpha - fade.initial_alphas[i]) * weight_delta;
+					if (is_decoration_batch(Object::cast_to<Node>(node))) {
+						CanvasItem *item = Object::cast_to<CanvasItem>(node);
+						if (!item) continue;
+						Color modulate = item->get_modulate();
+						modulate.a += static_cast<real_t>(step);
+						item->set_modulate(modulate);
+					} else if (node->has_meta(StringName("hsv_watcher"))) {
+						Object *watcher = node->get_meta(StringName("hsv_watcher"));
+						watcher->set("alpha", static_cast<double>(watcher->get("alpha")) + step);
+						watcher->call("update_color");
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::COLOR:
+			case TriggerEffectKind::PULSE:
+				apply_color(fade, effect, weight, weight_delta);
+				break;
+			case TriggerEffectKind::TIMEWARP: {
+				double time_scale = Engine::get_singleton()->get_time_scale();
+				time_scale = Math::max(0.01, time_scale + (effect.time_scale - fade.initial_time_scale) * weight_delta);
+				Engine::get_singleton()->set_time_scale(time_scale);
+				break;
+			}
+			case TriggerEffectKind::CAMERA_ZOOM: {
+				Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) break;
+				const Vector2 target = Vector2(
+					static_cast<real_t>(effect.camera_zoom * PLAYER_CAMERA_DEFAULT_ZOOM),
+					static_cast<real_t>(effect.camera_zoom * PLAYER_CAMERA_DEFAULT_ZOOM));
+				camera->set_zoom(camera->get_zoom() + (target - fade.initial_camera_zoom) * static_cast<real_t>(weight_delta));
+				break;
+			}
+			case TriggerEffectKind::CAMERA_OFFSET: {
+				Object *camera = ObjectDB::get_instance(camera_id);
+				if (!camera) break;
+				const Vector2 current = camera->get("additional_offset");
+				camera->set("additional_offset",
+					current + (effect.camera_offset_px - fade.initial_camera_offset) * static_cast<real_t>(weight_delta));
+				break;
+			}
+			case TriggerEffectKind::CAMERA_ROTATE: {
+				Node2D *camera = Object::cast_to<Node2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) break;
+				camera->set_rotation_degrees(camera->get_rotation_degrees()
+					+ static_cast<real_t>(effect.camera_rotation_degrees * weight_delta));
+				break;
+			}
+			case TriggerEffectKind::SHAKE:
+				apply_shake(fade, effect, weight, delta);
+				break;
+			default:
+				break;
+		}
+	}
+
+	// Colour fades lerp sRGB per channel (GD's own fade behaviour) between the
+	// captured channel colour and the resolved source. Channel-table targets
+	// also fade HSV shift, intensity and opacity toward the trigger's values;
+	// the watcher fan-out runs from the resource's changed signal, whose
+	// native fast path recolours every bound object in C++.
+	void apply_color(Fade &fade, const TriggerEffect &effect, double weight, double weight_delta) {
+		const Color color = fade.from_color.lerp(fade.to_color, static_cast<real_t>(weight));
+		if (!fade.level_color_property.is_empty()) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (level) level->set(fade.level_color_property, color);
+			return;
+		}
+		Object *data = ObjectDB::get_instance(fade.channel_data);
+		if (!data) return;
+		data->set("color", color);
+		if (effect.kind == TriggerEffectKind::COLOR) {
+			Array hsv = data->get("hsv_shift");
+			if (hsv.size() >= 3) {
+				const double hue = hsv[0];
+				const double saturation = hsv[1];
+				const double value = hsv[2];
+				hsv.set(0, hue + (0.0 - fade.initial_hue) * weight_delta);
+				hsv.set(1, saturation + (0.0 - fade.initial_saturation) * weight_delta);
+				hsv.set(2, value + (0.0 - fade.initial_value) * weight_delta);
+				data->set("hsv_shift", hsv);
+			}
+			data->set("intensity", static_cast<double>(data->get("intensity")) + (1.0 - fade.initial_intensity) * weight_delta);
+			data->set("alpha", static_cast<double>(data->get("alpha")) + (fade.alpha_target - fade.initial_alpha) * weight_delta);
+		}
+		data->emit_signal(StringName("changed"));
+	}
+
+	// Screen shake decays with the eased weight while the noise position keeps
+	// advancing, matching CameraShakeComponent's STRENGTH easing at speed 100.
+	void apply_shake(Fade &fade, const TriggerEffect &effect, double weight, double delta) {
+		Object *camera = ObjectDB::get_instance(camera_id);
+		if (!camera || fade.noise.is_null()) return;
+		const double duration = effect.duration > 0.0 ? effect.duration : 1.0;
+		fade.linear_eased_weight += delta / duration;
+		const double noise_position = fade.linear_eased_weight * 100.0 * 100.0;
+		const double sample_strength = (1.0 - weight) * effect.shake_strength * 10.0;
+		const Vector2 offset(
+			static_cast<real_t>(fade.noise->get_noise_2d(noise_position, 0.0) * sample_strength),
+			static_cast<real_t>(fade.noise->get_noise_2d(1.0, noise_position) * sample_strength));
+		camera->set("shake_offset", offset);
+	}
+
+	void cancel_group_events(const StringName &group) {
+		if (events.empty()) return;
+		std::vector<Event> kept;
+		kept.reserve(events.size());
+		for (Event &event : events) {
+			if (event.group != group) kept.push_back(std::move(event));
+		}
+		if (kept.size() == events.size()) return;
+		events.swap(kept);
+		std::make_heap(events.begin(), events.end(), event_later);
+	}
+
+	void check_touch_overlaps() {
+		if (frame_players.empty() || touch_order.empty()) return;
+		ensure_index();
+		for (ObjectID player_object : frame_players) {
+			Node2D *player = Object::cast_to<Node2D>(ObjectDB::get_instance(player_object));
+			if (!player) continue;
+			const uint64_t player_id = static_cast<uint64_t>(player_object);
+			const Vector2 position = player->get_global_position();
+			std::set<size_t> &inside = touch_inside_players[player_id];
+			// Multi-activate touch triggers re-fire on every fresh overlap:
+			// forget records that left the player's X window in earlier frames
+			// so returning to them counts as a new touch.
+			for (auto entry = inside.begin(); entry != inside.end(); ) {
+				if (records[*entry].x < position.x - TOUCH_HALF_EXTENT
+						|| records[*entry].x > position.x + TOUCH_HALF_EXTENT) {
+					entry = inside.erase(entry);
+				} else {
+					++entry;
+				}
+			}
+			auto first = std::lower_bound(touch_order.begin(), touch_order.end(),
+				position.x - TOUCH_HALF_EXTENT,
+				[&](double value, size_t index) { return value < records[index].x; });
+			for (auto it = first; it != touch_order.end() && records[*it].x <= position.x + TOUCH_HALF_EXTENT; ++it) {
+				const size_t index = *it;
+				const bool inside_now = Math::abs(records[index].y - position.y) <= TOUCH_HALF_EXTENT;
+				const bool was_inside = inside.count(index) != 0;
+				if (inside_now && !was_inside) activate(index, player, true);
+				if (inside_now) inside.insert(index);
+				else if (was_inside) inside.erase(index);
+			}
+		}
 	}
 
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
-		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger);
-		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger);
+		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config"), &NativeTriggerRuntime::bind_context);
+		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeTriggerRuntime::register_channel);
+		ClassDB::bind_method(D_METHOD("set_group_members", "group", "members"), &NativeTriggerRuntime::set_group_members);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("advance", "player", "previous_x", "current_x"), &NativeTriggerRuntime::advance);
 		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
@@ -141,6 +1122,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeTriggerRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeTriggerRuntime::restore);
 		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeTriggerRuntime::trigger_count);
+		ClassDB::bind_method(D_METHOD("active_fade_count"), &NativeTriggerRuntime::active_fade_count);
 		ClassDB::bind_integer_constant(get_class_static(), "Flags", "SPAWN_ONLY", SPAWN_ONLY);
 		ClassDB::bind_integer_constant(get_class_static(), "Flags", "TOUCH_ONLY", TOUCH_ONLY);
 		ClassDB::bind_integer_constant(get_class_static(), "Flags", "MULTI_ACTIVATE", MULTI_ACTIVATE);
@@ -150,21 +1132,73 @@ public:
 	void clear() {
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false;
+		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
+		touch_inside_players.clear(); frame_players.clear();
+		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID();
 	}
-	int64_t register_trigger(Object *trigger, double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		Record record;
 		record.x = x;
+		record.y = y;
 		if (trigger) record.object = trigger->get_instance_id();
 		record.flags = static_cast<int32_t>(flags); record.source_order = source_order;
 		record.gd_id = gd_id; record.properties = properties;
+		record.effect = parse_trigger_effect(gd_id, properties);
 		const size_t index = records.size();
 		for (int64_t i = 0; i < groups.size(); ++i)
 			group_index[String(groups[i])].push_back(index);
 		records.push_back(std::move(record)); index_dirty = true;
 		return static_cast<int64_t>(index);
 	}
-	int64_t register_packed_trigger(double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
-		return register_trigger(nullptr, x, flags, source_order, groups, gd_id, properties);
+	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return register_trigger(nullptr, x, y, flags, source_order, groups, gd_id, properties);
+	}
+	// Level, camera and Config objects the effects read/write.
+	void bind_context(Object *level, Object *camera, Object *config) {
+		if (level) level_id = level->get_instance_id();
+		if (camera) camera_id = camera->get_instance_id();
+		if (config) config_id = config->get_instance_id();
+	}
+	void register_channel(const String &name, Object *data) {
+		if (data && !name.is_empty()) channel_index[name] = data->get_instance_id();
+	}
+	void set_group_members(const String &group, const Array &members) {
+		std::vector<ObjectID> ids;
+		ids.reserve(static_cast<size_t>(members.size()));
+		for (int64_t i = 0; i < members.size(); ++i) {
+			Object *member = members[i];
+			if (member) ids.push_back(ObjectID(member->get_instance_id()));
+		}
+		member_index[group] = std::move(ids);
+	}
+	// Every group an effect may resolve against, for the membership snapshot
+	// the owner Node takes at finalize time.
+	std::vector<String> referenced_effect_groups() const {
+		std::vector<String> groups;
+		for (const Record &record : records) {
+			for (const String &group : record.effect.target_groups) {
+				bool duplicate = false;
+				for (const String &existing : groups) {
+					if (existing == group) {
+						duplicate = true;
+						break;
+					}
+				}
+				if (!duplicate) groups.push_back(group);
+			}
+			const String &center = record.effect.center_group;
+			if (!center.is_empty()) {
+				bool duplicate = false;
+				for (const String &existing : groups) {
+					if (existing == center) {
+						duplicate = true;
+						break;
+					}
+				}
+				if (!duplicate) groups.push_back(center);
+			}
+		}
+		return groups;
 	}
 	void finalize() {
 		ensure_index();
@@ -173,12 +1207,21 @@ public:
 		for (auto &entry : group_index) {
 			std::stable_sort(entry.value.begin(), entry.value.end(), [&](size_t a, size_t b) {
 				return records[a].source_order < records[b].source_order;
-			});
+				});
 			entry.value.shrink_to_fit();
 		}
+		touch_order.clear();
+		for (size_t index : x_order) {
+			if (records[index].flags & TOUCH_ONLY) touch_order.push_back(index);
+		}
+		touch_order.shrink_to_fit();
 	}
 	void advance(Object *player, double previous_x, double current_x) {
-		if (!player || Math::is_equal_approx(previous_x, current_x)) return;
+		if (!player) return;
+		// Touch overlap checks run from tick() for every player advanced this
+		// frame, including ones that did not move on X.
+		frame_players.push_back(ObjectID(player->get_instance_id()));
+		if (Math::is_equal_approx(previous_x, current_x)) return;
 		ensure_index();
 		auto index_before_value = [&](size_t index, double value) { return records[index].x < value; };
 		if (current_x > previous_x) {
@@ -223,10 +1266,50 @@ public:
 			}
 			++dispatched;
 		}
+		check_touch_overlaps();
+		frame_players.clear();
+		for (size_t i = 0; i < fades.size(); ) {
+			Fade &fade = fades[i];
+			const TriggerEffect &effect = records[fade.record_index].effect;
+			double weight = 0.0;
+			bool finished = false;
+			const double t = clock - fade.start;
+			if (effect.pulse_envelope) {
+				// Pulse envelope: eased fade in, hold at full, eased fade out.
+				if (t < effect.fade_in) {
+					weight = ease_weight(effect.easing, t / effect.fade_in);
+				} else if (t < effect.fade_in + effect.hold) {
+					weight = 1.0;
+				} else if (t < effect.fade_in + effect.hold + effect.fade_out) {
+					weight = 1.0 - ease_weight(effect.easing,
+						(t - effect.fade_in - effect.hold) / effect.fade_out);
+				} else {
+					weight = 0.0;
+					finished = true;
+				}
+			} else if (t >= effect.duration) {
+				weight = 1.0;
+				finished = true;
+			} else {
+				weight = ease_weight(effect.easing, t / effect.duration);
+			}
+			const double weight_delta = weight - fade.prev_weight;
+			fade.prev_weight = weight;
+			apply_fade(fade, weight, weight_delta, delta);
+			if (finished) {
+				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
+				continue;
+			}
+			++i;
+		}
 	}
 	void reset() {
 		for (Record &record : records) record.activated = false;
 		events.clear(); clock = 0.0; event_sequence = 0;
+		// Restarts rebuild object transforms from level data; running fades
+		// must not keep mutating mid-animation state.
+		fades.clear();
+		touch_inside_players.clear();
 	}
 	Dictionary snapshot() const {
 		Dictionary state; PackedByteArray active;
@@ -238,9 +1321,10 @@ public:
 	void restore(const Dictionary &state) {
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
-		clock = state.get("clock", 0.0); events.clear();
+		clock = state.get("clock", 0.0); events.clear(); fades.clear();
 	}
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
+	int64_t active_fade_count() const { return static_cast<int64_t>(fades.size()); }
 };
 
 struct DecorationCullJob {
@@ -301,6 +1385,7 @@ class NativeLevelRuntime : public Node {
 
 	Ref<NativeTriggerRuntime> triggers;
 	Node *level_manager = nullptr;
+	Node *context_level = nullptr;
 	std::map<uint64_t, double> previous_x;
 	bool coordinates_rendering = false;
 
@@ -314,16 +1399,45 @@ class NativeLevelRuntime : public Node {
 		previous_x[id] = x;
 	}
 
+	// Effect targets resolve against the group members present when the level
+	// starts. The runtime is a RefCounted without tree access, so the owner
+	// Node snapshots membership here: once at finalize, never per fire.
+	void snapshot_effect_groups() {
+		SceneTree *tree = get_tree();
+		if (!tree) return;
+		for (const String &group : triggers->referenced_effect_groups()) {
+			Array members;
+			const Array nodes = tree->get_nodes_in_group(StringName(group));
+			for (int64_t i = 0; i < nodes.size(); ++i) {
+				Node2D *candidate = Object::cast_to<Node2D>(nodes[i]);
+				// Nodes of other levels can still be in the tree while their
+				// queue_free resolves; only this level's objects are targets.
+				if (candidate && (!context_level || context_level->is_ancestor_of(candidate))) {
+					members.append(candidate);
+				}
+			}
+			triggers->set_group_members(group, members);
+		}
+	}
+
+	static void ensure_visible(Object *object) {
+		CanvasItem *item = Object::cast_to<CanvasItem>(object);
+		if (item) item->set_visible(true);
+	}
+
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("clear"), &NativeLevelRuntime::clear);
-		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger);
-		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger);
+		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config"), &NativeLevelRuntime::bind_context);
+		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeLevelRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
 		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeLevelRuntime::trigger_count);
+		ClassDB::bind_method(D_METHOD("active_fade_count"), &NativeLevelRuntime::active_fade_count);
 		ClassDB::bind_method(D_METHOD("render_stats"), &NativeLevelRuntime::render_stats);
 	}
 
@@ -365,18 +1479,38 @@ protected:
 public:
 	NativeLevelRuntime() { triggers.instantiate(); }
 
-	void clear() { triggers->clear(); previous_x.clear(); }
-	int64_t register_trigger(Object *trigger, double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
-		return triggers->register_trigger(trigger, x, flags, source_order, groups, gd_id, properties);
+	void clear() { triggers->clear(); previous_x.clear(); context_level = nullptr; }
+	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return triggers->register_trigger(trigger, x, y, flags, source_order, groups, gd_id, properties);
 	}
-	int64_t register_packed_trigger(double x, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
-		return triggers->register_packed_trigger(x, flags, source_order, groups, gd_id, properties);
+	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return triggers->register_packed_trigger(x, y, flags, source_order, groups, gd_id, properties);
 	}
-	void finalize() { triggers->finalize(); }
-	void reset() { triggers->reset(); previous_x.clear(); }
+	void bind_context(Object *level, Object *camera, Object *config) {
+		Node *level_node = Object::cast_to<Node>(level);
+		if (level_node) context_level = level_node;
+		triggers->bind_context(level, camera, config);
+	}
+	void register_channel(const String &name, Object *data) { triggers->register_channel(name, data); }
+	void finalize() {
+		snapshot_effect_groups();
+		triggers->finalize();
+	}
+	void reset() {
+		triggers->reset();
+		previous_x.clear();
+		// A Hide Player trigger must not survive the restart: Geometry Dash
+		// always respawns a visible icon.
+		if (level_manager) {
+			ensure_visible(level_manager->get("player"));
+			const Array duals = level_manager->get("player_duals");
+			for (int64_t i = 0; i < duals.size(); ++i) ensure_visible(duals[i]);
+		}
+	}
 	Dictionary snapshot() const { return triggers->snapshot(); }
 	void restore(const Dictionary &state) { triggers->restore(state); previous_x.clear(); }
 	int64_t trigger_count() const { return triggers->trigger_count(); }
+	int64_t active_fade_count() const { return triggers->active_fade_count(); }
 	Dictionary render_stats() const { return registered_decoration_stats(); }
 };
 

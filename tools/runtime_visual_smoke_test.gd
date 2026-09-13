@@ -24,6 +24,15 @@ var _native_canvas: Object
 var _level_runtime: Node
 
 
+## Stand-in for Level's colour properties during the native effect-engine
+## checks: the C++ runtime reads them through Variant property access.
+class FakeLevel extends Node2D:
+	var background_color := Color.WHITE
+	var ground_color := Color.WHITE
+	var line_color := Color.WHITE
+
+
+
 func _ready() -> void:
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
@@ -214,7 +223,9 @@ func _test_native_core() -> void:
 	static_level.free()
 	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
 	# Every 2.2 trigger ID must survive import. Dedicated families retain their
-	# component scenes; newer families use the packed native trigger shell.
+	# component scenes in editor/fallback builds; with the native library
+	# available, effect families (and the generic shell) import as packed C++
+	# records so a 5000-trigger level builds no trigger nodes at all.
 	var trigger_chunks := PackedStringArray(["kA2,0,kA4,0"])
 	for trigger_id: int in GMDObjects.TRIGGER_IDS:
 		trigger_chunks.append("1,%d,2,%d,3,30,62,1,57,7" % [trigger_id, 30 + trigger_chunks.size() * 30])
@@ -222,13 +233,22 @@ func _test_native_core() -> void:
 	var trigger_level := GMDConverter.import_online_level_string(";".join(trigger_chunks) + ";", "2.2 trigger inventory", trigger_report)
 	var trigger_entries: Array = trigger_level.get("layers", [{}])[0].get("objects", [])
 	assert(trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(), "native smoke: one or more 2.2 trigger IDs were dropped")
+	var native_import := NativeCore.available() and not Editor.in_editor
 	for trigger_data: Dictionary in trigger_entries:
 		assert(trigger_data.has("gd_trigger_flags") and trigger_data.has("gd_properties"), "native smoke: trigger metadata missing")
+		if native_import and (int(trigger_data.get("gd_object_id", 0)) in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS or not GMDObjects.MAP.has(int(trigger_data.get("gd_object_id", 0)))):
+			# Effect families and generic families pack as C++ records with no
+			# scene and no component data; scene-backed families outside the
+			# native set (camera static, edge, end level) keep their components.
+			assert(bool(trigger_data.get("native_only_trigger", false)), "native smoke: runtime import must pack effect triggers as records")
+			assert(not trigger_data.has("components"), "native smoke: packed records must not carry component data")
 	# Colour triggers must keep their colour source: an explicit RGB, a copied
 	# channel (key 50, with the copy HSV of key 49 and the opacity copy of key
 	# 60), a player colour (keys 15/16), or the channel's own colour when the
 	# trigger only fades opacity. Defaulting the missing RGB to white is what
-	# bleached whole channels mid-level wherever such a trigger fired.
+	# bleached whole channels mid-level wherever such a trigger fired. With the
+	# native runtime the source survives in the raw properties and the fade is
+	# executed by C++ (asserted further below against a live channel).
 	var color_report := GMDConverter.ImportReport.new()
 	var color_level := GMDConverter.import_online_level_string(
 		"kA2,0,kA4,0;1,899,2,30,3,30,23,4,7,10,8,200,9,30;1,899,2,60,3,30,23,4,50,7,49,90a-0.5a0a1a1,60,1;1,899,2,90,3,30,23,4,15,1;1,899,2,120,3,30,23,4,10,0.5,35,0.2;",
@@ -237,18 +257,31 @@ func _test_native_core() -> void:
 	)
 	var color_entries: Array = color_level.get("layers", [{}])[0].get("objects", [])
 	assert(color_entries.size() == 4, "native smoke: colour triggers were dropped")
-	var color_sources := color_entries.map(
-		func(entry: Dictionary): return entry.get("components", {}).get("ColorChannelChangerComponent", {})
-	)
-	assert(color_sources[0].get("color", Color.BLACK) == Color8(10, 200, 30), "native smoke: colour trigger lost its explicit RGB")
-	assert(int(color_sources[0].get("color_space", -1)) == ColorChannelChangerComponent.ColorSpace.SRGB, "native smoke: colour trigger must fade in sRGB")
-	assert(int(color_sources[1].get("source", -1)) == ColorChannelChangerComponent.ColorSource.COPY_CHANNEL, "native smoke: copy colour trigger lost its source")
-	assert(int(color_sources[1].get("copied_channel_id", 0)) == 7, "native smoke: copy colour trigger lost its channel")
-	assert(bool(color_sources[1].get("copy_opacity", false)), "native smoke: copy colour trigger lost its opacity copy")
-	assert(is_equal_approx(float(color_sources[1].get("copy_saturation", 0.0)), -0.5), "native smoke: copy colour trigger lost its HSV adjustment")
-	assert(int(color_sources[2].get("source", -1)) == ColorChannelChangerComponent.ColorSource.PLAYER_1, "native smoke: player colour trigger lost its source")
-	assert(int(color_sources[3].get("source", -1)) == ColorChannelChangerComponent.ColorSource.KEEP, "native smoke: opacity-only trigger must keep the channel colour")
-	assert(not color_sources[3].has("color"), "native smoke: opacity-only trigger must not carry a colour")
+	if native_import:
+		for entry: Dictionary in color_entries:
+			assert(bool(entry.get("native_only_trigger", false)), "native smoke: colour trigger was not packed at runtime import")
+			assert(not entry.has("components"), "native smoke: packed colour trigger must not carry components")
+		var rgb_properties: Dictionary = color_entries[0].get("gd_properties", {})
+		assert(rgb_properties.get("7", "") == "10" and rgb_properties.get("8", "") == "200" and rgb_properties.get("9", "") == "30", "native smoke: colour trigger lost its explicit RGB")
+		var copy_properties: Dictionary = color_entries[1].get("gd_properties", {})
+		assert(copy_properties.get("50", "") == "7" and copy_properties.get("60", "") == "1" and copy_properties.get("49", "") == "0a-0.5a0a1a1", "native smoke: copy colour trigger lost its source keys")
+		var player_properties: Dictionary = color_entries[2].get("gd_properties", {})
+		assert(player_properties.get("15", "") == "1", "native smoke: player colour trigger lost its source")
+		var opacity_properties: Dictionary = color_entries[3].get("gd_properties", {})
+		assert(not opacity_properties.has("7") and not opacity_properties.has("8") and not opacity_properties.has("9"), "native smoke: opacity-only trigger must not carry a colour")
+	else:
+		var color_sources := color_entries.map(
+			func(entry: Dictionary): return entry.get("components", {}).get("ColorChannelChangerComponent", {})
+		)
+		assert(color_sources[0].get("color", Color.BLACK) == Color8(10, 200, 30), "native smoke: colour trigger lost its explicit RGB")
+		assert(int(color_sources[0].get("color_space", -1)) == ColorChannelChangerComponent.ColorSpace.SRGB, "native smoke: colour trigger must fade in sRGB")
+		assert(int(color_sources[1].get("source", -1)) == ColorChannelChangerComponent.ColorSource.COPY_CHANNEL, "native smoke: copy colour trigger lost its source")
+		assert(int(color_sources[1].get("copied_channel_id", 0)) == 7, "native smoke: copy colour trigger lost its channel")
+		assert(bool(color_sources[1].get("copy_opacity", false)), "native smoke: copy colour trigger lost its opacity copy")
+		assert(is_equal_approx(float(color_sources[1].get("copy_saturation", 0.0)), -0.5), "native smoke: copy colour trigger lost its HSV adjustment")
+		assert(int(color_sources[2].get("source", -1)) == ColorChannelChangerComponent.ColorSource.PLAYER_1, "native smoke: player colour trigger lost its source")
+		assert(int(color_sources[3].get("source", -1)) == ColorChannelChangerComponent.ColorSource.KEEP, "native smoke: opacity-only trigger must keep the channel colour")
+		assert(not color_sources[3].has("color"), "native smoke: opacity-only trigger must not carry a colour")
 	# Imported pads keep their hand-authored Area2D behaviour but replace the
 	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
 	# hitbox must follow that sprite to the object origin.
@@ -283,8 +316,8 @@ func _test_native_core() -> void:
 	trigger_b.connect(&"interacted", func(_player: Object): fired.append(2))
 	# Register out of X order. The native spatial index must activate by X and
 	# source order, and a normal trigger may only activate once.
-	scheduler.call(&"register_trigger", trigger_b, 20.0, 0, 2, PackedStringArray(["g_7"]), 0, {})
-	scheduler.call(&"register_trigger", trigger_a, 10.0, 0, 1, PackedStringArray(), 0, {})
+	scheduler.call(&"register_trigger", trigger_b, 20.0, 0.0, 0, 2, PackedStringArray(["g_7"]), 0, {})
+	scheduler.call(&"register_trigger", trigger_a, 10.0, 0.0, 0, 1, PackedStringArray(), 0, {})
 	scheduler.call(&"finalize")
 	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
 	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
@@ -303,7 +336,7 @@ func _test_native_core() -> void:
 	var trigger_state: Dictionary = scheduler.call(&"snapshot")
 	assert(trigger_state.get("active", PackedByteArray()).size() == 2, "native smoke: trigger checkpoint state")
 	var packed_scheduler: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
-	packed_scheduler.call(&"register_packed_trigger", 12.0, 0, 0, PackedStringArray(["g_9"]), 2904, {"1": "2904"})
+	packed_scheduler.call(&"register_packed_trigger", 12.0, 0.0, 0, 0, PackedStringArray(["g_9"]), 2904, {"1": "2904"})
 	packed_scheduler.call(&"finalize")
 	packed_scheduler.call(&"advance", scheduler_player, 0.0, 20.0)
 	var packed_state: Dictionary = packed_scheduler.call(&"snapshot")
@@ -311,6 +344,105 @@ func _test_native_core() -> void:
 	trigger_a.free()
 	trigger_b.free()
 	scheduler_player.free()
+
+	# --- Native trigger effect engine -------------------------------------
+	# The packed families execute entirely in C++: moves convert GD units to
+	# pixels with a flipped Y axis, colour triggers fade a registered channel,
+	# toggles flip visibility, pulses rise and fall, camera zooms ease, and
+	# timewarps drive the engine time scale.
+	var effect_runtime: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
+	var effect_level := FakeLevel.new()
+	add_child(effect_level)
+	var effect_camera := Camera2D.new()
+	add_child(effect_camera)
+	effect_runtime.call(&"bind_context", effect_level, effect_camera, null)
+	var effect_channel := ColorChannelData.new()
+	effect_channel.associated_group = "c_5"
+	effect_runtime.call(&"register_channel", "c_5", effect_channel)
+	var pulse_channel := ColorChannelData.new()
+	pulse_channel.associated_group = "c_6"
+	effect_runtime.call(&"register_channel", "c_6", pulse_channel)
+	var moved := Node2D.new()
+	moved.add_to_group(&"g_3")
+	effect_level.add_child(moved)
+	effect_runtime.call(&"set_group_members", &"g_3", [moved])
+	var toggled := Node2D.new()
+	toggled.add_to_group(&"g_8")
+	effect_level.add_child(toggled)
+	effect_runtime.call(&"set_group_members", &"g_8", [toggled])
+	var effect_player := Node2D.new()
+	effect_level.add_child(effect_player)
+	# 901 Move: 60 units right, 30 units up over 1s. 30 GD units = 128 px,
+	# with +Y pointing down in Godot: the full offset is (256, -128).
+	effect_runtime.call(&"register_packed_trigger", 50.0, 0.0, 0, 0, PackedStringArray(), 901,
+		{"1": "901", "51": "3", "28": "60", "29": "30", "10": "1.0"})
+	# 899 Colour: fade channel c_5 to an explicit RGB, plus its opacity.
+	effect_runtime.call(&"register_packed_trigger", 60.0, 0.0, 0, 1, PackedStringArray(), 899,
+		{"1": "899", "23": "5", "7": "10", "8": "200", "9": "30", "35": "0.5", "10": "1.0"})
+	# 1006 Pulse: 0.5s fade in, 0.5s fade out against its own channel.
+	effect_runtime.call(&"register_packed_trigger", 70.0, 0.0, 0, 2, PackedStringArray(), 1006,
+		{"1": "1006", "51": "6", "52": "0", "7": "255", "8": "0", "9": "0", "45": "0.5", "46": "0", "47": "0.5"})
+	# 1049 Toggle: hide group 8.
+	effect_runtime.call(&"register_packed_trigger", 80.0, 0.0, 0, 3, PackedStringArray(), 1049,
+		{"1": "1049", "51": "8", "56": "0"})
+	# 1913 Zoom Camera: 50% (half of the 0.8 default) over 1s.
+	effect_runtime.call(&"register_packed_trigger", 85.0, 0.0, 0, 4, PackedStringArray(), 1913,
+		{"1": "1913", "371": "50", "10": "1.0"})
+	# 1935 Timewarp: 50% over 1s.
+	effect_runtime.call(&"register_packed_trigger", 90.0, 0.0, 0, 5, PackedStringArray(), 1935,
+		{"1": "1935", "120": "0.5", "10": "1.0"})
+	# 1612 Hide Player has no fade at all.
+	effect_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"})
+	effect_runtime.call(&"finalize")
+	effect_runtime.call(&"advance", effect_player, 0.0, 120.0)
+	assert(toggled.visible == false, "native smoke: toggle trigger did not hide its group")
+	assert(effect_player.visible == false, "native smoke: hide player trigger did not run")
+	assert(int(effect_runtime.call(&"active_fade_count")) == 5, "native smoke: move/colour/pulse/zoom/timewarp fades missing")
+	effect_runtime.call(&"tick", 0.5)
+	assert(is_equal_approx(moved.global_position.x, 128.0) and is_equal_approx(moved.global_position.y, -64.0),
+		"native smoke: move trigger offset wrong at half weight")
+	assert(is_equal_approx(effect_channel.color.r, (1.0 + 10.0 / 255.0) / 2.0),
+		"native smoke: colour trigger did not fade halfway")
+	assert(pulse_channel.color.is_equal_approx(Color8(255, 0, 0)), "native smoke: pulse did not reach its colour at hold")
+	assert(is_equal_approx(effect_camera.zoom.x, 0.7), "native smoke: camera zoom did not ease halfway")
+	assert(is_equal_approx(Engine.time_scale, 0.75), "native smoke: timewarp did not ease halfway")
+	effect_runtime.call(&"tick", 0.5)
+	assert(moved.global_position == Vector2(256.0, -128.0), "native smoke: move trigger did not finish")
+	assert(effect_channel.color.is_equal_approx(Color8(10, 200, 30)), "native smoke: colour trigger did not reach its target")
+	assert(is_equal_approx(float(effect_channel.alpha), 0.5), "native smoke: colour trigger lost its opacity fade")
+	assert(pulse_channel.color == Color.WHITE, "native smoke: pulse did not fade back out")
+	assert(is_equal_approx(effect_camera.zoom.x, 0.4), "native smoke: camera zoom did not reach its target")
+	assert(is_equal_approx(Engine.time_scale, 0.5), "native smoke: timewarp did not reach its target")
+	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: finished fades were not retired")
+	Engine.time_scale = 1.0
+	# Reset clears activation state and running fades.
+	effect_runtime.call(&"reset")
+	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
+	# Stop cancels a pending spawn, cutting spawn loops: a spawn-only member of
+	# g_9 fires from a scheduled event, then the stop trigger eats the second.
+	var spawn_target := Node.new()
+	spawn_target.add_user_signal(&"interacted", [{"name": "player", "type": TYPE_OBJECT}])
+	# Lambdas capture locals by value, so the counter is an array the signal
+	# handler appends to - the same pattern the crossing test above uses.
+	var spawn_fired: Array[int] = []
+	spawn_target.connect(&"interacted", func(_player: Object): spawn_fired.append(1))
+	var spawn_runtime: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
+	spawn_runtime.call(&"register_trigger", spawn_target, 50.0, 0.0, 1, 0, PackedStringArray(["g_9"]), 0, {})
+	spawn_runtime.call(&"register_packed_trigger", 510.0, 0.0, 0, 1, PackedStringArray(), 1616, {"1": "1616", "51": "9"})
+	spawn_runtime.call(&"finalize")
+	spawn_runtime.call(&"schedule_group", &"g_9", 0.5, effect_player)
+	spawn_runtime.call(&"tick", 1.0)
+	assert(spawn_fired.size() == 1, "native smoke: scheduled spawn did not fire its group member")
+	spawn_runtime.call(&"schedule_group", &"g_9", 0.5, effect_player)
+	spawn_runtime.call(&"advance", effect_player, 0.0, 600.0)
+	spawn_runtime.call(&"tick", 1.0)
+	assert(spawn_fired.size() == 1, "native smoke: stop trigger did not cancel the pending spawn")
+	spawn_target.free()
+	effect_player.free()
+	toggled.free()
+	moved.free()
+	effect_camera.free()
+	effect_level.free()
 	assert(ClassDB.class_exists(&"NativeLevelBuildJob"), "native smoke: level builder missing")
 	assert(ClassDB.class_exists(&"NativeFrustumIndex"), "native smoke: frustum index missing")
 	var near := Node2D.new()

@@ -288,6 +288,18 @@ const GENERIC_TRIGGER: Dictionary = {
 }
 
 
+## Trigger families whose behaviour is implemented in the C++ runtime
+## (NativeTriggerRuntime). Runtime imports pack them as records instead of
+## scenes, and NativeTriggerBridge also drops their Area2D so touch-flagged
+## variants cannot double-fire alongside the native hitbox check. The other
+## dedicated families (camera static/edge, end level) keep their scene even at
+## runtime: they are one or two per level and still run their components.
+const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
+	899, 901, 1006, 1007, 1049, 1268, 1346, 1520, 1612, 1613, 1616,
+	1913, 1916, 1935, 2015, 2067, 3022,
+]
+
+
 ## Geometry Dash object ID ranges that are [i]solid square blocks[/i].
 ##
 ## Any ID inside one of these ranges that isn't in [member MAP] is imported as a

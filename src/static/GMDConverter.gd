@@ -575,7 +575,11 @@ static func _object_from_properties(
 		# builds keep them exclusively as C++ records, avoiding an Area2D plus
 		# child nodes for every inert trigger; editor/fallback builds still use
 		# the lightweight scene for selection and forward compatibility.
-		if scene_path == GMDObjects.GENERIC_TRIGGER.scene:
+		# Families with a C++ effect do the same during runtime imports: a
+		# 5000-trigger effect level builds no trigger nodes at all, with the
+		# effects executed entirely by NativeTriggerRuntime.
+		if scene_path == GMDObjects.GENERIC_TRIGGER.scene \
+				or _native_trigger_execution(gd_id):
 			object_data["native_only_trigger"] = true
 		var trigger_flags: int = 0
 		if properties.get(Prop.SPAWN_TRIGGERED, "0") == "1":
@@ -589,7 +593,11 @@ static func _object_from_properties(
 		object_data["gd_source_order"] = index
 		object_data["gd_properties"] = properties.duplicate()
 
-	var components: Dictionary = _components_from_properties(gd_id, properties, description)
+	# Packed records execute in C++ from their raw properties; their component
+	# data would only bloat the level file and mislead the editor.
+	var components: Dictionary = { }
+	if not object_data.get("native_only_trigger", false):
+		components = _components_from_properties(gd_id, properties, description)
 	if not components.is_empty():
 		object_data["components"] = components
 		object_data["markers"] = []
@@ -1009,6 +1017,18 @@ static func _easing_from_property(easing: int) -> Array:
 		17: return [Tween.EASE_IN, Tween.TRANS_BACK]
 		18: return [Tween.EASE_OUT, Tween.TRANS_BACK]
 		_: return [Tween.EASE_IN_OUT, Tween.TRANS_LINEAR]
+
+
+## Whether a trigger family's effect should be executed by the C++ runtime
+## for this import. Only runtime builds with the native library available pack
+## effect families as records; editor and fallback imports keep their scene so
+## the components stay editable and playable without the extension.
+static func _native_trigger_execution(gd_id: int) -> bool:
+	return (
+		gd_id in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS
+		and NativeCore.available()
+		and not Editor.in_editor
+	)
 
 
 ## Parses a Geometry Dash group reference into the list of groups it names.

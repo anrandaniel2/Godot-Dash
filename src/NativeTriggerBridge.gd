@@ -17,6 +17,12 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	if _runtime == null or _runtime is not Node:
 		return false
 	add_child(_runtime as Node)
+	# Colour/camera/player effects execute in C++: they need the level's own
+	# colours, the channel table and the live camera and Config objects.
+	_runtime.call(&"bind_context", level, LevelManager.player_camera, Config)
+	for channel: ColorChannelData in level.color_channels:
+		if not channel.associated_group.is_empty():
+			_runtime.call(&"register_channel", channel.associated_group, channel)
 	var records: Array[TriggerInteractable] = []
 	for node: Node in get_tree().get_nodes_in_group(&"_gd_native_trigger"):
 		if node is TriggerInteractable and level.is_ancestor_of(node):
@@ -27,19 +33,21 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	for trigger: TriggerInteractable in records:
 		_configure_runtime_targets(trigger)
 		var flags := int(trigger.get_meta(&"gd_trigger_flags", 0))
+		var gd_id := int(trigger.get_meta(&"gd_object_id", 0))
 		var trigger_groups := PackedStringArray()
 		for group: StringName in trigger.get_groups():
 			if String(group).begins_with(Constants.GROUP_PREFIX):
 				trigger_groups.append(String(group))
 		_runtime.call(
-				&"register_trigger", trigger, trigger.global_position.x, flags,
-				int(trigger.get_meta(&"gd_source_order", 0)), trigger_groups,
-				int(trigger.get_meta(&"gd_object_id", 0)),
-				trigger.get_meta(&"gd_properties", {}),
+			&"register_trigger", trigger, trigger.global_position.x, trigger.global_position.y,
+			flags, int(trigger.get_meta(&"gd_source_order", 0)), trigger_groups,
+			gd_id, trigger.get_meta(&"gd_properties", {}),
 		)
 		# Physical line crossings are now indexed in C++. Square/touch triggers
-		# retain their Area2D because overlap semantics depend on both axes.
-		if (flags & 2) == 0:
+		# keep overlap semantics, but only when their family has no native
+		# effect: native families (including touch-flagged ones) are checked
+		# against the player hitbox in C++, so their Area2D would double-fire.
+		if (flags & 2) == 0 or gd_id in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS:
 			# Remove the entire Area from broad-phase participation, not only its
 			# shape. This is the material win on trigger-dense levels.
 			trigger.set_deferred(&"monitoring", false)
@@ -70,11 +78,11 @@ func _register_packed_triggers(level_data: Dictionary) -> void:
 		for group: Variant in object_data.get("groups", []):
 			groups.append(str(group))
 		_runtime.call(
-				&"register_packed_trigger", transform.origin.x,
-				int(object_data.get("gd_trigger_flags", 0)),
-				int(object_data.get("gd_source_order", 0)), groups,
-				int(object_data.get("gd_object_id", 0)),
-				object_data.get("gd_properties", {}),
+			&"register_packed_trigger", transform.origin.x, transform.origin.y,
+			int(object_data.get("gd_trigger_flags", 0)),
+			int(object_data.get("gd_source_order", 0)), groups,
+			int(object_data.get("gd_object_id", 0)),
+			object_data.get("gd_properties", {}),
 		)
 
 

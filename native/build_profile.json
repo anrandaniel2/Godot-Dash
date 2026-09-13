@@ -4,6 +4,7 @@
     "CanvasItem",
     "CollisionShape2D",
     "Engine",
+    "FastNoiseLite",
     "Marshalls",
     "Node",
     "Node2D",
