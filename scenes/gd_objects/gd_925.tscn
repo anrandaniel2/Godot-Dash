@@ -5,45 +5,39 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(318.565941, 356.098808)
+size = Vector2(318.565941, 318.565941)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2795, 399, 65, 68)
+region = Rect2(2354, 397, 65, 68)
 
 [node name="GD925" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 925
-bounds = Rect2(-283.565475, -283.565475, 318.565941, 356.098808)
+bounds = Rect2(-283.565475, -283.565475, 318.565941, 318.565941)
 metadata/_editor_description_ = "Geometry Dash object 925 (d_rainbow_01_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 rotation = 0.261799
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-96, 0)
 
-[node name="Sprite2" type="Sprite2D" parent="Base"]
+[node name="Sprite1" type="Sprite2D" parent="Base"]
 use_parent_material = true
 rotation = 0.785398
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-96, 0)
 
-[node name="Sprite3" type="Sprite2D" parent="Base"]
+[node name="Sprite2" type="Sprite2D" parent="Base"]
 use_parent_material = true
 rotation = 1.308997
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
-offset = Vector2(-96, 0)
-
-[node name="Root" type="Sprite2D" parent="Base"]
-use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-96, 0)
@@ -65,6 +59,6 @@ type = 9
 id = 925
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-124.282504, -105.516071)
+position = Vector2(-124.282504, -124.282504)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

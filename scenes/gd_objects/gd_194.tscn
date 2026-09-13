@@ -6,15 +6,15 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(91.733333, 91.733333)
+size = Vector2(93.866667, 110.933333)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(490, 1148, 44, 45)
+region = Rect2(187, 1091, 44, 45)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1805, 1185, 43, 43)
+region = Rect2(2315, 1120, 43, 43)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
 size = Vector2(89.6, 89.6)
@@ -23,15 +23,18 @@ size = Vector2(89.6, 89.6)
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 194
-bounds = Rect2(-45.866667, -45.866667, 91.733333, 91.733333)
+bounds = Rect2(-46.933333, -65.066667, 93.866667, 110.933333)
 metadata/_editor_description_ = "Geometry Dash object 194 (square_h_09_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite1" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(0, -8)
@@ -59,5 +62,6 @@ type = 9
 id = 194
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+position = Vector2(0, -9.6)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

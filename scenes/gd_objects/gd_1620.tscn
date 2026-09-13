@@ -6,19 +6,19 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(136.533333, 136.533333)
+size = Vector2(155.733333, 166.4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(364, 993, 30, 56)
+region = Rect2(1077, 925, 30, 56)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1143, 268, 73, 78)
+region = Rect2(3832, 316, 73, 78)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3490, 471, 64, 64)
+region = Rect2(2656, 466, 64, 64)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
 radius = 64
@@ -27,7 +27,7 @@ radius = 64
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1620
-bounds = Rect2(-104.533333, -106.666667, 136.533333, 136.533333)
+bounds = Rect2(-114.133333, -123.733333, 155.733333, 166.4)
 metadata/_editor_description_ = "Geometry Dash object 1620 (spinBlade02_001.png)"
 
 [node name="Detail" type="Node2D" parent="."]
@@ -42,9 +42,12 @@ offset = Vector2(-6, -18)
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite2" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(-17, -19)
@@ -73,6 +76,6 @@ type = 9
 id = 1620
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-36.266667, -38.4)
+position = Vector2(-36.266667, -40.533333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

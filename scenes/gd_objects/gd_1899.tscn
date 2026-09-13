@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://dstat5c8yu2vm"]
+[gd_scene load_steps=8 format=3 uid="uid://dstat5c8yu2vm"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
@@ -10,44 +10,37 @@ size = Vector2(167.442886, 167.442886)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1143, 348, 73, 73)
+region = Rect2(970, 350, 73, 73)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(862, 1705, 85, 26)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
-atlas = ExtResource("gd_page0")
-region = Rect2(1921, 785, 60, 60)
+region = Rect2(1835, 1671, 85, 26)
 
 [node name="GD1899" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1899
 bounds = Rect2(-68.636498, -68.636498, 167.442886, 167.442886)
-metadata/_editor_description_ = "Geometry Dash object 1899 (blockOutline_14_001.png)"
+metadata/_editor_description_ = "Geometry Dash object 1899 (triangle_b_01_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="GlowSprite" type="Sprite2D" parent="Base/Glow"]
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(1, 1)
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 rotation = -0.785398
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, 10)
-
-[node name="Root" type="Sprite2D" parent="Base"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd2")
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

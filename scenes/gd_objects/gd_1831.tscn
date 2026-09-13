@@ -5,28 +5,23 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(192, 192)
+size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(870, 801, 60, 60)
+region = Rect2(1490, 779, 60, 60)
 
 [node name="GD1831" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1831
-bounds = Rect2(-128, -128, 192, 192)
+bounds = Rect2(-128, -128, 128, 128)
 metadata/_editor_description_ = "Geometry Dash object 1831 (d_scaleFadeRing_01_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
 [node name="Root" type="Sprite2D" parent="Base"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
-
-[node name="Sprite1" type="Sprite2D" parent="Base"]
 use_parent_material = true
 position = Vector2(-64, -64)
 scale = Vector2(2.133333, 2.133333)
@@ -49,6 +44,6 @@ type = 9
 id = 1831
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-32, -32)
+position = Vector2(-64, -64)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

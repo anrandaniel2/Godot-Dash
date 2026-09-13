@@ -6,19 +6,19 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(313.6, 324.266667)
+size = Vector2(334.933333, 358.4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1692, 399, 58, 70)
+region = Rect2(1854, 395, 58, 70)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3912, 229, 107, 86)
+region = Rect2(3954, 228, 107, 86)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3478, 318, 99, 78)
+region = Rect2(3293, 316, 99, 78)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
 radius = 106.666667
@@ -27,7 +27,7 @@ radius = 106.666667
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1619
-bounds = Rect2(-156.8, -162.133333, 313.6, 324.266667)
+bounds = Rect2(-167.466667, -179.2, 334.933333, 358.4)
 metadata/_editor_description_ = "Geometry Dash object 1619 (spinBlade01_001.png)"
 
 [node name="Detail" type="Node2D" parent="."]
@@ -35,23 +35,32 @@ use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Detail"]
 use_parent_material = true
-scale = Vector2(-2.133333, -2.133333)
+scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-18, -33)
 
 [node name="Sprite2" type="Sprite2D" parent="Detail"]
 use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
+scale = Vector2(-2.133333, -2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-18, -33)
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite3" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
+offset = Vector2(-25, -41)
+
+[node name="Sprite4" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
+scale = Vector2(-2.133333, -2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(-25, -41)
 
@@ -61,7 +70,7 @@ scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd2")
 offset = Vector2(-24, -37)
 
-[node name="Sprite3" type="Sprite2D" parent="Base"]
+[node name="Sprite5" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(-2.133333, -2.133333)
 texture = SubResource("AtlasTexture_gd2")

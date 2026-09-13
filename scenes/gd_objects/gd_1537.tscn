@@ -9,14 +9,14 @@ size = Vector2(216.357941, 216.357941)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1572, 1086, 50, 50)
+region = Rect2(2487, 1020, 50, 50)
 
 [node name="GD1537" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1537
 bounds = Rect2(-108.178971, -108.178971, 216.357941, 216.357941)
-metadata/_editor_description_ = "Geometry Dash object 1537 (emptyFrame.png)"
+metadata/_editor_description_ = "Geometry Dash object 1537 (persp_block013_04_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
@@ -28,7 +28,7 @@ rotation = -0.785398
 scale = Vector2(2.154667, 2.154667)
 texture = SubResource("AtlasTexture_gd0")
 
-[node name="Sprite2" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 position = Vector2(32, -32)
 rotation = -0.785398

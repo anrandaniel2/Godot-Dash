@@ -9,15 +9,15 @@ size = Vector2(70.4, 74.666667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3501, 1787, 22, 23)
+region = Rect2(1263, 1822, 33, 19)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2033, 1970, 11, 11)
+region = Rect2(844, 1732, 22, 23)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2966, 1880, 33, 19)
+region = Rect2(1957, 1914, 11, 11)
 
 [node name="GD939" type="Node2D"]
 texture_filter = 1
@@ -26,29 +26,29 @@ gd_id = 939
 bounds = Rect2(-35.2, -37.333333, 70.4, 74.666667)
 metadata/_editor_description_ = "Geometry Dash object 939 (d_flower01_01_001.png)"
 
-[node name="Detail" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
-offset = Vector2(0, -6)
-
-[node name="Sprite2" type="Sprite2D" parent="Detail"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd1")
-offset = Vector2(0, -6)
-
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd2")
+texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(0, 8)
+
+[node name="Detail" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Sprite1" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
+offset = Vector2(0, -6)
+
+[node name="Sprite2" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd2")
+offset = Vector2(0, -6)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

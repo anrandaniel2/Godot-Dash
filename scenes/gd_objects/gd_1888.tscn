@@ -9,7 +9,7 @@ size = Vector2(256, 256)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3299, 785, 60, 60)
+region = Rect2(2911, 778, 60, 60)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
 size = Vector2(256, 256)
@@ -19,7 +19,7 @@ texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1888
 bounds = Rect2(-128, -128, 256, 256)
-metadata/_editor_description_ = "Geometry Dash object 1888 (emptyFrame.png)"
+metadata/_editor_description_ = "Geometry Dash object 1888 (d_gradient_c_02_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
@@ -39,13 +39,15 @@ texture = SubResource("AtlasTexture_gd0")
 [node name="Sprite3" type="Sprite2D" parent="Base"]
 use_parent_material = true
 position = Vector2(64, 64)
-scale = Vector2(-2.133333, -2.133333)
+rotation = 3.141593
+scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
-[node name="Sprite4" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 position = Vector2(-64, 64)
-scale = Vector2(2.133333, -2.133333)
+rotation = 3.141593
+scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
 [node name="Collision" type="StaticBody2D" parent="."]

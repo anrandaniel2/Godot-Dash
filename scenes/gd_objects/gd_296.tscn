@@ -10,15 +10,15 @@ size = Vector2(51.2, 55.466667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(954, 1937, 16, 16)
+region = Rect2(2088, 1880, 16, 16)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1225, 1734, 24, 26)
+region = Rect2(3132, 1699, 24, 26)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2157, 2005, 6, 6)
+region = Rect2(2205, 1950, 6, 6)
 
 [node name="GD296" type="Node2D"]
 texture_filter = 1
@@ -30,9 +30,12 @@ metadata/_editor_description_ = "Geometry Dash object 296 (triangle_b_square_01_
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite1" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-22, -22)
@@ -44,7 +47,7 @@ scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(-18, -17)
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Sprite2" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd2")

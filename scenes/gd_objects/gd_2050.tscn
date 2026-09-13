@@ -5,22 +5,31 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(115.2, 64)
+size = Vector2(136.533333, 81.066667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3489, 1546, 54, 30)
+region = Rect2(1298, 1822, 32, 19)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3001, 1880, 32, 19)
+region = Rect2(3130, 1483, 54, 30)
 
 [node name="GD2050" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 2050
-bounds = Rect2(-100.266667, -23.466667, 115.2, 64)
+bounds = Rect2(-110.933333, -32, 136.533333, 81.066667)
 metadata/_editor_description_ = "Geometry Dash object 2050 (gj22_anim_31_001.png)"
+
+[node name="Detail" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Sprite1" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+scale = Vector2(4.266667, 4.266667)
+texture = SubResource("AtlasTexture_gd0")
+offset = Vector2(-10, 2)
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
@@ -28,17 +37,8 @@ use_parent_material = true
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
-offset = Vector2(-20, 4)
-
-[node name="Detail" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
-offset = Vector2(-10, 2)
+offset = Vector2(-20, 4)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

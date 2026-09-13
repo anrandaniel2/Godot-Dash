@@ -9,23 +9,24 @@ size = Vector2(24, 24)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(226, 2017, 2, 2)
+region = Rect2(2851, 1963, 2, 2)
 
 [node name="GD2690" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 2690
 bounds = Rect2(-73.866667, -12, 24, 24)
-metadata/_editor_description_ = "Geometry Dash object 2690 (pixelart_590_001.png)"
+metadata/_editor_description_ = "Geometry Dash object 2690 (pixelart_1258_color_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
+position = Vector2(-59.733333, 0)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
-offset = Vector2(-29, 0)
+offset = Vector2(-1, 0)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

@@ -255,28 +255,45 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 	var first_base_part: DecorationBatch.Item = null
 	var first_part: DecorationBatch.Item = null
 	var root_drawn: bool = false
+	var glow_batch: DecorationBatch = null
 	for part: Dictionary in frames.parts:
 		var order: int = int(part.get("order", 0))
 		if order >= 0 and not root_drawn:
 			base_item = _add_root(
-					batch, sheet, frames, transform, z_order, gd_id, channels,
-					art_scale_factor, tint, hsv_shift, base_alpha, spin,
-			)
+						batch, sheet, frames, transform, z_order, gd_id, channels,
+						art_scale_factor, tint, hsv_shift, base_alpha, spin,
+					)
 			root_drawn = true
-		var part_item: DecorationBatch.Item = _add_part(
-				batch, sheet, part, transform, z_order, gd_id, channels,
-				art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
-				base_alpha, spin,
-		)
+		var is_glow_part: bool = str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_GLOW
+		var part_item: DecorationBatch.Item = null
+		if is_glow_part:
+			# A positioned glow sprite from the object's stack follows the same
+			# rules as the legacy glow layer: drawn additively, tinted by the
+			# base channel, and only when the placement asks for glow (key 96).
+			if wants_glow:
+				if glow_batch == null:
+					glow_batch = _batch_for(batches, group_key, z_layer, true, not is_zero_approx(spin))
+				part_item = _add_part(
+							glow_batch, sheet, part, transform, z_order, gd_id, channels,
+							art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
+							base_alpha, spin,
+						)
+		else:
+			part_item = _add_part(
+						batch, sheet, part, transform, z_order, gd_id, channels,
+						art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
+						base_alpha, spin,
+					)
 		if part_item == null:
 			continue
-		if first_part == null:
+		if first_part == null and not is_glow_part:
 			first_part = part_item
 		if part_item.layer == "detail":
 			if detail_item == null:
 				detail_item = part_item
-		elif first_base_part == null and str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_BASE:
-			first_base_part = part_item
+		elif first_base_part == null and not is_glow_part:
+			if str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_BASE:
+				first_base_part = part_item
 	if not root_drawn:
 		base_item = _add_root(
 				batch, sheet, frames, transform, z_order, gd_id, channels,
@@ -381,8 +398,18 @@ static func _add_root(
 		root_channel = &""
 		root_hsv = PackedFloat32Array()
 	root_tint.a *= frames.opacity
+	# The root sprite's own placement: like any other sprite it can sit off the
+	# object's centre and carry its own rotation or scale (perspective blocks,
+	# flipped sawblade roots). Built exactly like _add_part's local transform.
+	var gd_to_world: float = float(Constants.CELL_SIZE) / GMDConverter.GD_CELL_SIZE
+	var root_local := Transform2D(
+			-deg_to_rad(frames.root_rot),
+			Vector2(frames.root_sx, frames.root_sy),
+			0.0,
+			Vector2(frames.root_x, -frames.root_y) * gd_to_world,
+	)
 	return _add_layer(
-			batch, sheet, frames.base, transform, z_order, gd_id, root_channel, "base",
+			batch, sheet, frames.base, transform * root_local, z_order, gd_id, root_channel, "base",
 			art_scale_factor, root_tint, root_hsv, base_alpha * frames.opacity, spin,
 			DRAW_ORDER_ROOT, transform.origin,
 	)
@@ -645,7 +672,7 @@ static func serialize_batch(batch: DecorationBatch, art_scale_factor: float) -> 
 			# Only objects that asked for their glow get it back. Emitting it
 			# for every object with a glow frame, as before, buried a reloaded
 			# level under additive white.
-			"glow": frames.has_glow() and item.wants_glow,
+			"glow": frames.has_glow_layer() and item.wants_glow,
 			"hsv_shift": item.object_hsv_shift,
 			"base_alpha": item.base_alpha,
 			"spin": item.spin,

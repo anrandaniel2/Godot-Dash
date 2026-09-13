@@ -5,22 +5,31 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(256, 66.133333)
+size = Vector2(290.133333, 115.2)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(798, 1516, 120, 31)
+region = Rect2(1037, 1646, 68, 27)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1280, 1704, 68, 27)
+region = Rect2(3496, 1482, 120, 31)
 
 [node name="GD2890" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 2890
-bounds = Rect2(-134.4, -26.666667, 256, 66.133333)
+bounds = Rect2(-149.333333, -49.066667, 290.133333, 115.2)
 metadata/_editor_description_ = "Geometry Dash object 2890 (gj22_anim_60_001.png)"
+
+[node name="Detail" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Sprite1" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+scale = Vector2(4.266667, 4.266667)
+texture = SubResource("AtlasTexture_gd0")
+offset = Vector2(-1, 2)
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
@@ -28,17 +37,8 @@ use_parent_material = true
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
-offset = Vector2(-3, 3)
-
-[node name="Detail" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
-offset = Vector2(-1, 2)
+offset = Vector2(-3, 3)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2
@@ -57,6 +57,6 @@ type = 9
 id = 2890
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-6.4, 6.4)
+position = Vector2(-4.266667, 8.533333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

@@ -9,14 +9,14 @@ size = Vector2(64, 24)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1228, 2013, 30, 2)
+region = Rect2(3243, 1959, 30, 2)
 
 [node name="GD2674" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 2674
 bounds = Rect2(-32, 13.6, 64, 24)
-metadata/_editor_description_ = "Geometry Dash object 2674 (pixelart_574_001.png)"
+metadata/_editor_description_ = "Geometry Dash object 2674 (pixelart_548_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true

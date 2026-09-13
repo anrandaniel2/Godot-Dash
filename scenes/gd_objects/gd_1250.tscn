@@ -9,53 +9,53 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(250, 683, 60, 60)
+region = Rect2(2105, 594, 60, 60)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2757, 2005, 60, 4)
+region = Rect2(469, 1958, 60, 4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1787, 1970, 60, 11)
+region = Rect2(1676, 1914, 60, 11)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd3"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3970, 2005, 4, 4)
+region = Rect2(1970, 1958, 4, 4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd4"]
 atlas = ExtResource("gd_page0")
-region = Rect2(469, 1970, 11, 12)
+region = Rect2(866, 1914, 11, 12)
 
 [node name="GD1250" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1250
 bounds = Rect2(-64, -64, 128, 128)
-metadata/_editor_description_ = "Geometry Dash object 1250 (block009c_base_001.png)"
+metadata/_editor_description_ = "Geometry Dash object 1250 (block009c_line_02_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Root" type="Sprite2D" parent="Base"]
+[node name="Sprite1" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Sprite2" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -28)
 
-[node name="Sprite2" type="Sprite2D" parent="Base"]
+[node name="Sprite3" type="Sprite2D" parent="Base"]
 use_parent_material = true
 rotation = 1.570796
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -28)
 
-[node name="Sprite3" type="Sprite2D" parent="Base"]
+[node name="Sprite4" type="Sprite2D" parent="Base"]
 self_modulate = Color(0, 0, 0, 0.298)
 use_parent_material = true
 rotation = 1.570796
@@ -63,26 +63,27 @@ scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd2")
 offset = Vector2(0, -23)
 
-[node name="Sprite4" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
-scale = Vector2(2.133333, -2.133333)
+rotation = 3.141593
+scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd3")
 offset = Vector2(-28, -28)
 
-[node name="Detail" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Sprite5" type="Sprite2D" parent="Detail"]
+[node name="Sprite5" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 0.298)
 use_parent_material = true
 scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd2")
 offset = Vector2(0, -23)
 
-[node name="Sprite6" type="Sprite2D" parent="Detail"]
+[node name="Sprite6" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
 use_parent_material = true
+position = Vector2(-32, -32)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd4")
-offset = Vector2(-23, 24)
+offset = Vector2(-8, 9)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2
@@ -101,5 +102,6 @@ type = 9
 id = 1250
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+position = Vector2(0, 0)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

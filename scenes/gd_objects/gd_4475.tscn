@@ -5,21 +5,21 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(51.2, 64)
+size = Vector2(96, 120)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1670, 1642, 24, 30)
+region = Rect2(1640, 1580, 24, 30)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2911, 1760, 20, 26)
+region = Rect2(3313, 1699, 20, 26)
 
 [node name="GD4475" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 4475
-bounds = Rect2(-25.6, -32, 51.2, 64)
+bounds = Rect2(-48, -60, 96, 120)
 metadata/_editor_description_ = "Geometry Dash object 4475 (pixelitem_075_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
@@ -27,7 +27,7 @@ use_parent_material = true
 
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
+scale = Vector2(4, 4)
 texture = SubResource("AtlasTexture_gd0")
 
 [node name="Detail" type="Node2D" parent="."]
@@ -35,6 +35,12 @@ use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Detail"]
 use_parent_material = true
+scale = Vector2(4, 4)
+texture = SubResource("AtlasTexture_gd1")
+
+[node name="Sprite2" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+position = Vector2(25.6, -32)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 

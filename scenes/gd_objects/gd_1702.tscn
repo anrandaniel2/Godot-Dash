@@ -6,19 +6,19 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(121.6, 121.6)
+size = Vector2(142.933333, 145.066667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2771, 1642, 17, 29)
+region = Rect2(472, 1589, 17, 29)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2537, 399, 35, 68)
+region = Rect2(2421, 397, 35, 68)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3299, 971, 31, 57)
+region = Rect2(3507, 904, 31, 57)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
 radius = 25.6
@@ -27,7 +27,7 @@ radius = 25.6
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1702
-bounds = Rect2(-60.8, -60.8, 121.6, 121.6)
+bounds = Rect2(-71.466667, -72.533333, 142.933333, 145.066667)
 metadata/_editor_description_ = "Geometry Dash object 1702 (bladeTrap02_001.png)"
 
 [node name="Detail" type="Node2D" parent="."]
@@ -48,9 +48,18 @@ offset = Vector2(-6, 0)
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite3" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
+scale = Vector2(-2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
+offset = Vector2(-16, 0)
+
+[node name="Sprite4" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(-16, 0)
@@ -61,7 +70,7 @@ scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd2")
 offset = Vector2(-13, 0)
 
-[node name="Sprite3" type="Sprite2D" parent="Base"]
+[node name="Sprite5" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd2")

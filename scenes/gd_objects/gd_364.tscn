@@ -9,7 +9,7 @@ size = Vector2(284.615316, 204.968188)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(243, 1277, 135, 33)
+region = Rect2(2595, 1244, 135, 33)
 
 [sub_resource type="ConvexPolygonShape2D" id="ConvexPolygonShape2D_gdc0"]
 points = PackedVector2Array(-128, 64, 128, 64, 128, -64)
@@ -19,12 +19,12 @@ texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 364
 bounds = Rect2(-150.840991, -117.264261, 284.615316, 204.968188)
-metadata/_editor_description_ = "Geometry Dash object 364 (emptyFrame.png)"
+metadata/_editor_description_ = "Geometry Dash object 364 (pit_01_slope_02_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 self_modulate = Color(0, 0, 0, 1)
 use_parent_material = true
 rotation = -0.523599

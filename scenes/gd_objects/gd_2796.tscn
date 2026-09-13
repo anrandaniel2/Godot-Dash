@@ -1,21 +1,25 @@
-[gd_scene load_steps=6 format=3 uid="uid://c521suqbofgc5"]
+[gd_scene load_steps=7 format=3 uid="uid://c521suqbofgc5"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(24, 68.266667)
+size = Vector2(24, 69.333333)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(298, 1516, 7, 32)
+region = Rect2(3369, 1482, 7, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
+atlas = ExtResource("gd_page0")
+region = Rect2(521, 1589, 7, 29)
 
 [node name="GD2796" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 2796
-bounds = Rect2(-16.266667, -4.266667, 24, 68.266667)
+bounds = Rect2(-16.266667, -5.333333, 24, 69.333333)
 metadata/_editor_description_ = "Geometry Dash object 2796 (gdh_01_2_11_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
@@ -26,6 +30,15 @@ use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-2, 14)
+
+[node name="Detail" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Sprite1" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
+offset = Vector2(-2, 12)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2
@@ -44,6 +57,6 @@ type = 9
 id = 2796
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-4.266667, 29.866667)
+position = Vector2(-4.266667, 29.333333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

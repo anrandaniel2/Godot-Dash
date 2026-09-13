@@ -9,11 +9,11 @@ size = Vector2(24, 59.733333)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3181, 1703, 2, 28)
+region = Rect2(4093, 1611, 2, 28)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(194, 2017, 2, 2)
+region = Rect2(2847, 1963, 2, 2)
 
 [node name="GD4122" type="Node2D"]
 texture_filter = 1
@@ -36,9 +36,10 @@ use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Detail"]
 use_parent_material = true
+position = Vector2(0, -21.333333)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
-offset = Vector2(0, 13)
+offset = Vector2(0, 3)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

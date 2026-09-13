@@ -9,11 +9,11 @@ size = Vector2(130.133333, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1088, 1146, 61, 45)
+region = Rect2(2, 1091, 61, 45)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2580, 1185, 53, 42)
+region = Rect2(1105, 1131, 53, 42)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
 radius = 17.066667

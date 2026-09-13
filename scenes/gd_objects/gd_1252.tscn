@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://dq1v668eyvdx8"]
+[gd_scene load_steps=7 format=3 uid="uid://dq1v668eyvdx8"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
@@ -9,15 +9,11 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(188, 683, 60, 60)
+region = Rect2(1926, 656, 60, 60)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1787, 1970, 60, 11)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
-atlas = ExtResource("gd_page0")
-region = Rect2(469, 1970, 11, 12)
+region = Rect2(1676, 1914, 60, 11)
 
 [node name="GD1252" type="Node2D"]
 texture_filter = 1
@@ -43,12 +39,6 @@ rotation = -1.570796
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -23)
-
-[node name="Sprite2" type="Sprite2D" parent="Detail"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd2")
-offset = Vector2(-23, 24)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

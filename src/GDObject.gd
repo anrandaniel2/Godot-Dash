@@ -62,7 +62,7 @@ var detail_hsv_shift: PackedFloat32Array = PackedFloat32Array()
 ## node's description in the generated scene).
 const COLLISION_NODE: StringName = &"Collision"
 
-var _glow: Sprite2D
+var _glow: Node2D
 var _collision: CollisionObject2D
 var _has_collision_shapes: bool = false
 

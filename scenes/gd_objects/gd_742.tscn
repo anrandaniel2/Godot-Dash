@@ -6,15 +6,15 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(179.2, 179.2)
+size = Vector2(200.533333, 202.666667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1560, 141, 94, 95)
+region = Rect2(1682, 140, 94, 95)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2937, 233, 84, 84)
+region = Rect2(3107, 232, 84, 84)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
 radius = 53.76
@@ -23,15 +23,18 @@ radius = 53.76
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 742
-bounds = Rect2(-89.6, -89.6, 179.2, 179.2)
+bounds = Rect2(-100.266667, -101.333333, 200.533333, 202.666667)
 metadata/_editor_description_ = "Geometry Dash object 742 (blade_03_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite1" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 

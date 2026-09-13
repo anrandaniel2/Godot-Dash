@@ -9,11 +9,11 @@ size = Vector2(51.2, 106.666667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1924, 1086, 24, 50)
+region = Rect2(2924, 1020, 24, 50)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1151, 1145, 12, 44)
+region = Rect2(1656, 1120, 12, 44)
 
 [node name="GD3577" type="Node2D"]
 texture_filter = 1

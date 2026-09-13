@@ -26,10 +26,12 @@ const USER_MAP_PATH: String = "user://gd_object_frames.json"
 
 ## Colour classes a sprite can belong to. A [i]base[/i] sprite follows the
 ## object's main colour channel, a [i]detail[/i] sprite its secondary channel,
-## and a [i]black[/i] sprite is always drawn black, as in Geometry Dash.
+## and a [i]black[/i] sprite is always drawn black, as in Geometry Dash. A
+## [i]glow[/i] sprite is drawn additively and follows the main channel.
 const COLOR_BASE: String = "base"
 const COLOR_DETAIL: String = "detail"
 const COLOR_BLACK: String = "black"
+const COLOR_GLOW: String = "glow"
 
 ## The frame Geometry Dash gives objects whose root sprite draws nothing; all
 ## of their artwork lives in [member ObjectFrames.parts].
@@ -64,6 +66,17 @@ class ObjectFrames:
 	## object table doesn't cover this id.
 	var default_z_layer: int = Z_UNKNOWN
 	var default_z_order: int = Z_UNKNOWN
+	## The root sprite's own placement, in Geometry Dash units around the
+	## object's centre (y up), exactly like a part's. Geometry Dash draws the
+	## root like any other sprite - off-centre, scaled, rotated or mirrored for
+	## hundreds of objects (perspective blocks, flipped sawblades) - so the
+	## root path applies these instead of assuming a centred, untransformed
+	## sprite.
+	var root_x: float = 0.0
+	var root_y: float = 0.0
+	var root_rot: float = 0.0
+	var root_sx: float = 1.0
+	var root_sy: float = 1.0
 	## Extra sprites the object is drawn from, in draw order. Each is a
 	## [Dictionary] with:
 	## [codeblock]
@@ -108,6 +121,16 @@ class ObjectFrames:
 			return true
 		for part: Dictionary in parts:
 			if str(part.get("color", COLOR_BASE)) == COLOR_BLACK:
+				return true
+		return false
+
+	## [code]true[/code] when any sprite is drawn additively: a legacy glow
+	## frame, or a part of the glow colour class.
+	func has_glow_layer() -> bool:
+		if has_glow():
+			return true
+		for part: Dictionary in parts:
+			if str(part.get("color", COLOR_BASE)) == COLOR_GLOW:
 				return true
 		return false
 
@@ -176,6 +199,11 @@ static func _merge_file(path: String) -> void:
 			entry.opacity = clampf(float(value.get("opacity", 1.0)), 0.0, 1.0)
 			entry.default_z_layer = int(value.get("zl", Z_UNKNOWN))
 			entry.default_z_order = int(value.get("zo", Z_UNKNOWN))
+			entry.root_x = float(value.get("rx", 0.0))
+			entry.root_y = float(value.get("ry", 0.0))
+			entry.root_rot = float(value.get("rrot", 0.0))
+			entry.root_sx = float(value.get("rsx", 1.0))
+			entry.root_sy = float(value.get("rsy", 1.0))
 			var raw_parts: Variant = value.get("parts", [])
 			if raw_parts is Array:
 				for raw_part: Variant in raw_parts:

@@ -9,11 +9,11 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(834, 1613, 30, 30)
+region = Rect2(2505, 1579, 30, 30)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3635, 1858, 30, 20)
+region = Rect2(1989, 1800, 30, 20)
 
 [node name="GD1516" type="Node2D"]
 texture_filter = 1
@@ -25,20 +25,15 @@ metadata/_editor_description_ = "Geometry Dash object 1516 (waterfallAnim_001.pn
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
-use_parent_material = true
-scale = Vector2(4.266667, 4.266667)
-texture = SubResource("AtlasTexture_gd0")
-
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
+scale = Vector2(4.266667, 4.266667)
 texture = SubResource("AtlasTexture_gd0")
 
 [node name="Detail" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite2" type="Sprite2D" parent="Detail"]
+[node name="Sprite1" type="Sprite2D" parent="Detail"]
 use_parent_material = true
 scale = Vector2(4.266667, 4.266667)
 texture = SubResource("AtlasTexture_gd1")

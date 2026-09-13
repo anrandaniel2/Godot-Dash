@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://cu4grya8wtept"]
+[gd_scene load_steps=10 format=3 uid="uid://cu4grya8wtept"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
@@ -10,19 +10,15 @@ size = Vector2(158.391919, 158.391919)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1128, 1836, 85, 20)
+region = Rect2(2886, 1777, 85, 20)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1143, 348, 73, 73)
+region = Rect2(1045, 350, 71, 73)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1921, 785, 60, 60)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_gd3"]
-atlas = ExtResource("gd_page0")
-region = Rect2(1041, 1836, 85, 20)
+region = Rect2(2799, 1777, 85, 20)
 
 [sub_resource type="ConvexPolygonShape2D" id="ConvexPolygonShape2D_gdc0"]
 points = PackedVector2Array(-64, -64, 64, -64, -64, 64)
@@ -32,7 +28,7 @@ texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1906
 bounds = Rect2(-65.619509, -65.619509, 158.391919, 158.391919)
-metadata/_editor_description_ = "Geometry Dash object 1906 (blockOutline_14_001.png)"
+metadata/_editor_description_ = "Geometry Dash object 1906 (plank_01_slope_01_001.png)"
 
 [node name="Detail" type="Node2D" parent="."]
 use_parent_material = true
@@ -47,23 +43,20 @@ offset = Vector2(0, 9)
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="GlowSprite" type="Sprite2D" parent="Base/Glow"]
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(1, 1)
 
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd2")
-
-[node name="Sprite2" type="Sprite2D" parent="Base"]
-use_parent_material = true
 rotation = -0.785398
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd3")
+texture = SubResource("AtlasTexture_gd2")
 offset = Vector2(0, 9)
 
 [node name="Collision" type="StaticBody2D" parent="."]

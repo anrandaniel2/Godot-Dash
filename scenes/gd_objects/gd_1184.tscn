@@ -9,15 +9,15 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(828, 1901, 60, 16)
+region = Rect2(3513, 1843, 60, 16)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2385, 1919, 16, 16)
+region = Rect2(546, 1863, 16, 16)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(881, 925, 46, 60)
+region = Rect2(314, 868, 46, 60)
 
 [node name="GD1184" type="Node2D"]
 texture_filter = 1
@@ -38,12 +38,7 @@ offset = Vector2(0, -22)
 
 [node name="Sprite2" type="Sprite2D" parent="Detail"]
 use_parent_material = true
-scale = Vector2(-2.133333, -2.133333)
-texture = SubResource("AtlasTexture_gd1")
-offset = Vector2(-22, -22)
-
-[node name="Sprite3" type="Sprite2D" parent="Detail"]
-use_parent_material = true
+rotation = 3.141593
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(-22, -22)
@@ -74,5 +69,6 @@ type = 9
 id = 1184
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+position = Vector2(0, 0)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

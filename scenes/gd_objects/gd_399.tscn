@@ -6,19 +6,19 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(183.466667, 183.466667)
+size = Vector2(204.8, 209.066667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(689, 1859, 20, 20)
+region = Rect2(2340, 135, 96, 98)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1805, 137, 96, 98)
+region = Rect2(522, 1803, 20, 20)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3581, 230, 86, 86)
+region = Rect2(2741, 230, 86, 86)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gdc0"]
 radius = 55.04
@@ -27,23 +27,29 @@ radius = 55.04
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 399
-bounds = Rect2(-91.733333, -91.733333, 183.466667, 183.466667)
+bounds = Rect2(-102.4, -104.533333, 204.8, 209.066667)
 metadata/_editor_description_ = "Geometry Dash object 399 (darkblade_03_001.png)"
-
-[node name="Detail" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="GlowSprite" type="Sprite2D" parent="Base/Glow"]
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+
+[node name="Sprite1" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+
+[node name="Sprite2" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 

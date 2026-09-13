@@ -9,15 +9,15 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2, 682, 60, 60)
+region = Rect2(1734, 656, 60, 60)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1787, 1970, 60, 11)
+region = Rect2(1676, 1914, 60, 11)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1849, 1970, 57, 11)
+region = Rect2(1738, 1914, 57, 11)
 
 [node name="GD1251" type="Node2D"]
 texture_filter = 1
@@ -39,8 +39,8 @@ use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Detail"]
 use_parent_material = true
-rotation = 1.570796
-scale = Vector2(2.133333, -2.133333)
+rotation = -1.570796
+scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -23)
 

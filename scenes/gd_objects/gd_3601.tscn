@@ -5,35 +5,41 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(110.933333, 110.933333)
+size = Vector2(160, 160)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(668, 1045, 52, 52)
+region = Rect2(2734, 1072, 46, 46)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2934, 1137, 46, 46)
+region = Rect2(482, 987, 52, 52)
 
 [node name="GD3601" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 3601
-bounds = Rect2(-55.466667, -55.466667, 110.933333, 110.933333)
+bounds = Rect2(-55.466667, -104.533333, 160, 160)
 metadata/_editor_description_ = "Geometry Dash object 3601 (d_time01_001.png)"
-
-[node name="Base" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Root" type="Sprite2D" parent="Base"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
 
 [node name="Detail" type="Node2D" parent="."]
 use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+position = Vector2(55.466667, -55.466667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+
+[node name="Sprite2" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+
+[node name="Base" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
@@ -55,5 +61,6 @@ type = 9
 id = 3601
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+position = Vector2(24.533333, -24.533333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

@@ -9,7 +9,7 @@ size = Vector2(130.133333, 40.533333)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2803, 1880, 61, 19)
+region = Rect2(4030, 1821, 61, 19)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
 size = Vector2(38.4, 17.066667)

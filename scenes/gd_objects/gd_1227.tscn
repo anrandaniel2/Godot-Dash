@@ -10,11 +10,11 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3524, 1137, 90, 45)
+region = Rect2(531, 1088, 90, 45)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2665, 1937, 60, 14)
+region = Rect2(592, 1881, 60, 14)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
 size = Vector2(128, 29.866667)
@@ -29,35 +29,37 @@ metadata/_editor_description_ = "Geometry Dash object 1227 (blockOutlineThickb_0
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="GlowSprite" type="Sprite2D" parent="Base/Glow"]
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(0, -29)
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 rotation = 1.570796
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -23)
 
+[node name="Sprite1" type="Sprite2D" parent="Base"]
+use_parent_material = true
+rotation = -3.141593
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
+offset = Vector2(0, -23)
+
 [node name="Sprite2" type="Sprite2D" parent="Base"]
 use_parent_material = true
-rotation = 3.141593
+rotation = -1.570796
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -23)
 
 [node name="Sprite3" type="Sprite2D" parent="Base"]
-use_parent_material = true
-rotation = 4.712389
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd1")
-offset = Vector2(0, -23)
-
-[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")

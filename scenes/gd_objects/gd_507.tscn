@@ -9,23 +9,24 @@ size = Vector2(128, 24)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3191, 2005, 60, 4)
+region = Rect2(345, 1958, 60, 4)
 
 [node name="GD507" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 507
-bounds = Rect2(-64, -29.066667, 128, 24)
-metadata/_editor_description_ = "Geometry Dash object 507 (persp_outline_02_001.png)"
+bounds = Rect2(-64, -71.733333, 128, 24)
+metadata/_editor_description_ = "Geometry Dash object 507 (block008_topcolor_15_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
+position = Vector2(0, -21.333333)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
-offset = Vector2(0, -8)
+offset = Vector2(0, -18)
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2
@@ -44,6 +45,6 @@ type = 9
 id = 507
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(0, -17.066667)
+position = Vector2(0, -59.733333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

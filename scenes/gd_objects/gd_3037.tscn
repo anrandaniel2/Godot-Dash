@@ -9,11 +9,11 @@ size = Vector2(42.666667, 42.666667)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(887, 1859, 20, 20)
+region = Rect2(892, 1914, 11, 12)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(495, 1970, 11, 12)
+region = Rect2(698, 1803, 20, 20)
 
 [node name="GD3037" type="Node2D"]
 texture_filter = 1
@@ -22,22 +22,22 @@ gd_id = 3037
 bounds = Rect2(-21.333333, -21.333333, 42.666667, 42.666667)
 metadata/_editor_description_ = "Geometry Dash object 3037 (gdh_spike_04_001.png)"
 
-[node name="Base" type="Node2D" parent="."]
-use_parent_material = true
-
-[node name="Root" type="Sprite2D" parent="Base"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
-
 [node name="Detail" type="Node2D" parent="."]
 use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Detail"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd1")
+texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(0, 1)
+
+[node name="Base" type="Node2D" parent="."]
+use_parent_material = true
+
+[node name="Root" type="Sprite2D" parent="Base"]
+use_parent_material = true
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2

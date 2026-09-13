@@ -263,7 +263,20 @@ def sprites_of(entry: dict) -> list[SpriteSpec]:
         key=lambda p: int(p.get("order", 0)),
     )
     root_class = "black" if entry.get("color") == "black" else "base"
-    root = SpriteSpec(entry["base"], root_class, 0, opacity=float(entry.get("opacity", 1.0)), is_root=True)
+    # The root sprite's own placement: off-centre, rotated, scaled or mirrored
+    # for hundreds of objects (perspective blocks, flipped sawblades).
+    root = SpriteSpec(
+        entry["base"],
+        root_class,
+        0,
+        x=float(entry.get("rx", 0.0)),
+        y=float(entry.get("ry", 0.0)),
+        rot=float(entry.get("rrot", 0.0)),
+        sx=float(entry.get("rsx", 1.0)),
+        sy=float(entry.get("rsy", 1.0)),
+        opacity=float(entry.get("opacity", 1.0)),
+        is_root=True,
+    )
     result: list[SpriteSpec] = []
     root_placed = False
     for part in parts:
@@ -505,7 +518,8 @@ def build_scene(gd_id: int, entry: dict, ctx: Context, preserved: Preserved) -> 
         return None
 
     detail = [s for s in sprites if s.color_class == "detail"]
-    main = [s for s in sprites if s.color_class != "detail"]
+    glow_sprites = [s for s in sprites if s.color_class == "glow"]
+    main = [s for s in sprites if s.color_class not in ("detail", "glow")]
     # Geometry Dash never interleaves the two classes; the detail layer sits
     # either wholly under or wholly over the main sprites.
     detail_under = bool(detail) and bool(main) and max(s.order for s in detail) < min(s.order for s in main)
@@ -522,7 +536,7 @@ def build_scene(gd_id: int, entry: dict, ctx: Context, preserved: Preserved) -> 
     ext.append(
         f'[ext_resource type="Script" uid="{ctx.selector_uid}" path="{SELECTOR_SCRIPT_PATH}" id="gd_selector"]'
     )
-    if glow:
+    if glow or glow_sprites:
         ext.append(
             f'[ext_resource type="Material" uid="{ctx.additive_uid}" path="{ADDITIVE_MATERIAL_PATH}" id="gd_additive"]'
         )
@@ -611,18 +625,26 @@ def build_scene(gd_id: int, entry: dict, ctx: Context, preserved: Preserved) -> 
     if detail and detail_under:
         nodes.extend(detail_container())
     nodes.append('[node name="Base" type="Node2D" parent="."]\nuse_parent_material = true\n')
-    if glow:
-        atlas = ctx.atlas[glow]
-        lines = [
-            '[node name="Glow" type="Sprite2D" parent="Base"]',
-            "visible = false",
-            'material = ExtResource("gd_additive")',
-            f"scale = {vec2(ART_SCALE, ART_SCALE)}",
-            f'texture = SubResource("{texture_id(glow)}")',
-        ]
-        if atlas.offset_x or atlas.offset_y:
-            lines.append(f"offset = {vec2(atlas.offset_x, -atlas.offset_y)}")
-        nodes.append("\n".join(lines) + "\n")
+    if glow or glow_sprites:
+        # The glow container holds the probed legacy glow frame and the
+        # object's positioned glow sprites; GDObject.gd toggles its visibility
+        # with the placement's glow flag (key 96).
+        nodes.append(
+            '[node name="Glow" type="Node2D" parent="Base"]\n'
+            "visible = false\n"
+            'material = ExtResource("gd_additive")\n'
+        )
+        if glow:
+            atlas = ctx.atlas[glow]
+            lines = [
+                '[node name="GlowSprite" type="Sprite2D" parent="Base/Glow"]',
+                f"scale = {vec2(ART_SCALE, ART_SCALE)}",
+                f'texture = SubResource("{texture_id(glow)}")',
+            ]
+            if atlas.offset_x or atlas.offset_y:
+                lines.append(f"offset = {vec2(atlas.offset_x, -atlas.offset_y)}")
+            nodes.append("\n".join(lines) + "\n")
+        nodes.extend(sprite_node(s, "Base/Glow") for s in glow_sprites)
     nodes.extend(sprite_node(s, "Base") for s in main)
     if detail and not detail_under:
         nodes.extend(detail_container())

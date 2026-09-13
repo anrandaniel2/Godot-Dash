@@ -5,17 +5,17 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(402.432, 402.432)
+size = Vector2(403.2, 403.2)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1682, 140, 97, 97)
+region = Rect2(1805, 137, 97, 97)
 
 [node name="GD222" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 222
-bounds = Rect2(-201.6, -201.6, 402.432, 402.432)
+bounds = Rect2(-201.6, -201.6, 403.2, 403.2)
 metadata/_editor_description_ = "Geometry Dash object 222 (d_roundCloud_01_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
@@ -29,21 +29,18 @@ offset = Vector2(-46, -46)
 
 [node name="Sprite1" type="Sprite2D" parent="Base"]
 use_parent_material = true
-position = Vector2(-0.768, 0)
 scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-46, -46)
 
 [node name="Sprite2" type="Sprite2D" parent="Base"]
 use_parent_material = true
-position = Vector2(-0.768, -0.768)
 scale = Vector2(-2.133333, -2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-46, -46)
 
 [node name="Sprite3" type="Sprite2D" parent="Base"]
 use_parent_material = true
-position = Vector2(0, -0.768)
 scale = Vector2(2.133333, -2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-46, -46)
@@ -65,6 +62,5 @@ type = 9
 id = 222
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-0.384, -0.384)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

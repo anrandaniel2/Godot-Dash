@@ -1,42 +1,152 @@
-[gd_scene load_steps=7 format=3 uid="uid://dqetc5gkm0ymq"]
+[gd_scene load_steps=17 format=3 uid="uid://dqetc5gkm0ymq"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(128, 128)
+size = Vector2(142.08, 155.093333)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(436, 807, 60, 60)
+region = Rect2(585, 1939, 32, 9)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(64, 808, 60, 60)
+region = Rect2(3912, 1949, 32, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
+atlas = ExtResource("gd_page0")
+region = Rect2(3839, 1939, 32, 8)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd3"]
+atlas = ExtResource("gd_page0")
+region = Rect2(3975, 1939, 32, 8)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd4"]
+atlas = ExtResource("gd_page0")
+region = Rect2(1042, 1459, 8, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd5"]
+atlas = ExtResource("gd_page0")
+region = Rect2(141, 1461, 8, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd6"]
+atlas = ExtResource("gd_page0")
+region = Rect2(3637, 779, 60, 60)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd7"]
+atlas = ExtResource("gd_page0")
+region = Rect2(3873, 1939, 32, 8)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd8"]
+atlas = ExtResource("gd_page0")
+region = Rect2(4009, 1939, 32, 8)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd9"]
+atlas = ExtResource("gd_page0")
+region = Rect2(491, 1589, 8, 29)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd10"]
+atlas = ExtResource("gd_page0")
+region = Rect2(151, 1461, 8, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gd11"]
+atlas = ExtResource("gd_page0")
+region = Rect2(3699, 779, 60, 60)
 
 [node name="GD2821" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 2821
-bounds = Rect2(-64, -64, 128, 128)
+bounds = Rect2(-64, -77.013333, 142.08, 155.093333)
 metadata/_editor_description_ = "Geometry Dash object 2821 (gdh_01_1_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
+[node name="Sprite1" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(0, -63.146667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+offset = Vector2(-14, -2)
+
+[node name="Sprite2" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(0, -63.146667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd1")
+offset = Vector2(14, -2)
+
+[node name="Sprite3" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(0, 63.146667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd2")
+offset = Vector2(14, 2)
+
+[node name="Sprite4" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(0, 63.146667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd3")
+offset = Vector2(-14, 3)
+
+[node name="Sprite5" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(63.146667, 0)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd4")
+offset = Vector2(2, -14)
+
+[node name="Sprite6" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(63.146667, 0)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd5")
+offset = Vector2(3, 14)
+
 [node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd0")
+texture = SubResource("AtlasTexture_gd6")
 
 [node name="Detail" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
+[node name="Sprite7" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+position = Vector2(0, 63.146667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd7")
+offset = Vector2(14, 2)
+
+[node name="Sprite8" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+position = Vector2(0, 63.146667)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd8")
+offset = Vector2(-14, 3)
+
+[node name="Sprite9" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+position = Vector2(63.146667, 0)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd9")
+offset = Vector2(2, -12)
+
+[node name="Sprite10" type="Sprite2D" parent="Detail"]
+use_parent_material = true
+position = Vector2(63.146667, 0)
+scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd10")
+offset = Vector2(3, 14)
+
+[node name="Sprite11" type="Sprite2D" parent="Detail"]
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
-texture = SubResource("AtlasTexture_gd1")
+texture = SubResource("AtlasTexture_gd11")
 
 [node name="Collision" type="StaticBody2D" parent="."]
 collision_layer = 2
@@ -55,5 +165,6 @@ type = 9
 id = 2821
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+position = Vector2(7.04, 0.533333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

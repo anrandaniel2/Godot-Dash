@@ -12,36 +12,51 @@ of ``<objectID>:<frame name>`` lines, one per object, dumped from the game.
     8:spike_01_001.png
     36:ring_01_001.png
 
-Every line is then validated against the atlases that ship in
-``assets/textures/gd_atlas``. An entry whose frame does not exist in any atlas
-is dropped rather than written, so the generated table can never point at
-artwork that isn't there.
-
 Multi-sprite objects
 --------------------
-Many objects are not one sprite but a small tree of them: an outline with a
-black fill behind it, a sawblade built from a half-blade mirrored twice, a
-"perspective" block whose root sprite is an empty frame and whose visible
-pieces are all children. Drawing only the root sprite of those objects is what
-left hollow outlines, half sawblades and blank squares in imported levels.
+Nearly every object is not one sprite but a small stack of them: a glow behind
+a block, a black fill under an outline, a sawblade built from mirrored halves,
+a "perspective" block whose root sprite is empty and whose visible pieces are
+all children. Drawing only the root sprite of those objects is what left
+hollow outlines, half sawblades and blank squares in imported levels.
 
-That tree is not in the id list. It is taken from ``gdrweb_objects.json``, a
-dump of the object table shipped by the MIT-licensed gdrweb renderer (itself
-derived from the game's own object data). For every id it covers, the root
-sprite's colour class, its default colour channels and every child sprite with
-its transform are recorded as ``parts``, flattened into draw order.
+The sprite stack is taken from ``tools/gdrweb_objects_22.json``: the 2.2-era
+object table shipped by the MIT-licensed GDRWeb renderer
+(github.com/iliasHDZ/GDRWeb, object data by Opstic & Maxnut), covering object
+ids 1 to 4539. For every id it lists each sprite with its texture, colour
+class (base/detail/black/glow), position, scale, flip, rotation and content
+size, in draw order.
 
-Layer discovery
----------------
-For ids the object table does not cover, Geometry Dash's naming convention is
-used to find companion sprites::
+The table stores, per sprite, the position of the *untrimmed* content box's
+bottom-left corner (Geometry Dash units, y up) plus the box's ``contentSize``;
+the cocos2d trim offset is applied by the game at render time. Godot Dash's
+loader applies the same trim offset from its own atlas, so the conversion is a
+plain centre-of-box computation::
+
+    center = position + R(rot) . S(scale) . (contentSize / 2)
+
+validated against the previous (2.1-era) gdrweb dump: for the 1,600 objects
+both tables describe, sprite centres agree to within 0.01 units. Where the
+table's ``spriteOffset`` deviates from the atlas plist's trim offset (a handful
+of frames), the difference is folded into the part position.
+
+Only the *opacity* still comes from the old 2.1 dump
+(``tools/gdrweb_objects.json``): the 2.2 table does not carry per-sprite
+opacity, and ~70 sprites (semi-transparent block fills, pixel-art decor) need
+it. Opacities are merged per (object id, texture).
+
+Fallbacks and layer discovery
+-----------------------------
+For the handful of ids the object table does not describe, the toolbox frame is
+used directly, and companion sprites are found by Geometry Dash's naming
+convention::
 
     square_01_001.png         base silhouette
     square_01_color_001.png   recolourable detail layer
     square_01_glow_001.png    additive glow layer
 
-The glow layer is probed for every object, since the object table does not
-describe glow.
+Objects whose sprite tree already contains glow sprites are not probed for
+glow, so the layer is never drawn twice.
 
 Usage
 -----
@@ -60,7 +75,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ATLAS_DIR = PROJECT_ROOT / "assets" / "textures" / "gd_atlas" / "source"
-DEFAULT_GDRWEB_JSON = PROJECT_ROOT / "tools" / "gdrweb_objects.json"
+DEFAULT_GDRWEB_JSON = PROJECT_ROOT / "tools" / "gdrweb_objects_22.json"
+DEFAULT_LEGACY_JSON = PROJECT_ROOT / "tools" / "gdrweb_objects.json"
 DEFAULT_OUT = PROJECT_ROOT / "assets" / "textures" / "gd_atlas" / "object_frames.json"
 
 # Loaded in priority order: the first atlas to define a frame owns it.
@@ -92,16 +108,14 @@ EMPTY_FRAME = "emptyFrame.png"
 # Frames that are editor UI rather than level artwork. Several UI buttons are
 # genuinely referenced by the toolbox table (the editor reuses object IDs for
 # its own buttons), but they must never be drawn as level objects.
-# Editor chrome that the toolbox table also references: the editor reuses object
-# ids for its own buttons, and those must never be drawn as level objects.
-#
-# The match is deliberately narrow. A broader "gj_" rule also caught gj_drops,
-# gj_smoke, gj_bubble and gj_lightning - genuine level decoration - and silently
-# dropped ~190 objects from every import.
 UI_PREFIXES = ("edit_", "GJ_", "difficulty", "diff", "emoji")
 
 # Frame families that begin with "gj_" but are real artwork, not editor UI.
 GJ_ART_PREFIXES = ("gj_drops", "gj_smoke", "gj_bubble", "gj_lightning", "gj_hand", "gjHand")
+
+# The colour classes a 2.2-table sprite can carry; "glow" sprites are drawn
+# additively and follow the base colour channel.
+COLOR_CLASSES = {"base", "detail", "black", "glow"}
 
 
 def is_editor_ui(frame: str) -> bool:
@@ -129,6 +143,39 @@ def load_atlas_frames(atlas_dir: Path) -> dict[str, str]:
     return owner
 
 
+def load_atlas_offsets(atlas_dir: Path) -> dict[str, tuple[float, float]]:
+    """frame name -> cocos2d trim offset (as stored in the plist, y down),
+    converted to Geometry Dash units (atlas pixels / 2 for the -hd sheets)."""
+    offsets: dict[str, tuple[float, float]] = {}
+    for sheet in SHEETS:
+        for suffix in ("-hd", ""):
+            plist_path = atlas_dir / f"{sheet}{suffix}.plist"
+            if not plist_path.exists():
+                continue
+            with plist_path.open("rb") as handle:
+                data = plistlib.load(handle)
+            divisor = 2.0 if suffix == "-hd" else 1.0
+            for frame, info in data.get("frames", {}).items():
+                raw = info.get("offset", info.get("spriteOffset"))
+                values = _bracket_numbers(raw)
+                if len(values) >= 2:
+                    offsets[frame] = (values[0] / divisor, values[1] / divisor)
+            break
+    return offsets
+
+
+def _bracket_numbers(value) -> list[float]:
+    if isinstance(value, str):
+        parts = value.replace("{", "").replace("}", "").split(",")
+        try:
+            return [float(part) for part in parts]
+        except ValueError:
+            return []
+    if isinstance(value, (list, tuple)):
+        return [float(v) for v in value]
+    return []
+
+
 def parse_id_list(path: Path) -> dict[int, str]:
     """Read ``<id>:<frame>`` lines, tolerating CRLF and stray blanks."""
     mapping: dict[int, str] = {}
@@ -147,10 +194,10 @@ def parse_id_list(path: Path) -> dict[int, str]:
 def find_layers(base: str, owner: dict[str, str], detail: bool = True) -> dict[str, str]:
     """Locate the detail/glow/extra companions of a base frame.
 
-    ``detail`` is False for objects whose sprite tree is known exactly: a
-    ``_color_`` frame is then already accounted for as a part (or is genuinely
-    unused), and guessing it back in would paint an opaque white fill over the
-    object - which is precisely what several outline blocks looked like.
+    Only used for ids the object table does not describe: a tree carries its
+    own detail and glow sprites, and guessing them back in would paint an
+    opaque white fill over the object - which is precisely what several
+    outline blocks looked like before the trees were trusted.
     """
     match = BASE_RE.match(base)
     if not match:
@@ -182,160 +229,231 @@ def find_layers(base: str, owner: dict[str, str], detail: bool = True) -> dict[s
     return layers
 
 
-# --- multi-sprite objects ---------------------------------------------------
+# --- the 2.2 object table ----------------------------------------------------
 
 
-def load_gdrweb(path: Path | None) -> dict[str, dict]:
-    """The object table: id -> {texture, color_type, children[], ...}."""
+def load_object_table(path: Path | None) -> dict[str, dict]:
+    """The 2.2 object table: id -> {spriteSheet, defaultZLayer, sprites[], ...}."""
     if path is None or not path.exists():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    # Accept both the raw dump and the wrapped copy kept in tools/.
     objects = data.get("objects", data) if isinstance(data, dict) else {}
     return {str(k): v for k, v in objects.items() if isinstance(v, dict)}
 
 
-def color_class(value: str | None) -> str:
-    """Object table colour type -> the class name Godot Dash uses."""
-    return {"Base": "base", "Detail": "detail", "Black": "black"}.get(value or "", "base")
+def load_legacy_opacities(path: Path | None) -> dict[int, dict[str, float]]:
+    """Per-object sprite opacities from the 2.1-era dump: id -> texture -> opacity.
 
-
-def compose(parent: tuple, child: tuple) -> tuple:
-    """Fold a child's (x, y, rot, sx, sy) into its parent's frame.
-
-    Coordinates are Geometry Dash units with y up, rotations anticlockwise, as
-    the object table stores them. The parent's scale is always uniform in
-    magnitude (a flip at most), which is what lets the result stay a plain
-    position/rotation/scale triple instead of a general matrix.
+    The 2.2 table dropped per-sprite opacity; the semi-transparent block fills
+    and pixel-art decor still need theirs.
     """
-    px, py, prot, psx, psy = parent
-    cx, cy, crot, csx, csy = child
-    # Child position: scaled, then rotated, in the parent's frame.
-    scaled_x, scaled_y = cx * psx, cy * psy
-    radians = math.radians(prot)
-    cos, sin = math.cos(radians), math.sin(radians)
-    x = px + cos * scaled_x - sin * scaled_y
-    y = py + sin * scaled_x + cos * scaled_y
-    # A single-axis flip in the parent mirrors the child's rotation.
-    mirrored = (psx < 0) != (psy < 0)
-    rot = prot - crot if mirrored else prot + crot
-    return (x, y, rot, psx * csx, psy * csy)
+    result: dict[int, dict[str, float]] = {}
+    if path is None or not path.exists():
+        return result
+    data = json.loads(path.read_text(encoding="utf-8"))
+    objects = data.get("objects", data) if isinstance(data, dict) else {}
+    for key, spec in objects.items():
+        if not isinstance(spec, dict) or not key.isdigit():
+            continue
+
+        def visit(node: dict) -> None:
+            opacity = node.get("opacity")
+            texture = node.get("texture")
+            if opacity is not None and texture:
+                try:
+                    value = float(opacity)
+                except (TypeError, ValueError):
+                    return
+                if abs(value - 1.0) > 1e-6:
+                    result.setdefault(int(key), {})[texture] = value
+            for child in node.get("children", []):
+                if isinstance(child, dict):
+                    visit(child)
+
+        visit(spec)
+    return result
 
 
-def flatten_parts(root: dict, owner: dict[str, str]) -> tuple[list[dict], int, list[str]]:
-    """Depth-first draw order of a sprite tree, relative to its root.
+def sprite_center(sprite: dict, atlas_offsets: dict[str, tuple[float, float]]) -> tuple[float, float]:
+    """The sprite's untrimmed-box centre, in Geometry Dash units, y up.
 
-    Returns (parts, missing): ``parts`` in draw order, each with ``order``
-    negative for sprites drawn behind the root and positive for those in front;
-    ``missing`` lists child frames absent from the atlases (dropped).
+    The table places the box by its bottom-left corner and rotates/scales
+    around that corner's transform, so the centre is the transformed half-size.
+    A ``spriteOffset`` that disagrees with the atlas plist's trim offset (a
+    handful of frames) shifts the box by the difference, y flipped, because the
+    plist stores offsets y-down while positions are y-up.
     """
-    sequence: list[tuple[dict, tuple]] = []  # (node, world (x, y, rot, sx, sy))
-    missing: list[str] = []
-    ROOT = object()
+    px, py = (float(v) for v in sprite["position"])
+    csx, csy = (float(v) for v in sprite["contentSize"])
+    rot = math.radians(float(sprite.get("rotation", 0.0)))
+    sx, sy = (float(v) for v in sprite.get("scale", (1.0, 1.0)))
 
-    def visit(node: dict, world: tuple, is_root: bool) -> None:
-        children = [c for c in node.get("children", []) if isinstance(c, dict)]
-        # The renderer keeps children sorted by z, stable for equal z.
-        children.sort(key=lambda c: c.get("z", 0))
-        composed = []
-        for child in children:
-            sx = float(child.get("scale_x", 1)) * (-1.0 if child.get("flip_x") else 1.0)
-            sy = float(child.get("scale_y", 1)) * (-1.0 if child.get("flip_y") else 1.0)
-            local = (
-                float(child.get("x", 0)),
-                float(child.get("y", 0)),
-                float(child.get("rot", 0)),
-                sx,
-                sy,
-            )
-            composed.append((child, compose(world, local)))
-        index = 0
-        while index < len(composed) and composed[index][0].get("z", 0) < 0:
-            visit(composed[index][0], composed[index][1], False)
-            index += 1
-        sequence.append((ROOT if is_root else node, world))
-        while index < len(composed):
-            visit(composed[index][0], composed[index][1], False)
-            index += 1
+    vx = csx / 2.0
+    vy = csy / 2.0
+    sox, soy = (float(v) for v in sprite.get("spriteOffset", (0.0, 0.0)))
+    plist_offset = atlas_offsets.get(sprite["texture"])
+    if plist_offset is not None:
+        dx = sox - plist_offset[0]
+        dy = -(soy - plist_offset[1])
+        if abs(dx) > 1e-6 or abs(dy) > 1e-6:
+            vx += dx
+            vy += dy
 
-    visit(root, (0.0, 0.0, 0.0, 1.0, 1.0), True)
+    cos_r, sin_r = math.cos(rot), math.sin(rot)
+    x = px + cos_r * sx * vx - sin_r * sy * vy
+    y = py + sin_r * sx * vx + cos_r * sy * vy
+    return x, y
 
-    root_index = next(i for i, (node, _) in enumerate(sequence) if node is ROOT)
-    parts: list[dict] = []
-    for position, (node, world) in enumerate(sequence):
-        if node is ROOT:
+
+def pick_root_index(sprites: list[dict], toolbox_frame: str, legacy_roots: dict[int, str], object_id: int) -> int:
+    """Which sprite stands for the object: the one the toolbox names, else the
+    one the 2.1 table called the root, else the largest. Glow sprites never
+    stand in - the root path draws opaque, and an object's glow belongs to its
+    positioned glow parts."""
+    def eligible(index: int, sprite: dict) -> bool:
+        return str(sprite.get("colorType", "base")) != "glow" or all(
+            str(s.get("colorType", "base")) == "glow" for s in sprites
+        )
+
+    for index, sprite in enumerate(sprites):
+        if sprite["texture"] == toolbox_frame and eligible(index, sprite):
+            return index
+    legacy = legacy_roots.get(object_id)
+    if legacy:
+        for index, sprite in enumerate(sprites):
+            if sprite["texture"] == legacy and eligible(index, sprite):
+                return index
+    best, best_area = 0, -1.0
+    for index, sprite in enumerate(sprites):
+        if not eligible(index, sprite):
             continue
-        frame = node.get("texture")
-        if not frame or frame not in owner:
-            missing.append(str(frame))
-            continue
-        x, y, rot, sx, sy = world
-        part: dict = {"frame": frame, "order": position - root_index}
-        # Defaults are omitted to keep the table small; the loader fills them.
-        if abs(x) > 1e-6:
-            part["x"] = round(x, 4)
-        if abs(y) > 1e-6:
-            part["y"] = round(y, 4)
-        if abs(rot) > 1e-6:
-            part["rot"] = round(rot, 4)
-        if abs(sx - 1.0) > 1e-6:
-            part["sx"] = round(sx, 4)
-        if abs(sy - 1.0) > 1e-6:
-            part["sy"] = round(sy, 4)
-        anchor_x = float(node.get("anchor_x", 0) or 0)
-        anchor_y = float(node.get("anchor_y", 0) or 0)
-        if abs(anchor_x) > 1e-6:
-            part["ax"] = round(anchor_x, 4)
-        if abs(anchor_y) > 1e-6:
-            part["ay"] = round(anchor_y, 4)
-        klass = color_class(node.get("color_type"))
-        if klass != "base":
-            part["color"] = klass
-        opacity = node.get("opacity")
-        if opacity is not None and abs(float(opacity) - 1.0) > 1e-6:
-            part["opacity"] = round(float(opacity), 4)
-        parts.append(part)
-    return parts, root_index, missing
+        csx, csy = (float(v) for v in sprite.get("contentSize", (0.0, 0.0)))
+        sx, sy = (float(v) for v in sprite.get("scale", (1.0, 1.0)))
+        area = abs(csx * csy * sx * sy)
+        if area >= best_area:
+            best, best_area = index, area
+    return best
 
 
-def entry_from_gdrweb(frame: str, spec: dict, owner: dict[str, str]) -> tuple[dict | None, list[str]]:
-    """Build a table entry from the object table, or None to fall back."""
-    texture = spec.get("texture")
-    if not texture or texture not in owner:
-        return None, []
-    # The object table is authoritative for the root frame too: the id list
-    # occasionally names a sibling frame for the same object.
-    entry: dict = {"base": texture, "sheet": owner[texture]}
+def entry_from_object_table(
+    object_id: int,
+    spec: dict,
+    toolbox_frame: str,
+    owner: dict[str, str],
+    atlas_offsets: dict[str, tuple[float, float]],
+    opacities: dict[str, float],
+) -> tuple[dict | None, list[str]]:
+    """Build a table entry from the 2.2 object table, or None to fall back."""
+    raw_sprites = [s for s in spec.get("sprites", []) if isinstance(s, dict)]
+    sprites = [s for s in raw_sprites if s.get("texture") and s["texture"] in owner]
+    missing = [str(s.get("texture")) for s in raw_sprites if not s.get("texture") or s["texture"] not in owner]
+    if not sprites:
+        return None, missing
 
-    root_class = color_class(spec.get("color_type"))
-    parts, _, missing = flatten_parts(spec, owner)
+    root_index = pick_root_index(sprites, toolbox_frame, LEGACY_ROOTS, object_id)
+    root = sprites[root_index]
 
     # An object whose sprites are all "detail" follows the base channel, as it
     # does in the game (the renderer performs the same normalisation).
-    classes = {root_class} | {p.get("color", "base") for p in parts}
-    if classes == {"detail"}:
-        root_class = "base"
-        for part in parts:
-            part.pop("color", None)
+    classes = {str(s.get("colorType", "base")) for s in sprites}
+    all_detail = classes == {"detail"}
 
-    if root_class != "base":
-        entry["color"] = root_class
-    opacity = spec.get("opacity")
-    if opacity is not None and abs(float(opacity) - 1.0) > 1e-6:
-        entry["opacity"] = round(float(opacity), 4)
+    parts: list[dict] = []
+    has_glow_sprite = False
+    for index, sprite in enumerate(sprites):
+        if index == root_index:
+            continue
+        x, y = sprite_center(sprite, atlas_offsets)
+        sx, sy = (float(v) for v in sprite.get("scale", (1.0, 1.0)))
+        if sprite.get("flipX"):
+            sx = -sx
+        if sprite.get("flipY"):
+            sy = -sy
+        color = str(sprite.get("colorType", "base"))
+        if color not in COLOR_CLASSES:
+            color = "base"
+        if all_detail and color == "detail":
+            color = "base"
+        if color == "glow":
+            has_glow_sprite = True
+        part: dict = {"frame": sprite["texture"], "order": index - root_index}
+        # Defaults are omitted to keep the table small; the loader fills them.
+        if abs(x) > 1e-4:
+            part["x"] = round(x, 4)
+        if abs(y) > 1e-4:
+            part["y"] = round(y, 4)
+        rot = float(sprite.get("rotation", 0.0))
+        if abs(rot) > 1e-4:
+            part["rot"] = round(rot, 4)
+        if abs(sx - 1.0) > 1e-4:
+            part["sx"] = round(sx, 4)
+        if abs(sy - 1.0) > 1e-4:
+            part["sy"] = round(sy, 4)
+        if color != "base":
+            part["color"] = color
+        opacity = opacities.get(sprite["texture"])
+        if opacity is not None:
+            part["opacity"] = round(opacity, 4)
+        parts.append(part)
+
+    root_color = str(root.get("colorType", "base"))
+    if root_color not in COLOR_CLASSES:
+        root_color = "base"
+    if all_detail and root_color == "detail":
+        root_color = "base"
+    entry: dict = {"base": root["texture"]}
+    if root_color != "base":
+        entry["color"] = root_color
+    root_opacity = opacities.get(root["texture"])
+    if root_opacity is not None:
+        entry["opacity"] = round(root_opacity, 4)
+
+    # The root sprite's own placement. Geometry Dash draws the root like any
+    # other sprite - it can sit off the object's centre, be scaled, rotated or
+    # mirrored - while the root path used to assume it was always centred and
+    # untransformed, which misplaced half of the perspective blocks and every
+    # flipped sawblade root.
+    root_x, root_y = sprite_center(root, atlas_offsets)
+    root_sx, root_sy = (float(v) for v in root.get("scale", (1.0, 1.0)))
+    if root.get("flipX"):
+        root_sx = -root_sx
+    if root.get("flipY"):
+        root_sy = -root_sy
+    root_rot = float(root.get("rotation", 0.0))
+    if abs(root_x) > 1e-4:
+        entry["rx"] = round(root_x, 4)
+    if abs(root_y) > 1e-4:
+        entry["ry"] = round(root_y, 4)
+    if abs(root_rot) > 1e-4:
+        entry["rrot"] = round(root_rot, 4)
+    if abs(root_sx - 1.0) > 1e-4:
+        entry["rsx"] = round(root_sx, 4)
+    if abs(root_sy - 1.0) > 1e-4:
+        entry["rsy"] = round(root_sy, 4)
+
     if parts:
         entry["parts"] = parts
+
     # Where Geometry Dash draws the object when the level string carries no
     # explicit z layer (key 24) or z order (key 25): 1/3/5 are B2/B1/T1.
-    z_layer = spec.get("default_z_layer")
-    z_order = spec.get("default_z_order")
+    z_layer = spec.get("defaultZLayer")
+    z_order = spec.get("defaultZOrder")
     if z_layer is not None:
         entry["zl"] = int(z_layer)
     if z_order is not None:
         entry["zo"] = int(z_order)
-    # Glow is not described by the object table, so it is still probed.
-    entry.update(find_layers(texture, owner, detail=False))
+
+    # Glow: the tree names its glow sprites explicitly, so the naming
+    # convention is only probed for objects without any. Probing both would
+    # draw the glow layer twice.
+    if not has_glow_sprite:
+        entry.update(find_layers(root["texture"], owner, detail=False))
     return entry, missing
+
+
+# The 2.1 table's root texture per id, used only to keep root selection stable
+# for the objects the toolbox names a sibling frame for. Filled by main().
+LEGACY_ROOTS: dict[int, str] = {}
 
 
 def main() -> None:
@@ -349,7 +467,13 @@ def main() -> None:
         "--gdrweb-json",
         type=Path,
         default=DEFAULT_GDRWEB_JSON,
-        help="object table dump (id -> sprite tree); multi-sprite objects come from here",
+        help="2.2 object table (id -> flat sprite list); multi-sprite objects come from here",
+    )
+    parser.add_argument(
+        "--legacy-gdrweb-json",
+        type=Path,
+        default=DEFAULT_LEGACY_JSON,
+        help="2.1-era object table; only per-sprite opacities and root stability come from here",
     )
     args = parser.parse_args()
 
@@ -361,44 +485,54 @@ def main() -> None:
     owner = load_atlas_frames(args.atlas_dir)
     if not owner:
         sys.exit(f"no .plist atlases found in {args.atlas_dir}")
+    atlas_offsets = load_atlas_offsets(args.atlas_dir)
     print(f"{len(owner):,} frames across the atlases")
 
     raw = parse_id_list(args.id_list)
     print(f"{len(raw):,} id -> frame pairs in {args.id_list.name}")
 
-    gdrweb = load_gdrweb(args.gdrweb_json)
-    print(f"{len(gdrweb):,} sprite trees in {args.gdrweb_json.name if gdrweb else '(no object table)'}")
+    table = load_object_table(args.gdrweb_json)
+    print(f"{len(table):,} sprite stacks in {args.gdrweb_json.name if table else '(no object table)'}")
+
+    legacy = load_object_table(args.legacy_gdrweb_json)
+    for key, spec in legacy.items():
+        if key.isdigit() and isinstance(spec.get("texture"), str):
+            LEGACY_ROOTS[int(key)] = spec["texture"]
+    opacities = load_legacy_opacities(args.legacy_gdrweb_json)
 
     entries: dict[int, dict] = {}
     missing: list[tuple[int, str]] = []
     missing_parts: list[tuple[int, str]] = []
     skipped_ui = 0
     from_tree = 0
+    glow_parts = 0
 
     # Every id either source knows about. The object table can describe an
     # object the id list lacks, but never a UI button as level art.
-    all_ids = set(raw) | {int(k) for k in gdrweb if k.isdigit()}
+    all_ids = set(raw) | {int(k) for k in table if k.isdigit()}
     for object_id in sorted(all_ids):
         frame = raw.get(object_id, "")
-        spec = gdrweb.get(str(object_id))
-        tree_frame = spec.get("texture") if spec else None
-        if is_editor_ui(frame) or (tree_frame and is_editor_ui(tree_frame)):
+        spec = table.get(str(object_id))
+        if is_editor_ui(frame):
             skipped_ui += 1
             continue
 
         entry = None
         if spec is not None:
-            entry, dropped = entry_from_gdrweb(frame, spec, owner)
+            entry, dropped = entry_from_object_table(
+                object_id, spec, frame, owner, atlas_offsets, opacities.get(object_id, {})
+            )
             missing_parts.extend((object_id, name) for name in dropped)
         if entry is not None:
             from_tree += 1
+            glow_parts += sum(1 for p in entry.get("parts", []) if p.get("color") == "glow")
         else:
             if not frame:
                 continue
             if frame not in owner:
                 missing.append((object_id, frame))
                 continue
-            entry = {"base": frame, "sheet": owner[frame]}
+            entry = {"base": frame}
             entry.update(find_layers(frame, owner))
         entries[object_id] = entry
 
@@ -406,14 +540,19 @@ def main() -> None:
     glow_count = sum(1 for e in entries.values() if "glow" in e)
     parts_count = sum(1 for e in entries.values() if "parts" in e)
     empty_root = sum(1 for e in entries.values() if e["base"] == EMPTY_FRAME)
+    detail_parts = sum(1 for e in entries.values() for p in e.get("parts", []) if p.get("color") == "detail")
+    black_parts = sum(1 for e in entries.values() for p in e.get("parts", []) if p.get("color") == "black")
 
     print(f"\nverified entries : {len(entries):,}")
-    print(f"  from sprite tree : {from_tree:,}")
-    print(f"  with parts       : {parts_count:,}")
-    print(f"  invisible root   : {empty_root:,}")
-    print(f"  with detail      : {detail_count:,}")
-    print(f"  with glow        : {glow_count:,}")
-    print(f"  editor UI skipped: {skipped_ui:,}")
+    print(f"  from sprite stack : {from_tree:,}")
+    print(f"  with parts        : {parts_count:,}")
+    print(f"  invisible root    : {empty_root:,}")
+    print(f"  with legacy detail: {detail_count:,}")
+    print(f"  with legacy glow  : {glow_count:,}")
+    print(f"  detail parts      : {detail_parts:,}")
+    print(f"  black parts       : {black_parts:,}")
+    print(f"  glow parts        : {glow_parts:,}")
+    print(f"  editor UI skipped : {skipped_ui:,}")
     print(f"  frame not in atlas: {len(missing):,}")
     if missing:
         preview = ", ".join(f"{i}:{f}" for i, f in missing[:5])
@@ -426,7 +565,7 @@ def main() -> None:
     out_path: Path = args.out or DEFAULT_OUT
     payload = {
         "_source": "ObjectToolbox id list, validated against the shipped atlases",
-        "_parts_source": "gdrweb object table (MIT) for the sprite tree of multi-sprite objects and the default z layer/order (zl/zo)",
+        "_parts_source": "GDRWeb 2.2 object table (MIT, github.com/iliasHDZ/GDRWeb; object data by Opstic & Maxnut) for the sprite stack of multi-sprite objects and the default z layer/order (zl/zo)",
         "_verified": "every frame below exists in an atlas plist",
         "_count": len(entries),
         "frames": {str(i): entries[i] for i in sorted(entries)},

@@ -9,19 +9,19 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1228, 1089, 10, 47)
+region = Rect2(3737, 1020, 10, 47)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3378, 1970, 39, 10)
+region = Rect2(3146, 1926, 39, 10)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3173, 1137, 40, 46)
+region = Rect2(3131, 1072, 40, 46)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd3"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2059, 661, 60, 60)
+region = Rect2(374, 620, 60, 60)
 
 [node name="GD814" type="Node2D"]
 texture_filter = 1
@@ -30,29 +30,29 @@ gd_id = 814
 bounds = Rect2(-64, -64, 128, 128)
 metadata/_editor_description_ = "Geometry Dash object 814 (block007_04_001.png)"
 
-[node name="Detail" type="Node2D" parent="."]
+[node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
+[node name="Sprite1" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-22, 3)
 
-[node name="Sprite2" type="Sprite2D" parent="Detail"]
+[node name="Sprite2" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
 use_parent_material = true
 scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(-22, 3)
 
-[node name="Sprite3" type="Sprite2D" parent="Detail"]
+[node name="Sprite3" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, -22)
-
-[node name="Base" type="Node2D" parent="."]
-use_parent_material = true
 
 [node name="Sprite4" type="Sprite2D" parent="Base"]
 self_modulate = Color(0, 0, 0, 0.698)

@@ -6,19 +6,19 @@
 [ext_resource type="Material" uid="uid://urnhm06n6ar4" path="res://resources/AdditiveBlendingMaterial.tres" id="gd_additive"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(53.333333, 51.2)
+size = Vector2(81.066667, 83.2)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(585, 1836, 19, 21)
+region = Rect2(1897, 1777, 19, 21)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1340, 1230, 38, 39)
+region = Rect2(1404, 1166, 38, 39)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1126, 1762, 25, 24)
+region = Rect2(2115, 1726, 25, 24)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
 size = Vector2(11.093333, 20.48)
@@ -27,7 +27,7 @@ size = Vector2(11.093333, 20.48)
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 458
-bounds = Rect2(-26.666667, -25.6, 53.333333, 51.2)
+bounds = Rect2(-40.533333, -39.466667, 81.066667, 83.2)
 metadata/_editor_description_ = "Geometry Dash object 458 (colorSpike_04_001.png)"
 
 [node name="Detail" type="Node2D" parent="."]
@@ -41,9 +41,12 @@ texture = SubResource("AtlasTexture_gd0")
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="Sprite2" type="Sprite2D" parent="Base/Glow"]
+use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(0, 1)
@@ -71,5 +74,6 @@ type = 9
 id = 458
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
+position = Vector2(0, 2.133333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

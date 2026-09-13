@@ -9,15 +9,15 @@ size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2320, 1970, 54, 10)
+region = Rect2(406, 1927, 54, 10)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1364, 1137, 48, 46)
+region = Rect2(2060, 1072, 48, 46)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1873, 661, 60, 60)
+region = Rect2(2, 620, 60, 60)
 
 [node name="GD808" type="Node2D"]
 texture_filter = 1
@@ -26,17 +26,15 @@ gd_id = 808
 bounds = Rect2(-64, -64, 128, 128)
 metadata/_editor_description_ = "Geometry Dash object 808 (block007_01_001.png)"
 
-[node name="Detail" type="Node2D" parent="."]
+[node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Detail"]
+[node name="Sprite1" type="Sprite2D" parent="Base"]
+self_modulate = Color(0, 0, 0, 1)
 use_parent_material = true
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 offset = Vector2(0, -22)
-
-[node name="Base" type="Node2D" parent="."]
-use_parent_material = true
 
 [node name="Sprite2" type="Sprite2D" parent="Base"]
 self_modulate = Color(0, 0, 0, 0.698)

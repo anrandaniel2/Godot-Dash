@@ -5,49 +5,44 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(96, 96)
+size = Vector2(128, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2251, 1578, 30, 30)
+region = Rect2(3234, 1516, 30, 30)
 
 [node name="GD1842" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1842
-bounds = Rect2(-64, -64, 96, 96)
+bounds = Rect2(-64, -64, 128, 128)
 metadata/_editor_description_ = "Geometry Dash object 1842 (d_scaleFadeRing_04_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Sprite1" type="Sprite2D" parent="Base"]
+[node name="Root" type="Sprite2D" parent="Base"]
 use_parent_material = true
 position = Vector2(-32, -32)
 scale = Vector2(2.133333, 2.133333)
+texture = SubResource("AtlasTexture_gd0")
+
+[node name="Sprite1" type="Sprite2D" parent="Base"]
+use_parent_material = true
+position = Vector2(32, -32)
+scale = Vector2(-2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
 [node name="Sprite2" type="Sprite2D" parent="Base"]
 use_parent_material = true
-position = Vector2(-32, -32)
-scale = Vector2(-2.133333, 2.133333)
+position = Vector2(32, 32)
+scale = Vector2(-2.133333, -2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
 [node name="Sprite3" type="Sprite2D" parent="Base"]
 use_parent_material = true
-position = Vector2(-32, -32)
-scale = Vector2(-2.133333, -2.133333)
-texture = SubResource("AtlasTexture_gd0")
-
-[node name="Sprite4" type="Sprite2D" parent="Base"]
-use_parent_material = true
-position = Vector2(-32, -32)
+position = Vector2(-32, 32)
 scale = Vector2(2.133333, -2.133333)
-texture = SubResource("AtlasTexture_gd0")
-
-[node name="Root" type="Sprite2D" parent="Base"]
-use_parent_material = true
-scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
 [node name="Collision" type="StaticBody2D" parent="."]
@@ -67,6 +62,5 @@ type = 9
 id = 1842
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-16, -16)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

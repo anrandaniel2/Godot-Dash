@@ -5,25 +5,25 @@
 [ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="gd_selector"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gdsel"]
-size = Vector2(24, 24)
+size = Vector2(862.933333, 864)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(2630, 2016, 1, 1)
+region = Rect2(2883, 1963, 1, 1)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3103, 1995, 11, 8)
+region = Rect2(3440, 1949, 11, 8)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3671, 2004, 5, 8)
+region = Rect2(3863, 1949, 5, 8)
 
 [node name="GD1855" type="Node2D"]
 texture_filter = 1
 script = ExtResource("gd_script")
 gd_id = 1855
-bounds = Rect2(-14.133333, -13.066667, 24, 24)
+bounds = Rect2(-853.333333, -10.666667, 862.933333, 864)
 metadata/_editor_description_ = "Geometry Dash object 1855 (gj_drops05_001.png)"
 
 [node name="Base" type="Node2D" parent="."]
@@ -31,6 +31,7 @@ use_parent_material = true
 
 [node name="Sprite1" type="Sprite2D" parent="Base"]
 use_parent_material = true
+position = Vector2(-852.266667, 852.266667)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
@@ -45,6 +46,7 @@ use_parent_material = true
 
 [node name="Sprite2" type="Sprite2D" parent="Detail"]
 use_parent_material = true
+position = Vector2(-852.266667, 852.266667)
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd0")
 
@@ -71,6 +73,6 @@ type = 9
 id = 1855
 
 [node name="EditorSelectionHitbox" type="CollisionShape2D" parent="EditorSelectionCollider"]
-position = Vector2(-2.133333, -1.066667)
+position = Vector2(-421.866667, 421.333333)
 shape = SubResource("RectangleShape2D_gdsel")
 debug_color = Color(0, 0.6, 0.7, 0)

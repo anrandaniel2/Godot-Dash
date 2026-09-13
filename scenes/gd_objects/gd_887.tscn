@@ -10,19 +10,19 @@ size = Vector2(256, 128)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd0"]
 atlas = ExtResource("gd_page0")
-region = Rect2(3505, 970, 102, 58)
+region = Rect2(2602, 903, 102, 58)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd1"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1555, 321, 131, 76)
+region = Rect2(2385, 319, 131, 76)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1751, 536, 120, 60)
+region = Rect2(312, 496, 120, 60)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd3"]
 atlas = ExtResource("gd_page0")
-region = Rect2(1873, 537, 120, 60)
+region = Rect2(3017, 530, 120, 60)
 
 [sub_resource type="ConvexPolygonShape2D" id="ConvexPolygonShape2D_gdc0"]
 points = PackedVector2Array(-128, 64, 128, 64, 128, -64)
@@ -46,9 +46,11 @@ offset = Vector2(9, 1)
 [node name="Base" type="Node2D" parent="."]
 use_parent_material = true
 
-[node name="Glow" type="Sprite2D" parent="Base"]
+[node name="Glow" type="Node2D" parent="Base"]
 visible = false
 material = ExtResource("gd_additive")
+
+[node name="GlowSprite" type="Sprite2D" parent="Base/Glow"]
 scale = Vector2(2.133333, 2.133333)
 texture = SubResource("AtlasTexture_gd1")
 offset = Vector2(1, 0)
