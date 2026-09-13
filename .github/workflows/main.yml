@@ -245,6 +245,12 @@ jobs:
           echo "Using NDK: $NDK_DIR"
 
       - name: Build gdash_native (Android arm64, Godot 4.7 API)
+        env:
+          # Space-separated hex PCs from an on-device tombstone (libgdash_native.so
+          # arm64). Set the GDASH_CRASH_OFFSETS repository variable to symbolize
+          # them against this build; offsets only map correctly while the native
+          # source is unchanged since the crashing APK.
+          GDASH_CRASH_OFFSETS: ${{ vars.GDASH_CRASH_OFFSETS }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -293,20 +299,23 @@ jobs:
             fi
           fi
           ls -lh "$SO" /tmp/libgdash_native_android_unstripped.so
-          # Symbolize the 2026-09-13 on-device tombstone (Amethyst level
-          # start, APK 1fa4b8c): SIGSEGV in libgdash_native android arm64 at
-          # these three PCs. The source and codegen flags are unchanged
-          # since that build, so the addresses map directly.
-          SYMBOLIZED=$(for off in 0x39094 0x28fa0 0x3ca80; do
-            echo "pc $off:"
-            addr2line -Cfipe /tmp/libgdash_native_android_unstripped.so "$off" || true
-          done)
-          echo "$SYMBOLIZED"
-          # NOTE: sed can't do this — GNU sed processes line-by-line so the
-          # pattern space never contains \n, and a raw newline inside the
-          # ::warning:: truncates the annotation at the first line.
-          SYMBOLIZED_ESCAPED=$(printf '%s' "$SYMBOLIZED" | awk '{ gsub(/%/, "%25"); gsub(/\r/, "%0D"); printf "%s%%0A", $0 }')
-          echo "::warning title=Device crash symbolized (Amethyst level start)::${SYMBOLIZED_ESCAPED}"
+          # Symbolize on-device crash PCs against this exact build when the
+          # GDASH_CRASH_OFFSETS repository variable is set (see env above).
+          # The debug_symbols=yes build has identical code layout to the
+          # shipped (stripped) library, so addr2line resolves the PCs as long
+          # as the native source is unchanged since the crashing APK.
+          if [ -n "${GDASH_CRASH_OFFSETS// /}" ]; then
+            SYMBOLIZED=$(for off in $GDASH_CRASH_OFFSETS; do
+              echo "pc $off:"
+              addr2line -Cfipe /tmp/libgdash_native_android_unstripped.so "$off" || true
+            done)
+            echo "$SYMBOLIZED"
+            # NOTE: sed can't do this — GNU sed processes line-by-line so the
+            # pattern space never contains \n, and a raw newline inside the
+            # ::warning:: truncates the annotation at the first line.
+            SYMBOLIZED_ESCAPED=$(printf '%s' "$SYMBOLIZED" | awk '{ gsub(/%/, "%25"); gsub(/\r/, "%0D"); printf "%s%%0A", $0 }')
+            echo "::warning title=Device crash symbolized::${SYMBOLIZED_ESCAPED}"
+          fi
           # Same profile ground truth as the linux step (gen files were
           # regenerated after the linux clean; ~29 classes expected).
           GEN_COUNT=$(ls godot-cpp/gen/src/classes/*.cpp 2>/dev/null | wc -l)
