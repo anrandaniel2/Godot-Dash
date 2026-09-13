@@ -809,7 +809,7 @@ class NativeTriggerRuntime : public RefCounted {
 				apply_toggle(effect);
 				break;
 			case TriggerEffectKind::TELEPORT:
-				apply_teleport(record, player);
+				apply_teleport(index, record, player);
 				break;
 			case TriggerEffectKind::MOVE:
 			case TriggerEffectKind::ROTATE:
@@ -847,12 +847,24 @@ class NativeTriggerRuntime : public RefCounted {
 		}
 	}
 
-	void apply_teleport(const Record &record, Object *player) {
+	void apply_teleport(size_t index, const Record &record, Object *player) {
 		Node2D *target = resolve_first_member(record.effect.center_group);
 		if (!target && !record.effect.target_groups.empty()) {
 			target = resolve_first_member(record.effect.target_groups[0]);
 		}
 		Node2D *player_node = Object::cast_to<Node2D>(player);
+		// Device forensics 2026-09-13: the user sees a teleport interaction with
+		// an unresolved target at the exact moment the process dies at Amethyst
+		// level start. Log every native teleport attempt so the next logcat
+		// capture timestamps it against the gdash-mem checkpoints.
+		ERR_PRINT(String("[gdash_native] teleport attempt: record ")
+			+ String::num_uint64(static_cast<uint64_t>(index))
+			+ ", center_group='" + record.effect.center_group + "'"
+			+ ", target_groups=" + String::num_uint64(static_cast<uint64_t>(record.effect.target_groups.size()))
+			+ ", resolved=" + (target ? "yes" : "no")
+			+ ", epoch=" + String::num_uint64(structure_epoch)
+			+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+				Engine::get_singleton()->get_process_frames())));
 		if (target && player_node) {
 			player_node->set_global_position(target->get_global_position());
 		}

@@ -47,6 +47,10 @@ func _get_property_default_value(property: String) -> Variant:
 func teleport(player: Player) -> void:
 	var target_component: TargetObjectComponent = parent.query(TargetObjectComponent)
 	var target := target_component.target_to_node()
+	# Device forensics 2026-09-13: a teleport interaction with an unset target
+	# has been observed firing at the exact moment the process dies at level
+	# start. Log it (Toasts.error is UI-only and never reaches logcat).
+	print("[gdash-tp] %s fired, target %s" % [parent.name, "set" if target else "UNSET"])
 	if not target:
 		Toasts.error("In %s: target is unset" % parent.name)
 		return

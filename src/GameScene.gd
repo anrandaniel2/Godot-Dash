@@ -34,6 +34,7 @@ func _print_process_memory(tag: String) -> void:
 
 
 func _ready() -> void:
+	print("[gdash-mem] game scene ready")
 	Engine.time_scale = 1.0
 	LevelManager.game_scene = self
 	LevelManager.background_sprites.clear()
