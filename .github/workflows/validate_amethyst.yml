@@ -1,0 +1,39 @@
+name: Validate Amethyst mapping
+
+# Downloads the real Amethyst level (2.2, id 119550490) and checks every
+# placed object id against the artwork mapping, committing the report back
+# to the branch (the Actions log viewer is unreachable from the sandbox).
+on:
+  push:
+    paths:
+      - tools/validate_amethyst.py
+      - .github/workflows/validate_amethyst.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate mapping against Amethyst
+        run: python3 tools/validate_amethyst.py
+
+      - name: Commit report
+        run: |
+          git config user.name "arena-agent"
+          git config user.email "arena-agent@users.noreply.github.com"
+          git add reports/amethyst_validation.md
+          if git diff --cached --quiet; then
+            echo "report unchanged"
+          else
+            git commit -m "docs: refresh Amethyst mapping validation report"
+            git push
+          fi
