@@ -415,7 +415,11 @@ jobs:
             exit 1
           fi
 
+      # Diagnostic repro for the on-device level-start crash. Never blocks the
+      # APK: a crash here is reported through annotations (with symbolized
+      # native frames) and the build keeps going.
       - name: Boot Amethyst through the native runtime (device crash repro)
+        continue-on-error: true
         run: |
           set -euo pipefail
           command -v xvfb-run >/dev/null || {
