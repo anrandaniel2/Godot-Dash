@@ -45,6 +45,11 @@ const Prop := {
 	RED = "7",
 	GREEN = "8",
 	BLUE = "9",
+	PLAYER_COLOR_1 = "15", # any Color trigger: follow the player's primary colour
+	PLAYER_COLOR_2 = "16", # any Color trigger: follow the player's secondary colour
+	COPIED_COLOR_ID = "50", # the channel a Color trigger copies its colour from
+	COPIED_COLOR_HSV = "49", # HSV adjustment applied to the copied colour
+	COPY_OPACITY = "60", # copy the source channel's opacity instead of key 35
 	MOVE_X = "28",
 	MOVE_Y = "29",
 	TARGET_COLOR_ID = "23",
@@ -397,12 +402,20 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			continue
 
 		# A colour trigger needs its target channel to exist at runtime even
-		# when no object has been bound to it yet.
+		# when no object has been bound to it yet. A copy-colour trigger also
+		# reads its source channel (key 50) whenever it fires, so that channel
+		# has to exist too - but only when it resolves through the channel
+		# table, not when it aliases a live level or player colour.
 		if gd_id == COLOR_TRIGGER_ID:
 			var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
 			if target_color.is_valid_int() and _is_colorable_channel(channel_style, int(target_color)):
 				if not SPECIAL_CHANNELS.has(int(target_color)):
 					used_channels[int(target_color)] = true
+			var copy_source: String = properties.get(Prop.COPIED_COLOR_ID, "").strip_edges()
+			if copy_source.is_valid_int() and int(copy_source) > 0 \
+					and not SPECIAL_CHANNELS.has(int(copy_source)) \
+					and _is_colorable_channel(channel_style, int(copy_source)):
+				used_channels[int(copy_source)] = true
 
 		match kind:
 			1:
@@ -907,7 +920,15 @@ static func _hsv_shift_array(
 ) -> PackedFloat32Array:
 	if properties.get(enabled_key, "0") != "1":
 		return PackedFloat32Array()
-	var parts: PackedStringArray = properties.get(hsv_key, "").split("a", false)
+	return _hsv_values(properties.get(hsv_key, ""))
+
+
+## Parses a [code]h a s a v a s_checked a v_checked[/code] HSV string into
+## [code][hue, saturation, value, saturation_additive, value_additive][/code],
+## with hue normalised from degrees to Godot's 0-1 range. Empty or short
+## strings yield an empty array.
+static func _hsv_values(raw: String) -> PackedFloat32Array:
+	var parts: PackedStringArray = raw.split("a", false)
 	if parts.size() < 3:
 		return PackedFloat32Array()
 	return PackedFloat32Array([
@@ -1059,14 +1080,43 @@ static func _components_from_properties(
 	match gd_id:
 		899: # Color trigger
 			if "ColorChannelChangerComponent" in supported:
-				components["ColorChannelChangerComponent"] = {
-					"color": Color8(
-							int(properties.get(Prop.RED, "255")),
-							int(properties.get(Prop.GREEN, "255")),
-							int(properties.get(Prop.BLUE, "255")),
-					),
+				var changer: Dictionary = {
+					# Geometry Dash fades channel colours in plain sRGB.
+					"color_space": ColorChannelChangerComponent.ColorSpace.SRGB,
 					"alpha": clampf(float(properties.get(Prop.OPACITY, "1")), 0.0, 1.0),
 				}
+				# The trigger's colour source. Geometry Dash always serialises
+				# the RGB keys of a picked colour - even pure white - so their
+				# absence means the colour comes from elsewhere: a copied
+				# channel (key 50) or one of the player colours (keys 15/16).
+				# A trigger with none of those only fades opacity. Defaulting
+				# the missing RGB to white is what bleached whole channels
+				# mid-level wherever a copy-colour trigger fired.
+				var copied_color: String = properties.get(Prop.COPIED_COLOR_ID, "").strip_edges()
+				if copied_color.is_valid_int() and int(copied_color) > 0:
+					changer["source"] = ColorChannelChangerComponent.ColorSource.COPY_CHANNEL
+					changer["copied_channel_id"] = int(copied_color)
+					changer["copy_opacity"] = properties.get(Prop.COPY_OPACITY, "0") == "1"
+					var copy_hsv: PackedFloat32Array = _hsv_values(properties.get(Prop.COPIED_COLOR_HSV, ""))
+					if not copy_hsv.is_empty():
+						changer["copy_hue"] = copy_hsv[0]
+						changer["copy_saturation"] = copy_hsv[1]
+						changer["copy_value"] = copy_hsv[2]
+						changer["copy_saturation_additive"] = copy_hsv[3] > 0.5
+						changer["copy_value_additive"] = copy_hsv[4] > 0.5
+				elif properties.get(Prop.PLAYER_COLOR_1, "0") == "1":
+					changer["source"] = ColorChannelChangerComponent.ColorSource.PLAYER_1
+				elif properties.get(Prop.PLAYER_COLOR_2, "0") == "1":
+					changer["source"] = ColorChannelChangerComponent.ColorSource.PLAYER_2
+				elif properties.has(Prop.RED) or properties.has(Prop.GREEN) or properties.has(Prop.BLUE):
+					changer["color"] = Color8(
+						int(properties.get(Prop.RED, "255")),
+						int(properties.get(Prop.GREEN, "255")),
+						int(properties.get(Prop.BLUE, "255")),
+					)
+				else:
+					changer["source"] = ColorChannelChangerComponent.ColorSource.KEEP
+				components["ColorChannelChangerComponent"] = changer
 			if "TargetColorChannelComponent" in supported:
 				var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
 				if target_color.is_valid_int():

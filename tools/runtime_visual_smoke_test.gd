@@ -224,6 +224,31 @@ func _test_native_core() -> void:
 	assert(trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(), "native smoke: one or more 2.2 trigger IDs were dropped")
 	for trigger_data: Dictionary in trigger_entries:
 		assert(trigger_data.has("gd_trigger_flags") and trigger_data.has("gd_properties"), "native smoke: trigger metadata missing")
+	# Colour triggers must keep their colour source: an explicit RGB, a copied
+	# channel (key 50, with the copy HSV of key 49 and the opacity copy of key
+	# 60), a player colour (keys 15/16), or the channel's own colour when the
+	# trigger only fades opacity. Defaulting the missing RGB to white is what
+	# bleached whole channels mid-level wherever such a trigger fired.
+	var color_report := GMDConverter.ImportReport.new()
+	var color_level := GMDConverter.import_online_level_string(
+		"kA2,0,kA4,0;1,899,2,30,3,30,23,4,7,10,8,200,9,30;1,899,2,60,3,30,23,4,50,7,49,90a-0.5a0a1a1,60,1;1,899,2,90,3,30,23,4,15,1;1,899,2,120,3,30,23,4,10,0.5,35,0.2;",
+		"Color trigger sources",
+		color_report,
+	)
+	var color_entries: Array = color_level.get("layers", [{}])[0].get("objects", [])
+	assert(color_entries.size() == 4, "native smoke: colour triggers were dropped")
+	var color_sources := color_entries.map(
+		func(entry: Dictionary): return entry.get("components", {}).get("ColorChannelChangerComponent", {})
+	)
+	assert(color_sources[0].get("color", Color.BLACK) == Color8(10, 200, 30), "native smoke: colour trigger lost its explicit RGB")
+	assert(int(color_sources[0].get("color_space", -1)) == ColorChannelChangerComponent.ColorSpace.SRGB, "native smoke: colour trigger must fade in sRGB")
+	assert(int(color_sources[1].get("source", -1)) == ColorChannelChangerComponent.ColorSource.COPY_CHANNEL, "native smoke: copy colour trigger lost its source")
+	assert(int(color_sources[1].get("copied_channel_id", 0)) == 7, "native smoke: copy colour trigger lost its channel")
+	assert(bool(color_sources[1].get("copy_opacity", false)), "native smoke: copy colour trigger lost its opacity copy")
+	assert(is_equal_approx(float(color_sources[1].get("copy_saturation", 0.0)), -0.5), "native smoke: copy colour trigger lost its HSV adjustment")
+	assert(int(color_sources[2].get("source", -1)) == ColorChannelChangerComponent.ColorSource.PLAYER_1, "native smoke: player colour trigger lost its source")
+	assert(int(color_sources[3].get("source", -1)) == ColorChannelChangerComponent.ColorSource.KEEP, "native smoke: opacity-only trigger must keep the channel colour")
+	assert(not color_sources[3].has("color"), "native smoke: opacity-only trigger must not carry a colour")
 	# Imported pads keep their hand-authored Area2D behaviour but replace the
 	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
 	# hitbox must follow that sprite to the object origin.
