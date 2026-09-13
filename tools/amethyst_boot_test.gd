@@ -37,7 +37,6 @@ func _ready() -> void:
 	var client := RobTopLevels.new()
 	add_child(client)
 	var level_data: Dictionary = {}
-	var report = GMDConverter.ImportReport.new()
 	var response: Dictionary = await client.download(AMETHYST_ID, {
 		"name": "Amethyst",
 		"creator": "iMist",
@@ -45,8 +44,8 @@ func _ready() -> void:
 	})
 	if bool(response.get("ok", false)):
 		level_data = response.level_data
-		report = response.get("report", report)
-		print("[amethyst-boot] imported via RobTop: %s" % str(report.get("summary", "?")))
+		# RobTopLevels itself prints the conversion summary.
+		print("[amethyst-boot] imported via RobTop")
 	else:
 		print("[amethyst-boot] RobTop unavailable from this network (%s); using the GDHistory archive" % str(response.get("error", "unknown")))
 		level_data = await _import_from_gdhistory()
@@ -105,7 +104,7 @@ func _import_from_gdhistory() -> Dictionary:
 		return {}
 	var report = GMDConverter.ImportReport.new()
 	var level_data: Dictionary = GMDConverter.import_online_level_string(level_string, "Amethyst", report)
-	print("[amethyst-boot] imported: %s" % str(report.get("summary", "?")))
+	print("[amethyst-boot] imported: %s" % report.summary())
 	level_data.name = "Amethyst"
 	level_data.creator = "iMist"
 	level_data.rating = -1
