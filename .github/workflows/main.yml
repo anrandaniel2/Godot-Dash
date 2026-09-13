@@ -302,7 +302,10 @@ jobs:
             addr2line -Cfipe /tmp/libgdash_native_android_unstripped.so "$off" || true
           done)
           echo "$SYMBOLIZED"
-          SYMBOLIZED_ESCAPED=$(printf '%s' "$SYMBOLIZED" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+          # NOTE: sed can't do this — GNU sed processes line-by-line so the
+          # pattern space never contains \n, and a raw newline inside the
+          # ::warning:: truncates the annotation at the first line.
+          SYMBOLIZED_ESCAPED=$(printf '%s' "$SYMBOLIZED" | awk '{ gsub(/%/, "%25"); gsub(/\r/, "%0D"); printf "%s%%0A", $0 }')
           echo "::warning title=Device crash symbolized (Amethyst level start)::${SYMBOLIZED_ESCAPED}"
           # Same profile ground truth as the linux step (gen files were
           # regenerated after the linux clean; ~29 classes expected).
