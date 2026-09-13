@@ -176,7 +176,11 @@ jobs:
           }
 
           cd native
-          if ! scons platform=linux target=template_debug arch=x86_64 api_version=4.7 -j2 > /tmp/scons_linux.log 2>&1; then
+          # The CI test-host library keeps debug symbols (and skips LTO) so a
+          # native crash in the smoke/boot tests symbolizes with addr2line.
+          # It never ships: the APK carries the android arm64 library, whose
+          # own build resolves lto=auto to none anyway.
+          if ! scons platform=linux target=template_debug arch=x86_64 api_version=4.7 debug_symbols=yes lto=none -j2 > /tmp/scons_linux.log 2>&1; then
             emit_scons_error /tmp/scons_linux.log
             exit 1
           fi
@@ -201,13 +205,14 @@ jobs:
             echo "::error::camera2d.cpp binding missing (generated set incomplete)"
             exit 1
           }
-          # Loose tripwire against symbol/stdlib bloat only. The profile build
-          # is ~2.0 MB with the ubuntu-24.04 toolchain (g++-13 LTO retains
-          # more than Debian's g++-12, which produces ~0.8 MB for the same
-          # sources); all-classes builds are caught by the gen check above.
-          SO_SIZE=$(stat -c%s "$SO")
+          # Loose tripwire against symbol/stdlib bloat only. Measure stripped
+          # bytes so the tripwire stays comparable even though the test-host
+          # library above keeps its debug symbols.
+          cp "$SO" /tmp/libgdash_native_stripped.so
+          strip /tmp/libgdash_native_stripped.so
+          SO_SIZE=$(stat -c%s /tmp/libgdash_native_stripped.so)
           if [ "$SO_SIZE" -ge 3000000 ]; then
-            echo "::error::linux gdash_native .so is $SO_SIZE bytes (tripwire: < 3000000)"
+            echo "::error::linux gdash_native .so is $SO_SIZE bytes stripped (tripwire: < 3000000)"
             exit 1
           fi
           # Preserve the host library while cleaning shared intermediates before
@@ -407,6 +412,46 @@ jobs:
             details=${details//$'\r'/'%0D'}
             details=${details//$'\n'/'%0A'}
             echo "::error title=Visual smoke::${details}"
+            exit 1
+          fi
+
+      - name: Boot Amethyst through the native runtime (device crash repro)
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 420s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/amethyst_boot_test.tscn \
+            > amethyst_boot.log 2>&1
+          status=$?
+          set -e
+          if grep -q "handle_crash" amethyst_boot.log; then
+            # Symbolize the gdash_native frames of Godot's crash dump against
+            # the debug-symbol test-host library built in the linux step.
+            {
+              echo ""
+              echo "=== symbolized native frames (debug_symbols build) ==="
+              for off in $(grep -oE "libgdash_native[^ )]*\.so\+0x[0-9a-f]+" amethyst_boot.log | sed 's/.*+//' | sort -u); do
+                addr2line -Cfipe native/bin/linux/libgdash_native.linux.template_debug.x86_64.so "$off" || true
+              done
+            } >> amethyst_boot.log
+          fi
+          cat amethyst_boot.log
+          if [ $status -ne 0 ] || ! grep -q "AMETHYST_BOOT_OK" amethyst_boot.log; then
+            echo "### Amethyst boot failure (status $status)" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 100 amethyst_boot.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            details=$(tail -n 100 amethyst_boot.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Amethyst boot::${details}"
             exit 1
           fi
 

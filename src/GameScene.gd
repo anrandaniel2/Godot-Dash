@@ -198,9 +198,13 @@ func _probe_native_core() -> void:
 	if native == null:
 		push_warning("Native core is enabled in Config but GdashNative could not be instantiated.")
 		return
-	print("[gdash] native core loaded: %s (self-check add(2, 3) == %s)" % [
-		String(native.call(&"build_string")),
-		String(native.call(&"add", 2, 3)),
+	# str() accepts any Variant; String() only converts String/StringName/
+	# NodePath, so String(int-returning calls) raised "Nonexistent 'String'
+	# constructor" in every build's logcat and hid the self-check output.
+	var build: Variant = native.call(&"build_string")
+	var checksum: Variant = native.call(&"add", 2, 3)
+	print("[gdash] native core loaded: %s (self-check add(2, 3) == %s, types %d/%d)" % [
+		str(build), str(checksum), typeof(build), typeof(checksum),
 	])
 
 
