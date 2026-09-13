@@ -17,7 +17,7 @@ extends Node
 ## RobTop's Cloudflare blocks CI datacenter IPs with HTTP 403, so when the
 ## live download is unavailable the level comes from the GDHistory archive:
 ## record 179189859 stores exactly the level build the device downloaded
-## (the .gmd is RobTop key/value plist text: "k4 ~~<base64>~~")
+## (the .gmd is an XML plist with RobTop short tags: <k>k4</k><s>base64</s>)
 ## (compressed-string sha256 below; object count and decompressed size match
 ## the device logcat). The song is fetched best-effort from Newgrounds.
 
@@ -72,20 +72,25 @@ func _ready() -> void:
 	get_tree().change_scene_to_packed(AssetManager.game_scene_packed)
 
 
-## Imports the archived level build from GDHistory's .gmd. The file uses
-## RobTop's key/value plist text format: "k4 ~~<compressed string>~~".
+## Imports the archived level build from GDHistory's .gmd. The file is an
+## XML plist with RobTop's short tags: <k>k4</k><s>compressed string</s>.
 func _import_from_gdhistory() -> Dictionary:
 	var gmd := await _get_text(GDHISTORY_GMD_URL)
 	if gmd.is_empty():
 		push_error("[amethyst-boot] GDHistory archive fetch failed")
 		return {}
-	var marker := "k4 ~~"
-	var start := gmd.find(marker)
-	if start < 0:
+	# Whitespace-tolerant in case the exporter breaks lines between tags.
+	var pattern := RegEx.new()
+	var compile_error := pattern.compile("<k>\\s*k4\\s*</k>\\s*<s>")
+	if compile_error != OK:
+		push_error("[amethyst-boot] k4 pattern failed to compile")
+		return {}
+	var match := pattern.search(gmd)
+	if match == null:
 		push_error("[amethyst-boot] k4 not found in the archived .gmd")
 		return {}
-	start += marker.length()
-	var end := gmd.find("~~", start)
+	var start: int = match.get_end()
+	var end := gmd.find("</s>", start)
 	if end < 0:
 		push_error("[amethyst-boot] unterminated k4 in the archived .gmd")
 		return {}
