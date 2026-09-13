@@ -54,6 +54,12 @@ def download_robtop() -> str:
         return response.read().decode("utf-8", "replace")
 
 
+def http_get(url: str, timeout: int = 120) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "Godot-Dash validation"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
 def download_gdbrowser() -> dict:
     url = f"https://gdbrowser.com/api/level/{LEVEL_ID}?download=true"
     request = urllib.request.Request(url, headers={"User-Agent": "Godot-Dash validation"})
@@ -83,36 +89,72 @@ def decode_gzip_b64(text: str) -> str:
     return gzip.decompress(base64.b64decode(padded)).decode("utf-8", "replace")
 
 
+GDHISTORY_BASE = "https://history.geometrydash.eu"
+
+
+def download_gdhistory() -> str:
+    """Level string from the GDHistory archive (history.geometrydash.eu).
+
+    RobTop's server 403s cloud runners and gdbrowser's download proxy is
+    unreliable, but GDHistory keeps every level string it has ever seen and
+    serves it as a .gmd (RobTop plist XML, k4 = base64+gzip level string).
+    """
+    info = json.loads(http_get(f"{GDHISTORY_BASE}/api/v1/level/{LEVEL_ID}/").decode("utf-8", "replace"))
+    records = [
+        record
+        for record in info.get("records", [])
+        if record.get("record_type") == "download"
+        and record.get("level_string_available")
+        and not record.get("is_invalid")
+        and not record.get("cache_is_dupe")
+    ]
+    if not records:
+        raise RuntimeError("no download record with a level string on GDHistory")
+    record = max(records, key=lambda item: (str(item.get("real_date") or ""), int(item.get("id") or 0)))
+    gmd = http_get(f"{GDHISTORY_BASE}/level/{LEVEL_ID}/{record['id']}/download/").decode("utf-8", "replace")
+    match = re.search(r"<k>k4</k>\s*<s>([^<]+)</s>", gmd)
+    if not match:
+        raise RuntimeError(f"gmd for record {record['id']} has no k4 level string")
+    print(f"GDHistory record {record['id']} ({record.get('real_date')})")
+    try:
+        return decode_gzip_b64(match.group(1))
+    except Exception:  # noqa: BLE001 - some records store it uncompressed
+        return match.group(1)
+
+
 def fetch_level_string() -> str:
-    """Level string from boomlings, with gdbrowser as the fallback."""
+    """Level string from GDHistory, with RobTop/gdbrowser as fallbacks."""
     errors: list[str] = []
-    for name, download in (("boomlings", download_robtop), ("gdbrowser", download_gdbrowser)):
+    for name, download in (
+        ("gdhistory", download_gdhistory),
+        ("boomlings", download_robtop),
+        ("gdbrowser", download_gdbrowser),
+    ):
         try:
             payload = download()
         except Exception as error:  # noqa: BLE001 - report and try the mirror
             errors.append(f"{name} download: {type(error).__name__}: {error}")
             continue
-        candidates: list[str] = []
-        if isinstance(payload, str):
-            # RobTop response: '#' sections, section 0 = 'key:value' pairs.
-            fields = payload.split("#")[0].split(":")
-            values = dict(zip(fields[0::2], fields[1::2]))
-            raw = values.get("4", "")
-            candidates.append(("raw", raw))
-            try:
-                candidates.append(("decoded", decode_gzip_b64(raw)))
-            except Exception as error:  # noqa: BLE001
-                errors.append(f"{name} gunzip: {type(error).__name__}: {error}")
+        if name == "gdhistory":
+            # download_gdhistory returns the level string itself.
+            candidates = [payload]
         else:
-            raw = payload.get("data") or ""
-            candidates.append(("raw", raw))
+            candidates = []
+            if isinstance(payload, str):
+                # RobTop response: '#' sections, section 0 = 'key:value' pairs.
+                fields = payload.split("#")[0].split(":")
+                values = dict(zip(fields[0::2], fields[1::2]))
+                raw = values.get("4", "")
+            else:
+                raw = payload.get("data") or ""
+            candidates.append(raw)
             try:
-                candidates.append(("decoded", decode_gzip_b64(raw)))
+                candidates.append(decode_gzip_b64(raw))
             except Exception as error:  # noqa: BLE001
                 errors.append(f"{name} gunzip: {type(error).__name__}: {error}")
-        for label, candidate in candidates:
+        for candidate in candidates:
             if looks_like_level_string(candidate):
-                print(f"level string from {name} ({label}): {len(candidate):,} chars")
+                print(f"level string from {name}: {len(candidate):,} chars")
                 return candidate
         errors.append(f"{name}: payload is not a level string (start: {str(payload)[:120]!r})")
     raise RuntimeError("could not download the level:\n  " + "\n  ".join(errors))
