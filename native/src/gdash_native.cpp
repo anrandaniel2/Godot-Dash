@@ -532,6 +532,13 @@ class NativeTriggerRuntime : public RefCounted {
 	double clock = 0.0;
 	uint64_t event_sequence = 0;
 	bool index_dirty = false;
+	// Bumped whenever container identity changes (clear/finalize/reset/
+	// restore). Trigger activation can call back into GDScript — including
+	// handlers that restart the level, which clears and re-registers every
+	// record and frees the old buffers mid-scan. Every loop that holds
+	// iterators or references across such a call-out captures this value
+	// first and bails out as soon as it changes.
+	uint64_t structure_epoch = 0;
 
 	static bool event_later(const Event &a, const Event &b) {
 		return a.due == b.due ? a.sequence > b.sequence : a.due > b.due;
@@ -550,20 +557,33 @@ class NativeTriggerRuntime : public RefCounted {
 
 	void activate(size_t index, Object *player, bool forced = false) {
 		if (index >= records.size()) return;
-		Record &record = records[index];
-		if (record.activated && !(record.flags & MULTI_ACTIVATE)) return;
-		if (!forced && (record.flags & (SPAWN_ONLY | TOUCH_ONLY))) return;
+		const uint64_t epoch = structure_epoch;
+		const int32_t flags = records[index].flags;
+		if (records[index].activated && !(flags & MULTI_ACTIVATE)) return;
+		if (!forced && (flags & (SPAWN_ONLY | TOUCH_ONLY))) return;
 		if (!player) return;
 		// Families with a C++ effect run entirely here. Records without one
 		// keep emitting the Interactable signal so scene-backed families
 		// (camera static/edge, end level) execute their components.
-		if (record.effect.kind == TriggerEffectKind::NONE) {
-			Object *target = ObjectDB::get_instance(record.object);
+		if (records[index].effect.kind == TriggerEffectKind::NONE) {
+			Object *target = ObjectDB::get_instance(records[index].object);
 			if (target) target->call("emit_signal", StringName("interacted"), player);
 		} else {
-			execute_effect(record, index, player);
+			// Copy by value: execute_effect must not hold a reference into
+			// records across its call-outs.
+			const Record snapshot = records[index];
+			execute_effect(snapshot, index, player);
 		}
-		if (!(record.flags & MULTI_ACTIVATE)) record.activated = true;
+		// The signal or effect above can synchronously restart the level,
+		// which clears and re-registers every record; finalize() frees the
+		// old records buffer, so a reference captured before the call would
+		// dangle. Write back through a fresh lookup, and only when the
+		// runtime was not rebuilt (a rebuilt runtime starts with fresh
+		// activation state).
+		if (!(flags & MULTI_ACTIVATE) && index < records.size()
+				&& structure_epoch == epoch) {
+			records[index].activated = true;
+		}
 	}
 
 	// ---------------------------------------------------------------
@@ -694,7 +714,7 @@ class NativeTriggerRuntime : public RefCounted {
 		return keep;
 	}
 
-	void execute_effect(Record &record, size_t index, Object *player) {
+	void execute_effect(const Record &record, size_t index, Object *player) {
 		const TriggerEffect &effect = record.effect;
 		switch (effect.kind) {
 			case TriggerEffectKind::SPAWN: {
@@ -856,7 +876,7 @@ class NativeTriggerRuntime : public RefCounted {
 		if (!effect.pulse_envelope && effect.duration <= 0.0) {
 			// Instant triggers apply the full weight in one step, matching a
 			// zero-length tween completing on its first frame.
-			apply_fade(fade, 1.0, 1.0, 0.0);
+			apply_fade(fade, effect, 1.0, 1.0, 0.0);
 			return;
 		}
 		if (effect.pulse_envelope && effect.fade_in + effect.hold + effect.fade_out <= 0.0) {
@@ -904,8 +924,7 @@ class NativeTriggerRuntime : public RefCounted {
 		return true;
 	}
 
-	void apply_fade(Fade &fade, double weight, double weight_delta, double delta) {
-		const TriggerEffect &effect = records[fade.record_index].effect;
+	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta) {
 		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE) return;
 		switch (effect.kind) {
 			case TriggerEffectKind::MOVE: {
@@ -1015,7 +1034,7 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			}
 			case TriggerEffectKind::SHAKE:
-				apply_shake(fade, effect, weight, delta);
+				apply_shake(fade, effect, weight);
 				break;
 			default:
 				break;
@@ -1027,7 +1046,7 @@ class NativeTriggerRuntime : public RefCounted {
 	// also fade HSV shift, intensity and opacity toward the trigger's values;
 	// the watcher fan-out runs from the resource's changed signal, whose
 	// native fast path recolours every bound object in C++.
-	void apply_color(Fade &fade, const TriggerEffect &effect, double weight, double weight_delta) {
+	void apply_color(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta) {
 		const Color color = fade.from_color.lerp(fade.to_color, static_cast<real_t>(weight));
 		if (!fade.level_color_property.is_empty()) {
 			Object *level = ObjectDB::get_instance(level_id);
@@ -1056,11 +1075,11 @@ class NativeTriggerRuntime : public RefCounted {
 
 	// Screen shake decays with the eased weight while the noise position keeps
 	// advancing, matching CameraShakeComponent's STRENGTH easing at speed 100.
-	void apply_shake(Fade &fade, const TriggerEffect &effect, double weight, double delta) {
+	// The noise cursor (linear_eased_weight) is advanced by the caller before
+	// the snapshot is taken; this function only reads the fade.
+	void apply_shake(const Fade &fade, const TriggerEffect &effect, double weight) {
 		Object *camera = ObjectDB::get_instance(camera_id);
 		if (!camera || fade.noise.is_null()) return;
-		const double duration = effect.duration > 0.0 ? effect.duration : 1.0;
-		fade.linear_eased_weight += delta / duration;
 		const double noise_position = fade.linear_eased_weight * 100.0 * 100.0;
 		const double sample_strength = (1.0 - weight) * effect.shake_strength * 10.0;
 		const Vector2 offset(
@@ -1084,7 +1103,14 @@ class NativeTriggerRuntime : public RefCounted {
 	void check_touch_overlaps() {
 		if (frame_players.empty() || touch_order.empty()) return;
 		ensure_index();
+		// activate() below can reenter GDScript (an interacted handler that
+		// restarts the level rebuilds records/touch_order and frees the old
+		// buffers), which would leave the scan iterators and the `inside`
+		// reference dangling. Bail out as soon as that happens; the next
+		// physics frame re-evaluates the overlaps from scratch.
+		const uint64_t epoch = structure_epoch;
 		for (ObjectID player_object : frame_players) {
+			if (structure_epoch != epoch) return;
 			Node2D *player = Object::cast_to<Node2D>(ObjectDB::get_instance(player_object));
 			if (!player) continue;
 			const uint64_t player_id = static_cast<uint64_t>(player_object);
@@ -1108,7 +1134,10 @@ class NativeTriggerRuntime : public RefCounted {
 				const size_t index = *it;
 				const bool inside_now = Math::abs(records[index].y - position.y) <= TOUCH_HALF_EXTENT;
 				const bool was_inside = inside.count(index) != 0;
-				if (inside_now && !was_inside) activate(index, player, true);
+				if (inside_now && !was_inside) {
+					activate(index, player, true);
+					if (structure_epoch != epoch) return;
+				}
 				if (inside_now) inside.insert(index);
 				else if (was_inside) inside.erase(index);
 			}
@@ -1140,6 +1169,7 @@ protected:
 
 public:
 	void clear() {
+		++structure_epoch;
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
@@ -1211,6 +1241,7 @@ public:
 		return groups;
 	}
 	void finalize() {
+		++structure_epoch;
 		ensure_index();
 		records.shrink_to_fit();
 		x_order.shrink_to_fit();
@@ -1233,6 +1264,9 @@ public:
 		frame_players.push_back(ObjectID(player->get_instance_id()));
 		if (Math::is_equal_approx(previous_x, current_x)) return;
 		ensure_index();
+		// activate() below can reenter GDScript and rebuild the runtime,
+		// freeing x_order/records; the scan iterators would dangle.
+		const uint64_t epoch = structure_epoch;
 		auto index_before_value = [&](size_t index, double value) { return records[index].x < value; };
 		if (current_x > previous_x) {
 			// (previous_x, current_x] in O(log n + crossed), rather than scanning
@@ -1241,12 +1275,18 @@ public:
 				[&](double value, size_t index) { return value < records[index].x; });
 			auto last = std::upper_bound(x_order.begin(), x_order.end(), current_x,
 				[&](double value, size_t index) { return value < records[index].x; });
-			for (auto it = first; it != last; ++it) activate(*it, player);
+			for (auto it = first; it != last; ++it) {
+				if (structure_epoch != epoch) return;
+				activate(*it, player);
+			}
 		} else {
 			// [current_x, previous_x), preserving descending spatial/source order.
 			auto first = std::lower_bound(x_order.begin(), x_order.end(), current_x, index_before_value);
 			auto last = std::lower_bound(x_order.begin(), x_order.end(), previous_x, index_before_value);
-			for (auto it = std::make_reverse_iterator(last); it != std::make_reverse_iterator(first); ++it) activate(*it, player);
+			for (auto it = std::make_reverse_iterator(last); it != std::make_reverse_iterator(first); ++it) {
+				if (structure_epoch != epoch) return;
+				activate(*it, player);
+			}
 		}
 	}
 	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
@@ -1263,7 +1303,11 @@ public:
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
 		int64_t dispatched = 0;
-		while (!events.empty() && events.front().due <= clock && dispatched < 10000) {
+		// activate() inside the dispatch loop can reenter GDScript and
+		// rebuild this runtime; stop dispatching in that case (pending
+		// events of a rebuilt runtime belong to its own timeline).
+		const uint64_t epoch = structure_epoch;
+		while (structure_epoch == epoch && !events.empty() && events.front().due <= clock && dispatched < 10000) {
 			std::pop_heap(events.begin(), events.end(), event_later);
 			const Event event = std::move(events.back());
 			events.pop_back();
@@ -1279,11 +1323,17 @@ public:
 		check_touch_overlaps();
 		frame_players.clear();
 		for (size_t i = 0; i < fades.size(); ) {
-			Fade &fade = fades[i];
-			const TriggerEffect &effect = records[fade.record_index].effect;
+			const uint64_t fade_epoch = structure_epoch;
+			if (fades[i].record_index >= records.size()) {
+				// Defensive: state is inconsistent (should not happen; a
+				// rebuild clears fades too). Drop the corrupt entry.
+				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
+				continue;
+			}
+			const TriggerEffect effect = records[fades[i].record_index].effect;
 			double weight = 0.0;
 			bool finished = false;
-			const double t = clock - fade.start;
+			const double t = clock - fades[i].start;
 			if (effect.pulse_envelope) {
 				// Pulse envelope: eased fade in, hold at full, eased fade out.
 				if (t < effect.fade_in) {
@@ -1303,9 +1353,25 @@ public:
 			} else {
 				weight = ease_weight(effect.easing, t / effect.duration);
 			}
-			const double weight_delta = weight - fade.prev_weight;
-			fade.prev_weight = weight;
-			apply_fade(fade, weight, weight_delta, delta);
+			const double weight_delta = weight - fades[i].prev_weight;
+			// Persist progress before any call out into the scene: a
+			// reentrant rebuild clears fades while apply_fade is still
+			// running. The shake noise cursor advances here too (matching
+			// the old in-apply_shake behaviour, camera present and noise
+			// valid) so the snapshot below already carries it.
+			fades[i].prev_weight = weight;
+			if (effect.kind == TriggerEffectKind::SHAKE
+					&& ObjectDB::get_instance(camera_id)
+					&& !fades[i].noise.is_null()) {
+				fades[i].linear_eased_weight += delta
+					/ (effect.duration > 0.0 ? effect.duration : 1.0);
+			}
+			// Snapshot by value: apply_fade reaches back into GDScript
+			// (update_size/update_color/channel changed signals) which can
+			// rebuild this runtime and free fades/records mid-application.
+			const Fade fade = fades[i];
+			apply_fade(fade, effect, weight, weight_delta, delta);
+			if (structure_epoch != fade_epoch) return;
 			if (finished) {
 				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
 				continue;
@@ -1314,6 +1380,7 @@ public:
 		}
 	}
 	void reset() {
+		++structure_epoch;
 		for (Record &record : records) record.activated = false;
 		events.clear(); clock = 0.0; event_sequence = 0;
 		// Restarts rebuild object transforms from level data; running fades
@@ -1329,6 +1396,7 @@ public:
 		return state;
 	}
 	void restore(const Dictionary &state) {
+		++structure_epoch;
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
 		clock = state.get("clock", 0.0); events.clear(); fades.clear();
@@ -1478,10 +1546,13 @@ protected:
 		Variant main_value = level_manager->get("player");
 		Object *main_player = main_value;
 		advance_player(main_player);
-		const Array duals = level_manager->get("player_duals");
-		for (int64_t i = 0; i < duals.size(); ++i) {
-			Object *dual = duals[i];
-			advance_player(dual);
+		// advance_player can reenter GDScript (a trigger activation that
+		// restarts the level replaces the dual icons), so re-read the array
+		// every iteration instead of holding one snapshot of Object pointers.
+		for (int64_t i = 0; ; ++i) {
+			const Array duals = level_manager->get("player_duals");
+			if (i >= duals.size()) break;
+			advance_player(duals[i]);
 		}
 		triggers->tick(get_physics_process_delta_time());
 	}
