@@ -184,10 +184,30 @@ jobs:
           SO=bin/linux/libgdash_native.linux.template_debug.x86_64.so
           test -f "$SO" || { echo "::error::linux gdash_native .so missing after scons"; ls -R bin; exit 1; }
           ls -lh "$SO"
-          # Catch accidental return to the all-classes godot-cpp build.
+          # Ground truth that the build profile was honored: the trimmed
+          # binding set generates ~29 class files, an untrimmed godot-cpp
+          # generates 1000+. Compiler output size varies by toolchain, this
+          # does not.
+          GEN_COUNT=$(ls godot-cpp/gen/src/classes/*.cpp 2>/dev/null | wc -l)
+          if [ "$GEN_COUNT" -ge 60 ]; then
+            echo "::error::godot-cpp generated $GEN_COUNT class bindings (expected ~29) - build profile ignored?"
+            exit 1
+          fi
+          test -f godot-cpp/gen/src/classes/fast_noise_lite.cpp || {
+            echo "::error::fast_noise_lite.cpp binding missing (generated set incomplete)"
+            exit 1
+          }
+          test -f godot-cpp/gen/src/classes/camera2d.cpp || {
+            echo "::error::camera2d.cpp binding missing (generated set incomplete)"
+            exit 1
+          }
+          # Loose tripwire against symbol/stdlib bloat only. The profile build
+          # is ~2.0 MB with the ubuntu-24.04 toolchain (g++-13 LTO retains
+          # more than Debian's g++-12, which produces ~0.8 MB for the same
+          # sources); all-classes builds are caught by the gen check above.
           SO_SIZE=$(stat -c%s "$SO")
-          if [ "$SO_SIZE" -ge 2000000 ]; then
-            echo "::error::linux gdash_native .so is $SO_SIZE bytes (guard: < 2000000)"
+          if [ "$SO_SIZE" -ge 3000000 ]; then
+            echo "::error::linux gdash_native .so is $SO_SIZE bytes (tripwire: < 3000000)"
             exit 1
           fi
           # Preserve the host library while cleaning shared intermediates before
@@ -246,10 +266,22 @@ jobs:
           tail -n 3 /tmp/scons_android.log
           SO=bin/android/libgdash_native.android.template_debug.arm64.so
           test -f "$SO" || { echo "::error::android gdash_native .so missing after scons"; ls -R bin; exit 1; }
-          # Catch accidental return to the all-classes godot-cpp build.
+          # Same profile ground truth as the linux step (gen files were
+          # regenerated after the linux clean; ~29 classes expected).
+          GEN_COUNT=$(ls godot-cpp/gen/src/classes/*.cpp 2>/dev/null | wc -l)
+          if [ "$GEN_COUNT" -ge 60 ]; then
+            echo "::error::godot-cpp generated $GEN_COUNT class bindings (expected ~29) - build profile ignored?"
+            exit 1
+          fi
+          test -f godot-cpp/gen/src/classes/fast_noise_lite.cpp || {
+            echo "::error::fast_noise_lite.cpp binding missing (generated set incomplete)"
+            exit 1
+          }
+          # Loose tripwire against symbol/stdlib bloat only (android builds
+          # without LTO via clang from the NDK).
           SO_SIZE=$(stat -c%s "$SO")
-          if [ "$SO_SIZE" -ge 2500000 ]; then
-            echo "::error::android gdash_native .so is $SO_SIZE bytes (guard: < 2500000)"
+          if [ "$SO_SIZE" -ge 4000000 ]; then
+            echo "::error::android gdash_native .so is $SO_SIZE bytes (tripwire: < 4000000)"
             exit 1
           fi
           ls -lh bin/android/
