@@ -1227,11 +1227,36 @@ class NativeTriggerRuntime : public RefCounted {
 					++entry;
 				}
 			}
+			// 2026-09-13 device forensics: five tombstones faulted reading
+			// records[index] inside these searches with index one to four
+			// past records.size(), even though the tables were validated on
+			// entry. Rather than trust the table entries between validation
+			// and use, every record read below goes through a bounds-checked
+			// accessor: an out-of-range index is reported once per call and
+			// sorts outside every player window instead of faulting.
+			bool reported_bounds = false;
+			const size_t bounds_count = records.size();
+			auto touch_x = [&](size_t index) -> double {
+				if (index < bounds_count) return records[index].x;
+				if (!reported_bounds) {
+					reported_bounds = true;
+					ERR_PRINT(String("[gdash_native] out-of-range index ")
+						+ String::num_uint64(static_cast<uint64_t>(index))
+						+ " in touch scan, records=" + String::num_uint64(static_cast<uint64_t>(bounds_count))
+						+ ", touch_order=" + String::num_uint64(static_cast<uint64_t>(touch_order.size()))
+						+ ", epoch=" + String::num_uint64(structure_epoch)
+						+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+							Engine::get_singleton()->get_process_frames())));
+				}
+				return INFINITY;
+			};
 			auto first = std::lower_bound(touch_order.begin(), touch_order.end(),
 				position.x - TOUCH_HALF_EXTENT,
-				[&](double value, size_t index) { return value < records[index].x; });
-			for (auto it = first; it != touch_order.end() && records[*it].x <= position.x + TOUCH_HALF_EXTENT; ++it) {
+				[&](double value, size_t index) { return value < touch_x(index); });
+			for (auto it = first; it != touch_order.end(); ++it) {
 				const size_t index = *it;
+				if (index >= bounds_count) continue;
+				if (records[index].x > position.x + TOUCH_HALF_EXTENT) break;
 				const bool inside_now = Math::abs(records[index].y - position.y) <= TOUCH_HALF_EXTENT;
 				const bool was_inside = inside.count(index) != 0;
 				if (inside_now && !was_inside) {
@@ -1291,7 +1316,7 @@ public:
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
-		touch_inside_players.clear(); frame_players.clear();
+		touch_inside_players.clear(); frame_players.clear(); previous_positions.clear();
 		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID();
 	}
 	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
@@ -1387,14 +1412,34 @@ public:
 		// activate() below can reenter GDScript and rebuild the runtime,
 		// freeing x_order/records; the scan iterators would dangle.
 		const uint64_t epoch = structure_epoch;
-		auto index_before_value = [&](size_t index, double value) { return records[index].x < value; };
+		// Bounds-checked accessor for the same reason as the touch scan:
+		// tombstones showed table entries one to four past records.size()
+		// surviving entry validation. Reported once per call; an out-of-range
+		// entry sorts outside the crossing range instead of faulting.
+		bool reported_bounds = false;
+		const size_t bounds_count = records.size();
+		auto order_x = [&](size_t index) -> double {
+			if (index < bounds_count) return records[index].x;
+			if (!reported_bounds) {
+				reported_bounds = true;
+				ERR_PRINT(String("[gdash_native] out-of-range index ")
+					+ String::num_uint64(static_cast<uint64_t>(index))
+					+ " in crossing scan, records=" + String::num_uint64(static_cast<uint64_t>(bounds_count))
+					+ ", x_order=" + String::num_uint64(static_cast<uint64_t>(x_order.size()))
+					+ ", epoch=" + String::num_uint64(structure_epoch)
+					+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+						Engine::get_singleton()->get_process_frames())));
+			}
+			return INFINITY;
+		};
+		auto index_before_value = [&](size_t index, double value) { return order_x(index) < value; };
 		if (current_x > previous_x) {
 			// (previous_x, current_x] in O(log n + crossed), rather than scanning
 			// every trigger from the start once per player and physics frame.
 			auto first = std::upper_bound(x_order.begin(), x_order.end(), previous_x,
-				[&](double value, size_t index) { return value < records[index].x; });
+				[&](double value, size_t index) { return value < order_x(index); });
 			auto last = std::upper_bound(x_order.begin(), x_order.end(), current_x,
-				[&](double value, size_t index) { return value < records[index].x; });
+				[&](double value, size_t index) { return value < order_x(index); });
 			for (auto it = first; it != last; ++it) {
 				if (structure_epoch != epoch) return;
 				activate(*it, player);
@@ -1407,6 +1452,39 @@ public:
 				if (structure_epoch != epoch) return;
 				activate(*it, player);
 			}
+		}
+	}
+	// Per-player x tracking lives inside the RefCounted runtime, not the
+	// owner Node: an interacted handler can free the owner Node synchronously,
+	// and the physics step holds a local Ref to this object, so state owned
+	// here stays alive for the whole step no matter what the scene does.
+	std::map<uint64_t, double> previous_positions;
+
+	void advance_player(Object *player) {
+		Node2D *node = Object::cast_to<Node2D>(player);
+		if (!node) return;
+		const uint64_t id = static_cast<uint64_t>(player->get_instance_id());
+		const double x = node->get_global_position().x;
+		auto previous = previous_positions.find(id);
+		const double from = previous != previous_positions.end() ? previous->second : x;
+		// Update the tracking map before advance(): activate() inside it can
+		// re-enter GDScript and retire this runtime for the rest of the step.
+		previous_positions[id] = x;
+		// 2026-09-13 device forensics: a portal at the Amethyst spawn
+		// teleports the player on the first physics frame, and treating the
+		// jump as a crossing activated the ENTIRE level's trigger range in
+		// one shot (stop, end-level and restart handlers included), which is
+		// what lit up the level-start crashes. Portals must not activate the
+		// triggers they skip over: any jump larger than any legitimate speed
+		// registers the player for touch checks at the new position but
+		// fires no crossings. Physics runs at a fixed rate, so a real player
+		// moves ~tens of pixels per step; 1024 is far above that and far
+		// below any portal jump.
+		constexpr double TELEPORT_JUMP_PX = 1024.0;
+		if (Math::abs(x - from) > TELEPORT_JUMP_PX) {
+			advance(player, x, x);
+		} else {
+			advance(player, from, x);
 		}
 	}
 	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
@@ -1504,9 +1582,13 @@ public:
 		for (Record &record : records) record.activated = false;
 		events.clear(); clock = 0.0; event_sequence = 0;
 		// Restarts rebuild object transforms from level data; running fades
-		// must not keep mutating mid-animation state.
+		// must not keep mutating mid-animation state. The respawn jump is a
+		// teleport, not a crossing: forget the tracked positions so the
+		// first frame after a restart fires no crossings.
 		fades.clear();
 		touch_inside_players.clear();
+		frame_players.clear();
+		previous_positions.clear();
 	}
 	Dictionary snapshot() const {
 		Dictionary state; PackedByteArray active;
@@ -1520,6 +1602,7 @@ public:
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
 		clock = state.get("clock", 0.0); events.clear(); fades.clear();
+		frame_players.clear(); previous_positions.clear();
 	}
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t active_fade_count() const { return static_cast<int64_t>(fades.size()); }
@@ -1584,18 +1667,7 @@ class NativeLevelRuntime : public Node {
 	Ref<NativeTriggerRuntime> triggers;
 	Node *level_manager = nullptr;
 	Node *context_level = nullptr;
-	std::map<uint64_t, double> previous_x;
 	bool coordinates_rendering = false;
-
-	void advance_player(Object *object) {
-		Node2D *player = Object::cast_to<Node2D>(object);
-		if (!player) return;
-		const uint64_t id = static_cast<uint64_t>(player->get_instance_id());
-		const double x = player->get_global_position().x;
-		auto previous = previous_x.find(id);
-		if (previous != previous_x.end()) triggers->advance(player, previous->second, x);
-		previous_x[id] = x;
-	}
 
 	// Effect targets resolve against the group members present when the level
 	// starts. The runtime is a RefCounted without tree access, so the owner
@@ -1663,24 +1735,35 @@ protected:
 		}
 		if (what != Node::NOTIFICATION_PHYSICS_PROCESS || !level_manager || !triggers.is_valid()) return;
 		if (!static_cast<bool>(level_manager->get("level_playing"))) return;
-		Variant main_value = level_manager->get("player");
+		// 2026-09-13 device forensics: an interacted handler reached from
+		// advance_player()/tick() can free this node synchronously (an
+		// immediate free() of an ancestor in the scene). Snapshot every
+		// member this step needs before the first reentry point, and hold a
+		// strong local Ref so the runtime outlives the whole step even if
+		// this node's destructor releases the member reference with tick()
+		// still on the stack. Nothing below touches `this` after the first
+		// advance_player call.
+		Node *const manager = level_manager;
+		Ref<NativeTriggerRuntime> const runtime = triggers;
+		const double physics_delta = get_physics_process_delta_time();
+		Variant main_value = manager->get("player");
 		Object *main_player = main_value;
-		advance_player(main_player);
+		runtime->advance_player(main_player);
 		// advance_player can reenter GDScript (a trigger activation that
 		// restarts the level replaces the dual icons), so re-read the array
 		// every iteration instead of holding one snapshot of Object pointers.
 		for (int64_t i = 0; ; ++i) {
-			const Array duals = level_manager->get("player_duals");
+			const Array duals = manager->get("player_duals");
 			if (i >= duals.size()) break;
-			advance_player(duals[i]);
+			runtime->advance_player(duals[i]);
 		}
-		triggers->tick(get_physics_process_delta_time());
+		runtime->tick(physics_delta);
 	}
 
 public:
 	NativeLevelRuntime() { triggers.instantiate(); }
 
-	void clear() { triggers->clear(); previous_x.clear(); context_level = nullptr; }
+	void clear() { triggers->clear(); context_level = nullptr; }
 	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return triggers->register_trigger(trigger, x, y, flags, source_order, groups, gd_id, properties);
 	}
@@ -1699,7 +1782,6 @@ public:
 	}
 	void reset() {
 		triggers->reset();
-		previous_x.clear();
 		// A Hide Player trigger must not survive the restart: Geometry Dash
 		// always respawns a visible icon.
 		if (level_manager) {
@@ -1709,7 +1791,7 @@ public:
 		}
 	}
 	Dictionary snapshot() const { return triggers->snapshot(); }
-	void restore(const Dictionary &state) { triggers->restore(state); previous_x.clear(); }
+	void restore(const Dictionary &state) { triggers->restore(state); }
 	int64_t trigger_count() const { return triggers->trigger_count(); }
 	int64_t active_fade_count() const { return triggers->active_fade_count(); }
 	Dictionary render_stats() const { return registered_decoration_stats(); }
