@@ -26,7 +26,10 @@ jobs:
       - name: Validate mapping against Amethyst
         run: python3 tools/validate_amethyst.py
 
+      # Runs even when the download fails, so the diagnostic report the
+      # script always writes still reaches the branch.
       - name: Commit report
+        if: always()
         run: |
           git config user.name "arena-agent"
           git config user.email "arena-agent@users.noreply.github.com"

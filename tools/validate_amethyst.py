@@ -24,6 +24,7 @@ import gzip
 import json
 import re
 import sys
+import time
 import traceback
 import urllib.parse
 import urllib.request
@@ -56,8 +57,16 @@ def download_robtop() -> str:
 def download_gdbrowser() -> dict:
     url = f"https://gdbrowser.com/api/level/{LEVEL_ID}?download=true"
     request = urllib.request.Request(url, headers={"User-Agent": "Godot-Dash validation"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8", "replace"))
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode("utf-8", "replace"))
+        except Exception as error:  # noqa: BLE001 - retry, keep the last error
+            last_error = error
+            if attempt < 2:
+                time.sleep(5)
+    raise last_error  # type: ignore[misc]
 
 
 def looks_like_level_string(text: str) -> bool:
