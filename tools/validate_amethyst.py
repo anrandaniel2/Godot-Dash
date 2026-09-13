@@ -90,6 +90,18 @@ def decode_gzip_b64(text: str) -> str:
 
 
 GDHISTORY_BASE = "https://history.geometrydash.eu"
+# A gzipped level string checked into the repo. Every download source is
+# IP-blocked from some network or another (RobTop 403s cloud runners,
+# GDHistory's Cloudflare challenges datacenter IPs, gdbrowser's proxy is
+# flaky), so the workflow can fall back to this committed snapshot.
+SNAPSHOT_PATH = PROJECT / "tools" / "amethyst_level_snapshot.txt.gz"
+
+
+def load_snapshot() -> str:
+    """The committed level string snapshot, if present."""
+    if not SNAPSHOT_PATH.exists():
+        raise FileNotFoundError("no level snapshot committed")
+    return gzip.decompress(SNAPSHOT_PATH.read_bytes()).decode("utf-8", "replace")
 
 
 def download_gdhistory() -> str:
@@ -129,14 +141,15 @@ def fetch_level_string() -> str:
         ("gdhistory", download_gdhistory),
         ("boomlings", download_robtop),
         ("gdbrowser", download_gdbrowser),
+        ("snapshot", load_snapshot),
     ):
         try:
             payload = download()
         except Exception as error:  # noqa: BLE001 - report and try the mirror
             errors.append(f"{name} download: {type(error).__name__}: {error}")
             continue
-        if name == "gdhistory":
-            # download_gdhistory returns the level string itself.
+        if name in ("gdhistory", "snapshot"):
+            # These sources return the level string itself.
             candidates = [payload]
         else:
             candidates = []
