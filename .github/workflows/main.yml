@@ -530,6 +530,23 @@ jobs:
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           cat amethyst_glow.log >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # The job log blob is unreachable from some sandboxes; the report is
+          # committed to the branch instead so it is always retrievable via git.
+          if [ -s amethyst_glow.log ]; then
+            mkdir -p reports
+            {
+              echo "# Amethyst glow analysis (level data)"
+              echo
+              echo '```text'
+              cat amethyst_glow.log
+              echo '```'
+            } > reports/amethyst_glow.md
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add reports/amethyst_glow.md
+            git commit -q -m "Amethyst glow analysis report [skip ci]" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}" || true
+          fi
 
       # If the import-time scan never registered native/bin/gdash_native.gdextension,
       # the exporter has nothing to attach the .so to (and the exported app's
