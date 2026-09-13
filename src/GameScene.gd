@@ -10,6 +10,29 @@ var cached_level_path: String
 var native_trigger_bridge: NativeTriggerBridge
 
 
+## Device memory diagnostics (2026-09-13): the app dies at Amethyst level
+## start with no tombstone - lmkd (the low-memory killer) is the prime
+## suspect on this device. Print this process's RSS and peak from
+## /proc/self/status at the key level-lifecycle moments and every 10 s
+## while playing, so one more session in logcat (grep gdash-mem) shows
+## the full RAM trajectory into the kill.
+func _print_process_memory(tag: String) -> void:
+	var status := FileAccess.open("/proc/self/status", FileAccess.READ)
+	if status == null:
+		return
+	var rss := ""
+	var peak := ""
+	while not status.eof_reached():
+		var line := status.get_line()
+		if line.begins_with("VmRSS"):
+			rss = line.strip_edges()
+		elif line.begins_with("VmHWM"):
+			peak = line.strip_edges()
+	status.close()
+	if not rss.is_empty():
+		print("[gdash-mem] %s | %s | %s" % [tag, rss, peak])
+
+
 func _ready() -> void:
 	Engine.time_scale = 1.0
 	LevelManager.game_scene = self
@@ -22,6 +45,14 @@ func _ready() -> void:
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
 	Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN
 	_probe_native_core()
+	var memory_report_timer := Timer.new()
+	memory_report_timer.name = "MemoryReportTimer"
+	memory_report_timer.wait_time = 10.0
+	memory_report_timer.autostart = true
+	memory_report_timer.timeout.connect(func() -> void:
+		if LevelManager.level_playing:
+			_print_process_memory("playing"))
+	add_child(memory_report_timer)
 	if not SceneManager.in_editor():
 		pause_menu.leave_callback = _on_leave_pressed
 		fade_screen.anticipate_fade_out()
@@ -60,6 +91,7 @@ func _open_level_paced() -> void:
 			level_data = latest_snapshot
 
 	var open_started_ms: int = Time.get_ticks_msec()
+	_print_process_memory("level open start")
 	var job := LevelBuildJob.new(level_data)
 	# Component setters and player initialization legitimately consult the
 	# current level while LevelBuildJob performs its final use_data pass. Publish
@@ -77,9 +109,11 @@ func _open_level_paced() -> void:
 		while not job.finished:
 			job.step(0x7fffffff)
 	var level: Level = job.level
+	_print_process_memory("level built")
 	if not SceneManager.in_editor():
 		SceneManager.set_current_scene(SceneManager.Scene.LEVEL)
 	add_loaded_level(level, level_data)
+	_print_process_memory("native runtime registered")
 
 	var open_ms: int = Time.get_ticks_msec() - open_started_ms
 	await start_level()
@@ -136,6 +170,7 @@ func start_level() -> void:
 	$PercentageLayer.visible = Config.show_percentage
 	LevelManager.attempt += 1
 	LevelManager.player.process_mode = Node.PROCESS_MODE_INHERIT
+	_print_process_memory("play start")
 
 
 func restart_level() -> void:

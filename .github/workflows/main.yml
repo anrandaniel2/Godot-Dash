@@ -366,7 +366,7 @@ jobs:
           chmod +x android/build/gradlew
           test -f android/build/build.gradle && echo "template installed: $(ls android/build | head -5)"
 
-      - name: Enable android:largeHeap in the app manifest
+      - name: Patch app manifest (largeHeap, game category)
         run: |
           python3 - <<'PYEOF'
           import glob, os, re, sys
@@ -375,18 +375,31 @@ jobs:
               sys.exit("no AndroidManifest.xml found under android/build")
           for path in manifests:
               text = open(path, encoding="utf-8").read()
-              if "android:largeHeap" in text:
-                  print("already set:", path)
-                  continue
-              new = re.sub(
-                  r"(<application\b[^>]*?)(/?>)",
-                  lambda m: m.group(1) + ' android:largeHeap="true"' + m.group(2),
-                  text, count=1, flags=re.S,
-              )
-              if new == text:
-                  sys.exit("found no <application> tag to patch in %s" % path)
-              open(path, "w", encoding="utf-8").write(new)
-              print("android:largeHeap=\"true\" added to", path)
+              if "android:largeHeap" not in text:
+                  new = re.sub(
+                      r"(<application\b[^>]*?)(/?>)",
+                      lambda m: m.group(1) + ' android:largeHeap="true"' + m.group(2),
+                      text, count=1, flags=re.S,
+                  )
+                  if new == text:
+                      sys.exit("found no <application> tag to patch in %s" % path)
+                  text = new
+                  print('android:largeHeap="true" added to', path)
+              else:
+                  print("largeHeap already set:", path)
+              # Declare the game category: Samsung/Android game management
+              # (SemGameManager/Game Booster, lmkd policy) ignores the app
+              # otherwise - device log showed isGamePackage ret=false.
+              if "android:appCategory" not in text:
+                  new = re.sub(
+                      r"(<application\b[^>]*?)(/?>)",
+                      lambda m: m.group(1) + ' android:appCategory="game"' + m.group(2),
+                      text, count=1, flags=re.S,
+                  )
+                  if new != text:
+                      text = new
+                      print('android:appCategory="game" added to', path)
+              open(path, "w", encoding="utf-8").write(text)
           PYEOF
 
       # The gradle template declares debug.jniLibs.srcDirs = ['libs/debug', ...]
