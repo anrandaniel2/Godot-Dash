@@ -249,9 +249,8 @@ jobs:
           # Space-separated hex PCs from an on-device tombstone (libgdash_native.so
           # arm64). Set the GDASH_CRASH_OFFSETS repository variable to symbolize
           # them against this build; offsets only map correctly while the native
-          # source is unchanged since the crashing APK. Default: the 2026-09-13
-          # 15:22 crash on the bfd307a0/99908c44 build.
-          GDASH_CRASH_OFFSETS: ${{ vars.GDASH_CRASH_OFFSETS || '0x39540 0x29094 0x3d324' }}
+          # source is unchanged since the crashing APK.
+          GDASH_CRASH_OFFSETS: ${{ vars.GDASH_CRASH_OFFSETS }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"

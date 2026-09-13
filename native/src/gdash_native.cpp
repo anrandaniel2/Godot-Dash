@@ -26,6 +26,7 @@
 #include <godot_cpp/classes/worker_thread_pool.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
+#include <godot_cpp/core/error_macros.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/godot.hpp>
@@ -553,6 +554,69 @@ class NativeTriggerRuntime : public RefCounted {
 			return records[a].source_order < records[b].source_order;
 		});
 		index_dirty = false;
+	}
+
+	// 2026-09-13 device tombstones (two builds, MTE): SEGV_ACCERR while the
+	// lower_bound comparators read records[order[i]].x. The runtime object
+	// and its vector metadata were provably alive both times (tick ran to
+	// the scan), so the fault is in the data itself: either an index in an
+	// order table is out of range, or a data buffer was freed. Validate the
+	// tables before every scan; when one is broken, report the exact state
+	// to logcat (ERR_PRINT is visible via adb) and rebuild it instead of
+	// crashing. The two canary reads below put a freed records buffer on a
+	// known line of the next tombstone instead of inside the binary search.
+	bool index_table_valid(const std::vector<size_t> &table, const char *name) {
+		if (table.empty()) return true;
+		const size_t count = records.size();
+		if (count == 0) {
+			ERR_PRINT(String("[gdash_native] corrupt index table '") + name
+				+ "': " + String::num_uint64(static_cast<uint64_t>(table.size()))
+				+ " entries but records is empty"
+				+ ", epoch=" + String::num_uint64(structure_epoch)
+				+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+					Engine::get_singleton()->get_process_frames()))
+				+ "; rebuilding");
+			return false;
+		}
+		// volatile so -O3 cannot elide the reads.
+		volatile double canary = records[0].x;
+		canary = records[count - 1].x;
+		(void)canary;
+		for (size_t position = 0; position < table.size(); ++position) {
+			const size_t index = table[position];
+			if (index >= count) {
+				ERR_PRINT(String("[gdash_native] corrupt index table '") + name
+					+ "': position " + String::num_uint64(static_cast<uint64_t>(position))
+					+ " holds index " + String::num_uint64(static_cast<uint64_t>(index))
+					+ ", records=" + String::num_uint64(static_cast<uint64_t>(count))
+					+ ", table=" + String::num_uint64(static_cast<uint64_t>(table.size()))
+					+ ", epoch=" + String::num_uint64(structure_epoch)
+					+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+						Engine::get_singleton()->get_process_frames()))
+					+ ", records_ptr=" + String::num_uint64(static_cast<uint64_t>(
+						reinterpret_cast<uintptr_t>(records.data())))
+					+ ", table_ptr=" + String::num_uint64(static_cast<uint64_t>(
+						reinterpret_cast<uintptr_t>(table.data())))
+					+ "; rebuilding");
+				return false;
+			}
+		}
+		return true;
+	}
+
+	void rebuild_touch_order() {
+		touch_order.clear();
+		for (size_t index : x_order) {
+			if (records[index].flags & TOUCH_ONLY) touch_order.push_back(index);
+		}
+	}
+
+	void repair_index_tables() {
+		if (!index_table_valid(x_order, "x_order")) {
+			index_dirty = true;
+			ensure_index();
+		}
+		if (!index_table_valid(touch_order, "touch_order")) rebuild_touch_order();
 	}
 
 	void activate(size_t index, Object *player, bool forced = false) {
@@ -1103,6 +1167,8 @@ class NativeTriggerRuntime : public RefCounted {
 	void check_touch_overlaps() {
 		if (frame_players.empty() || touch_order.empty()) return;
 		ensure_index();
+		repair_index_tables();
+		if (records.empty() || touch_order.empty()) return;
 		// activate() below can reenter GDScript (an interacted handler that
 		// restarts the level rebuilds records/touch_order and frees the old
 		// buffers), which would leave the scan iterators and the `inside`
@@ -1264,6 +1330,8 @@ public:
 		frame_players.push_back(ObjectID(player->get_instance_id()));
 		if (Math::is_equal_approx(previous_x, current_x)) return;
 		ensure_index();
+		repair_index_tables();
+		if (x_order.empty()) return;
 		// activate() below can reenter GDScript and rebuild the runtime,
 		// freeing x_order/records; the scan iterators would dangle.
 		const uint64_t epoch = structure_epoch;
