@@ -161,18 +161,44 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
           export SCONS_CACHE="$(pwd)/native/scons-cache"
+
+          # Raw job logs are not always downloadable; re-emit the tail of a
+          # failed scons log as workflow error annotations (10 max per step).
+          emit_scons_error() {
+            echo "scons FAILED; tail of $1:"
+            tail -n 50 "$1"
+            while IFS= read -r chunk; do
+              echo "::error::${chunk}"
+            done < <(tail -n 50 "$1" | cut -c1-160 | awk '
+              { gsub(/%/, "%25"); gsub(/\r/, "%0D"); buf = buf $0 "%0A"
+                if (++n >= 5) { print buf; buf = ""; n = 0; if (++c >= 10) exit } }
+              END { if (n > 0 && c < 10) print buf }')
+          }
+
           cd native
-          scons platform=linux target=template_debug arch=x86_64 api_version=4.7 -j2
-          test -f bin/linux/libgdash_native.linux.template_debug.x86_64.so
-          ls -lh bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          if ! scons platform=linux target=template_debug arch=x86_64 api_version=4.7 -j2 > /tmp/scons_linux.log 2>&1; then
+            emit_scons_error /tmp/scons_linux.log
+            exit 1
+          fi
+          tail -n 3 /tmp/scons_linux.log
+          SO=bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          test -f "$SO" || { echo "::error::linux gdash_native .so missing after scons"; ls -R bin; exit 1; }
+          ls -lh "$SO"
           # Catch accidental return to the all-classes godot-cpp build.
-          test "$(stat -c%s bin/linux/libgdash_native.linux.template_debug.x86_64.so)" -lt 2000000
+          SO_SIZE=$(stat -c%s "$SO")
+          if [ "$SO_SIZE" -ge 2000000 ]; then
+            echo "::error::linux gdash_native .so is $SO_SIZE bytes (guard: < 2000000)"
+            exit 1
+          fi
           # Preserve the host library while cleaning shared intermediates before
           # the ARM build. Restore it for the visual smoke test afterward.
-          cp bin/linux/libgdash_native.linux.template_debug.x86_64.so /tmp/libgdash_native.linux.so
-          scons -c platform=linux target=template_debug arch=x86_64 api_version=4.7
+          cp "$SO" /tmp/libgdash_native.linux.so
+          if ! scons -c platform=linux target=template_debug arch=x86_64 api_version=4.7 > /tmp/scons_linux_clean.log 2>&1; then
+            emit_scons_error /tmp/scons_linux_clean.log
+            exit 1
+          fi
           mkdir -p bin/linux
-          cp /tmp/libgdash_native.linux.so bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          cp /tmp/libgdash_native.linux.so "$SO"
           ls -lh bin/linux/
 
       - name: Locate or install Android NDK
@@ -198,12 +224,34 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
           export SCONS_CACHE="$(pwd)/native/scons-cache"
+
+          emit_scons_error() {
+            echo "scons FAILED; tail of $1:"
+            tail -n 50 "$1"
+            while IFS= read -r chunk; do
+              echo "::error::${chunk}"
+            done < <(tail -n 50 "$1" | cut -c1-160 | awk '
+              { gsub(/%/, "%25"); gsub(/\r/, "%0D"); buf = buf $0 "%0A"
+                if (++n >= 5) { print buf; buf = ""; n = 0; if (++c >= 10) exit } }
+              END { if (n > 0 && c < 10) print buf }')
+          }
+
           NDK_VERSION="$(basename "$NDK_DIR")"
           cd native
-          scons platform=android target=template_debug arch=arm64 \
-            api_version=4.7 ndk_version="$NDK_VERSION" -j2
-          test -f bin/android/libgdash_native.android.template_debug.arm64.so
-          test "$(stat -c%s bin/android/libgdash_native.android.template_debug.arm64.so)" -lt 2500000
+          if ! scons platform=android target=template_debug arch=arm64 \
+               api_version=4.7 ndk_version="$NDK_VERSION" -j2 > /tmp/scons_android.log 2>&1; then
+            emit_scons_error /tmp/scons_android.log
+            exit 1
+          fi
+          tail -n 3 /tmp/scons_android.log
+          SO=bin/android/libgdash_native.android.template_debug.arm64.so
+          test -f "$SO" || { echo "::error::android gdash_native .so missing after scons"; ls -R bin; exit 1; }
+          # Catch accidental return to the all-classes godot-cpp build.
+          SO_SIZE=$(stat -c%s "$SO")
+          if [ "$SO_SIZE" -ge 2500000 ]; then
+            echo "::error::android gdash_native .so is $SO_SIZE bytes (guard: < 2500000)"
+            exit 1
+          fi
           ls -lh bin/android/
 
       # ------------------------------------------------- Android build template

@@ -42,11 +42,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <iterator>
 #include <map>
 #include <numeric>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace godot {
@@ -108,9 +111,16 @@ static double ease_bounce_out(double t) {
 	const double c1 = 7.5625;
 	const double c2 = 2.75;
 	if (t < 1.0 / c2) return c1 * t * t;
-	if (t < 2.0 / c2) return c1 * (t -= 1.5 / c2) * t + 0.75;
-	if (t < 2.5 / c2) return c1 * (t -= 2.25 / c2) * t + 0.9375;
-	return c1 * (t -= 2.625 / c2) * t + 0.984375;
+	if (t < 2.0 / c2) {
+		const double x = t - 1.5 / c2;
+		return c1 * x * x + 0.75;
+	}
+	if (t < 2.5 / c2) {
+		const double x = t - 2.25 / c2;
+		return c1 * x * x + 0.9375;
+	}
+	const double x = t - 2.625 / c2;
+	return c1 * x * x + 0.984375;
 }
 static double ease_weight(int gd_easing, double t) {
 	if (gd_easing <= 0 || gd_easing > 18) return Math::clamp(t, 0.0, 1.0);
@@ -728,7 +738,7 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::CAMERA_OFFSET:
 			case TriggerEffectKind::CAMERA_ROTATE:
 			case TriggerEffectKind::SHAKE:
-				start_fade(record, index, effect, player);
+				start_fade(index, effect, player);
 				break;
 			default:
 				break;
@@ -764,7 +774,7 @@ class NativeTriggerRuntime : public RefCounted {
 		}
 	}
 
-	void start_fade(Record &record, size_t index, const TriggerEffect &effect, Object *player) {
+	void start_fade(size_t index, const TriggerEffect &effect, Object *player) {
 		// prevent_restart_during_animation: re-activating a record mid-fade is
 		// ignored, like EasingComponent's default guard.
 		const ObjectID player_id = ObjectID(player->get_instance_id());
