@@ -13,8 +13,19 @@ extends Node
 ## window of physics frames or ended cleanly (an input-less player is allowed
 ## to die like in the real game). A native crash kills the process outright,
 ## so the missing success marker plus Godot's crash dump identifies it.
+##
+## RobTop's Cloudflare blocks CI datacenter IPs with HTTP 403, so when the
+## live download is unavailable the level comes from the GDHistory archive:
+## record 179189859 stores exactly the level build the device downloaded
+## (the .gmd is RobTop key/value plist text: "k4 ~~<base64>~~")
+## (compressed-string sha256 below; object count and decompressed size match
+## the device logcat). The song is fetched best-effort from Newgrounds.
 
 const AMETHYST_ID := 119550490
+const GDHISTORY_GMD_URL := "https://history.geometrydash.eu/level/119550490/179189859/download/"
+const EXPECTED_LEVEL_SHA256 := "b5d1d7af41d8699917d8c758541beba7d6756ad467022643e5a1c00bad75f4e6"
+const SONG_URL := "https://audio.ngfiles.com/233000/233860_Dawn.mp3"
+const SONG_FILE := "robtop_233860.mp3"
 ## ~10 seconds of physics at 60 fps after the level starts playing.
 const PLAYING_SURVIVAL_FRAMES := 600
 ## Generous budget for download + import + paced build of 147k objects.
@@ -22,24 +33,30 @@ const BOOT_TIMEOUT_MS := 330_000
 
 
 func _ready() -> void:
-	print("[amethyst-boot] downloading level %d" % AMETHYST_ID)
+	print("[amethyst-boot] fetching level %d" % AMETHYST_ID)
 	var client := RobTopLevels.new()
 	add_child(client)
+	var level_data: Dictionary = {}
+	var report = GMDConverter.ImportReport.new()
 	var response: Dictionary = await client.download(AMETHYST_ID, {
 		"name": "Amethyst",
 		"creator": "iMist",
 		"id": AMETHYST_ID,
 	})
+	if bool(response.get("ok", false)):
+		level_data = response.level_data
+		report = response.get("report", report)
+		print("[amethyst-boot] imported via RobTop: %s" % str(report.get("summary", "?")))
+	else:
+		print("[amethyst-boot] RobTop unavailable from this network (%s); using the GDHistory archive" % str(response.get("error", "unknown")))
+		level_data = await _import_from_gdhistory()
 	client.queue_free()
-	if not bool(response.get("ok", false)):
-		push_error("[amethyst-boot] download failed: %s" % str(response.get("error", "unknown")))
+	if level_data.is_empty():
 		get_tree().quit(1)
 		return
-	var report: Dictionary = response.get("report", {})
-	print("[amethyst-boot] imported: %s" % report.get("summary", "?"))
 	var file_name := "Amethyst [GD-%d].%s" % [AMETHYST_ID, Constants.LEVEL_FILE_EXTENSION]
 	var level_path := Constants.LEVEL_DIR + file_name
-	var write_error: int = LevelOperationsHandler.write_level_and_meta(level_path, response.level_data)
+	var write_error: int = LevelOperationsHandler.write_level_and_meta(level_path, level_data)
 	if write_error != OK:
 		push_error("[amethyst-boot] could not save level (error %d)" % write_error)
 		get_tree().quit(1)
@@ -54,6 +71,95 @@ func _ready() -> void:
 	LevelManager.attempt = 0
 	LevelManager.current_level_path = level_path
 	get_tree().change_scene_to_packed(AssetManager.game_scene_packed)
+
+
+## Imports the archived level build from GDHistory's .gmd. The file uses
+## RobTop's key/value plist text format: "k4 ~~<compressed string>~~".
+func _import_from_gdhistory() -> Dictionary:
+	var gmd := await _get_text(GDHISTORY_GMD_URL)
+	if gmd.is_empty():
+		push_error("[amethyst-boot] GDHistory archive fetch failed")
+		return {}
+	var marker := "k4 ~~"
+	var start := gmd.find(marker)
+	if start < 0:
+		push_error("[amethyst-boot] k4 not found in the archived .gmd")
+		return {}
+	start += marker.length()
+	var end := gmd.find("~~", start)
+	if end < 0:
+		push_error("[amethyst-boot] unterminated k4 in the archived .gmd")
+		return {}
+	var encoded := gmd.substr(start, end - start)
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	ctx.update(encoded.to_utf8_buffer())
+	var digest: String = ctx.finish().hex_encode()
+	if digest == EXPECTED_LEVEL_SHA256:
+		print("[amethyst-boot] archive sha256 matches the device build")
+	else:
+		push_warning("[amethyst-boot] archive sha256 %s differs from the device build %s" % [digest, EXPECTED_LEVEL_SHA256])
+	var level_string := GMD.decode_level_string(encoded)
+	if level_string.is_empty():
+		push_error("[amethyst-boot] archived level string could not be decoded")
+		return {}
+	var report = GMDConverter.ImportReport.new()
+	var level_data: Dictionary = GMDConverter.import_online_level_string(level_string, "Amethyst", report)
+	print("[amethyst-boot] imported: %s" % str(report.get("summary", "?")))
+	level_data.name = "Amethyst"
+	level_data.creator = "iMist"
+	level_data.rating = -1
+	level_data["robtop_level_id"] = AMETHYST_ID
+	var song_file := await _cache_song()
+	if not song_file.is_empty():
+		level_data.song_path = song_file
+	else:
+		print("[amethyst-boot] continuing without the song (dummy audio driver in CI)")
+	return level_data
+
+
+func _get_text(url: String) -> String:
+	var bytes := await _get_bytes(url)
+	return bytes.get_string_from_utf8() if not bytes.is_empty() else ""
+
+
+func _get_bytes(url: String) -> PackedByteArray:
+	var request := HTTPRequest.new()
+	request.use_threads = true
+	request.timeout = 90.0
+	add_child(request)
+	var completed: Array = []
+	request.request_completed.connect(
+		func(result: int, _status: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+			completed.assign([result, body])
+	)
+	var error := request.request(url)
+	if error != OK:
+		request.queue_free()
+		return PackedByteArray()
+	while completed.is_empty():
+		await get_tree().process_frame
+	request.queue_free()
+	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
+		push_warning("[amethyst-boot] GET %s failed (result %d)" % [url, int(completed[0])])
+		return PackedByteArray()
+	var body: PackedByteArray = completed[1]
+	return body
+
+
+func _cache_song() -> String:
+	if FileAccess.file_exists(Constants.SONG_DIR + SONG_FILE):
+		return SONG_FILE
+	var bytes := await _get_bytes(SONG_URL)
+	if bytes.size() < 100_000:
+		return ""
+	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
+	var file := FileAccess.open(Constants.SONG_DIR + SONG_FILE, FileAccess.WRITE)
+	if file == null:
+		return ""
+	file.store_buffer(bytes)
+	print("[amethyst-boot] cached song (%d bytes)" % bytes.size())
+	return SONG_FILE
 
 
 class BootWatchdog extends Node:
