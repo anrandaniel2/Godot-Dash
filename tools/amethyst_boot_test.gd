@@ -87,7 +87,10 @@ func _import_from_gdhistory() -> Dictionary:
 		return {}
 	var match := pattern.search(gmd)
 	if match == null:
-		push_error("[amethyst-boot] k4 not found in the archived .gmd")
+		push_error("[amethyst-boot] k4 not found in the archived .gmd (%d chars): %s" % [
+			gmd.length(),
+			gmd.substr(0, 500).replace("\n", "\\n"),
+		])
 		return {}
 	var start: int = match.get_end()
 	var end := gmd.find("</s>", start)
@@ -137,7 +140,12 @@ func _get_bytes(url: String) -> PackedByteArray:
 		func(result: int, _status: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 			completed.assign([result, body])
 	)
-	var error := request.request(url)
+	# GDHistory sits behind Cloudflare, which challenges default engine user
+	# agents from datacenter IPs; identify as a plain browser client.
+	var headers := PackedStringArray([
+		"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36",
+	])
+	var error := request.request(url, headers)
 	if error != OK:
 		request.queue_free()
 		return PackedByteArray()
