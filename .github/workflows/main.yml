@@ -250,10 +250,7 @@ jobs:
           # arm64). Set the GDASH_CRASH_OFFSETS repository variable to symbolize
           # them against this build; offsets only map correctly while the native
           # source is unchanged since the crashing APK.
-          # 2026-09-13 17:52 tombstone (godot-dash-android-debug-2e2f0adc.apk):
-          # #00 0x3a264 (crash site), #01 0x29384 (caller), #02 0x3e048.
-          # Same native source as HEAD (2e2f0adc) - only workflow edits since.
-          GDASH_CRASH_OFFSETS: "0x3a264 0x29384 0x3e048"
+          GDASH_CRASH_OFFSETS: ${{ vars.GDASH_CRASH_OFFSETS }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"

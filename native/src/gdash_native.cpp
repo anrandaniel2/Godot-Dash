@@ -1187,6 +1187,7 @@ class NativeTriggerRuntime : public RefCounted {
 		// reference dangling. Bail out as soon as that happens; the next
 		// physics frame re-evaluates the overlaps from scratch.
 		const uint64_t epoch = structure_epoch;
+		const size_t record_count = records.size();
 		for (ObjectID player_object : frame_players) {
 			if (structure_epoch != epoch) return;
 			Node2D *player = Object::cast_to<Node2D>(ObjectDB::get_instance(player_object));
@@ -1197,9 +1198,30 @@ class NativeTriggerRuntime : public RefCounted {
 			// Multi-activate touch triggers re-fire on every fresh overlap:
 			// forget records that left the player's X window in earlier frames
 			// so returning to them counts as a new touch.
+			// 2026-09-13 tombstones (five, four builds): MTE fault reading
+			// records[idx] with idx just past records.size(). The order tables
+			// are validated above, so the remaining unvalidated index source
+			// in this function is this per-player `inside` set: an index
+			// inserted while records was larger (a re-registration without a
+			// clear) reads past the post-finalize shrink_to_fit allocation.
+			// Drop stale entries instead of reading them, and report them.
 			for (auto entry = inside.begin(); entry != inside.end(); ) {
-				if (records[*entry].x < position.x - TOUCH_HALF_EXTENT
-						|| records[*entry].x > position.x + TOUCH_HALF_EXTENT) {
+				const size_t remembered = *entry;
+				if (remembered >= record_count) {
+					ERR_PRINT(String("[gdash_native] stale touch-inside entry ")
+						+ String::num_uint64(static_cast<uint64_t>(remembered))
+						+ " with records=" + String::num_uint64(static_cast<uint64_t>(record_count))
+						+ ", set=" + String::num_uint64(static_cast<uint64_t>(inside.size()))
+						+ ", player=" + String::num_uint64(player_id)
+						+ ", epoch=" + String::num_uint64(structure_epoch)
+						+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+							Engine::get_singleton()->get_process_frames()))
+						+ "; erasing");
+					entry = inside.erase(entry);
+					continue;
+				}
+				if (records[remembered].x < position.x - TOUCH_HALF_EXTENT
+						|| records[remembered].x > position.x + TOUCH_HALF_EXTENT) {
 					entry = inside.erase(entry);
 				} else {
 					++entry;
@@ -1215,6 +1237,24 @@ class NativeTriggerRuntime : public RefCounted {
 				if (inside_now && !was_inside) {
 					activate(index, player, true);
 					if (structure_epoch != epoch) return;
+					// activate() re-entered GDScript. A rebuild bumps the
+					// epoch (handled above); an append-only re-registration
+					// grows records without bumping it. Nothing registers
+					// during play, so ANY size change here is unexpected:
+					// report it and let the next physics frame re-validate
+					// the whole scan instead of trusting stale iterators.
+					if (records.size() != record_count) {
+						ERR_PRINT(String("[gdash_native] records resized mid-scan: ")
+							+ String::num_uint64(static_cast<uint64_t>(record_count))
+							+ " -> " + String::num_uint64(static_cast<uint64_t>(records.size()))
+							+ " after activating record "
+							+ String::num_uint64(static_cast<uint64_t>(index))
+							+ ", epoch=" + String::num_uint64(structure_epoch)
+							+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+								Engine::get_singleton()->get_process_frames()))
+							+ "; aborting scan");
+						return;
+					}
 				}
 				if (inside_now) inside.insert(index);
 				else if (was_inside) inside.erase(index);
