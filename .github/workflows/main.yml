@@ -56,6 +56,9 @@ env:
 jobs:
   android-debug:
     runs-on: ubuntu-latest
+    # Hard stop for wedged steps (a hung probe once sat on the runner for
+    # most of an hour); the full build normally finishes in well under 15.
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -449,8 +452,20 @@ jobs:
       # file:line error lands in this step's log and annotations.
       - name: GDScript load probe (surface root script errors)
         run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
           set +e
-          "$GODOT_BIN" --headless --path . --script res://tools/gdscript_probe.gd > probe.log 2>&1
+          # Scene-run shape (same as the smoke test, autoloads up) because a
+          # --script SceneTree probe hung in CI; hard timeout so a wedged
+          # script load can never stall the job for hours.
+          timeout 180s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/gdscript_probe.tscn \
+            > probe.log 2>&1
           status=$?
           set -e
           cat probe.log

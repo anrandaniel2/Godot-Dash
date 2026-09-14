@@ -1,4 +1,4 @@
-extends SceneTree
+extends Node
 ## CI diagnostic that surfaces ROOT GDScript parse/analyze errors.
 ##
 ## Scripts that are only referenced as global classes (never loaded as a
@@ -7,9 +7,12 @@ extends SceneTree
 ## and "Failed to compile depended scripts" while the actual error in X is
 ## counted but never printed. Loading every script here forces each one's
 ## own reload, so the real file:line error appears in the log.
+##
+## Runs as a scene (with autoloads up, like the real game) because a
+## SceneTree --script probe hung in CI; this node quits from _ready.
 
 
-func _init() -> void:
+func _ready() -> void:
 	var paths: PackedStringArray = []
 	_collect("res://src", paths)
 	_collect("res://tools", paths)
@@ -24,7 +27,7 @@ func _init() -> void:
 		else:
 			print("PROBE OK ", path)
 	print("PROBE_SUMMARY total=", paths.size(), " failed=", failed.size())
-	quit(1 if not failed.is_empty() else 0)
+	get_tree().quit(1 if not failed.is_empty() else 0)
 
 
 func _collect(dir_path: String, into: PackedStringArray) -> void:
