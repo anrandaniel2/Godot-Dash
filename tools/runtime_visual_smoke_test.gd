@@ -533,10 +533,12 @@ func _test_native_core() -> void:
 		host.add_child(member)
 		member.add_to_group(channel_group)
 		return member
-	var copy_member := make_member.call(&"c_10")
-	var chain_member := make_member.call(&"c_11")
-	var opacity_member := make_member.call(&"c_12")
-	var special_member := make_member.call(&"c_13")
+	# Callable.call() returns Variant; `:=` inference from Variant is an
+	# error-level GDScript warning, so the members are typed explicitly.
+	var copy_member: HSVWatcher = make_member.call(&"c_10")
+	var chain_member: HSVWatcher = make_member.call(&"c_11")
+	var opacity_member: HSVWatcher = make_member.call(&"c_12")
+	var special_member: HSVWatcher = make_member.call(&"c_13")
 	# The source's opacity and colour change; every copying channel follows,
 	# each with its own HSV adjustment on top (c_10 rotates 180 degrees, the
 	# c_11 chain link adds nothing) and the opacity copy (c_12) taking the
@@ -566,7 +568,7 @@ func _test_native_core() -> void:
 	# A copy-colour trigger (key 50) re-points its channel at the source, so
 	# the channel keeps following that source's later recolours; an explicit
 	# RGB severs the link again. Fades resolve chains live too.
-	var link_member := make_member.call(&"c_8")
+	var link_member: HSVWatcher = make_member.call(&"c_8")
 	effect_runtime.call(&"register_channel", "c_7", link_source)
 	effect_runtime.call(&"register_channel", "c_8", link_target)
 	# Recolour the source first: the copy trigger's fade resolves it live.

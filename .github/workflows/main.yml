@@ -442,6 +442,27 @@ jobs:
           grep -n "SCRIPT ERROR\|Parse Error\|ERROR:" godot_import.log | head -40 || true
           exit $status
 
+      # Scripts referenced only as global classes fail through the analyzer's
+      # external-parser cache: dependents print "Could not resolve class X,
+      # because of a parser error" while the actual error in X is never shown.
+      # Force-load every project script so each failing script's own
+      # file:line error lands in this step's log and annotations.
+      - name: GDScript load probe (surface root script errors)
+        run: |
+          set +e
+          "$GODOT_BIN" --headless --path . --script res://tools/gdscript_probe.gd > probe.log 2>&1
+          status=$?
+          set -e
+          cat probe.log
+          if [ $status -ne 0 ]; then
+            probe_details=$(grep -v "^PROBE OK " probe.log | head -n 60)
+            probe_details=${probe_details//'%'/'%25'}
+            probe_details=${probe_details//$'\r'/'%0D'}
+            probe_details=${probe_details//$'\n'/'%0A'}
+            echo "::error title=GDScript load probe (root errors)::${probe_details}"
+            exit 1
+          fi
+
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.
