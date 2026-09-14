@@ -2,6 +2,7 @@
   "enabled_classes": [
     "Camera2D",
     "CanvasItem",
+    "CanvasItemMaterial",
     "CollisionShape2D",
     "Engine",
     "FastNoiseLite",
@@ -10,8 +11,8 @@
     "Node2D",
     "OS",
     "RefCounted",
-    "ResourceLoader",
     "RenderingServer",
+    "ResourceLoader",
     "SceneTree",
     "Script",
     "Shape2D",
