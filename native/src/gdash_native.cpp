@@ -1263,26 +1263,35 @@ class NativeTriggerRuntime : public RefCounted {
 			// the trigger fires. The channel resource's changed signal fans out to
 			// the watcher, which pushes the flip onto the channel's batches.
 			data->set("blending", effect.blending);
-			// The copy link is target state too (key 50): once the trigger's
-			// fade completes, the channel is re-pointed at its source and
-			// keeps following that source's later recolours. The link only
-			// goes live at completion (or instantly for duration-0 triggers,
-			// where the fire already carries weight 1) so the fade towards
-			// the source stays visible - GDRweb mixes towards the live copy
-			// during the fade, and the finished link continues that.
-			if ((effect.copy_channel > 0 || effect.has_color || effect.player_color != 0) && weight >= 1.0) {
+			// The copy link and the link sever have different timings, so
+			// the weight gate applies to the set only:
+			// - Setting the link is target state (key 50): once the
+			//   trigger's fade completes, the channel is re-pointed at its
+			//   source and keeps following that source's later recolours.
+			//   The link only goes live at completion (or instantly for
+			//   duration-0 triggers, where the fire already carries weight
+			//   1) so the fade towards the source stays visible - GDRweb
+			//   mixes towards the live copy during the fade, and the
+			//   finished link continues that.
+			// - Severing the link happens the moment the trigger fires:
+			//   an explicit colour or player target replaces the channel's
+			//   CopyColor start value right away (GDRweb's track model), so
+			//   the fade runs from the colour the channel showed at fire -
+			//   its copy source's colour at that moment - to the literal
+			//   target. Repeated severs while the fade ticks are idempotent.
+			if (effect.copy_channel > 0 || effect.has_color || effect.player_color != 0) {
 				if (effect.copy_channel > 0) {
-					data->set("copied_channel_id", static_cast<int64_t>(effect.copy_channel));
-					data->set("copy_opacity", effect.copy_opacity);
-					data->set("copy_hue", effect.copy_hue);
-					data->set("copy_saturation", effect.copy_saturation);
-					data->set("copy_value", effect.copy_value);
-					data->set("copy_saturation_additive", effect.copy_saturation_additive);
-					data->set("copy_value_additive", effect.copy_value_additive);
+					if (weight >= 1.0) {
+						data->set("copied_channel_id", static_cast<int64_t>(effect.copy_channel));
+						data->set("copy_opacity", effect.copy_opacity);
+						data->set("copy_hue", effect.copy_hue);
+						data->set("copy_saturation", effect.copy_saturation);
+						data->set("copy_value", effect.copy_value);
+						data->set("copy_saturation_additive", effect.copy_saturation_additive);
+						data->set("copy_value_additive", effect.copy_value_additive);
+					}
 				} else {
-					// An explicit colour or player target severs the link
-					// (GDRweb's track model: a trigger value replaces the
-					// channel's CopyColor start value).
+					// An explicit colour or player target severs the link.
 					data->set("copied_channel_id", static_cast<int64_t>(0));
 				}
 			}

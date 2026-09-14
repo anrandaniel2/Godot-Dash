@@ -18,8 +18,14 @@ static var _refresh_stack: Array[int] = []
 ## Lookup cache from channel id to its ColorChannelData, rebuilt whenever the
 ## current level changes. Copy resolution walks it on every refresh of a
 ## copying channel, so the O(channels) scan happens once per level instead.
-static var _channel_cache: Dictionary[int, ColorChannelData] = {}
-static var _channel_cache_level: Level = null
+## Both statics must stay untyped on purpose: static member type annotations
+## are resolved eagerly at class load, and a `Level` or
+## `Dictionary[int, ColorChannelData]` annotation here would close the
+## Level -> ColorChannelData -> ColorChannelWatcher class-reference cycle and
+## fail the whole script (and everything importing it) with a cyclic
+## reference parse error.
+static var _channel_cache: Dictionary = {}
+static var _channel_cache_level = null
 
 var data: ColorChannelData
 
