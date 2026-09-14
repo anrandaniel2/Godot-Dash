@@ -50,6 +50,10 @@ const CHANNEL_GROUND_2 := 1009
 @export_range(-1.0, 1.0, 0.01, "slider") var value: float = 0.0
 @export_range(0.0, 5.0, 0.01, "slider") var intensity: float = 1.0
 @export_range(0.0, 1.0, 0.01, "slider") var alpha: float = 1.0
+## The Blending checkbox: part of the trigger's target state, applied the
+## moment it fires rather than faded. Flips the channel additive/normal, which
+## is how effect levels switch their glow on and off mid-level.
+@export var blending: bool = false
 @export_group("Copied channel")
 @export var copied_channel_id: int = 0
 @export var copy_opacity: bool = false
@@ -128,9 +132,14 @@ func start(_player: Player) -> void:
 			if idx == -1:
 				Toasts.error("In %s: color channel is unset" % parent.name)
 				return
-			color_channel = LevelManager.current_level.color_channels[idx]
-			initial_color_channel = color_channel.duplicate()
-			gradient.colors = PackedColorArray([initial_color_channel.color, _resolved_color(initial_color_channel.color)])
+				color_channel = LevelManager.current_level.color_channels[idx]
+				initial_color_channel = color_channel.duplicate()
+				gradient.colors = PackedColorArray([initial_color_channel.color, _resolved_color(initial_color_channel.color)])
+				# Blending is target state applied at fire time, not faded:
+				# the checkbox itself is the channel's new blend mode.
+				if color_channel.blending != blending:
+					color_channel.blending = blending
+					color_channel.emit_changed()
 		Type.LEVEL:
 			var Channel = Constants.SpecialColorChannel
 			var level: Level = LevelManager.current_level

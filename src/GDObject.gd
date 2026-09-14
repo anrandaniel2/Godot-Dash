@@ -120,9 +120,27 @@ func setup(data: Dictionary) -> void:
 		add_to_group(StringName(str(group)))
 	apply_draw_order()
 	if blending:
-		var additive := CanvasItemMaterial.new()
-		additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-		material = additive
+		material = _additive_material()
+
+
+## Shared additive material: one per class, not per object.
+static var _shared_additive_material: CanvasItemMaterial
+
+
+static func _additive_material() -> CanvasItemMaterial:
+	if _shared_additive_material == null:
+		_shared_additive_material = CanvasItemMaterial.new()
+		_shared_additive_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	return _shared_additive_material
+
+
+## Flips this object between normal and additive blending when a colour
+## trigger toggles its channel (key 17). Mirrors the import-time setup.
+func set_channel_blending(additive: bool) -> void:
+	if additive == blending:
+		return
+	blending = additive
+	material = _additive_material() if additive else null
 	# The tint is the object's colour until a colour channel repaints it
 	# through the Base/Detail HSV watchers; objects on no channel keep it.
 	var base: Node2D = get_node_or_null(^"Base")

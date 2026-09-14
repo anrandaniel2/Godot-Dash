@@ -138,6 +138,9 @@ var _buckets: Dictionary[int, Array] = { }
 ## channels and 186,000 sprites would do ~32 million comparisons just to finish
 ## loading, because each channel's watcher fires once on ready.
 var _by_channel: Dictionary[StringName, Array] = { }
+## Last blend state applied per channel, so repeated colour-trigger refreshes
+## do not push the same blend update through the native boundary again.
+var _channel_blend: Dictionary[StringName, bool] = { }
 var _last_visible := PackedInt32Array()
 var _built: bool = false
 var _cull: bool = false
@@ -235,6 +238,7 @@ func build() -> void:
 	_cull = items.size() >= CULL_THRESHOLD
 	_buckets.clear()
 	_by_channel.clear()
+	_channel_blend.clear()
 	_spinning.clear()
 	_bounds = Rect2()
 
@@ -381,6 +385,38 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 		changed = true
 	if changed:
 		_request_redraw()
+
+
+## Flips every item on [param channel] between normal and additive blending.
+##
+## Geometry Dash colour triggers toggle a channel's Blending state at fire
+## time; the glow in modern effect levels comes from those flips, not from
+## classic glow sprites. The native renderer owns per-record blend modes, so
+## this only forwards the affected indices; the portable path can switch a
+## single material per node, which is only correct when the whole batch sits
+## on the one channel - mixed batches there keep their import-time blend.
+func apply_channel_blending(channel: StringName, additive: bool) -> void:
+	if _channel_blend.has(channel) and _channel_blend[channel] == additive:
+		return
+	_channel_blend[channel] = additive
+	# Glow layers are always additive whatever the channel says, so they are
+	# excluded from the flip; only base/detail/other items re-route.
+	var affected: Array = _by_channel.get(channel, [])
+	if _native_canvas != null:
+		var indices := PackedInt32Array()
+		for item: Item in affected:
+			if item.layer != "glow" and item.render_index >= 0:
+				indices.append(item.render_index)
+		if not indices.is_empty():
+			_native_canvas.call(&"set_channel_blending", indices, additive)
+		return
+	var uniform := not items.is_empty()
+	for item: Item in items:
+		if item.layer == "glow" or item.channel != channel:
+			uniform = false
+			break
+	if uniform:
+		material = GDObject._additive_material() if additive else null
 
 
 ## Current rendered tint, including native channel animations. Serialization

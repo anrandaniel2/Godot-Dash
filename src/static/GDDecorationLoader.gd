@@ -38,6 +38,10 @@ const Z_LAYER_GAMEPLAY: int = 4
 
 static var _sheet: GDSpriteSheet.Sheet
 static var _loaded: bool = false
+## gd_id -> how many placements wanted glow (key 96) while the object's
+## artwork carries no glow sprite at all. Read by Level's load-time
+## diagnostics (GLOWDIAG) and cleared on reset.
+static var _glow_without_art: Dictionary = { }
 
 
 ## The parsed atlases, loading them on first use.
@@ -66,6 +70,7 @@ static func get_sheet() -> GDSpriteSheet.Sheet:
 static func reset() -> void:
 	_sheet = null
 	_loaded = false
+	_glow_without_art = { }
 	GDObjectFrames.reload()
 
 
@@ -222,6 +227,11 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 	# Most objects explicitly disable their glow (key 96); drawing it anyway
 	# stacked thousands of additive white sprites over the level.
 	var wants_glow: bool = bool(object_data.get("glow", false))
+	if wants_glow and not frames.has_glow_layer():
+		# Level data asks for glow but the object's artwork has none in our
+		# atlas. Counted once per object so a device log answers "where did
+		# the glow go" without a debugger attached.
+		_glow_without_art[gd_id] = _glow_without_art.get(gd_id, 0) + 1
 	# Low detail mode drops the objects Geometry Dash itself marks as
 	# decoration-only, which is what key 103 means.
 	if Config.ldm and bool(object_data.get("high_detail", false)):
@@ -448,6 +458,10 @@ static func _add_part(
 			part_hsv = detail_hsv
 			channel = _channel_for(channels, "detail")
 			layer = "detail"
+		GDObjectFrames.COLOR_GLOW:
+			# Positioned glow sprites live in the always-additive glow batch;
+			# the tag keeps channel blending flips from ever un-adding them.
+			layer = "glow"
 		GDObjectFrames.COLOR_BLACK:
 			# A black fill under an outline. Left unbound: following the
 			# object's channel would turn the fill white on the first update.

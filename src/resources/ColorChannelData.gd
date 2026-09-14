@@ -7,6 +7,9 @@ extends Resource
 @export var hsv_shift: Array[float] = [0.0, 0.0, 0.0]
 @export var intensity: float = 1.0
 @export var alpha: float = 1.0
+## Whether the channel renders additively. Set at import from the channel
+## table (kS38 key 5) and flipped at runtime by colour triggers (key 17).
+@export var blending: bool
 @export var associated_group: String
 
 var watcher: ColorChannelWatcher
@@ -56,6 +59,7 @@ static func to_data(channel: ColorChannelData) -> Dictionary:
 		"hsv_shift": channel.hsv_shift,
 		"intensity": channel.intensity,
 		"alpha": channel.alpha,
+		"blending": channel.blending,
 		"associated_group": channel.associated_group,
 	}
 
@@ -69,4 +73,6 @@ static func from_data(data: Dictionary) -> ColorChannelData:
 	channel.intensity = data.intensity
 	channel.alpha = data.alpha
 	channel.associated_group = data.associated_group
+	if data.has("blending"):
+		channel.blending = data.blending
 	return channel

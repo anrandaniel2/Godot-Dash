@@ -50,6 +50,7 @@ const Prop := {
 	COPIED_COLOR_ID = "50", # the channel a Color trigger copies its colour from
 	COPIED_COLOR_HSV = "49", # HSV adjustment applied to the copied colour
 	COPY_OPACITY = "60", # copy the source channel's opacity instead of key 35
+	BLENDING = "17", # Color trigger: the Blending checkbox, flips the channel additive
 	MOVE_X = "28",
 	MOVE_Y = "29",
 	TARGET_COLOR_ID = "23",
@@ -1104,6 +1105,12 @@ static func _components_from_properties(
 					# Geometry Dash fades channel colours in plain sRGB.
 					"color_space": ColorChannelChangerComponent.ColorSpace.SRGB,
 					"alpha": clampf(float(properties.get(Prop.OPACITY, "1")), 0.0, 1.0),
+					# The Blending checkbox (key 17) is part of the trigger's
+					# target state: like Geometry Dash's own editor, firing the
+					# trigger sets the channel additive (checked) or normal
+					# (unchecked), which is how effect levels switch their glow
+					# on and off mid-level.
+					"blending": properties.get(Prop.BLENDING, "0") == "1",
 				}
 				# The trigger's colour source. Geometry Dash always serialises
 				# the RGB keys of a picked colour - even pure white - so their
@@ -1409,6 +1416,9 @@ static func _build_color_channels(
 		channel.associated_group = Constants.COLOR_CHANNEL_GROUP_PREFIX + str(channel_id)
 		channel.alpha = float(style.get("alpha", 1.0))
 		channel.color = style.get("color", Color.WHITE)
+		# The import-time blending flag (kS38 key 5): colour triggers can flip
+		# it later, and the watcher needs the current state to diff against.
+		channel.blending = bool(style.get("blending", false))
 		# A channel that is, or plainly copies, a level colour follows that
 		# colour live. A copy with an HSV shift keeps its resolved colour
 		# instead, since the runtime copy has no equivalent shift.

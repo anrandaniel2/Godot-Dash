@@ -17,6 +17,10 @@ var _native_index: Object
 ## restore re-applies per-object HSV data through HSVWatcher.use_data).
 var _native_member_count: int = -1
 var _native_watcher_version: int = -1
+## Last blend state pushed to this channel's members: -1 unknown, 0 normal,
+## 1 additive. Colour triggers refresh the channel every animation frame, so
+## the blend flip is diffed instead of re-sent.
+var _applied_blending: int = -1
 
 
 func _init(new_data: ColorChannelData) -> void:
@@ -36,6 +40,7 @@ func _ready() -> void:
 
 
 func refresh_objects_color(hsv_watchers: Array[HSVWatcher] = [], _data: ColorChannelData = data) -> void:
+	_apply_blending_if_changed(_data)
 	if hsv_watchers.is_empty():
 		if _refresh_native(_data):
 			_refresh_decoration_batches(_data)
@@ -120,6 +125,28 @@ func _channel_color(channel_data: ColorChannelData) -> Color:
 		Constants.SpecialColorChannel.GLOW:
 			return Config.glow_color
 	return channel_data.color
+
+
+## Pushes a blending flip onto every decoration batch and object of this
+## channel. Geometry Dash's colour triggers carry the channel's blend mode as
+## part of their target state (the Blending checkbox, key 17); modern levels
+## build their glow out of those mid-level flips.
+func _apply_blending_if_changed(_data: ColorChannelData) -> void:
+	var state: int = 1 if _data.blending else 0
+	if state == _applied_blending:
+		return
+	_applied_blending = state
+	if not is_inside_tree():
+		return
+	var channel := StringName(_data.associated_group)
+	var additive := state == 1
+	for node: Node in get_tree().get_nodes_in_group(DecorationBatch.CHANNEL_GROUP_PREFIX + channel):
+		if node is DecorationBatch:
+			node.apply_channel_blending(channel, additive)
+	for watcher: Node in get_tree().get_nodes_in_group(_data.associated_group):
+		var watched: Node2D = watcher.get("parent") if watcher is HSVWatcher else null
+		if watched is GDObject:
+			watched.set_channel_blending(additive)
 
 
 ## Pushes this channel's colour into every [DecorationBatch].

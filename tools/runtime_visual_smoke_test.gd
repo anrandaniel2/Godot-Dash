@@ -78,6 +78,13 @@ func _ready() -> void:
 			batch.apply_channel_color(&"native_smoke", Color(0.8, 0.2, 0.1, 0.75))
 			var native_color: Color = native_canvas.call(&"get_item_color", 0)
 			assert(is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75), "native smoke: channel update")
+			# A colour trigger's Blending flip re-routes the channel's records
+			# between the batch's own canvas item and the additive override.
+			assert(int(native_canvas.call(&"get_item_blend", 0)) == 0, "native smoke: records must start on the inherited blend")
+			batch.apply_channel_blending(&"native_smoke", true)
+			assert(int(native_canvas.call(&"get_item_blend", 0)) == 1, "native smoke: blending flip did not flag the record additive")
+			batch.apply_channel_blending(&"native_smoke", false)
+			assert(int(native_canvas.call(&"get_item_blend", 0)) == 2, "native smoke: blending flip did not flag the record normal")
 		var item: DecorationBatch.Item = batch.items[0]
 		print(
 				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
@@ -251,12 +258,12 @@ func _test_native_core() -> void:
 	# executed by C++ (asserted further below against a live channel).
 	var color_report := GMDConverter.ImportReport.new()
 	var color_level := GMDConverter.import_online_level_string(
-		"kA2,0,kA4,0;1,899,2,30,3,30,23,4,7,10,8,200,9,30;1,899,2,60,3,30,23,4,50,7,49,90a-0.5a0a1a1,60,1;1,899,2,90,3,30,23,4,15,1;1,899,2,120,3,30,23,4,10,0.5,35,0.2;",
+		"kA2,0,kA4,0;1,899,2,30,3,30,23,4,7,10,8,200,9,30;1,899,2,60,3,30,23,4,50,7,49,90a-0.5a0a1a1,60,1;1,899,2,90,3,30,23,4,15,1;1,899,2,120,3,30,23,4,10,0.5,35,0.2;1,899,2,150,3,30,23,4,17,1;",
 		"Color trigger sources",
 		color_report,
 	)
 	var color_entries: Array = color_level.get("layers", [{}])[0].get("objects", [])
-	assert(color_entries.size() == 4, "native smoke: colour triggers were dropped")
+	assert(color_entries.size() == 5, "native smoke: colour triggers were dropped")
 	if native_import:
 		for entry: Dictionary in color_entries:
 			assert(bool(entry.get("native_only_trigger", false)), "native smoke: colour trigger was not packed at runtime import")
@@ -269,6 +276,8 @@ func _test_native_core() -> void:
 		assert(player_properties.get("15", "") == "1", "native smoke: player colour trigger lost its source")
 		var opacity_properties: Dictionary = color_entries[3].get("gd_properties", {})
 		assert(not opacity_properties.has("7") and not opacity_properties.has("8") and not opacity_properties.has("9"), "native smoke: opacity-only trigger must not carry a colour")
+		var blend_properties: Dictionary = color_entries[4].get("gd_properties", {})
+		assert(blend_properties.get("17", "") == "1", "native smoke: blending checkbox (key 17) was dropped from the colour trigger")
 	else:
 		var color_sources := color_entries.map(
 			func(entry: Dictionary): return entry.get("components", {}).get("ColorChannelChangerComponent", {})
@@ -282,6 +291,7 @@ func _test_native_core() -> void:
 		assert(int(color_sources[2].get("source", -1)) == ColorChannelChangerComponent.ColorSource.PLAYER_1, "native smoke: player colour trigger lost its source")
 		assert(int(color_sources[3].get("source", -1)) == ColorChannelChangerComponent.ColorSource.KEEP, "native smoke: opacity-only trigger must keep the channel colour")
 		assert(not color_sources[3].has("color"), "native smoke: opacity-only trigger must not carry a colour")
+		assert(bool(color_sources[4].get("blending", false)), "native smoke: blending checkbox was lost in trigger conversion")
 	# Imported pads keep their hand-authored Area2D behaviour but replace the
 	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
 	# hitbox must follow that sprite to the object origin.
@@ -379,6 +389,11 @@ func _test_native_core() -> void:
 	# 899 Colour: fade channel c_5 to an explicit RGB, plus its opacity.
 	effect_runtime.call(&"register_packed_trigger", 60.0, 0.0, 0, 1, PackedStringArray(), 899,
 		{"1": "899", "23": "5", "7": "10", "8": "200", "9": "30", "35": "0.5", "10": "1.0"})
+	# 899 Colour with the Blending checkbox (key 17): flips channel c_5
+	# additive the moment it fires. Effect levels build their glow out of
+	# these flips, so dropping the key leaves everything past the intro unlit.
+	effect_runtime.call(&"register_packed_trigger", 65.0, 0.0, 0, 7, PackedStringArray(), 899,
+		{"1": "899", "23": "5", "17": "1", "10": "0"})
 	# 1006 Pulse: 0.5s fade in, 0.5s fade out against its own channel.
 	effect_runtime.call(&"register_packed_trigger", 70.0, 0.0, 0, 2, PackedStringArray(), 1006,
 		{"1": "1006", "51": "6", "52": "0", "7": "255", "8": "0", "9": "0", "45": "0.5", "46": "0", "47": "0.5"})
@@ -403,6 +418,7 @@ func _test_native_core() -> void:
 		"native smoke: move trigger offset wrong at half weight")
 	assert(is_equal_approx(effect_channel.color.r, (1.0 + 10.0 / 255.0) / 2.0),
 		"native smoke: colour trigger did not fade halfway")
+	assert(effect_channel.blending, "native smoke: blending checkbox trigger did not flip its channel additive")
 	assert(pulse_channel.color.is_equal_approx(Color8(255, 0, 0)), "native smoke: pulse did not reach its colour at hold")
 	assert(is_equal_approx(effect_camera.zoom.x, 0.7), "native smoke: camera zoom did not ease halfway")
 	assert(is_equal_approx(Engine.time_scale, 0.75), "native smoke: timewarp did not ease halfway")

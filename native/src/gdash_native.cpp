@@ -7,6 +7,7 @@
 
 #include <godot_cpp/classes/camera2d.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
+#include <godot_cpp/classes/canvas_item_material.hpp>
 #include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/fast_noise_lite.hpp>
@@ -240,6 +241,7 @@ struct TriggerEffect {
 	bool copy_saturation_additive = true, copy_value_additive = true;
 	int32_t player_color = 0;    // 0 none, 1 key 15, 2 key 16
 	double opacity = 1.0;        // 899: key 35
+	bool blending = false;       // 899: key 17, the Blending checkbox
 	double shake_strength = 5.0; // 1520: key 75
 	double time_scale = 1.0;     // 1935: key 120
 	double camera_zoom = 1.0;    // 1913: key 371 (GD zoom percentage)
@@ -290,6 +292,10 @@ static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) 
 // those only fades opacity (KEEP). Mirrors the Color trigger converter arm.
 static void parse_color_source(const Dictionary &properties, TriggerEffect &effect) {
 	effect.opacity = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+	// The Blending checkbox is part of the trigger's target state: firing it
+	// flips the channel additive (checked) or normal (unchecked). Effect
+	// levels build their glow out of these mid-level flips.
+	effect.blending = String(properties.get("17", String("0"))) == "1";
 	const String copied = String(properties.get("50", String())).strip_edges();
 	if (copied.is_valid_int() && copied.to_int() > 0) {
 		effect.copy_channel = static_cast<int32_t>(copied.to_int());
@@ -1145,6 +1151,10 @@ class NativeTriggerRuntime : public RefCounted {
 			}
 			data->set("intensity", static_cast<double>(data->get("intensity")) + (1.0 - fade.initial_intensity) * weight_delta);
 			data->set("alpha", static_cast<double>(data->get("alpha")) + (fade.alpha_target - fade.initial_alpha) * weight_delta);
+			// Blending is target state, not a faded value: it applies the moment
+			// the trigger fires. The channel resource's changed signal fans out to
+			// the watcher, which pushes the flip onto the channel's batches.
+			data->set("blending", effect.blending);
 		}
 		data->emit_signal(StringName("changed"));
 	}
@@ -2563,10 +2573,19 @@ class NativeDecorationRenderer : public RefCounted {
 		bool has_hsv = false;
 		float spin_radians = 0.0f;
 		Vector2 spin_pivot;
+		// Blend override after a colour trigger flips the channel (key 17):
+		// 0 inherits the batch's import-time material, 1 additive, 2 normal.
+		uint8_t blend = 0;
 	};
 
 	uint64_t owner_id = 0;
 	RID canvas_item;
+	// Records a colour trigger flipped away from the batch's own blend mode
+	// are re-routed onto these instead, so one batch can hold normal and
+	// additive sprites at once without rebuilding either side.
+	RID canvas_item_plain;
+	RID canvas_item_add;
+	Ref<CanvasItemMaterial> additive_material;
 	std::vector<Record> records;
 	// Dense indices are effectively a small SoA hot set: animation touches only
 	// transform/spin data for rotating records, never every static Record.
@@ -2609,12 +2628,19 @@ class NativeDecorationRenderer : public RefCounted {
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
 		server->canvas_item_clear(canvas_item);
+		if (canvas_item_plain.is_valid()) server->canvas_item_clear(canvas_item_plain);
+		if (canvas_item_add.is_valid()) server->canvas_item_clear(canvas_item_add);
 		last_drawn_items = 0;
 		if (!range_has_records && cull) return;
 		auto draw_record = [&](const Record &record) {
-			server->canvas_item_add_set_transform(canvas_item, record.transform);
+			// Flipped records draw on their own canvas item; everything else
+			// keeps the batch's import-time material through the parent.
+			RID target = canvas_item;
+			if (record.blend == 1 && canvas_item_add.is_valid()) target = canvas_item_add;
+			else if (record.blend == 2 && canvas_item_plain.is_valid()) target = canvas_item_plain;
+			server->canvas_item_add_set_transform(target, record.transform);
 			server->canvas_item_add_texture_rect_region(
-					canvas_item, Rect2(-record.region.size * 0.5, record.region.size),
+					target, Rect2(-record.region.size * 0.5, record.region.size),
 					record.texture->get_rid(), record.region, record.color, false, true);
 			++last_drawn_items;
 		};
@@ -2652,6 +2678,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("update_camera_range"), &NativeDecorationRenderer::update_camera_range);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationRenderer::set_visible_buckets);
 		ClassDB::bind_method(D_METHOD("apply_channel_color", "indices", "color"), &NativeDecorationRenderer::apply_channel_color);
+		ClassDB::bind_method(D_METHOD("set_channel_blending", "indices", "additive"), &NativeDecorationRenderer::set_channel_blending);
+		ClassDB::bind_method(D_METHOD("get_item_blend", "index"), &NativeDecorationRenderer::get_item_blend);
 		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationRenderer::get_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationRenderer::set_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationRenderer::set_item_transform);
@@ -2664,13 +2692,21 @@ protected:
 public:
 	NativeDecorationRenderer() {
 		RenderingServer *server = RenderingServer::get_singleton();
-		if (server) canvas_item = server->canvas_item_create();
+		if (server) {
+			canvas_item = server->canvas_item_create();
+			canvas_item_plain = server->canvas_item_create();
+			canvas_item_add = server->canvas_item_create();
+		}
 		registered_decoration_renderers.insert(this);
 	}
 	~NativeDecorationRenderer() override {
 		registered_decoration_renderers.erase(this);
 		RenderingServer *server = RenderingServer::get_singleton();
-		if (server && canvas_item.is_valid()) server->free_rid(canvas_item);
+		if (server) {
+			if (canvas_item.is_valid()) server->free_rid(canvas_item);
+			if (canvas_item_plain.is_valid()) server->free_rid(canvas_item_plain);
+			if (canvas_item_add.is_valid()) server->free_rid(canvas_item_add);
+		}
 	}
 
 	void request_redraw() { commands_dirty = true; }
@@ -2692,6 +2728,24 @@ public:
 			server->canvas_item_set_parent(canvas_item, owner_canvas->get_canvas_item());
 			server->canvas_item_set_use_parent_material(canvas_item, true);
 			server->canvas_item_set_visible(canvas_item, false);
+			// The two override canvas items ignore the batch's material: one
+			// always adds, one is always plain. Records only reach them after
+			// a colour trigger flips their channel's blending.
+			if (canvas_item_plain.is_valid()) {
+				server->canvas_item_set_parent(canvas_item_plain, owner_canvas->get_canvas_item());
+				server->canvas_item_set_use_parent_material(canvas_item_plain, false);
+				server->canvas_item_set_visible(canvas_item_plain, false);
+			}
+			if (canvas_item_add.is_valid()) {
+				if (additive_material.is_null()) {
+					additive_material.instantiate();
+					additive_material->set_blend_mode(CanvasItemMaterial::BLEND_MODE_ADD);
+				}
+				server->canvas_item_set_parent(canvas_item_add, owner_canvas->get_canvas_item());
+				server->canvas_item_set_use_parent_material(canvas_item_add, false);
+				server->canvas_item_set_material(canvas_item_add, additive_material->get_rid());
+				server->canvas_item_set_visible(canvas_item_add, false);
+			}
 		}
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		records.clear(); spinning_indices.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
@@ -2766,6 +2820,8 @@ public:
 		last_viewport_size = job.screen_size; view_initialized = true;
 		range_has_records = selected_range_has_records();
 		server->canvas_item_set_visible(canvas_item, range_has_records);
+		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
+		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
 		rebuild_commands();
 	}
 
@@ -2789,10 +2845,28 @@ public:
 		last_viewport_size = screen_size; view_initialized = true;
 		range_has_records = selected_range_has_records();
 		server->canvas_item_set_visible(canvas_item, range_has_records);
+		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
+		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
 		rebuild_commands();
 	}
 
 	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; range_has_records = selected_range_has_records(); rebuild_commands(); }
+	// Flips the given records between normal and additive blending when a
+	// colour trigger toggles their channel (key 17). Idempotent: the batch's
+	// GDScript side caches the last state per channel.
+	void set_channel_blending(const PackedInt32Array &indices, bool additive) {
+		for (int64_t i = 0; i < indices.size(); ++i) {
+			const int64_t index = indices[i];
+			if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
+			records[static_cast<size_t>(index)].blend = additive ? 1 : 2;
+		}
+		commands_dirty = true;
+	}
+	// Blend override of one record (0 inherit, 1 additive, 2 normal) for tests.
+	int64_t get_item_blend(int64_t index) const {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return -1;
+		return records[static_cast<size_t>(index)].blend;
+	}
 	void apply_channel_color(const PackedInt32Array &indices, const Color &channel_color) {
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;

@@ -331,6 +331,67 @@ func setup_color_channel_watchers() -> void:
 		var watcher := ColorChannelWatcher.new(color_channel)
 		watcher.name = "Watcher@%s" % color_channel.associated_group.trim_prefix(Constants.COLOR_CHANNEL_GROUP_PREFIX)
 		add_child(watcher)
+	_print_glow_diagnostics()
+
+
+## One-shot load-time summary of everything that drives the level's glow:
+## which channels blend (directly or through a copy), how the glow sprites
+## distribute along the level, and which glow-capable placements lack artwork.
+## Printed once per level load so a device logcat answers "where did the glow
+## go" without a debugger attached. GLOWDIAG greps clean.
+func _print_glow_diagnostics() -> void:
+	if Editor.in_editor:
+		return
+	var blending_channels: Array[String] = []
+	var copy_channels: Array[String] = []
+	for channel: ColorChannelData in color_channels:
+		var id := channel.associated_group.trim_prefix(Constants.COLOR_CHANNEL_GROUP_PREFIX)
+		if channel.blending:
+			blending_channels.append(id)
+		if channel.copy:
+			copy_channels.append("%s<-%d" % [id, channel.copied_channel])
+	print(
+		"GLOWDIAG channels=%d blending=[%s] copies=[%s]"
+		% [color_channels.size(), ", ".join(blending_channels), ", ".join(copy_channels)]
+	)
+	var total_items := 0
+	var glow_items := 0
+	var blending_batches := 0
+	var batch_count := 0
+	var glow_by_bucket: Dictionary[int, int] = { }
+	for layer: Layer in layers:
+		for child: Node in layer.get_children():
+			if child is not DecorationBatch:
+				continue
+			batch_count += 1
+			if child.gd_blending:
+				blending_batches += 1
+			for item: DecorationBatch.Item in child.items:
+				total_items += 1
+				if item.layer == "glow":
+					glow_items += 1
+					var bucket := int(item.origin_x / 1000.0)
+					glow_by_bucket[bucket] = glow_by_bucket.get(bucket, 0) + 1
+	var bucket_line := ""
+	var sorted_buckets := glow_by_bucket.keys()
+	sorted_buckets.sort()
+	for bucket: int in sorted_buckets:
+		bucket_line += "%d:%d " % [bucket, glow_by_bucket[bucket]]
+	print(
+		"GLOWDIAG batches=%d additive=%d items=%d glow=%d"
+		% [batch_count, blending_batches, total_items, glow_items]
+	)
+	print("GLOWDIAG glow per 1000x: " + bucket_line.strip_edges())
+	if not GDDecorationLoader._glow_without_art.is_empty():
+		var top := GDDecorationLoader._glow_without_art.keys()
+		top.sort_custom(
+			func(a, b): return GDDecorationLoader._glow_without_art[a] > GDDecorationLoader._glow_without_art[b]
+		)
+		var art_line := ""
+		for index: int in mini(top.size(), 10):
+			var gd_id: int = top[index]
+			art_line += "%d:%d " % [gd_id, GDDecorationLoader._glow_without_art[gd_id]]
+		print("GLOWDIAG glow wanted, no artwork: " + art_line.strip_edges())
 
 
 func setup_level_sprites_colors() -> void:
