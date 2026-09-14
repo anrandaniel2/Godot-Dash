@@ -71,6 +71,7 @@ static func reset() -> void:
 	_sheet = null
 	_loaded = false
 	_glow_without_art = { }
+	_layer_batches = { }
 	GDObjectFrames.reload()
 
 
@@ -496,6 +497,18 @@ static func _add_part(
 	)
 
 
+## Batches that share a z layer, across every [method build_batches] call of
+## the current level build. The build job seals editor layers one at a time
+## (streamed while playing), so the batches of one z plane arrive spread over
+## several calls; ranking each call on its own handed every seal the same
+## 0..63 z offsets, and at equal z the scene tree order decided - so batches
+## of later-sealed layers covered already-loaded ones wherever they overlapped
+## (visible as dark spots swallowing the decoration as more of the level
+## streamed in). Ranking is therefore global per z layer and re-assigned
+## whenever new batches join.
+static var _layer_batches: Dictionary[int, Array] = { }
+
+
 ## Gives batches that share a z layer distinct z indices.
 ##
 ## Sorting inside a batch only orders that batch's own items. Two batches on the
@@ -503,19 +516,41 @@ static func _add_part(
 ## whatever order they sit in the scene tree, letting background pieces land on
 ## top of foreground ones. That reads as objects heaped in the wrong place.
 static func _finalise_batch_order(batches: Array[DecorationBatch]) -> void:
-	var by_layer: Dictionary[int, Array] = { }
+	# Drop batches whose level has exited, so the registry never grows across
+	# builds, and merge this call's batches in with the survivors.
+	for layer: int in _layer_batches.keys():
+		var live: Array = []
+		for batch: DecorationBatch in _layer_batches[layer]:
+			if is_instance_valid(batch):
+				live.append(batch)
+		if live.is_empty():
+			_layer_batches.erase(layer)
+		else:
+			_layer_batches[layer] = live
 	for batch: DecorationBatch in batches:
-		if not by_layer.has(batch.gd_z_layer):
-			by_layer[batch.gd_z_layer] = []
-		by_layer[batch.gd_z_layer].append(batch)
+		if not _layer_batches.has(batch.gd_z_layer):
+			_layer_batches[batch.gd_z_layer] = []
+		if not _layer_batches[batch.gd_z_layer].has(batch):
+			_layer_batches[batch.gd_z_layer].append(batch)
+
+	var by_layer: Dictionary[int, Array] = { }
+	for layer: int in _layer_batches:
+		by_layer[layer] = _layer_batches[layer]
 
 	for layer: int in by_layer:
 		var group: Array = by_layer[layer]
 		# Rank by the batch's own draw order, keyed on its lowest item so a
 		# batch never jumps ahead of one whose contents all sit behind it.
+		# sort_custom is not stable, so ties need a fixed tie-break: without
+		# one, two batches of equal key could swap places each time a later
+		# editor layer's seal re-ranks the layer.
 		group.sort_custom(
-				func(a: DecorationBatch, b: DecorationBatch) -> bool:
-					return a.sort_key() < b.sort_key()
+			func(a: DecorationBatch, b: DecorationBatch) -> bool:
+				var key_a := a.sort_key()
+				var key_b := b.sort_key()
+				if key_a == key_b:
+					return a.get_instance_id() < b.get_instance_id()
+				return key_a < key_b
 		)
 		# Additive batches go last within the layer: glow reads as light cast
 		# over the scenery rather than something hidden behind it.

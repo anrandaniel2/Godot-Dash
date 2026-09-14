@@ -684,7 +684,14 @@ func _get_jump_state() -> int:
 
 	if jump_hold_disabled:
 		jump_state = -1
-		if is_jump_just_pressed and (is_on_floor() or is_on_ceiling() or coyote_time > 0):
+		if not is_jump_pressed or is_jump_just_released:
+			# The hold the disable guards against is over. Without this an
+			# airborne UFO (or ship) that used a spider dash, a gravity flip
+			# or a stop-jump object kept ignoring clicks until it landed:
+			# there is no floor mid-air to satisfy the recovery check below,
+			# so a fresh click has to count as soon as the button was let go.
+			jump_hold_disabled = false
+		elif is_jump_just_pressed and (is_on_floor() or is_on_ceiling() or coyote_time > 0):
 			jump_hold_disabled = false
 	if jump_hold_disabled:
 		return -1

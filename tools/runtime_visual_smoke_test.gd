@@ -33,7 +33,40 @@ class FakeLevel extends Node2D:
 
 
 
+## Regression test for the streamed-level batch ordering: every editor layer
+## seal runs its own build_batches call while a level streams in, so the
+## batches of one z plane arrive across several calls. Ranking each call on
+## its own handed every seal the same z offsets and let later seals cover
+## earlier ones wherever they overlapped (device report: dark spots swallowing
+## the decoration as more of the level loaded).
+func _test_batch_order() -> void:
+	var front := DecorationBatch.new()
+	front.gd_z_layer = 5
+	var front_item := DecorationBatch.Item.new()
+	front_item.z_order = 100
+	front.items.append(front_item)
+	var first_seal: Array[DecorationBatch] = [front]
+	GDDecorationLoader.finalise_batch_order(first_seal)
+
+	var back := DecorationBatch.new()
+	back.gd_z_layer = 5
+	var back_item := DecorationBatch.Item.new()
+	back_item.z_order = 1
+	back.items.append(back_item)
+	var second_seal: Array[DecorationBatch] = [back]
+	GDDecorationLoader.finalise_batch_order(second_seal)
+
+	assert(
+		front.z_index > back.z_index,
+		"visual smoke: batches of separate seals on one z layer must share a ranking"
+	)
+	front.free()
+	back.free()
+
+
+
 func _ready() -> void:
+	_test_batch_order()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()
