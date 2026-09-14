@@ -820,18 +820,20 @@ class NativeTriggerRuntime : public RefCounted {
 			}
 		}
 		const int32_t link = static_cast<int32_t>(data->get("copied_channel_id"));
-		if (link <= 0) return data->get("color");
+		if (link <= 0) return static_cast<Color>(data->get("color"));
 		Color color;
 		const String level_property = level_color_property_for_channel(link);
 		if (!level_property.is_empty()) {
 			Object *level = ObjectDB::get_instance(level_id);
-			color = level ? level->get(level_property) : Color(1.0f, 1.0f, 1.0f);
+			if (level) color = level->get(level_property);
+			else color = Color(1.0f, 1.0f, 1.0f);
 		} else if (link == 1005 || link == 1006) {
 			Object *config = ObjectDB::get_instance(config_id);
-			color = config ? config->get(link == 1005 ? "primary_color" : "secondary_color") : Color(1.0f, 1.0f, 1.0f);
+			if (config) color = config->get(link == 1005 ? "primary_color" : "secondary_color");
+			else color = Color(1.0f, 1.0f, 1.0f);
 		} else {
 			Object *source = channel_lookup(link);
-			if (!source) return data->get("color");
+			if (!source) return static_cast<Color>(data->get("color"));
 			color = resolve_channel_data_color(source, budget - 1);
 		}
 		return shift_copy_hsv(color, data);
