@@ -459,9 +459,10 @@ jobs:
           }
           set +e
           # Scene-run shape (same as the smoke test, autoloads up) because a
-          # --script SceneTree probe hung in CI; hard timeout so a wedged
-          # script load can never stall the job for hours.
-          timeout 180s xvfb-run -a "$GODOT_BIN" --path . \
+          # --script SceneTree probe hung in CI. Hard timeout as a backstop;
+          # success is judged from the log below, because the engine's
+          # shutdown can hang after the probe itself completed cleanly.
+          timeout 240s xvfb-run -a "$GODOT_BIN" --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/gdscript_probe.tscn \
@@ -469,31 +470,26 @@ jobs:
           status=$?
           set -e
           cat probe.log
-          if [ $status -ne 0 ]; then
-            echo "### GDScript load probe failure" >> "$GITHUB_STEP_SUMMARY"
-            echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            cat probe.log >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if ! grep -q "^PROBE_SUMMARY" probe.log; then
+            # Never finished: real hang or crash before the summary line.
+            tail_details=$(tail -n 40 probe.log || true)
+            tail_details=${tail_details//'%'/'%25'}
+            tail_details=${tail_details//$'\r'/'%0D'}
+            tail_details=${tail_details//$'\n'/'%0A'}
+            echo "::error title=Probe hung or crashed (tail)::${tail_details}"
+            exit 1
+          fi
+          if grep -q "^PROBE FAIL" probe.log; then
             # The root errors print immediately before each PROBE FAIL line
             # (a script's own parse/analyze errors print during its load()).
-            # Show that context first - it is the whole point of the probe.
             context=$(grep -B30 "^PROBE FAIL" probe.log | head -n 55 || true)
             context=${context//'%'/'%25'}
             context=${context//$'\r'/'%0D'}
             context=${context//$'\n'/'%0A'}
             echo "::error title=Probe root errors (before each FAIL)::${context}"
-            fails=$(grep -E "^PROBE FAIL|^PROBE_SUMMARY" probe.log || true)
-            fails=${fails//'%'/'%25'}
-            fails=${fails//$'\r'/'%0D'}
-            fails=${fails//$'\n'/'%0A'}
-            echo "::error title=Probe failing scripts::${fails}"
-            tail_details=$(tail -n 40 probe.log || true)
-            tail_details=${tail_details//'%'/'%25'}
-            tail_details=${tail_details//$'\r'/'%0D'}
-            tail_details=${tail_details//$'\n'/'%0A'}
-            echo "::error title=Probe log tail (last 40 lines)::${tail_details}"
             exit 1
           fi
+          echo "Probe completed clean (engine exit $status; timeout was the backstop)"
 
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
