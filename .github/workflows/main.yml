@@ -470,11 +470,29 @@ jobs:
           set -e
           cat probe.log
           if [ $status -ne 0 ]; then
+            echo "### GDScript load probe failure" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            cat probe.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # The failing scripts first: the autoload-init cascade at the top
+            # of the log otherwise eats the whole annotation window before
+            # the probe's own output (the actual root errors, printed right
+            # before each PROBE FAIL line) shows up.
+            fails=$(grep -E "^PROBE (FAIL|SUMMARY)" probe.log)
+            fails=${fails//'%'/'%25'}
+            fails=${fails//$'\r'/'%0D'}
+            fails=${fails//$'\n'/'%0A'}
+            echo "::error title=Probe failing scripts::${fails}"
+            context=$(grep -B20 "^PROBE FAIL" probe.log | head -n 50)
+            context=${context//'%'/'%25'}
+            context=${context//$'\r'/'%0D'}
+            context=${context//$'\n'/'%0A'}
+            echo "::error title=Probe root-error context (log before each FAIL)::${context}"
             probe_details=$(grep -v "^PROBE OK " probe.log | head -n 60)
             probe_details=${probe_details//'%'/'%25'}
             probe_details=${probe_details//$'\r'/'%0D'}
             probe_details=${probe_details//$'\n'/'%0A'}
-            echo "::error title=GDScript load probe (root errors)::${probe_details}"
+            echo "::error title=GDScript load probe (head)::${probe_details}"
             exit 1
           fi
 
