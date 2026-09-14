@@ -1168,14 +1168,14 @@ static func _components_from_properties(
 				else:
 					changer["source"] = ColorChannelChangerComponent.ColorSource.KEEP
 				components["ColorChannelChangerComponent"] = changer
-				if "TargetColorChannelComponent" in supported:
-					var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
-					if not (target_color.is_valid_int() and int(target_color) > 0):
-						# No key 23: the legacy families each targeted a fixed
-						# channel, and a bare 899 defaults to channel 1
-						# (GDRweb's COLOR_TRIGGER_IDS).
-						target_color = str(LEGACY_COLOR_TRIGGER_CHANNELS.get(gd_id, 1))
-					if target_color.is_valid_int():
+			if "TargetColorChannelComponent" in supported:
+				var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
+				if not (target_color.is_valid_int() and int(target_color) > 0):
+					# No key 23: the legacy families each targeted a fixed
+					# channel, and a bare 899 defaults to channel 1
+					# (GDRweb's COLOR_TRIGGER_IDS).
+					target_color = str(LEGACY_COLOR_TRIGGER_CHANNELS.get(gd_id, 1))
+				if target_color.is_valid_int():
 					var channel_id: int = int(target_color)
 					# 1000+ are the level's own background / ground / line
 					# channels, which Godot Dash models as a separate type.
