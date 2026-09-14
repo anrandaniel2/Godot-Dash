@@ -73,6 +73,12 @@ const CHANNEL_GROUND_2 := 1009
 
 @export_storage var gradient: Gradient = Gradient.new()
 
+## The copy link this trigger's channel ends up with (-1 none pending): the
+## link goes live when the fade completes so the fade towards the source
+## stays visible, matching the native runtime and GDRweb's mix towards the
+## live copy during the fade.
+var _pending_copy_link: int = -1
+
 
 func _ready() -> void:
 	await require([TargetColorChannelComponent, EasingComponent])
@@ -140,6 +146,23 @@ func start(_player: Player) -> void:
 				if color_channel.blending != blending:
 					color_channel.blending = blending
 					color_channel.emit_changed()
+				# The copy link is target state too (key 50): re-pointing the
+				# channel at its source keeps it following that source's later
+				# recolours (GDRweb's CopyColor track value), while an explicit
+				# colour or player target severs the link. A copy link goes
+				# live when the fade completes so the fade towards the source
+				# stays visible; severing happens at fire time.
+				match source:
+					ColorSource.COPY_CHANNEL:
+						_pending_copy_link = copied_channel_id
+						if parent.query(EasingComponent).duration <= 0.0:
+							_apply_pending_copy_link()
+					ColorSource.COLOR, ColorSource.PLAYER_1, ColorSource.PLAYER_2:
+						_pending_copy_link = -1
+						color_channel.copied_channel_id = 0
+					ColorSource.KEEP:
+						# Opacity-only: no colour change and no link change.
+						_pending_copy_link = -1
 		Type.LEVEL:
 			var Channel = Constants.SpecialColorChannel
 			var level: Level = LevelManager.current_level
@@ -192,9 +215,11 @@ func _resolved_color(keep: Color) -> Color:
 ## [code]{ "color": Color, "alpha": float }[/code].
 ##
 ## Reserved channel IDs resolve to their live level or player colour; custom
-## channels are looked up in the level's channel table and follow their own
-## copy link. An ID nothing provides yields an empty dictionary, and the
-## trigger then simply keeps the channel's current colour.
+## channels are looked up in the level's channel table and resolve through
+## ColorChannelWatcher, so a source that is itself a copy follows its own link
+## (with its copy HSV) just like at render time. An ID nothing provides yields
+## an empty dictionary, and the trigger then simply keeps the channel's
+## current colour.
 func _resolve_copied_channel() -> Dictionary:
 	if copied_channel_id <= 0:
 		return { }
@@ -218,28 +243,12 @@ func _resolve_copied_channel() -> Dictionary:
 	if idx == -1:
 		return { }
 	var channel: ColorChannelData = level.color_channels[idx]
-	if channel.copy:
-		return { "color": _special_color(channel.copied_channel), "alpha": channel.alpha }
+	if channel.copy or channel.copied_channel_id > 0:
+		return {
+			"color": ColorChannelWatcher.resolve_channel_color(channel),
+			"alpha": ColorChannelWatcher.resolve_channel_alpha(channel),
+		}
 	return { "color": channel.color, "alpha": channel.alpha }
-
-
-## The live colour of a reserved channel, as followed by the channel table's
-## own copy links. Expects a current level to exist.
-func _special_color(channel: Constants.SpecialColorChannel) -> Color:
-	var level: Level = LevelManager.current_level
-	match channel:
-		Constants.SpecialColorChannel.BACKGROUND:
-			return level.background_color
-		Constants.SpecialColorChannel.GROUND:
-			return level.ground_color
-		Constants.SpecialColorChannel.LINE:
-			return level.line_color
-		Constants.SpecialColorChannel.P1:
-			return Config.primary_color
-		Constants.SpecialColorChannel.P2:
-			return Config.secondary_color
-		_:
-			return Config.glow_color
 
 
 ## Applies the copy-colour HSV adjustment to a resolved source colour, in
@@ -267,6 +276,8 @@ func _on_easing_progressed(player: Player, weight_delta: float) -> void:
 			color_channel.hsv_shift[2] += (value - initial_color_channel.hsv_shift[2]) * weight_delta
 			color_channel.intensity += (intensity - initial_color_channel.intensity) * weight_delta
 			color_channel.alpha += (alpha - initial_color_channel.alpha) * weight_delta
+			if _pending_copy_link != -1 and weight >= 1.0:
+				_apply_pending_copy_link()
 			color_channel.emit_changed()
 		Type.LEVEL:
 			var Channel = Constants.SpecialColorChannel
@@ -284,6 +295,22 @@ func _on_easing_progressed(player: Player, weight_delta: float) -> void:
 					pass
 				Channel.GLOW:
 					pass
+
+
+## Re-points the channel at its trigger's copy source (key 50), so it keeps
+## following that source's later recolours once this trigger's fade is done.
+func _apply_pending_copy_link() -> void:
+	if _pending_copy_link <= 0 or color_channel == null:
+		_pending_copy_link = -1
+		return
+	color_channel.copied_channel_id = _pending_copy_link
+	color_channel.copy_opacity = copy_opacity
+	color_channel.copy_hue = copy_hue
+	color_channel.copy_saturation = copy_saturation
+	color_channel.copy_value = copy_value
+	color_channel.copy_saturation_additive = copy_saturation_additive
+	color_channel.copy_value_additive = copy_value_additive
+	_pending_copy_link = -1
 
 
 func _on_target_color_channel_type_changed(type: Type) -> void:

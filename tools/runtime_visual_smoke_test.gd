@@ -292,6 +292,52 @@ func _test_native_core() -> void:
 		assert(int(color_sources[3].get("source", -1)) == ColorChannelChangerComponent.ColorSource.KEEP, "native smoke: opacity-only trigger must keep the channel colour")
 		assert(not color_sources[3].has("color"), "native smoke: opacity-only trigger must not carry a colour")
 		assert(bool(color_sources[4].get("blending", false)), "native smoke: blending checkbox was lost in trigger conversion")
+	# kS38 copy entries keep their link instead of being flattened to a
+	# literal: the runtime channel carries the source id, the copy HSV of key
+	# 10 and the opacity-copy flag of key 17, so it can follow the source live
+	# (the asserts further below exercise that fan-out through a real level).
+	# The legacy colour-trigger families (29/30/104/... targeted a fixed
+	# channel before key 23 existed) import like any colour trigger, and a
+	# bare 899 without key 23 falls back to channel 1.
+	var link_report := GMDConverter.ImportReport.new()
+	var link_level := GMDConverter.import_online_level_string(
+		"kA2,0,kA4,0,kS38,1_0_2_0_3_255_6_5_7_1|6_10_7_1_9_5_10_180a1a1a0a0|6_11_7_1_9_10|6_12_7_0.25_9_5_17_1;1,1,2,30,3,30,21,5;1,1,2,60,3,30,21,10;1,1,2,90,3,30,21,11;1,1,2,120,3,30,21,12;1,30,2,30,3,150;1,899,2,30,3,180,7,255,8,255,9,255;",
+		"Copy channel import",
+		link_report,
+	)
+	var link_channels: Array = link_level.get("color_channels", [])
+	var channel_data_by_group := {}
+	for entry: Dictionary in link_channels:
+		channel_data_by_group[entry.get("associated_group", "")] = entry
+	assert(int(channel_data_by_group.get("c_10", {}).get("copied_channel_id", 0)) == 5,
+			"native smoke: kS38 copy link was not kept on the runtime channel")
+	assert(is_equal_approx(float(channel_data_by_group.get("c_10", {}).get("copy_hue", 0.0)), 0.5),
+			"native smoke: kS38 copy HSV was not kept on the runtime channel")
+	assert(int(channel_data_by_group.get("c_11", {}).get("copied_channel_id", 0)) == 10,
+			"native smoke: copy chain link was not kept on the runtime channel")
+	assert(bool(channel_data_by_group.get("c_12", {}).get("copy_opacity", false)),
+			"native smoke: kS38 opacity-copy flag was not kept on the runtime channel")
+	var link_entries: Array = link_level.get("layers", [{}])[0].get("objects", [])
+	assert(link_entries.size() == 6, "native smoke: copy import dropped objects or triggers")
+	var legacy_trigger: Dictionary = {}
+	var bare_trigger: Dictionary = {}
+	for entry: Dictionary in link_entries:
+		if int(entry.get("gd_object_id", 0)) == 30:
+			legacy_trigger = entry
+		if int(entry.get("gd_object_id", 0)) == 899:
+			bare_trigger = entry
+	assert(not legacy_trigger.is_empty(), "native smoke: legacy colour trigger was dropped")
+	assert(not bare_trigger.is_empty(), "native smoke: bare colour trigger was dropped")
+	if native_import:
+		assert(bool(legacy_trigger.get("native_only_trigger", false)),
+				"native smoke: legacy colour trigger was not packed as a record")
+	else:
+		var legacy_target: Dictionary = legacy_trigger.get("components", {}).get("TargetColorChannelComponent", {})
+		assert(int(legacy_target.get("target_level_channel", -1)) == Constants.SpecialColorChannel.GROUND,
+				"native smoke: legacy ground trigger did not target the ground colour")
+		var bare_target: Dictionary = bare_trigger.get("components", {}).get("TargetColorChannelComponent", {})
+		assert(bare_target.get("target_color_channel", "") == Constants.COLOR_CHANNEL_GROUP_PREFIX + "1",
+				"native smoke: bare colour trigger did not fall back to channel 1")
 	# Imported pads keep their hand-authored Area2D behaviour but replace the
 	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
 	# hitbox must follow that sprite to the object origin.
@@ -434,6 +480,129 @@ func _test_native_core() -> void:
 	# Reset clears activation state and running fades.
 	effect_runtime.call(&"reset")
 	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
+	# --- Live copy channels (GDRweb CopyColor port) -----------------------
+	# Copies resolve their source live: B copies A, a trigger recolours A and
+	# B's members re-render from A's new colour. Chains, per-copy HSV shifts,
+	# opacity copying, level-colour copies and copy cycles are all part of
+	# the semantics ported from GDRweb's CopyColor evaluation.
+	var watcher_level := Level.new()
+	add_child(watcher_level)
+	var previous_level: Level = LevelManager.current_level
+	LevelManager.current_level = watcher_level
+	var source_channel := ColorChannelData.new()
+	source_channel.associated_group = "c_5"
+	source_channel.color = Color.WHITE
+	var copy_channel := ColorChannelData.new()
+	copy_channel.associated_group = "c_10"
+	copy_channel.color = Color.BLUE # import snapshot; the link decides at runtime
+	copy_channel.copied_channel_id = 5
+	copy_channel.copy_hue = 0.5 # +180 degrees
+	var chain_channel := ColorChannelData.new()
+	chain_channel.associated_group = "c_11"
+	chain_channel.copied_channel_id = 10
+	var opacity_channel := ColorChannelData.new()
+	opacity_channel.associated_group = "c_12"
+	opacity_channel.copied_channel_id = 5
+	opacity_channel.copy_opacity = true
+	opacity_channel.alpha = 0.25
+	var special_channel := ColorChannelData.new()
+	special_channel.associated_group = "c_13"
+	special_channel.copy = true
+	special_channel.copied_channel = Constants.SpecialColorChannel.BACKGROUND
+	var cycle_a := ColorChannelData.new()
+	cycle_a.associated_group = "c_14"
+	cycle_a.copied_channel_id = 15
+	var cycle_b := ColorChannelData.new()
+	cycle_b.associated_group = "c_15"
+	cycle_b.copied_channel_id = 14
+	# c_7 / c_8 pair for the trigger-side link asserts further below; both
+	# belong to the level from the start so the watcher wiring covers them.
+	var link_source := ColorChannelData.new()
+	link_source.associated_group = "c_7"
+	var link_target := ColorChannelData.new()
+	link_target.associated_group = "c_8"
+	watcher_level.color_channels = [
+		source_channel, copy_channel, chain_channel, opacity_channel,
+		special_channel, cycle_a, cycle_b, link_source, link_target,
+	]
+	watcher_level.setup_color_channel_watchers()
+	var make_member := func(channel_group: StringName) -> HSVWatcher:
+		var host := Node2D.new()
+		watcher_level.add_child(host)
+		var member := HSVWatcher.new()
+		host.add_child(member)
+		member.add_to_group(channel_group)
+		return member
+	var copy_member := make_member.call(&"c_10")
+	var chain_member := make_member.call(&"c_11")
+	var opacity_member := make_member.call(&"c_12")
+	var special_member := make_member.call(&"c_13")
+	# The source's opacity and colour change; every copying channel follows,
+	# each with its own HSV adjustment on top (c_10 rotates 180 degrees, the
+	# c_11 chain link adds nothing) and the opacity copy (c_12) taking the
+	# source's 0.5 instead of its own 0.25.
+	source_channel.set_alpha(0.5)
+	source_channel.set_color(Color.RED)
+	assert(copy_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
+			"native smoke: copy channel did not follow its source's recolour")
+	assert(chain_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
+			"native smoke: copy chain did not resolve through its link")
+	assert(opacity_member.modulate.is_equal_approx(Color.RED) and is_equal_approx(opacity_member.base_alpha, 0.5),
+			"native smoke: opacity copy did not take the source's alpha")
+	# A recoloured level colour reaches the channels copying it: nothing else
+	# fires when the background itself changes, so the level setter must fan
+	# the refresh out itself.
+	watcher_level.background_color = Color.GREEN
+	assert(special_member.modulate.is_equal_approx(Color.GREEN),
+			"native smoke: background copy channel stayed frozen at import")
+	# A copy cycle terminates: both channels resolve to white (the iteration
+	# budget) instead of recursing, and the refresh fan-out returns.
+	assert(ColorChannelWatcher.resolve_channel_color(cycle_a) == Color.WHITE,
+			"native smoke: copy cycle did not hit the iteration budget")
+	cycle_a.set_color(Color.YELLOW)
+	assert(chain_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
+			"native smoke: refresh fan-out disturbed an unrelated channel")
+	# --- Copy links as trigger target state -------------------------------
+	# A copy-colour trigger (key 50) re-points its channel at the source, so
+	# the channel keeps following that source's later recolours; an explicit
+	# RGB severs the link again. Fades resolve chains live too.
+	var link_member := make_member.call(&"c_8")
+	effect_runtime.call(&"register_channel", "c_7", link_source)
+	effect_runtime.call(&"register_channel", "c_8", link_target)
+	# Recolour the source first: the copy trigger's fade resolves it live.
+	effect_runtime.call(&"register_packed_trigger", 130.0, 0.0, 0, 8, PackedStringArray(), 899,
+			{"1": "899", "23": "7", "7": "0", "8": "255", "9": "0", "10": "0"})
+	effect_runtime.call(&"register_packed_trigger", 131.0, 0.0, 0, 9, PackedStringArray(), 899,
+			{"1": "899", "23": "8", "50": "7", "49": "120a1a1a0a0", "10": "0"})
+	effect_runtime.call(&"register_packed_trigger", 132.0, 0.0, 0, 10, PackedStringArray(), 899,
+			{"1": "899", "23": "7", "7": "255", "8": "0", "9": "255", "10": "0"})
+	effect_runtime.call(&"register_packed_trigger", 133.0, 0.0, 0, 11, PackedStringArray(), 899,
+			{"1": "899", "23": "8", "7": "0", "8": "0", "9": "255", "10": "0"})
+	effect_runtime.call(&"finalize")
+	effect_runtime.call(&"advance", effect_player, 0.0, 140.0)
+	assert(link_target.copied_channel_id == 7,
+			"native smoke: copy trigger did not link its channel to the source")
+	assert(is_equal_approx(link_target.copy_hue, 120.0 / 360.0),
+			"native smoke: copy trigger lost its HSV adjustment")
+	# The linked channel's members now render the source's colour with the
+	# link's +120 degree shift, re-resolved through the watcher fan-out.
+	assert(link_member.modulate.is_equal_approx(Color.from_hsv((120.0 + 120.0) / 360.0, 1.0, 1.0)),
+			"native smoke: linked channel member did not follow the source")
+	# A later recolour of the source reaches the linked channel with no
+	# trigger of its own - the whole point of the live link.
+	effect_runtime.call(&"advance", effect_player, 0.0, 150.0)
+	# Magenta (300 degrees) through the link's +120 shift wraps to 60 degrees.
+	assert(link_member.modulate.is_equal_approx(Color.from_hsv(60.0 / 360.0, 1.0, 1.0)),
+			"native smoke: linked channel did not follow its source's later recolour")
+	# An explicit RGB replaces the link: the channel becomes that literal
+	# colour and stops following the source.
+	effect_runtime.call(&"advance", effect_player, 0.0, 160.0)
+	assert(link_target.copied_channel_id == 0,
+			"native smoke: explicit RGB trigger did not sever the copy link")
+	assert(link_member.modulate.is_equal_approx(Color.BLUE),
+			"native smoke: severed link did not render the trigger's literal colour")
+	LevelManager.current_level = previous_level
+	watcher_level.free()
 	# Stop cancels a pending spawn, cutting spawn loops: a spawn-only member of
 	# g_9 fires from a scheduled event, then the stop trigger eats the second.
 	var spawn_target := Node.new()

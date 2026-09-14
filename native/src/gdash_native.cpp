@@ -285,6 +285,55 @@ static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) 
 	return true;
 }
 
+// The copy-chain recursion budget, matching ColorChannelWatcher.COPY_ITERATIONS
+// and GDRweb's CopyColor iteration guard: a chain longer than this (or a copy
+// cycle) resolves to white instead of recursing forever.
+constexpr int COPY_RESOLUTION_BUDGET = 8;
+
+// Applies a channel's copy HSV adjustment (kS38 key 10 / trigger key 49, held
+// on the ColorChannelData) to a resolved source colour, in Geometry Dash's
+// additive and multiplicative slider modes. Mirrors
+// ColorChannelWatcher._shift_copy_hsv and GDRweb's HSVShift.shiftColor.
+static Color shift_copy_hsv(const Color &base, Object *data) {
+	const double hue = static_cast<double>(data->get("copy_hue"));
+	const double saturation = static_cast<double>(data->get("copy_saturation"));
+	const double value = static_cast<double>(data->get("copy_value"));
+	if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value))
+		return base;
+	const bool saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
+	const bool value_additive = static_cast<bool>(data->get("copy_value_additive"));
+	double h = static_cast<double>(base.get_h()) + hue;
+	h -= Math::floor(h);
+	const double s = Math::clamp(
+		saturation_additive ? static_cast<double>(base.get_s()) + saturation
+							: static_cast<double>(base.get_s()) * saturation,
+		0.0, 1.0);
+	const double v = Math::clamp(
+		value_additive ? static_cast<double>(base.get_v()) + value
+					   : static_cast<double>(base.get_v()) * value,
+		0.0, 1.0);
+	return Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), base.a);
+}
+
+// The channel a colour trigger targeted when it carries no key 23: the legacy
+// families each had a fixed target (GDRweb's COLOR_TRIGGER_IDS), and a bare
+// modern 899 falls back to channel 1. 0 means "no default" (drop the trigger).
+static int32_t legacy_color_trigger_channel(int64_t gd_id) {
+	switch (gd_id) {
+		case 29: return 1000;
+		case 30: return 1001;
+		case 104: return 1002;
+		case 105: return 1004;
+		case 744: return 1003;
+		case 221: return 1;
+		case 717: return 2;
+		case 718: return 3;
+		case 743: return 4;
+		case 899: case 900: case 915: return 1;
+		default: return 0;
+	}
+}
+
 // Resolves where a colour/pulse trigger's target colour comes from. Geometry
 // Dash always serialises the RGB keys of a hand-picked colour - even pure
 // white - so their absence means the colour comes from a copied channel
@@ -338,7 +387,12 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2067: effect.kind = TriggerEffectKind::SCALE; break;
 		case 1007: effect.kind = TriggerEffectKind::ALPHA; break;
 		case 1049: effect.kind = TriggerEffectKind::TOGGLE; break;
-		case 899: effect.kind = TriggerEffectKind::COLOR; break;
+		case 899:
+		// Legacy colour-trigger families: each targeted a fixed channel
+		// before key 23 existed (GDRweb's COLOR_TRIGGER_IDS).
+		case 29: case 30: case 104: case 105: case 221: case 717:
+		case 718: case 743: case 744: case 900: case 915:
+			effect.kind = TriggerEffectKind::COLOR; break;
 		case 1006: effect.kind = TriggerEffectKind::PULSE; break;
 		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
 		case 1616: effect.kind = TriggerEffectKind::STOP; break;
@@ -391,11 +445,18 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		case TriggerEffectKind::COLOR: {
 			const String target = String(properties.get("23", String())).strip_edges();
-			if (!target.is_valid_int() || target.to_int() <= 0) {
-				effect.kind = TriggerEffectKind::NONE; // no target: nothing to fade
-				break;
+			int32_t channel = 0;
+			if (target.is_valid_int() && target.to_int() > 0) {
+				channel = static_cast<int32_t>(target.to_int());
+			} else {
+				// No key 23: the legacy families each targeted a fixed
+				// channel, and a bare 899 defaults to channel 1.
+				channel = legacy_color_trigger_channel(gd_id);
+				if (channel == 0) {
+					effect.kind = TriggerEffectKind::NONE; // no target: nothing to fade
+					break;
+				}
 			}
-			const int32_t channel = static_cast<int32_t>(target.to_int());
 			const String level_property = level_color_property_for_channel(channel);
 			if (!level_property.is_empty()) {
 				effect.channel_is_level_color = true;
@@ -727,23 +788,68 @@ class NativeTriggerRuntime : public RefCounted {
 		}
 		Object *data = channel_lookup(copy_id);
 		if (!data) return empty;
+		// The source resolves through its own state - special link, ordinary
+		// copy link or literal - exactly like ColorChannelWatcher does for
+		// rendering, so a copy of a copy lands on the same colour the level
+		// draws (GDRweb's recursive CopyColor evaluation).
 		Dictionary result;
+		result["color"] = resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET);
+		result["alpha"] = resolve_channel_data_alpha(data, COPY_RESOLUTION_BUDGET);
+		return result;
+	}
+
+	// A channel data's fully resolved colour: its literal colour, its special
+	// (level/player) colour, or - for an ordinary copy link - the source's
+	// resolved colour with this channel's copy HSV applied on top. The budget
+	// bounds copy chains the same way ColorChannelWatcher.COPY_ITERATIONS and
+	// GDRweb's CopyColor iteration guard do. The alpha is deliberately not
+	// folded into this colour: it travels separately through
+	// resolve_channel_data_alpha, so a copy-opacity channel never gets the
+	// source's alpha twice.
+	Color resolve_channel_data_color(Object *data, int budget) const {
+		if (budget <= 0) return Color(1.0f, 1.0f, 1.0f, 1.0f);
 		if (static_cast<bool>(data->get("copy"))) {
-			// A copying channel follows a reserved level/player colour.
 			const int32_t special = static_cast<int32_t>(data->get("copied_channel"));
 			switch (special) {
-				case 0: result["color"] = live_special_color(1000); break;
-				case 1: result["color"] = live_special_color(1001); break;
-				case 2: result["color"] = live_special_color(1002); break;
-				case 3: result["color"] = live_special_color(1005); break;
-				case 4: result["color"] = live_special_color(1006); break;
-				default: result["color"] = live_special_color(-1); break; // glow
+				case 0: return shift_copy_hsv(live_special_color(1000), data);
+				case 1: return shift_copy_hsv(live_special_color(1001), data);
+				case 2: return shift_copy_hsv(live_special_color(1002), data);
+				case 3: return shift_copy_hsv(live_special_color(1005), data);
+				case 4: return shift_copy_hsv(live_special_color(1006), data);
+				default: return shift_copy_hsv(live_special_color(-1), data); // glow
 			}
-		} else {
-			result["color"] = data->get("color");
 		}
-		result["alpha"] = data->get("alpha");
-		return result;
+		const int32_t link = static_cast<int32_t>(data->get("copied_channel_id"));
+		if (link <= 0) return data->get("color");
+		Color color;
+		const String level_property = level_color_property_for_channel(link);
+		if (!level_property.is_empty()) {
+			Object *level = ObjectDB::get_instance(level_id);
+			color = level ? level->get(level_property) : Color(1.0f, 1.0f, 1.0f);
+		} else if (link == 1005 || link == 1006) {
+			Object *config = ObjectDB::get_instance(config_id);
+			color = config ? config->get(link == 1005 ? "primary_color" : "secondary_color") : Color(1.0f, 1.0f, 1.0f);
+		} else {
+			Object *source = channel_lookup(link);
+			if (!source) return data->get("color");
+			color = resolve_channel_data_color(source, budget - 1);
+		}
+		return shift_copy_hsv(color, data);
+	}
+
+	// The opacity a channel's members render with: its own, or the source's
+	// when it copies opacity (kS38 key 17 / trigger key 60).
+	double resolve_channel_data_alpha(Object *data, int budget) const {
+		if (static_cast<bool>(data->get("copy"))) return 1.0;
+		const int32_t link = static_cast<int32_t>(data->get("copied_channel_id"));
+		if (link <= 0 || !static_cast<bool>(data->get("copy_opacity")))
+			return static_cast<double>(data->get("alpha"));
+		if (budget <= 0) return 1.0;
+		const String level_property = level_color_property_for_channel(link);
+		if (!level_property.is_empty() || link == 1005 || link == 1006) return 1.0;
+		Object *source = channel_lookup(link);
+		if (!source) return static_cast<double>(data->get("alpha"));
+		return resolve_channel_data_alpha(source, budget - 1);
 	}
 
 	Object *channel_lookup(int32_t channel) const {
@@ -1155,6 +1261,29 @@ class NativeTriggerRuntime : public RefCounted {
 			// the trigger fires. The channel resource's changed signal fans out to
 			// the watcher, which pushes the flip onto the channel's batches.
 			data->set("blending", effect.blending);
+			// The copy link is target state too (key 50): once the trigger's
+			// fade completes, the channel is re-pointed at its source and
+			// keeps following that source's later recolours. The link only
+			// goes live at completion (or instantly for duration-0 triggers,
+			// where the fire already carries weight 1) so the fade towards
+			// the source stays visible - GDRweb mixes towards the live copy
+			// during the fade, and the finished link continues that.
+			if ((effect.copy_channel > 0 || effect.has_color || effect.player_color != 0) && weight >= 1.0) {
+				if (effect.copy_channel > 0) {
+					data->set("copied_channel_id", static_cast<int64_t>(effect.copy_channel));
+					data->set("copy_opacity", effect.copy_opacity);
+					data->set("copy_hue", effect.copy_hue);
+					data->set("copy_saturation", effect.copy_saturation);
+					data->set("copy_value", effect.copy_value);
+					data->set("copy_saturation_additive", effect.copy_saturation_additive);
+					data->set("copy_value_additive", effect.copy_value_additive);
+				} else {
+					// An explicit colour or player target severs the link
+					// (GDRweb's track model: a trigger value replaces the
+					// channel's CopyColor start value).
+					data->set("copied_channel_id", static_cast<int64_t>(0));
+				}
+			}
 		}
 		data->emit_signal(StringName("changed"));
 	}

@@ -126,6 +126,7 @@ var background_color: Color = Constants.DEFAULT_BACKGROUND_COLOR:
 		background_color = new_color
 		for background_sprite: Sprite2D in LevelManager.background_sprites:
 			background_sprite.modulate = new_color
+		_refresh_level_color_copies(_background_copy_watchers)
 var ground_color: Color = Constants.DEFAULT_GROUND_COLOR:
 	set(new_color):
 		if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:
@@ -134,6 +135,7 @@ var ground_color: Color = Constants.DEFAULT_GROUND_COLOR:
 		var ground_up: Sprite2D = LevelManager.ground_up.get_node(^"Ground")
 		ground_down.self_modulate = new_color
 		ground_up.self_modulate = new_color
+		_refresh_level_color_copies(_ground_copy_watchers)
 var line_color: Color = Constants.DEFAULT_LINE_COLOR:
 	set(new_color):
 		if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:
@@ -141,6 +143,20 @@ var line_color: Color = Constants.DEFAULT_LINE_COLOR:
 		# The material resource is shared between ground sprites
 		var ground: Sprite2D = LevelManager.ground_down.get_node(^"Ground")
 		ground.material.set_shader_parameter(&"ground_color", new_color)
+		_refresh_level_color_copies(_line_copy_watchers)
+## Watchers of the channels that copy each level colour (kS38 entries with a
+## copy link to channel 1000/1001/1002 or a plain chain ending there). The
+## colour setters refresh them so a recoloured background reaches the channels
+## built on top of it instead of leaving them frozen at the import snapshot.
+var _background_copy_watchers: Array[ColorChannelWatcher] = []
+var _ground_copy_watchers: Array[ColorChannelWatcher] = []
+var _line_copy_watchers: Array[ColorChannelWatcher] = []
+
+
+func _refresh_level_color_copies(watchers: Array[ColorChannelWatcher]) -> void:
+	for watcher: ColorChannelWatcher in watchers:
+		if is_instance_valid(watcher) and watcher.is_inside_tree():
+			watcher.refresh_objects_color()
 
 var _elapsed_time: float = 0.0
 
@@ -327,10 +343,31 @@ func record_duration() -> void:
 
 
 func setup_color_channel_watchers() -> void:
+	# Every watcher is constructed before any of them enters the tree: a
+	# copying channel wires itself to its source's watcher on its first
+	# refresh (_ready), so the source's watcher must already exist whatever
+	# order the channels come in.
+	var watchers: Array[ColorChannelWatcher] = []
 	for color_channel: ColorChannelData in color_channels:
 		var watcher := ColorChannelWatcher.new(color_channel)
 		watcher.name = "Watcher@%s" % color_channel.associated_group.trim_prefix(Constants.COLOR_CHANNEL_GROUP_PREFIX)
+		watchers.append(watcher)
+	for watcher: ColorChannelWatcher in watchers:
 		add_child(watcher)
+	# Channels that copy a level colour follow it live, so the level colour
+	# setters need a direct line to their watchers: nothing else fires when
+	# the background itself recolours. (Ordinary copy links wire themselves
+	# on the watchers' first refresh.)
+	for color_channel: ColorChannelData in color_channels:
+		if not color_channel.copy or color_channel.watcher == null:
+			continue
+		match color_channel.copied_channel:
+			Constants.SpecialColorChannel.BACKGROUND:
+				_background_copy_watchers.append(color_channel.watcher)
+			Constants.SpecialColorChannel.GROUND:
+				_ground_copy_watchers.append(color_channel.watcher)
+			Constants.SpecialColorChannel.LINE:
+				_line_copy_watchers.append(color_channel.watcher)
 	_print_glow_diagnostics()
 
 
@@ -350,6 +387,11 @@ func _print_glow_diagnostics() -> void:
 			blending_channels.append(id)
 		if channel.copy:
 			copy_channels.append("%s<-%d" % [id, channel.copied_channel])
+		elif channel.copied_channel_id > 0:
+			# Ordinary copy links (kS38 key 9 / trigger key 50): these follow
+			# their source live at runtime, so a stale one shows up here as
+			# the whole story of a channel that stopped recolouring.
+			copy_channels.append("%s<-c%d" % [id, channel.copied_channel_id])
 	print(
 		"GLOWDIAG channels=%d blending=[%s] copies=[%s]"
 		% [color_channels.size(), ", ".join(blending_channels), ", ".join(copy_channels)]

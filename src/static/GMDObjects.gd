@@ -142,6 +142,64 @@ const MAP: Dictionary[int, Dictionary] = {
 		"name": "ColorTrigger",
 		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
 	},
+	# Legacy colour triggers from the pre-2.1 editors: each family targeted a
+	# fixed channel (GMDConverter.LEGACY_COLOR_TRIGGER_CHANNELS) since key 23
+	# did not exist yet. They convert through the same Color trigger arm.
+	29: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerBG",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	30: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerGround",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	104: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerLine",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	105: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerObj",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	221: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerChannel1",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	717: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerChannel2",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	718: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerChannel3",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	743: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerChannel4",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	744: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTrigger3DL",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	900: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerChannel900",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
+	915: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "LegacyColorTriggerChannel915",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
 	901: {
 		"scene": TRIGGERS + "MoveTrigger.tscn",
 		"name": "MoveTrigger",
@@ -271,7 +329,8 @@ const MAP: Dictionary[int, Dictionary] = {
 ## and are still retained by the packed native scheduler instead of being
 ## silently discarded as decoration.
 const TRIGGER_IDS: Array[int] = [
-	34, 899, 901, 1006, 1007, 1049, 1268, 1346, 1347, 1520, 1585, 1595,
+	29, 30, 104, 105, 221, 34, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
+	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1595,
 	1611, 1612, 1613, 1616, 1811, 1812, 1814, 1815, 1817, 1818, 1819,
 	1912, 1913, 1914, 1915, 1916, 1917, 1931, 1932, 1934, 1935, 2015,
 	2062, 2066, 2067, 2068, 2899, 2900, 2901, 2903, 2904, 2905, 2907,
@@ -295,7 +354,8 @@ const GENERIC_TRIGGER: Dictionary = {
 ## dedicated families (camera static/edge, end level) keep their scene even at
 ## runtime: they are one or two per level and still run their components.
 const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
-	899, 901, 1006, 1007, 1049, 1268, 1346, 1520, 1612, 1613, 1616,
+	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
+	1007, 1049, 1268, 1346, 1520, 1612, 1613, 1616,
 	1913, 1916, 1935, 2015, 2067, 3022,
 ]
 

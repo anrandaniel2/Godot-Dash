@@ -141,6 +141,26 @@ const HeaderKey := {
 ## The Geometry Dash colour trigger.
 const COLOR_TRIGGER_ID: int = 899
 
+## Colour-trigger object IDs and the channel each one targeted before key 23
+## existed, ported from GDRweb's COLOR_TRIGGER_IDS. Levels from the 1.x/2.0
+## era recolour through these legacy families, which carry no target channel
+## of their own - and a bare 899 without key 23 falls back to channel 1 just
+## the same.
+const LEGACY_COLOR_TRIGGER_CHANNELS: Dictionary[int, int] = {
+	29: CHANNEL_BG,
+	30: CHANNEL_G1,
+	104: CHANNEL_LINE,
+	105: CHANNEL_OBJ,
+	221: 1,
+	717: 2,
+	718: 3,
+	743: 4,
+	744: CHANNEL_3DL,
+	899: 1,
+	900: 1,
+	915: 1,
+}
+
 ## Geometry Dash uses a 30x30 pixel grid, Godot Dash uses [member
 ## Constants.CELL_SIZE] (128) pixels.
 const GD_CELL_SIZE: float = 30.0
@@ -407,8 +427,12 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		# reads its source channel (key 50) whenever it fires, so that channel
 		# has to exist too - but only when it resolves through the channel
 		# table, not when it aliases a live level or player colour.
-		if gd_id == COLOR_TRIGGER_ID:
+		if gd_id in LEGACY_COLOR_TRIGGER_CHANNELS:
 			var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
+			if not (target_color.is_valid_int() and int(target_color) > 0):
+				# Legacy families (and a bare 899) have no key 23: each one
+				# targeted a fixed channel.
+				target_color = str(LEGACY_COLOR_TRIGGER_CHANNELS.get(gd_id, 1))
 			if target_color.is_valid_int() and _is_colorable_channel(channel_style, int(target_color)):
 				if not SPECIAL_CHANNELS.has(int(target_color)):
 					used_channels[int(target_color)] = true
@@ -1099,7 +1123,7 @@ static func _components_from_properties(
 		components["EasingComponent"] = easing_data
 
 	match gd_id:
-		899: # Color trigger
+		899, 29, 30, 104, 105, 221, 717, 718, 743, 744, 900, 915: # Color trigger
 			if "ColorChannelChangerComponent" in supported:
 				var changer: Dictionary = {
 					# Geometry Dash fades channel colours in plain sRGB.
@@ -1144,9 +1168,14 @@ static func _components_from_properties(
 				else:
 					changer["source"] = ColorChannelChangerComponent.ColorSource.KEEP
 				components["ColorChannelChangerComponent"] = changer
-			if "TargetColorChannelComponent" in supported:
-				var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
-				if target_color.is_valid_int():
+				if "TargetColorChannelComponent" in supported:
+					var target_color: String = properties.get(Prop.TARGET_COLOR_ID, "").strip_edges()
+					if not (target_color.is_valid_int() and int(target_color) > 0):
+						# No key 23: the legacy families each targeted a fixed
+						# channel, and a bare 899 defaults to channel 1
+						# (GDRweb's COLOR_TRIGGER_IDS).
+						target_color = str(LEGACY_COLOR_TRIGGER_CHANNELS.get(gd_id, 1))
+					if target_color.is_valid_int():
 					var channel_id: int = int(target_color)
 					# 1000+ are the level's own background / ground / line
 					# channels, which Godot Dash models as a separate type.
@@ -1364,6 +1393,14 @@ static func _resolve_channel_styles(raw: String) -> Dictionary[int, Dictionary]:
 			style["color"] = p1
 		elif player == 2:
 			style["color"] = p2
+		# Keep the raw copy link next to the resolved colour: the runtime
+		# channel (_build_color_channels) uses it to follow the source live
+		# instead of staying frozen at this import-time snapshot.
+		var raw_copy_id: int = int(values.get(ChannelKey.COPIED_ID, "0"))
+		if raw_copy_id > 0 and raw_copy_id != channel_id:
+			style["copy_source"] = raw_copy_id
+			style["copy_hsv"] = values.get(ChannelKey.COPY_HSV, "")
+			style["copy_opacity"] = values.get(ChannelKey.COPY_OPACITY, "0") == "1"
 		styles[channel_id] = style
 
 	# Copies. A copy can itself copy another copy, so resolve in passes; the
@@ -1420,14 +1457,44 @@ static func _build_color_channels(
 		# it later, and the watcher needs the current state to diff against.
 		channel.blending = bool(style.get("blending", false))
 		# A channel that is, or plainly copies, a level colour follows that
-		# colour live. A copy with an HSV shift keeps its resolved colour
-		# instead, since the runtime copy has no equivalent shift.
+		# colour live. Since the runtime copy model (GDRweb's CopyColor)
+		# carries its own HSV shift and opacity-copy flag, shifted copies of
+		# level colours follow live as well instead of keeping their
+		# import-time snapshot.
 		var source_id: int = _copy_source(channel_style, channel_id)
+		var direct_id: int = int(style.get("copy_source", 0))
+		var special_source: int = -1
 		if SPECIAL_CHANNELS.has(source_id):
+			special_source = source_id
+		elif SPECIAL_CHANNELS.has(direct_id):
+			special_source = direct_id
+		if special_source != -1:
 			channel.copy = true
-			channel.copied_channel = SPECIAL_CHANNELS[source_id] as Constants.SpecialColorChannel
+			channel.copied_channel = SPECIAL_CHANNELS[special_source] as Constants.SpecialColorChannel
+			_apply_copy_link(channel, style)
+		elif direct_id > 0:
+			# Ordinary copies keep their link (kS38 key 9) so the channel
+			# re-resolves whenever its source recolours, exactly like
+			# GDRweb resolves CopyColor values at read time.
+			channel.copied_channel_id = direct_id
+			_apply_copy_link(channel, style)
 		channels.append(channel)
 	return channels
+
+
+## Copies a header entry's copy settings (HSV shift of key 10, opacity copy of
+## key 17) onto the runtime channel, where the watcher applies them on top of
+## the live source colour.
+static func _apply_copy_link(channel: ColorChannelData, style: Dictionary) -> void:
+	channel.copy_opacity = bool(style.get("copy_opacity", false))
+	var copy_hsv: PackedFloat32Array = _hsv_values(String(style.get("copy_hsv", "")))
+	if copy_hsv.is_empty():
+		return
+	channel.copy_hue = copy_hsv[0]
+	channel.copy_saturation = copy_hsv[1]
+	channel.copy_value = copy_hsv[2]
+	channel.copy_saturation_additive = copy_hsv[3] > 0.5
+	channel.copy_value_additive = copy_hsv[4] > 0.5
 
 
 ## Follows a chain of plain (unshifted) copies back to its origin.

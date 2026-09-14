@@ -11,3 +11,4 @@
 # Data credits
 
 - Object geometry, default colour channels and z-order data: [GDRWeb](https://github.com/iliasHDZ/GDRWeb) (MIT) — 2.2 `object.json` by Opstic & Maxnut
+- Colour, copy-channel and trigger-track semantics ported from GDRWeb's TypeScript implementation (vendored under `third_party/gdrweb/` as the reference)
