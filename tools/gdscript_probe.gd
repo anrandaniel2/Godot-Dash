@@ -8,16 +8,19 @@ extends Node
 ## counted but never printed. Loading every script here forces each one's
 ## own reload, so the real file:line error appears in the log.
 ##
-## Runs as a scene (with autoloads up, like the real game) because a
-## SceneTree --script probe hung in CI; this node quits from _ready.
+## Runs as a scene (with autoloads up, like the real game). "PROBE LOAD" is
+## printed BEFORE each load() so the last printed line names the script a
+## hang or crash died on.
 
 
 func _ready() -> void:
+	print("PROBE SCENE READY")
 	var paths: PackedStringArray = []
 	_collect("res://src", paths)
 	_collect("res://tools", paths)
 	var failed: PackedStringArray = []
 	for path: String in paths:
+		print("PROBE LOAD ", path)
 		# Plain assignment on purpose: load() returns Variant, and `:=`
 		# inference from Variant is an error-level GDScript warning.
 		var script = load(path)
