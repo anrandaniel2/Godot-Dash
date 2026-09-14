@@ -24,7 +24,10 @@ func _ready() -> void:
 		# Plain assignment on purpose: load() returns Variant, and `:=`
 		# inference from Variant is an error-level GDScript warning.
 		var script = load(path)
-		if script == null:
+		# load() returns a non-null GDScript resource even when the script
+		# failed to parse/compile, so success needs the validity check:
+		# compilable scripts are instantiable, except @abstract ones.
+		if script == null or not (script.can_instantiate() or script.is_abstract()):
 			failed.append(path)
 			print("PROBE FAIL ", path)
 		else:
