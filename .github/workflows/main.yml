@@ -436,6 +436,10 @@ jobs:
           "$GODOT_BIN" --headless --path . --import > godot_import.log 2>&1
           status=$?
           tail -n 30 godot_import.log
+          # Script parse errors during import do not fail the import step,
+          # and they name the root failing script before any dependent
+          # cascade appears - always surface them.
+          grep -n "SCRIPT ERROR\|Parse Error\|ERROR:" godot_import.log | head -40 || true
           exit $status
 
       # A successful import only proves scripts parse. Exercise both GD artwork
@@ -460,16 +464,34 @@ jobs:
           if [ $status -ne 0 ] || ! grep -q "VISUAL_SMOKE" visual_smoke.log; then
             echo "### Visual smoke failure" >> "$GITHUB_STEP_SUMMARY"
             echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            tail -n 80 visual_smoke.log >> "$GITHUB_STEP_SUMMARY"
+            cat visual_smoke.log >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            # Surface the complete tail in one check annotation as well;
-            # Actions retains only the first ten annotations from a step and
-            # its raw log blobs are not always retrievable from the sandbox.
+            # Surface the log through check annotations as well; Actions
+            # retains only the first ten annotations from a step and its raw
+            # log blobs are not always retrievable from the sandbox. The
+            # head goes first, in ~40-line chunks: the ROOT script error
+            # appears near the top of the log (startup compilation), while
+            # the old tail-only annotation kept showing nothing but the
+            # cascade of dependents it caused.
+            total_lines=$(wc -l < visual_smoke.log)
+            chunk_lines=40
+            start=1
+            emitted=0
+            while [ "$start" -le "$total_lines" ] && [ "$emitted" -lt 7 ]; do
+              end=$((start + chunk_lines - 1))
+              chunk=$(sed -n "${start},${end}p" visual_smoke.log)
+              chunk=${chunk//'%'/'%25'}
+              chunk=${chunk//$'\r'/'%0D'}
+              chunk=${chunk//$'\n'/'%0A'}
+              echo "::error title=visual_smoke.log lines ${start}-${end}::${chunk}"
+              start=$((end + 1))
+              emitted=$((emitted + 1))
+            done
             details=$(tail -n 80 visual_smoke.log)
             details=${details//'%'/'%25'}
             details=${details//$'\r'/'%0D'}
             details=${details//$'\n'/'%0A'}
-            echo "::error title=Visual smoke::${details}"
+            echo "::error title=Visual smoke (tail 80)::${details}"
             exit 1
           fi
 
