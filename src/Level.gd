@@ -131,6 +131,11 @@ var ground_color: Color = Constants.DEFAULT_GROUND_COLOR:
 	set(new_color):
 		if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:
 			return
+		# The build job finalises levels outside the playing scene (and the
+		# smoke harness runs without one); the value still stores, the ground
+		# sprites simply do not exist to tint yet.
+		if LevelManager.ground_down == null:
+			return
 		var ground_down: Sprite2D = LevelManager.ground_down.get_node(^"Ground")
 		var ground_up: Sprite2D = LevelManager.ground_up.get_node(^"Ground")
 		ground_down.self_modulate = new_color
@@ -139,6 +144,8 @@ var ground_color: Color = Constants.DEFAULT_GROUND_COLOR:
 var line_color: Color = Constants.DEFAULT_LINE_COLOR:
 	set(new_color):
 		if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:
+			return
+		if LevelManager.ground_down == null:
 			return
 		# The material resource is shared between ground sprites
 		var ground: Sprite2D = LevelManager.ground_down.get_node(^"Ground")
@@ -439,6 +446,10 @@ func _print_glow_diagnostics() -> void:
 func setup_level_sprites_colors() -> void:
 	for background_sprite: Sprite2D in LevelManager.background_sprites:
 		background_sprite.modulate = default_background_color
+	# Without a playing scene (build job finishing a detached level, or the
+	# smoke harness) there are no ground sprites to recolour.
+	if LevelManager.ground_down == null:
+		return
 	var ground_down: Sprite2D = LevelManager.ground_down.get_node(^"Ground")
 	var ground_up: Sprite2D = LevelManager.ground_up.get_node(^"Ground")
 	ground_down.self_modulate = default_ground_color
@@ -581,10 +592,13 @@ func _use_data_fields(data: Dictionary) -> void:
 	native_trigger_records.assign(data.get("native_trigger_records", []))
 	active_layer_idx = data.active_layer_idx
 
-	LevelManager.player.global_position = start_position
-	for group in data.player_data.groups:
-		LevelManager.player.add_to_group(group)
-	LevelManager.player.get_meta(Constants.HSV_WATCHER_META).use_data(data.player_data.hsv)
+	# Player updates only apply once the manager holds the live player from
+	# the playing scene; detached builds (and the smoke harness) have none.
+	if LevelManager.player != null:
+		LevelManager.player.global_position = start_position
+		for group in data.player_data.groups:
+			LevelManager.player.add_to_group(group)
+		LevelManager.player.get_meta(Constants.HSV_WATCHER_META).use_data(data.player_data.hsv)
 	# start_internal_gamemode and start_displayed_gamemode are set on the player
 	# in their respective setters.
 

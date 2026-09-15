@@ -520,9 +520,17 @@ static func _finalise_batch_order(batches: Array[DecorationBatch]) -> void:
 	# builds, and merge this call's batches in with the survivors.
 	for layer: int in _layer_batches.keys():
 		var live: Array = []
-		for batch: DecorationBatch in _layer_batches[layer]:
-			if is_instance_valid(batch):
-				live.append(batch)
+		# The registry outlives the levels it references, so it routinely
+		# holds freed batches between plays. Iterating with a typed
+		# DecorationBatch variable re-assigns each element and aborts the
+		# function on the first freed instance ("Trying to assign invalid
+		# previously freed instance"), which silently disabled the whole
+		# z-ranking below for every build after the first level exit -
+		# later seals then covered earlier ones again. Iterate untyped and
+		# filter by validity instead.
+		for stale_batch: Variant in _layer_batches[layer]:
+			if is_instance_valid(stale_batch):
+				live.append(stale_batch)
 		if live.is_empty():
 			_layer_batches.erase(layer)
 		else:

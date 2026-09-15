@@ -510,6 +510,23 @@ jobs:
           status=$?
           set -e
           cat visual_smoke.log
+          # A failed GDScript assert only aborts the running function: the
+          # scene keeps processing, still prints its VISUAL_SMOKE marker and
+          # exits 0, so the marker alone never gated the test's asserts (a
+          # broken native blending flip hid behind this for weeks). Any
+          # assertion or script error text must fail the step.
+          if grep -nE "Assertion failed|SCRIPT ERROR" visual_smoke.log; then
+            echo "### Visual smoke assertion failure" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" visual_smoke.log | head -60 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" visual_smoke.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Visual smoke assertion failure::${details}"
+            exit 1
+          fi
           if [ $status -ne 0 ] || ! grep -q "VISUAL_SMOKE" visual_smoke.log; then
             echo "### Visual smoke failure" >> "$GITHUB_STEP_SUMMARY"
             echo '```text' >> "$GITHUB_STEP_SUMMARY"

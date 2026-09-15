@@ -151,6 +151,10 @@ var _bounds: Rect2 = Rect2()
 ## parse without the optional platform library.
 var _native_canvas: Object
 var _native_by_channel: Dictionary[StringName, PackedInt32Array] = {}
+## Records that a Blending flip may re-route, by channel: the same items as
+## [member _native_by_channel] minus the glow layers, which are always
+## additive whatever their channel says.
+var _native_blend_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 
 
 func _init() -> void:
@@ -278,6 +282,7 @@ func build() -> void:
 ## and spatial rejection move native, so behaviour is unchanged.
 func _build_native_canvas(native: Object) -> void:
 	_native_by_channel.clear()
+	_native_blend_by_channel.clear()
 	# Dropping the Ref frees its RenderingServer RID immediately; no child Node is
 	# created or queued for deletion.
 	_native_canvas = null
@@ -326,6 +331,12 @@ func _build_native_canvas(native: Object) -> void:
 			var channel_indices: PackedInt32Array = _native_by_channel.get(item.channel, PackedInt32Array())
 			channel_indices.append(index)
 			_native_by_channel[item.channel] = channel_indices
+			# Glow layers never re-route on a Blending flip; the flip list
+			# therefore carries every other layer only.
+			if item.layer != "glow":
+				var blend_indices: PackedInt32Array = _native_blend_by_channel.get(item.channel, PackedInt32Array())
+				blend_indices.append(index)
+				_native_blend_by_channel[item.channel] = blend_indices
 	_native_canvas.call(
 			&"configure", self, textures, regions, transforms, colors, origins,
 			# Keep culling explicit for every node-free renderer, including tiny
@@ -409,14 +420,16 @@ func apply_channel_blending(channel: StringName, additive: bool) -> void:
 	_channel_blend[channel] = additive
 	# Glow layers are always additive whatever the channel says, so they are
 	# excluded from the flip; only base/detail/other items re-route.
-	var affected: Array = _by_channel.get(channel, [])
 	if _native_canvas != null:
-		var indices := PackedInt32Array()
-		for item: Item in affected:
-			if item.layer != "glow" and item.render_index >= 0:
-				indices.append(item.render_index)
-		if not indices.is_empty():
-			_native_canvas.call(&"set_channel_blending", indices, additive)
+		# The native renderer owns the records, and _by_channel is dropped
+		# once it takes over (see build), so the flip must address records
+		# through the configure-time index list. Reading _by_channel here
+		# addressed an empty list and the flip silently did nothing: every
+		# mid-level Blending change left whole channels stuck in their
+		# import blend, so trigger-faded dark colours rendered as opaque
+		# black shapes instead of additive glow.
+		if _native_blend_by_channel.has(channel):
+			_native_canvas.call(&"set_channel_blending", _native_blend_by_channel[channel], additive)
 		return
 	var uniform := not items.is_empty()
 	for item: Item in items:
