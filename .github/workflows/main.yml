@@ -569,30 +569,46 @@ jobs:
           if [ "$status" -eq 139 ]; then
             # The test passed every check and the engine crashed during
             # teardown. Keep it visible and capture the crash site for the
-            # follow-up fix instead of blocking the build on it.
+            # follow-up fix instead of blocking the build on it. The capture
+            # is best-effort: the runner images ship with empty apt lists, so
+            # "apt-get install gdb" without an update first exits 100 and
+            # (under set -e) would fail this step - the exact thing the
+            # capture must never do. Every branch below is non-fatal.
             echo "::warning title=Visual smoke teardown segfault::all checks passed (exit $status); capturing a backtrace"
-            command -v gdb >/dev/null || sudo apt-get install -y -qq gdb
-            set +e
-            timeout 120s xvfb-run -a gdb -batch -quiet \
-              -ex run -ex "bt 40" \
-              --args "$GODOT_BIN" --path . \
-              --rendering-method gl_compatibility \
-              --audio-driver Dummy \
-              res://tools/runtime_visual_smoke_test.tscn \
-              > smoke_gdb.log 2>&1
-            set -e
-            bt=$(grep -A45 "Program received signal" smoke_gdb.log | head -50 || true)
-            if [ -n "$bt" ]; then
-              bt=${bt//'%'/'%25'}
-              bt=${bt//$'\r'/'%0D'}
-              bt=${bt//$'\n'/'%0A'}
-              echo "::warning title=Teardown segfault backtrace::${bt}"
-              echo "### Visual smoke teardown segfault (test passed)" >> "$GITHUB_STEP_SUMMARY"
-              echo '```text' >> "$GITHUB_STEP_SUMMARY"
-              grep -A45 "Program received signal" smoke_gdb.log | head -50 >> "$GITHUB_STEP_SUMMARY"
-              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            if ! command -v gdb >/dev/null 2>&1; then
+              sudo apt-get update -qq >/dev/null 2>&1 || true
+              sudo apt-get install -y -qq gdb >/dev/null 2>&1 || true
+            fi
+            if command -v gdb >/dev/null 2>&1; then
+              set +e
+              timeout 120s xvfb-run -a gdb -batch -quiet \
+                -ex run -ex "bt 40" \
+                --args "$GODOT_BIN" --path . \
+                --rendering-method gl_compatibility \
+                --audio-driver Dummy \
+                res://tools/runtime_visual_smoke_test.tscn \
+                > smoke_gdb.log 2>&1
+              set -e
+              bt=$(grep -A45 "Program received signal" smoke_gdb.log | head -50 || true)
+              if [ -n "$bt" ]; then
+                bt=${bt//'%'/'%25'}
+                bt=${bt//$'\r'/'%0D'}
+                bt=${bt//$'\n'/'%0A'}
+                echo "::warning title=Teardown segfault backtrace::${bt}"
+                echo "### Visual smoke teardown segfault (test passed)" >> "$GITHUB_STEP_SUMMARY"
+                echo '```text' >> "$GITHUB_STEP_SUMMARY"
+                grep -A45 "Program received signal" smoke_gdb.log | head -50 >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "::warning title=Visual smoke teardown segfault::gdb rerun produced no 'Program received signal' (crash did not reproduce under gdb)"
+              fi
+            else
+              echo "::warning title=Visual smoke teardown segfault::gdb not installable on this runner; backtrace not captured"
             fi
           fi
+          # Both gates above passed: the test itself is green regardless of
+          # the engine's exit-time behaviour.
+          exit 0
 
       # Diagnostic repro for the on-device level-start crash. Never blocks the
       # APK: a crash here is reported through annotations (with symbolized
