@@ -1261,15 +1261,15 @@ static func _components_from_properties(
 				components["CameraShakeComponent"] = {
 					"strength": maxf(0.01, float(properties.get(Prop.STRENGTH, "5"))),
 				}
-				1913: # Camera zoom trigger
-					if "CameraZoomChangerComponent" in supported:
-						# Key 371 is already the zoom percentage the component
-						# wants (100 = default); rescaling it made a 50% zoom
-						# trigger ease towards a 5000% camera instead.
-						components["CameraZoomChangerComponent"] = {
-							"mode": CameraZoomChangerComponent.Mode.SET,
-							"zoom": Vector2.ONE * maxf(0.01, float(properties.get("371", "100"))),
-						}
+		1913: # Camera zoom trigger
+			if "CameraZoomChangerComponent" in supported:
+				# Key 371 is already the zoom percentage the component
+				# wants (100 = default); rescaling it made a 50% zoom
+				# trigger ease towards a 5000% camera instead.
+				components["CameraZoomChangerComponent"] = {
+					"mode": CameraZoomChangerComponent.Mode.SET,
+					"zoom": Vector2.ONE * maxf(0.01, float(properties.get("371", "100"))),
+				}
 		1914: # Camera static trigger
 			if "CameraStaticComponent" in supported:
 				var static_data: Dictionary = { }
