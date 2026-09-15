@@ -1783,6 +1783,9 @@ struct DecorationCullJob {
 	int64_t bottom = -1;
 };
 static std::vector<DecorationCullJob> decoration_cull_jobs;
+// The in-flight worker-pool cull group; file scope so teardown can drain it
+// (see finalize_decoration_culling).
+static int64_t decoration_cull_active_group = -1;
 
 // WorkerThreadPool invokes one element per renderer and automatically spreads
 // the group across the engine's worker pool (not a hard-coded two-thread cap).
@@ -1818,6 +1821,7 @@ public:
 static void decoration_coordinator_enter();
 static void decoration_coordinator_exit();
 static void update_registered_decoration_renderers(double delta);
+static void finalize_decoration_culling();
 static Dictionary registered_decoration_stats();
 
 // Native owner for the packed runtime. Besides being the migration point for
@@ -1880,9 +1884,14 @@ protected:
 			decoration_coordinator_enter();
 			return;
 		}
-		if (what == Node::NOTIFICATION_EXIT_TREE && coordinates_rendering) {
-			coordinates_rendering = false;
-			decoration_coordinator_exit();
+		if (what == Node::NOTIFICATION_EXIT_TREE) {
+			// Never leave the worker pool's cull group pending across a
+			// scene change or engine shutdown (see finalize_decoration_culling).
+			finalize_decoration_culling();
+			if (coordinates_rendering) {
+				coordinates_rendering = false;
+				decoration_coordinator_exit();
+			}
 			return;
 		}
 		if (what == Node::NOTIFICATION_READY) {
@@ -3069,7 +3078,6 @@ static void update_registered_decoration_renderers(double delta) {
 	decoration_last_update_frame = frame;
 	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
 	static Ref<NativeDecorationCullWorker> worker;
-	static int64_t active_group = -1;
 	// Coalesce any number of channel/spin updates into one RID command rebuild
 	// per renderer per frame instead of clearing/re-emitting after every item.
 	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
@@ -3083,15 +3091,15 @@ static void update_registered_decoration_renderers(double delta) {
 	// Never wait on the game thread. Apply a completed previous-frame result;
 	// if workers are still busy, retain the conservative old cells and try next
 	// frame. This makes culling incapable of becoming a new frame-time spike.
-	if (active_group >= 0) {
-		if (!pool->is_group_task_completed(active_group)) return;
-		pool->wait_for_group_task_completion(active_group);
+	if (decoration_cull_active_group >= 0) {
+		if (!pool->is_group_task_completed(decoration_cull_active_group)) return;
+		pool->wait_for_group_task_completion(decoration_cull_active_group);
 		for (const DecorationCullJob &job : decoration_cull_jobs) {
 			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
 			NativeDecorationRenderer *renderer = Object::cast_to<NativeDecorationRenderer>(object);
 			if (renderer) renderer->apply_cull_job(job);
 		}
-		active_group = -1;
+		decoration_cull_active_group = -1;
 	}
 
 	decoration_cull_jobs.clear();
@@ -3102,10 +3110,33 @@ static void update_registered_decoration_renderers(double delta) {
 		if (renderer->capture_cull_job(job)) decoration_cull_jobs.push_back(job);
 	}
 	if (!decoration_cull_jobs.empty()) {
-		active_group = pool->add_group_task(
+		decoration_cull_active_group = pool->add_group_task(
 				Callable(worker.ptr(), "compute"), static_cast<int32_t>(decoration_cull_jobs.size()),
 				-1, true, "GD visible-cell culling");
 	}
+}
+
+// Drains the pending cull group. The update above never waits on the game
+// thread: it applies the previous frame's group and posts a new one. When the
+// tree is exiting - a scene change, or the engine shutting down right after
+// the final frame - that freshly posted group is never waited on, the worker
+// pool reports its group pages as still in use, and teardown races the worker
+// still reading the job array (observed as a shutdown segfault once the smoke
+// test survived long enough to quit with a live coordinator). Waiting here is
+// safe at teardown: jobs are tiny, and applying them only touches renderers
+// that are still alive (freed ones resolve to null and are skipped).
+static void finalize_decoration_culling() {
+	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+	if (pool != nullptr && decoration_cull_active_group >= 0) {
+		pool->wait_for_group_task_completion(decoration_cull_active_group);
+		for (const DecorationCullJob &job : decoration_cull_jobs) {
+			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
+			NativeDecorationRenderer *renderer = Object::cast_to<NativeDecorationRenderer>(object);
+			if (renderer) renderer->apply_cull_job(job);
+		}
+	}
+	decoration_cull_active_group = -1;
+	decoration_cull_jobs.clear();
 }
 
 static Dictionary registered_decoration_stats() {
