@@ -376,6 +376,129 @@ func setup_color_channel_watchers() -> void:
 			Constants.SpecialColorChannel.LINE:
 				_line_copy_watchers.append(color_channel.watcher)
 	_print_glow_diagnostics()
+	_print_beam_diagnostics()
+
+
+## Object ids whose artwork is beam-shaped: an atlas frame at least 5:1 and
+## 80px long (the long-block outlines and their glow, the 2.2 animation
+## strips, planks, rods and the rotating lines). Used only by the BEAMDIAG
+## load-time summary below.
+const BEAM_SHAPED_IDS: PackedInt32Array = [
+	15, 372, 896, 1256, 1257, 1258, 1259, 1338, 1339, 1342, 1345,
+	1521, 1522, 1601, 1743, 1744, 1745, 1746, 1747, 1748, 1749, 1750,
+	1853, 1858, 1907, 2022, 2030, 2054, 2883, 2886, 2894,
+]
+
+
+## One-shot load-time answer to "why do those beams render white": per colour
+## channel, how many batched items follow it, how many of them end up opaque
+## white, and what the channel itself resolves to; the same counts narrowed
+## to the beam-shaped object ids; and the X distribution of the white items.
+##
+## This runs after the watchers' first refresh (the ready-connected setup),
+## so an item counts as white only if its channel really left it that way.
+## A channel whose resolved colour is not white while its items are says the
+## binding or the refresh failed; a channel that itself resolves to white
+## points at the channel data or its copy chain. BEAMDIAG greps clean.
+func _print_beam_diagnostics() -> void:
+	if Editor.in_editor:
+		return
+	var total_items := 0
+	var white_items := 0
+	# Reference-typed counters [total, white]; packed arrays copy on assign,
+	# so mutating them through the dictionary would silently do nothing.
+	var by_channel: Dictionary = {}
+	var white_by_x: Dictionary = {}
+	var beams: Dictionary = {}
+	var beam_channel: Dictionary = {}
+	for layer: Layer in layers:
+		for child: Node in layer.get_children():
+			if child is not DecorationBatch:
+				continue
+			for item: DecorationBatch.Item in child.items:
+				total_items += 1
+				var white := (
+					item.modulate.r > 0.95
+					and item.modulate.g > 0.95
+					and item.modulate.b > 0.95
+					and item.modulate.a > 0.95
+				)
+				if white:
+					white_items += 1
+					var bucket := int(item.origin_x / 1000.0)
+					var x_counts: Array = white_by_x.get_or_add(bucket, [0])
+					x_counts[0] += 1
+				var channel_name: StringName = item.channel
+				if channel_name.is_empty():
+					channel_name = &"(untinted)"
+				var counts: Array = by_channel.get_or_add(channel_name, [0, 0])
+				counts[0] += 1
+				if white:
+					counts[1] += 1
+				if item.gd_id in BEAM_SHAPED_IDS:
+					var beam_counts: Array = beams.get_or_add(item.gd_id, [0, 0])
+					beam_counts[0] += 1
+					if white:
+						beam_counts[1] += 1
+					if not beam_channel.has(item.gd_id) and not item.channel.is_empty():
+						beam_channel[item.gd_id] = item.channel
+	print("BEAMDIAG items=%d white=%d" % [total_items, white_items])
+	for channel: ColorChannelData in color_channels:
+		var counts: Array = by_channel.get(channel.associated_group, [0, 0])
+		if counts[0] == 0:
+			continue
+		var resolved: Color = ColorChannelWatcher.resolve_channel_color(channel)
+		var alpha: float = ColorChannelWatcher.resolve_channel_alpha(channel)
+		var copies: bool = channel.copy or channel.copied_channel_id > 0
+		print(
+			"BEAMDIAG ch=%s items=%d white=%d rgb=(%.2f,%.2f,%.2f) a=%.2f copy=%s"
+			% [
+				channel.associated_group.trim_prefix(Constants.COLOR_CHANNEL_GROUP_PREFIX),
+				counts[0],
+				counts[1],
+				resolved.r,
+				resolved.g,
+				resolved.b,
+				alpha,
+				"y" if copies else "n",
+			]
+		)
+	# Items on a channel no watcher exists for never refresh at all.
+	for channel_name: Variant in by_channel:
+		if str(channel_name) == "(untinted)":
+			continue
+		var has_watcher := false
+		for channel: ColorChannelData in color_channels:
+			if channel.associated_group == channel_name:
+				has_watcher = true
+				break
+		if not has_watcher:
+			var counts: Array = by_channel[channel_name]
+			print(
+				"BEAMDIAG NO WATCHER ch=%s items=%d white=%d"
+				% [str(channel_name).trim_prefix(Constants.COLOR_CHANNEL_GROUP_PREFIX), counts[0], counts[1]]
+			)
+	var untinted: Array = by_channel.get(&"(untinted)", [0, 0])
+	if untinted[0] > 0:
+		print("BEAMDIAG untinted items=%d white=%d" % [untinted[0], untinted[1]])
+	var beam_ids: Array = beams.keys()
+	beam_ids.sort()
+	for gd_id: Variant in beam_ids:
+		var beam_counts: Array = beams[gd_id]
+		var channel_text := str(beam_channel.get(gd_id, "(none)")).trim_prefix(
+			Constants.COLOR_CHANNEL_GROUP_PREFIX
+		)
+		print(
+			"BEAMDIAG beam id=%d items=%d white=%d ch=%s"
+			% [int(gd_id), beam_counts[0], beam_counts[1], channel_text]
+		)
+	var buckets: Array = white_by_x.keys()
+	buckets.sort()
+	var white_line := ""
+	for bucket: Variant in buckets:
+		white_line += "%d:%d " % [int(bucket), white_by_x[bucket][0]]
+	if not white_line.is_empty():
+		print("BEAMDIAG white per 1000x: " + white_line.strip_edges())
 
 
 ## One-shot load-time summary of everything that drives the level's glow:
