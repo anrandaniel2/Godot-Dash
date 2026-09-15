@@ -241,6 +241,7 @@ struct TriggerEffect {
 	bool copy_saturation_additive = true, copy_value_additive = true;
 	int32_t player_color = 0;    // 0 none, 1 key 15, 2 key 16
 	double opacity = 1.0;        // 899: key 35
+	bool has_blending = false;   // 899: key 17 present at all (tri-state)
 	bool blending = false;       // 899: key 17, the Blending checkbox
 	double shake_strength = 5.0; // 1520: key 75
 	double time_scale = 1.0;     // 1935: key 120
@@ -341,10 +342,15 @@ static int32_t legacy_color_trigger_channel(int64_t gd_id) {
 // those only fades opacity (KEEP). Mirrors the Color trigger converter arm.
 static void parse_color_source(const Dictionary &properties, TriggerEffect &effect) {
 	effect.opacity = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
-	// The Blending checkbox is part of the trigger's target state: firing it
-	// flips the channel additive (checked) or normal (unchecked). Effect
-	// levels build their glow out of these mid-level flips.
-	effect.blending = String(properties.get("17", String("0"))) == "1";
+	// The Blending checkbox is part of the trigger's target state, but only
+	// when the trigger actually carries key 17 (tri-state): a fading trigger
+	// without the checkbox must not clobber a Blending flip made by an
+	// overlapping trigger - its ticks kept reverting channels to normal
+	// mid-fade, killing the glow effect levels build out of these flips.
+	if (properties.has("17")) {
+		effect.has_blending = true;
+		effect.blending = String(properties.get("17", String("0"))) == "1";
+	}
 	const String copied = String(properties.get("50", String())).strip_edges();
 	if (copied.is_valid_int() && copied.to_int() > 0) {
 		effect.copy_channel = static_cast<int32_t>(copied.to_int());
@@ -1259,10 +1265,15 @@ class NativeTriggerRuntime : public RefCounted {
 			}
 			data->set("intensity", static_cast<double>(data->get("intensity")) + (1.0 - fade.initial_intensity) * weight_delta);
 			data->set("alpha", static_cast<double>(data->get("alpha")) + (fade.alpha_target - fade.initial_alpha) * weight_delta);
-			// Blending is target state, not a faded value: it applies the moment
-			// the trigger fires. The channel resource's changed signal fans out to
-			// the watcher, which pushes the flip onto the channel's batches.
-			data->set("blending", effect.blending);
+			// Blending is target state, not a faded value: it applies the
+			// moment a trigger carrying key 17 fires. The channel resource's
+			// changed signal fans out to the watcher, which pushes the flip
+			// onto the channel's batches. Triggers without the checkbox leave
+			// the channel's blend alone (tri-state), so a long fade cannot
+			// revert an overlapping Blending flip on its next tick.
+			if (effect.has_blending) {
+				data->set("blending", effect.blending);
+			}
 			// The copy link and the link sever have different timings, so
 			// the weight gate applies to the set only:
 			// - Setting the link is target state (key 50): once the

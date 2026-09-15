@@ -1138,13 +1138,18 @@ static func _components_from_properties(
 					# Geometry Dash fades channel colours in plain sRGB.
 					"color_space": ColorChannelChangerComponent.ColorSpace.SRGB,
 					"alpha": clampf(float(properties.get(Prop.OPACITY, "1")), 0.0, 1.0),
-					# The Blending checkbox (key 17) is part of the trigger's
-					# target state: like Geometry Dash's own editor, firing the
-					# trigger sets the channel additive (checked) or normal
-					# (unchecked), which is how effect levels switch their glow
-					# on and off mid-level.
-					"blending": properties.get(Prop.BLENDING, "0") == "1",
 				}
+				# The Blending checkbox (key 17) is part of the trigger's
+				# target state, but only when the trigger carries the key
+				# (tri-state): like Geometry Dash's own editor, firing a
+				# trigger with the checkbox sets the channel additive
+				# (checked) or normal (unchecked), which is how effect
+				# levels switch their glow on and off mid-level. A trigger
+				# without the checkbox must leave the channel's blend alone,
+				# or its fire would revert an overlapping Blending flip.
+				if properties.has(Prop.BLENDING):
+					changer["blending"] = properties.get(Prop.BLENDING, "0") == "1"
+					changer["has_blending"] = true
 				# The trigger's colour source. Geometry Dash always serialises
 				# the RGB keys of a picked colour - even pure white - so their
 				# absence means the colour comes from elsewhere: a copied

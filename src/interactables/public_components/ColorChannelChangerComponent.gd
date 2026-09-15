@@ -52,8 +52,12 @@ const CHANNEL_GROUND_2 := 1009
 @export_range(0.0, 1.0, 0.01, "slider") var alpha: float = 1.0
 ## The Blending checkbox: part of the trigger's target state, applied the
 ## moment it fires rather than faded. Flips the channel additive/normal, which
-## is how effect levels switch their glow on and off mid-level.
+## is how effect levels switch their glow on and off mid-level. Tri-state:
+## only triggers that actually carry the checkbox ([code]has_blending[/code])
+## touch the channel's blend; a trigger without it leaves any earlier flip
+## intact instead of reverting the channel to normal.
 @export var blending: bool = false
+@export var has_blending: bool = false
 @export_group("Copied channel")
 @export var copied_channel_id: int = 0
 @export var copy_opacity: bool = false
@@ -141,9 +145,11 @@ func start(_player: Player) -> void:
 				color_channel = LevelManager.current_level.color_channels[idx]
 				initial_color_channel = color_channel.duplicate()
 				gradient.colors = PackedColorArray([initial_color_channel.color, _resolved_color(initial_color_channel.color)])
-				# Blending is target state applied at fire time, not faded:
-				# the checkbox itself is the channel's new blend mode.
-				if color_channel.blending != blending:
+			# Blending is target state applied at fire time, not faded:
+			# the checkbox itself is the channel's new blend mode - but only
+			# for triggers that carry the checkbox (tri-state), so a plain
+			# colour trigger cannot revert an overlapping Blending flip.
+			if has_blending and color_channel.blending != blending:
 					color_channel.blending = blending
 					color_channel.emit_changed()
 				# The copy link is target state too (key 50): re-pointing the
