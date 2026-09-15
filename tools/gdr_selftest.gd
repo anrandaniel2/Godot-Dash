@@ -124,7 +124,18 @@ func _test_golden_document() -> void:
 	replay.level_id = 0
 	replay.platformer = true
 	replay.data = _golden_data()
-	check("replay encodes to golden bytes", GDRFormat.to_bytes(replay) == golden)
+	var produced := GDRFormat.to_bytes(replay)
+	if produced != golden:
+		# Keep the diff compact: the annotation budget is small.
+		var diff_index := 0
+		var max_check: int = mini(produced.size(), golden.size())
+		while diff_index < max_check and produced[diff_index] == golden[diff_index]:
+			diff_index += 1
+		var lo: int = maxi(diff_index - 12, 0)
+		print("GDR_SELFTEST_DETAIL encode mismatch: produced=", produced.size(), "B golden=", golden.size(), "B first diff at byte ", diff_index)
+		print("GDR_SELFTEST_DETAIL produced[", lo, "..] = ", produced.slice(lo, diff_index + 20).hex_encode())
+		print("GDR_SELFTEST_DETAIL golden  [", lo, "..] = ", golden.slice(lo, diff_index + 20).hex_encode())
+	check("replay encodes to golden bytes", produced == golden)
 	var loaded: Dictionary = GDRFormat.from_bytes(golden)
 	check("golden document loads as a replay", loaded.ok)
 	if not loaded.ok:
