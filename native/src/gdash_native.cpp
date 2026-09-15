@@ -511,7 +511,9 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		}
 		case TriggerEffectKind::CAMERA_ZOOM:
-			effect.camera_zoom = Math::max(0.01, prop_float(properties, "371", 1.0));
+			// Key 371 is a percentage (100 = the default zoom), not a raw
+			// multiplier: 50 means half the player camera's default 0.8.
+			effect.camera_zoom = Math::max(0.01, prop_float(properties, "371", 100.0) / 100.0);
 			break;
 		default:
 			break;
