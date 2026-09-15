@@ -3086,7 +3086,15 @@ static void update_registered_decoration_renderers(double delta) {
 		renderer->flush_commands();
 	}
 	if (!pool) return;
-	if (worker.is_null()) worker.instantiate();
+	if (worker.is_null()) {
+		worker.instantiate();
+		// This static outlives the engine: C++ static destructors run after
+		// main, and a plain Ref would memdelete the worker into an
+		// already-torn-down ObjectDB during teardown - a shutdown segfault.
+		// The immortal reference trades one leak-counter entry for a clean
+		// exit, the standard pattern for process-wide Godot objects.
+		if (worker.is_valid()) worker->reference();
+	}
 
 	// Never wait on the game thread. Apply a completed previous-frame result;
 	// if workers are still busy, retain the conservative old cells and try next
