@@ -65,8 +65,51 @@ func _test_batch_order() -> void:
 
 
 
+## Regression test for the device-reported black silhouettes covering the
+## decoration: Geometry Dash serialises an HSV-enabled object whose sliders
+## were never moved as an all-zero string with the saturation/value sliders
+## still multiplicative ("0a0a0a0a0"). Multiplying by those zeros painted the
+## object solid black; GDRweb's HSVShift.shiftColor treats it as "no shift".
+func _test_hsv_neutral() -> void:
+	var base := Color(0.2, 0.5, 0.8)
+	var untouched: Color = GMDConverter._apply_hsv_shift(
+		base, {"41": "1", "43": "0a0a0a0a0"}, "41", "43"
+	)
+	assert(untouched == base, "visual smoke: all-zero HSV shift changed the import tint")
+	var moved: Color = GMDConverter._apply_hsv_shift(
+		base, {"41": "1", "43": "90a1a1a0a0"}, "41", "43"
+	)
+	assert(moved != base, "visual smoke: a moved HSV slider must still shift the tint")
+
+	# The same rule on the batch recolour path: a channel update re-applies
+	# the object's HSV shift, and an all-zero shift must leave the channel
+	# colour alone (native records on device, GDScript fallback elsewhere).
+	var batch := DecorationBatch.new()
+	var item := DecorationBatch.Item.new()
+	item.texture = load("res://assets/textures/gd_atlas/gd_objects_atlas_0.png")
+	item.channel = &"hsv_neutral_smoke"
+	item.hsv_shift = PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.0])
+	item.base_alpha = 1.0
+	batch.add_item(item)
+	batch.build()
+	batch.apply_channel_color(&"hsv_neutral_smoke", Color(0.9, 0.6, 0.3, 1.0))
+	var applied: Color
+	var neutral_native: Object = batch.get("_native_canvas")
+	if neutral_native != null:
+		applied = neutral_native.call(&"get_item_color", 0)
+	else:
+		applied = item.modulate
+	assert(
+		is_equal_approx(applied.r, 0.9) and is_equal_approx(applied.g, 0.6) and is_equal_approx(applied.b, 0.3),
+		"visual smoke: all-zero HSV shift must not black out a recoloured item"
+	)
+	batch.free()
+
+
+
 func _ready() -> void:
 	_test_batch_order()
+	_test_hsv_neutral()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()
@@ -86,7 +129,18 @@ func _ready() -> void:
 	data = _object_data(BATCH_LOCAL)
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		data.color_channels = {"base": "native_smoke"}
-	var batch_objects: Array = [data]
+	var batch_objects: Array = []
+	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+		# Appended first so the sampled batch below stays the last one: an
+		# all-zero HSV string (multiplicative sliders) is Geometry Dash's
+		# "HSV enabled but untouched" encoding and must recolour like an
+		# unshifted object instead of painting a black silhouette.
+		var neutral := _object_data(Vector2(100000, BATCH_LOCAL.y - 300.0))
+		neutral.color_channels = {"base": "hsv_neutral_smoke"}
+		neutral.hsv_shift = PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.0])
+		neutral.groups = ["g_hsv_neutral"]
+		batch_objects.append(neutral)
+	batch_objects.append(data)
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		var offscreen := _object_data(Vector2(100000, BATCH_LOCAL.y))
 		offscreen.color_channels = {"base": "native_smoke"}
@@ -100,28 +154,42 @@ func _ready() -> void:
 		_batch = batch
 		batch.draw.connect(func(): print("VISUAL_SMOKE_BATCH_DRAW"))
 		if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
-			var native_canvas: Object = batch.get("_native_canvas")
-			_native_canvas = native_canvas
-			assert(native_canvas != null, "native smoke: DecorationBatch did not create native renderer")
-			assert(batch.get_node_or_null("NativeCanvas") == null, "native smoke: renderer still consumes a child Node")
-			assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
-			# The child is configured before its parent enters the SceneTree, so
-			# is_processing() is not meaningful yet. Pixel/count checks below prove
-			# that its native visibility callback runs once it is attached.
-			batch.apply_channel_color(&"native_smoke", Color(0.8, 0.2, 0.1, 0.75))
-			var native_color: Color = native_canvas.call(&"get_item_color", 0)
-			assert(is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75), "native smoke: channel update")
-			# A colour trigger's Blending flip re-routes the channel's records
-			# between the batch's own canvas item and the additive override.
-			assert(int(native_canvas.call(&"get_item_blend", 0)) == 0, "native smoke: records must start on the inherited blend")
-			batch.apply_channel_blending(&"native_smoke", true)
-			assert(int(native_canvas.call(&"get_item_blend", 0)) == 1, "native smoke: blending flip did not flag the record additive")
-			batch.apply_channel_blending(&"native_smoke", false)
-			assert(int(native_canvas.call(&"get_item_blend", 0)) == 2, "native smoke: blending flip did not flag the record normal")
+			if batch.is_in_group("g_hsv_neutral"):
+				# All-zero HSV with multiplicative sliders: the channel
+				# colour must survive the recolour untouched.
+				var neutral_canvas: Object = batch.get("_native_canvas")
+				assert(neutral_canvas != null, "native smoke: DecorationBatch did not create native renderer")
+				batch.apply_channel_color(&"hsv_neutral_smoke", Color(0.9, 0.6, 0.3, 1.0))
+				var neutral_color: Color = neutral_canvas.call(&"get_item_color", 0)
+				assert(
+					is_equal_approx(neutral_color.r, 0.9)
+					and is_equal_approx(neutral_color.g, 0.6)
+					and is_equal_approx(neutral_color.b, 0.3),
+					"native smoke: all-zero HSV shift blacked out the streamed item"
+				)
+			else:
+				var native_canvas: Object = batch.get("_native_canvas")
+				_native_canvas = native_canvas
+				assert(native_canvas != null, "native smoke: DecorationBatch did not create native renderer")
+				assert(batch.get_node_or_null("NativeCanvas") == null, "native smoke: renderer still consumes a child Node")
+				assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
+				# The child is configured before its parent enters the SceneTree, so
+				# is_processing() is not meaningful yet. Pixel/count checks below prove
+				# that its native visibility callback runs once it is attached.
+				batch.apply_channel_color(&"native_smoke", Color(0.8, 0.2, 0.1, 0.75))
+				var native_color: Color = native_canvas.call(&"get_item_color", 0)
+				assert(is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75), "native smoke: channel update")
+				# A colour trigger's Blending flip re-routes the channel's records
+				# between the batch's own canvas item and the additive override.
+				assert(int(native_canvas.call(&"get_item_blend", 0)) == 0, "native smoke: records must start on the inherited blend")
+				batch.apply_channel_blending(&"native_smoke", true)
+				assert(int(native_canvas.call(&"get_item_blend", 0)) == 1, "native smoke: blending flip did not flag the record additive")
+				batch.apply_channel_blending(&"native_smoke", false)
+				assert(int(native_canvas.call(&"get_item_blend", 0)) == 2, "native smoke: blending flip did not flag the record normal")
 		var item: DecorationBatch.Item = batch.items[0]
 		print(
-				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
-				% [batch.items.size(), item.transform, item.region, item.modulate, item.texture]
+			"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
+			% [batch.items.size(), item.transform, item.region, item.modulate, item.texture]
 		)
 
 

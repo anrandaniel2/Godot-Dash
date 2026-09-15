@@ -2510,12 +2510,18 @@ public:
 			modulate.set_h(modulate.get_h() + fh);
 			// HSVWatcher.update_color: per-object shift on top (s, v, h), then
 			// intensity product and alpha override on the parent's modulate.
+			// An all-zero shift in multiplicative mode is Geometry Dash's
+			// "HSV enabled but untouched" encoding and must not black the
+			// object out (GDRweb's shiftColor guard; the GDScript watcher
+			// and DecorationBatch paths match this).
 			Color shifted = modulate;
-			if (record.sat_multiplies) shifted.set_s(shifted.get_s() * record.hsv[1]);
-			else shifted.set_s(shifted.get_s() + record.hsv[1]);
-			if (record.val_multiplies) shifted.set_v(shifted.get_v() * record.hsv[2]);
-			else shifted.set_v(shifted.get_v() + record.hsv[2]);
-			shifted.set_h(shifted.get_h() + record.hsv[0]);
+			if (!(record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f)) {
+				if (record.sat_multiplies) shifted.set_s(shifted.get_s() * record.hsv[1]);
+				else shifted.set_s(shifted.get_s() + record.hsv[1]);
+				if (record.val_multiplies) shifted.set_v(shifted.get_v() * record.hsv[2]);
+				else shifted.set_v(shifted.get_v() + record.hsv[2]);
+				shifted.set_h(shifted.get_h() + record.hsv[0]);
+			}
 			Color parent_modulate = shifted * (record.intensity * static_cast<float>(intensity));
 			parent_modulate.a = modulate.a * record.alpha * static_cast<float>(alpha);
 			watcher->set_modulate(modulate);
@@ -3011,7 +3017,12 @@ public:
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
 			Record &record = records[static_cast<size_t>(index)]; Color tinted = channel_color;
-			if (record.has_hsv) {
+			// An all-zero shift with the sliders in multiplicative mode is
+			// Geometry Dash's "HSV enabled but untouched" encoding; the
+			// zeros would otherwise multiply saturation and value to 0 and
+			// render the item as a black silhouette. GDRweb's
+			// HSVShift.shiftColor returns the colour unchanged then.
+			if (record.has_hsv && !(record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f)) {
 				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
 				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
 				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);

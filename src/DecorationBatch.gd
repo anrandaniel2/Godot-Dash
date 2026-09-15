@@ -364,17 +364,25 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 		# rather than flattening every object to the same value.
 		var tinted: Color = color
 		if item.hsv_shift.size() >= 3:
-			tinted = Color.from_hsv(
+			# An all-zero shift with multiplicative sliders is Geometry
+			# Dash's "HSV enabled but untouched" encoding; multiplying by
+			# those zeros paints the item black (GDRweb's shiftColor guard).
+			if not (
+				is_zero_approx(item.hsv_shift[0])
+				and is_zero_approx(item.hsv_shift[1])
+				and is_zero_approx(item.hsv_shift[2])
+			):
+				tinted = Color.from_hsv(
 					fposmod(tinted.h + item.hsv_shift[0], 1.0),
 					clampf(
-							tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1],
-							0.0, 1.0,
+						tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1],
+						0.0, 1.0,
 					),
 					clampf(
-							tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2],
-							0.0, 1.0,
+						tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2],
+						0.0, 1.0,
 					),
-			)
+				)
 		# color.a already carries the channel's opacity; base_alpha is only the
 		# object's own. Multiplying the channel alpha in twice squares it and
 		# makes faint scenery vanish.

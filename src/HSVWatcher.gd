@@ -60,15 +60,24 @@ func use_data(data: Dictionary) -> void:
 
 func update_color() -> void:
 	var shifted_modulate: Color = modulate
-	if saturation_multiplies:
-		shifted_modulate.s *= hsv_shift[1]
-	else:
-		shifted_modulate.s += hsv_shift[1]
-	if value_multiplies:
-		shifted_modulate.v *= hsv_shift[2]
-	else:
-		shifted_modulate.v += hsv_shift[2]
-	shifted_modulate.h += hsv_shift[0]
+	# An all-zero shift with the sliders in multiplicative mode is Geometry
+	# Dash's "HSV enabled but untouched" encoding; multiplying by those zeros
+	# would black the object out. GDRweb's HSVShift.shiftColor returns the
+	# colour unchanged in that case, and so does the copy-HSV path.
+	if not (
+		is_zero_approx(hsv_shift[0])
+		and is_zero_approx(hsv_shift[1])
+		and is_zero_approx(hsv_shift[2])
+	):
+		if saturation_multiplies:
+			shifted_modulate.s *= hsv_shift[1]
+		else:
+			shifted_modulate.s += hsv_shift[1]
+		if value_multiplies:
+			shifted_modulate.v *= hsv_shift[2]
+		else:
+			shifted_modulate.v += hsv_shift[2]
+		shifted_modulate.h += hsv_shift[0]
 	match selection_highlight:
 		SelectionHighlight.NONE:
 			if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:

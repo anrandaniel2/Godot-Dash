@@ -996,6 +996,15 @@ static func _apply_hsv_shift(
 	var saturation_additive: bool = parts.size() > 3 and parts[3] == "1"
 	var value_additive: bool = parts.size() > 4 and parts[4] == "1"
 
+	# Geometry Dash serialises an untouched HSV setup as all zeros with the
+	# saturation/value sliders still in multiplicative mode; applying those
+	# zeros would multiply the colour's saturation and value to 0 and render
+	# the object as a solid black silhouette. GDRweb's HSVShift.shiftColor
+	# returns the colour unchanged in that case, and so does the copy-HSV
+	# path (_shift_copy_hsv); this must match it.
+	if is_zero_approx(hue) and is_zero_approx(saturation) and is_zero_approx(value):
+		return color
+
 	var shifted := Color.from_hsv(
 			fposmod(color.h + hue, 1.0),
 			clampf(color.s + saturation if saturation_additive else color.s * saturation, 0.0, 1.0),
