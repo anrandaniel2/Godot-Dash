@@ -150,15 +150,16 @@ static func _decode_value(buffer: StreamPeerBuffer, size: int) -> Dictionary:
 		return _ok(marker)
 	if marker >= 0xe0:
 		return _ok(marker - 0x100)
-	# Fixstr / fixarray / fixmap.
-	if marker >= 0xa0:
+	# Fixstr / fixarray / fixmap (the bounds matter: every marker at or
+	# above 0xc0 is a format prefix and must reach the match below).
+	if marker >= 0xa0 and marker <= 0xbf:
 		var length := marker & 0x1f
 		if buffer.get_position() + length > size:
 			return _fail("string exceeds data")
 		return _ok(buffer.get_string(length))
-	if marker >= 0x90:
+	if marker >= 0x90 and marker <= 0x9f:
 		return _read_array(buffer, marker & 0x0f, size)
-	if marker >= 0x80:
+	if marker >= 0x80 and marker <= 0x8f:
 		return _read_map(buffer, marker & 0x0f, size)
 	match marker:
 		0xc0:
