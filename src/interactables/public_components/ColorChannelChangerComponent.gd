@@ -142,33 +142,33 @@ func start(_player: Player) -> void:
 			if idx == -1:
 				Toasts.error("In %s: color channel is unset" % parent.name)
 				return
-				color_channel = LevelManager.current_level.color_channels[idx]
-				initial_color_channel = color_channel.duplicate()
-				gradient.colors = PackedColorArray([initial_color_channel.color, _resolved_color(initial_color_channel.color)])
+			color_channel = LevelManager.current_level.color_channels[idx]
+			initial_color_channel = color_channel.duplicate()
+			gradient.colors = PackedColorArray([initial_color_channel.color, _resolved_color(initial_color_channel.color)])
 			# Blending is target state applied at fire time, not faded:
 			# the checkbox itself is the channel's new blend mode - but only
 			# for triggers that carry the checkbox (tri-state), so a plain
 			# colour trigger cannot revert an overlapping Blending flip.
 			if has_blending and color_channel.blending != blending:
-					color_channel.blending = blending
-					color_channel.emit_changed()
-				# The copy link is target state too (key 50): re-pointing the
-				# channel at its source keeps it following that source's later
-				# recolours (GDRweb's CopyColor track value), while an explicit
-				# colour or player target severs the link. A copy link goes
-				# live when the fade completes so the fade towards the source
-				# stays visible; severing happens at fire time.
-				match source:
-					ColorSource.COPY_CHANNEL:
-						_pending_copy_link = copied_channel_id
-						if parent.query(EasingComponent).duration <= 0.0:
-							_apply_pending_copy_link()
-					ColorSource.COLOR, ColorSource.PLAYER_1, ColorSource.PLAYER_2:
-						_pending_copy_link = -1
-						color_channel.copied_channel_id = 0
-					ColorSource.KEEP:
-						# Opacity-only: no colour change and no link change.
-						_pending_copy_link = -1
+				color_channel.blending = blending
+				color_channel.emit_changed()
+			# The copy link is target state too (key 50): re-pointing the
+			# channel at its source keeps it following that source's later
+			# recolours (GDRweb's CopyColor track value), while an explicit
+			# colour or player target severs the link. A copy link goes
+			# live when the fade completes so the fade towards the source
+			# stays visible; severing happens at fire time.
+			match source:
+				ColorSource.COPY_CHANNEL:
+					_pending_copy_link = copied_channel_id
+					if parent.query(EasingComponent).duration <= 0.0:
+						_apply_pending_copy_link()
+				ColorSource.COLOR, ColorSource.PLAYER_1, ColorSource.PLAYER_2:
+					_pending_copy_link = -1
+					color_channel.copied_channel_id = 0
+				ColorSource.KEEP:
+					# Opacity-only: no colour change and no link change.
+					_pending_copy_link = -1
 		Type.LEVEL:
 			var Channel = Constants.SpecialColorChannel
 			var level: Level = LevelManager.current_level
