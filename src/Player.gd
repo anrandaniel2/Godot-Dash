@@ -250,8 +250,10 @@ func _physics_process(delta: float) -> void:
 		InputUtils.update()
 
 	if not in_replay:
-		var replay_jump_state: int = int(InputUtils.is_action_pressed(&"jump")) if not InputUtils.is_action_pressed(&"platformer_wave_down") else -1
-		replay.data.append(PackedByteArray([replay_jump_state, get_direction()]))
+		var replay_jump_state: int = int(InputUtils.is_action_pressed(&"jump")) if not InputUtils.is_action_pressed(&"platformer_wave_down") else 2
+		# A PackedByteArray element is an unsigned byte, so both values are
+		# stored shifted into range (jump state 0/1/2, direction + 1).
+		replay.data.append(PackedByteArray([replay_jump_state, get_direction() + 1]))
 
 	velocity = _compute_velocity(delta, velocity, get_direction(), jump_state, _ground_collider.shape is CircleShape2D)
 

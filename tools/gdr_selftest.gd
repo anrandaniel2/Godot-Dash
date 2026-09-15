@@ -158,7 +158,7 @@ func _test_replay_roundtrip_classic() -> void:
 		# format cannot express (and must not: emitting it would mark the
 		# replay as platformer for the ecosystem tools); the round trip
 		# normalizes it away.
-		replay.data.append(PackedByteArray([1 if tick % 7 < 3 else 0, 1]))
+		replay.data.append(PackedByteArray([1 if tick % 7 < 3 else 0, 2]))
 	var loaded: Dictionary = GDRFormat.from_bytes(GDRFormat.to_bytes(replay))
 	check("classic replay round-trips", loaded.ok)
 	if not loaded.ok:
@@ -166,7 +166,7 @@ func _test_replay_roundtrip_classic() -> void:
 		return
 	var expected: Array[PackedByteArray] = []
 	for tick in 100:
-		expected.append(PackedByteArray([1 if tick % 7 < 3 else 0, 0]))
+		expected.append(PackedByteArray([1 if tick % 7 < 3 else 0, 1]))
 	check("classic replay data matches", _data_equals(loaded.replay.data, expected))
 	check("classic replay stays classic", not loaded.replay.platformer)
 	check("classic replay keeps author", loaded.replay.author == "Classic")
@@ -198,7 +198,7 @@ func _test_json_variant() -> void:
 		return
 	var expected: Array[PackedByteArray] = []
 	for tick in 120:
-		expected.append(PackedByteArray([1 if tick >= 10 and tick < 20 else 0, 0]))
+		expected.append(PackedByteArray([1 if tick >= 10 and tick < 20 else 0, 1]))
 	check("JSON GDR replay data matches", _data_equals(loaded.replay.data, expected))
 	check("JSON GDR replay author matches", loaded.replay.author == "JsonBot")
 
@@ -267,18 +267,20 @@ func _golden_document() -> Dictionary:
 func _golden_data() -> Array[PackedByteArray]:
 	var data: Array[PackedByteArray] = []
 	for tick in 61:
+		# Stored representation: jump state 0/1/2 (2 = wave descend, which
+		# wins over a held jump), direction + 1 (0 left, 1 none, 2 right).
 		var jump_state := 0
 		if tick >= 5 and tick <= 19:
 			jump_state = 1
 		if tick >= 12 and tick <= 29:
-			jump_state = -1 # The wave descend wins over a held jump.
+			jump_state = 2
 		if tick >= 45 and tick <= 59:
-			jump_state = -1
-		var direction := 0
+			jump_state = 2
+		var direction := 1
 		if tick >= 40 and tick <= 49:
-			direction = 1
+			direction = 2
 		elif tick >= 50 and tick <= 54:
-			direction = -1
+			direction = 0
 		data.append(PackedByteArray([jump_state, direction]))
 	return data
 

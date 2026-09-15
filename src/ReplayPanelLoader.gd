@@ -136,8 +136,30 @@ func _migrate_legacy_replays() -> void:
 		if file_name.get_extension() != "res":
 			continue
 		var legacy: Variant = load(Constants.REPLAYS_DIR.path_join(file_name))
-		if legacy is Replay and GDRFormat.save(legacy, Constants.REPLAYS_DIR.path_join(file_name.get_basename() + GDRFormat.FILE_EXTENSION)) == OK:
-			DirAccess.remove_absolute(Constants.REPLAYS_DIR.path_join(file_name))
+		if legacy is Replay:
+			_normalize_legacy_replay(legacy)
+			if GDRFormat.save(legacy, Constants.REPLAYS_DIR.path_join(file_name.get_basename() + GDRFormat.FILE_EXTENSION)) == OK:
+				DirAccess.remove_absolute(Constants.REPLAYS_DIR.path_join(file_name))
+
+
+## Old recordings stored the jump state (-1 for the wave descend) and the
+## direction (-1/0/1) as raw PackedByteArray elements, which are unsigned
+## bytes: the negatives wrapped to 255 and could never be read back (the
+## wave descend and platformer-left inputs were lost in playback). Shift
+## them into the range the current representation uses.
+func _normalize_legacy_replay(legacy: Replay) -> void:
+	for tick in legacy.data.size():
+		var state: int = legacy.data[tick][0]
+		if state == 255:
+			state = 2
+		var direction: int = legacy.data[tick][1]
+		if direction == 255:
+			direction = 0
+		elif direction == 0:
+			direction = 1
+		else:
+			direction = 2
+		legacy.data[tick] = PackedByteArray([state, direction])
 
 
 func _open_importer() -> void:

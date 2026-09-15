@@ -126,9 +126,8 @@ static func _collect_input_edges(replay: Replay, inputs: Array, wave_down_events
 	var wave_down := false
 	var direction := 0
 	for tick: int in replay.data.size():
-		var state: int = replay.data[tick][0]
-		var tick_jump := state == 1
-		var tick_wave_down := state == -1
+		var tick_jump := replay.pressing_jump(tick)
+		var tick_wave_down := replay.pressing_down(tick)
 		if tick_jump != jump_held:
 			inputs.append(_input_event(tick, BUTTON_JUMP, tick_jump))
 		if tick_wave_down != wave_down:
@@ -139,7 +138,7 @@ static func _collect_input_edges(replay: Replay, inputs: Array, wave_down_events
 		# a constant and emitting it would wrongly mark the replay as
 		# platformer for the ecosystem tools.
 		if replay.platformer:
-			var tick_direction: int = replay.data[tick][1]
+			var tick_direction := replay.get_direction(tick)
 			if tick_direction != direction:
 				if direction == -1:
 					inputs.append(_input_event(tick, BUTTON_LEFT, false))
@@ -243,7 +242,7 @@ static func _replay_from_document(document: Dictionary) -> Dictionary:
 		while cursor < tick:
 			data.append(PackedByteArray([
 				_jump_state(jump, wave_down),
-				_direction(left, right) if replay.platformer else 0,
+				_direction(left, right) + 1 if replay.platformer else 1,
 			]))
 			cursor += 1
 		if event.wave:
@@ -258,7 +257,7 @@ static func _replay_from_document(document: Dictionary) -> Dictionary:
 	while cursor < total_ticks:
 		data.append(PackedByteArray([
 			_jump_state(jump, wave_down),
-			_direction(left, right) if replay.platformer else 0,
+			_direction(left, right) + 1 if replay.platformer else 1,
 		]))
 		cursor += 1
 	replay.data = data
@@ -266,9 +265,10 @@ static func _replay_from_document(document: Dictionary) -> Dictionary:
 
 
 static func _jump_state(jump: bool, wave_down: bool) -> int:
-	# The wave descend wins over a held jump, matching the recorder.
+	# Stored representation: 0 none, 1 jump, 2 wave descend (the wave
+	# descend wins over a held jump, matching the recorder).
 	if wave_down:
-		return -1
+		return 2
 	return 1 if jump else 0
 
 
