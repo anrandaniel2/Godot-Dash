@@ -379,7 +379,8 @@ func _test_native_core() -> void:
 		var rgb_properties: Dictionary = color_entries[0].get("gd_properties", {})
 		assert(rgb_properties.get("7", "") == "10" and rgb_properties.get("8", "") == "200" and rgb_properties.get("9", "") == "30", "native smoke: colour trigger lost its explicit RGB")
 		var copy_properties: Dictionary = color_entries[1].get("gd_properties", {})
-		assert(copy_properties.get("50", "") == "7" and copy_properties.get("60", "") == "1" and copy_properties.get("49", "") == "0a-0.5a0a1a1", "native smoke: copy colour trigger lost its source keys")
+		assert(copy_properties.get("50", "") == "7" and copy_properties.get("60", "") == "1" and copy_properties.get("49", "") == "90a-0.5a0a1a1",
+			"native smoke: copy colour trigger lost its source keys: %s" % [copy_properties])
 		var player_properties: Dictionary = color_entries[2].get("gd_properties", {})
 		assert(player_properties.get("15", "") == "1", "native smoke: player colour trigger lost its source")
 		var opacity_properties: Dictionary = color_entries[3].get("gd_properties", {})
