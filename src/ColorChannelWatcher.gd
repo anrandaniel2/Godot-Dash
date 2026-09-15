@@ -27,6 +27,15 @@ static var _refresh_stack: Array[int] = []
 static var _channel_cache: Dictionary = {}
 static var _channel_cache_level = null
 
+## Live-recolor counters for the BEAMDIAG heartbeat: every channel refresh
+## after this watcher's first (import-time) one. A device logcat captured
+## mid-level then shows whether the colour triggers are reaching the channel
+## table at all. Reset by Level.setup_color_channel_watchers on each load.
+static var live_recolor_count: int = 0
+static var live_last_channel: String = ""
+
+
+
 var data: ColorChannelData
 
 ## Watchers of the channels that copy this channel (directly, through
@@ -52,6 +61,9 @@ var _native_watcher_version: int = -1
 ## 1 additive. Colour triggers refresh the channel every animation frame, so
 ## the blend flip is diffed instead of re-sent.
 var _applied_blending: int = -1
+## Whether the watcher's first (import-time) refresh already ran; everything
+## after it is a live recolor and feeds the BEAMDIAG counters above.
+var _had_first_refresh: bool = false
 
 
 func _init(new_data: ColorChannelData) -> void:
@@ -81,6 +93,13 @@ func refresh_objects_color(hsv_watchers: Array[HSVWatcher] = [], _data: ColorCha
 			# further up the stack, so the cycle is broken by doing nothing.
 			return
 		_refresh_stack.append(self_id)
+		if _had_first_refresh:
+			live_recolor_count += 1
+			live_last_channel = String(_data.associated_group).trim_prefix(
+				Constants.COLOR_CHANNEL_GROUP_PREFIX
+			)
+		else:
+			_had_first_refresh = true
 	_apply_blending_if_changed(_data)
 	if hsv_watchers.is_empty():
 		if _refresh_native(_data):

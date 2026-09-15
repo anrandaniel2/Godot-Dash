@@ -201,6 +201,49 @@ func _process(_delta: float) -> void:
 	# entirely. MusicScale keeps its own count of live instances.
 	if MusicScale.active_count > 0:
 		music_scale = 0.85 + MusicVolume.get_volume()
+	_print_beam_diagnostics_live(_delta)
+
+
+## Rolling BEAMDIAG heartbeat, printed every 5 seconds of play so a device
+## logcat captured at the white beams answers the two questions that split the
+## bug in half: are the mid-level colour triggers recolouring channels at all
+## (recolors/last), and if they are, did the channel table end up non-white
+## (colored)? recolors stuck near zero means the triggers never fire; recolors
+## climbing while the beams stay white points past the channel table, at the
+## batch recolour path. Grep "BEAMDIAG live".
+var _beamdiag_seconds: float = 0.0
+var _beamdiag_last_print: float = -5.0
+
+
+func _print_beam_diagnostics_live(delta: float) -> void:
+	if Editor.in_editor or not LevelManager.level_playing:
+		_beamdiag_seconds = 0.0
+		_beamdiag_last_print = -5.0
+		return
+	_beamdiag_seconds += delta
+	if _beamdiag_seconds - _beamdiag_last_print < 5.0:
+		return
+	_beamdiag_last_print = _beamdiag_seconds
+	var colored := 0
+	for channel: ColorChannelData in color_channels:
+		var resolved: Color = ColorChannelWatcher.resolve_channel_color(channel)
+		var alpha: float = ColorChannelWatcher.resolve_channel_alpha(channel)
+		if alpha < 0.99 or resolved.r < 0.95 or resolved.g < 0.95 or resolved.b < 0.95:
+			colored += 1
+	var camera_x := 0.0
+	if LevelManager.player_camera != null:
+		camera_x = LevelManager.player_camera.global_position.x
+	print(
+		"BEAMDIAG live t=%.0f x=%.0f colored=%d/%d recolors=%d last=%s"
+		% [
+			_beamdiag_seconds,
+			camera_x,
+			colored,
+			color_channels.size(),
+			ColorChannelWatcher.live_recolor_count,
+			ColorChannelWatcher.live_last_channel,
+		]
+	)
 
 
 ## The shared physics world mirrors the object tree; any object added to or
@@ -350,6 +393,10 @@ func record_duration() -> void:
 
 
 func setup_color_channel_watchers() -> void:
+	# Fresh BEAMDIAG live counters per level: the heartbeat reads them during
+	# play, and a level change must not carry the previous level's recolors.
+	ColorChannelWatcher.live_recolor_count = 0
+	ColorChannelWatcher.live_last_channel = ""
 	# Every watcher is constructed before any of them enters the tree: a
 	# copying channel wires itself to its source's watcher on its first
 	# refresh (_ready), so the source's watcher must already exist whatever
