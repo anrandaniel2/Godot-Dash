@@ -632,6 +632,8 @@ func reset_replay() -> void:
 	if not in_replay:
 		replay.reset()
 		replay.level_name = LevelManager.current_level.name
+		replay.author = Config.username
+		replay.platformer = LevelManager.platformer
 	Input.action_release(&"move_left")
 	Input.action_release(&"move_right")
 	Input.action_release(&"jump")

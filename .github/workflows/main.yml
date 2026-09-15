@@ -491,6 +491,45 @@ jobs:
           fi
           echo "Probe completed clean (engine exit $status; timeout was the backstop)"
 
+      # Replays are stored in the GDR interchange format (MessagePack): a
+      # codec bug would silently eat saved runs or break compatibility with
+      # the GD replay ecosystem. The self-test round-trips real data and
+      # compares against golden bytes produced by an independent
+      # implementation of the format.
+      - name: GDR replay codec self-test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/gdr_selftest.tscn \
+            > gdr_selftest.log 2>&1
+          status=$?
+          set -e
+          cat gdr_selftest.log
+          if grep -nE "Assertion failed|SCRIPT ERROR" gdr_selftest.log; then
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" gdr_selftest.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=GDR self-test script error::${details}"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ] || ! grep -q "GDR_SELFTEST_SUMMARY.* failed=0$" gdr_selftest.log; then
+            details=$(tail -n 40 gdr_selftest.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=GDR self-test failure (tail 40)::${details}"
+            exit 1
+          fi
+          echo "GDR self-test passed"
+
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.

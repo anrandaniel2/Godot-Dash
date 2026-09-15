@@ -125,10 +125,10 @@ ok_button_text = "Open"
 mode_overrides_title = false
 file_mode = 0
 access = 2
-filters = PackedStringArray("*.res")
+filters = PackedStringArray("*.gdr")
 use_native_dialog = true
 option_count = 1
-option_0/name = "Keep original level file"
+option_0/name = "Keep original replay file"
 option_0/default = 1
 
 [node name="SaveReplayDialog" type="FileDialog" parent="." unique_id=177312287]
@@ -141,7 +141,7 @@ ok_button_text = "Save"
 mode_overrides_title = false
 access = 1
 root_subfolder = "replays"
-filters = PackedStringArray("*.res")
+filters = PackedStringArray("*.gdr")
 use_native_dialog = true
 
 [node name="HSeparator2" type="HSeparator" parent="." unique_id=1821575446]

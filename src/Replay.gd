@@ -3,6 +3,12 @@ extends Resource
 
 @export var data: Array[PackedByteArray] = [] # [jump_pressed as int, direction]
 @export var level_name: String = "Level"
+# GDR interchange metadata (see GDRFormat); the author and platformer flag
+# are captured at record time so a saved .gdr file is shareable as-is.
+var author: String = ""
+var description: String = ""
+var level_id: int = 0
+var platformer: bool = false
 
 
 func pressing_jump(tick: int) -> bool:
@@ -30,5 +36,7 @@ func reset() -> void:
 
 
 func save(name: String) -> void:
-	DirAccess.remove_absolute(Constants.REPLAYS_DIR + name + ".res")
-	ResourceSaver.save(self, Constants.REPLAYS_DIR + name + ".res", ResourceSaver.SaverFlags.FLAG_COMPRESS)
+	DirAccess.make_dir_recursive_absolute(Constants.REPLAYS_DIR)
+	var error := GDRFormat.save(self, Constants.REPLAYS_DIR.path_join(name + GDRFormat.FILE_EXTENSION))
+	if error != OK:
+		push_error("Could not save replay: Error %s." % error)
