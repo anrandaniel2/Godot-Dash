@@ -685,9 +685,12 @@ func _test_native_core() -> void:
 			{"1": "899", "23": "7", "7": "0", "8": "255", "9": "0", "10": "0"})
 	effect_runtime.call(&"register_packed_trigger", 131.0, 0.0, 0, 9, PackedStringArray(), 899,
 			{"1": "899", "23": "8", "50": "7", "49": "120a1a1a0a0", "10": "0"})
-	effect_runtime.call(&"register_packed_trigger", 132.0, 0.0, 0, 10, PackedStringArray(), 899,
+	# The later recolour (x=150) and the sever (x=160) must fire on their own
+	# advances: the asserts below read the link state between them, so firing
+	# them inside the first advance would sever the link before it is checked.
+	effect_runtime.call(&"register_packed_trigger", 150.0, 0.0, 0, 10, PackedStringArray(), 899,
 			{"1": "899", "23": "7", "7": "255", "8": "0", "9": "255", "10": "0"})
-	effect_runtime.call(&"register_packed_trigger", 133.0, 0.0, 0, 11, PackedStringArray(), 899,
+	effect_runtime.call(&"register_packed_trigger", 160.0, 0.0, 0, 11, PackedStringArray(), 899,
 			{"1": "899", "23": "8", "7": "0", "8": "0", "9": "255", "10": "0"})
 	effect_runtime.call(&"finalize")
 	effect_runtime.call(&"advance", effect_player, 0.0, 140.0)
