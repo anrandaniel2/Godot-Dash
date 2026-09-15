@@ -520,7 +520,12 @@ jobs:
             echo "::error title=GDR self-test script error::${details}"
             exit 1
           fi
-          if [ "$status" -ne 0 ] || ! grep -q "GDR_SELFTEST_SUMMARY.* failed=0$" gdr_selftest.log; then
+          # Success is judged from the summary line, not the engine exit
+          # status: this scene-run engine hangs during shutdown after the
+          # checks have completed cleanly (the load probe and the smoke test
+          # are gated the same way for the same reason), so the timeout is
+          # only a backstop.
+          if ! grep -q "GDR_SELFTEST_SUMMARY.* failed=0$" gdr_selftest.log; then
             details=$(tail -n 40 gdr_selftest.log)
             details=${details//'%'/'%25'}
             details=${details//$'\r'/'%0D'}
@@ -528,7 +533,7 @@ jobs:
             echo "::error title=GDR self-test failure (tail 40)::${details}"
             exit 1
           fi
-          echo "GDR self-test passed"
+          echo "GDR self-test passed (engine exit $status; timeout was the backstop)"
 
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
