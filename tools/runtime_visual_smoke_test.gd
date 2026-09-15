@@ -343,11 +343,14 @@ func _test_native_core() -> void:
 	assert(trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(), "native smoke: one or more 2.2 trigger IDs were dropped")
 	var native_import := NativeCore.available() and not Editor.in_editor
 	for trigger_data: Dictionary in trigger_entries:
-		# Packed records carry the raw activation metadata; scene-backed
-		# families (camera static, edge, end level) legitimately keep their
-		# components instead. Every trigger must be one or the other.
+		# Packed records carry the raw activation metadata; every other
+		# family keeps a scene to instantiate (dedicated scenes like the
+		# end-level trigger, which needs no component data, and the generic
+		# shell in editor/fallback builds). A trigger must be one or the
+		# other.
 		var packed: bool = trigger_data.has("gd_trigger_flags") and trigger_data.has("gd_properties")
-		assert(packed or not trigger_data.get("components", {}).is_empty(), "native smoke: trigger neither packed as a record nor backed by a scene")
+		assert(packed or not str(trigger_data.get("scene_file_path", "")).is_empty(),
+			"native smoke: trigger neither packed as a record nor backed by a scene")
 		if native_import and (int(trigger_data.get("gd_object_id", 0)) in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS or not GMDObjects.MAP.has(int(trigger_data.get("gd_object_id", 0)))):
 			# Effect families and generic families pack as C++ records with no
 			# scene and no component data; scene-backed families outside the
