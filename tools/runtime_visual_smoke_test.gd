@@ -148,10 +148,67 @@ func _test_gameplay_z() -> void:
 	swapped.free()
 
 
+## The invisible block family (146 block / 147 plank) imports collision-only:
+## their atlas frames are the GD editor's white ghost outlines, which the real
+## game never draws, so neither the generated-scene artwork swap nor the packed
+## static art may include them - previously they rendered as full-size ghost
+## squares over the level's actual decoration.
+func _test_invisible_blocks() -> void:
+	assert(not GMDObjects.is_static_gameplay_object(146), "invis smoke: 146 must not take the static-artwork path")
+	assert(not GMDObjects.is_static_gameplay_object(147), "invis smoke: 147 must not take the static-artwork path")
+	assert(not GMDObjects.is_fallback_block(146), "invis smoke: 146 must not fall back to a visible block")
+	assert(GMDObjects.get_object(146).scene.ends_with("GDInvisibleSquare.tscn"), "invis smoke: 146 lost its scene")
+	var block: Node2D = Level.instantiate_object_from_data({
+		"name": "InvisSmoke",
+		"scene_file_path": "scenes/components/level_components/solids/GDInvisibleSquare.tscn",
+		"gd_object_id": 146,
+		"transform": Transform2D(0.0, Vector2.ZERO),
+		"groups": [],
+		"color_channels": {},
+		"z_layer": 5,
+		"z_order": 2,
+	}, null)
+	assert(block != null, "invis smoke: invisible block scene missing")
+	assert(block.get_node_or_null(^"Base") == null, "invis smoke: invisible block must not wear artwork")
+	assert(block.get_child_count() == 2, "invis smoke: artwork swap injected nodes into the invisible block")
+	assert(block.get_node_or_null(^"Hitbox") != null, "invis smoke: invisible block lost its collision")
+	block.free()
+	# An invisible spike (hazard) and triangle (solid) import the same way.
+	var spike: Node2D = Level.instantiate_object_from_data({
+		"name": "InvisSpikeSmoke",
+		"scene_file_path": "scenes/components/level_components/hazards/GDInvisibleSpike.tscn",
+		"gd_object_id": 144,
+		"transform": Transform2D(0.0, Vector2.ZERO),
+		"groups": [],
+		"color_channels": {},
+		"z_layer": 5,
+		"z_order": 2,
+	}, null)
+	assert(spike != null, "invis smoke: invisible spike scene missing")
+	assert(spike is Area2D, "invis smoke: invisible spike lost its hazard area")
+	assert(spike.get_child_count() == 2, "invis smoke: invisible spike gained artwork nodes")
+	spike.free()
+	var triangle: Node2D = Level.instantiate_object_from_data({
+		"name": "InvisTriangleSmoke",
+		"scene_file_path": "scenes/components/level_components/solids/GDInvisibleTriangle.tscn",
+		"gd_object_id": 673,
+		"transform": Transform2D(0.0, Vector2.ZERO),
+		"groups": [],
+		"color_channels": {},
+		"z_layer": 5,
+		"z_order": 2,
+	}, null)
+	assert(triangle != null, "invis smoke: invisible triangle scene missing")
+	assert(triangle.get_node_or_null(^"Hitbox") != null, "invis smoke: invisible triangle lost its collision")
+	assert(triangle.get_child_count() == 2, "invis smoke: invisible triangle gained artwork nodes")
+	triangle.free()
+
+
 func _ready() -> void:
 	_test_batch_order()
 	_test_hsv_neutral()
 	_test_gameplay_z()
+	_test_invisible_blocks()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()
@@ -631,6 +688,40 @@ func _test_native_core() -> void:
 	# Reset clears activation state and running fades.
 	effect_runtime.call(&"reset")
 	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
+	# --- 1007 Fade: GD's multiplicative group-opacity model ----------------
+	# A fade eases its GROUP's persistent opacity, and a member renders as
+	# its own alpha times the product of all its groups' opacities. Two
+	# overlapping groups share a member: fading group 10 to 0 hides it, and
+	# a fade of the overlapping group 11 back up to 1 must NOT resurrect it
+	# (the regression that made a level's hidden collision blocks reappear).
+	var shared_block := Node2D.new()
+	shared_block.add_to_group(&"g_10")
+	shared_block.add_to_group(&"g_11")
+	effect_level.add_child(shared_block)
+	var shared_watcher := HSVWatcher.new()
+	shared_block.add_child(shared_watcher)
+	shared_block.set_meta(Constants.HSV_WATCHER_META, shared_watcher)
+	var solo_block := Node2D.new()
+	solo_block.add_to_group(&"g_11")
+	effect_level.add_child(solo_block)
+	var solo_watcher := HSVWatcher.new()
+	solo_block.add_child(solo_watcher)
+	solo_block.set_meta(Constants.HSV_WATCHER_META, solo_watcher)
+	effect_runtime.call(&"set_group_members", &"g_10", [shared_block])
+	effect_runtime.call(&"set_group_members", &"g_11", [shared_block, solo_block])
+	effect_runtime.call(&"register_packed_trigger", 200.0, 0.0, 0, 20, PackedStringArray(), 1007,
+		{"1": "1007", "51": "10", "35": "0", "10": "0"})
+	effect_runtime.call(&"register_packed_trigger", 210.0, 0.0, 0, 21, PackedStringArray(), 1007,
+		{"1": "1007", "51": "11", "35": "1", "10": "0"})
+	effect_runtime.call(&"advance", effect_player, 120.0, 220.0)
+	effect_runtime.call(&"tick", 0.016)
+	assert(is_zero_approx(shared_watcher.alpha), "native smoke: fade did not hide the shared group member")
+	assert(is_equal_approx(solo_watcher.alpha, 1.0), "native smoke: fade to full lost its own group member")
+	assert(is_zero_approx(shared_block.modulate.a), "native smoke: hidden block still renders")
+	# A restart clears group opacity: members re-render from their own alpha
+	# until the same fades fire again.
+	effect_runtime.call(&"reset")
+	assert(is_equal_approx(shared_watcher.alpha, 1.0), "native smoke: reset did not clear group opacity")
 	# --- Live copy channels (GDRweb CopyColor port) -----------------------
 	# Copies resolve their source live: B copies A, a trigger recolours A and
 	# B's members re-render from A's new colour. Chains, per-copy HSV shifts,

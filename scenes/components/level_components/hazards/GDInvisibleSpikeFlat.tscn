@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://dinvspk0205a"]
+
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="1_inv"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_invsp"]
+size = Vector2(25.6, 23.893333)
+
+[node name="GDInvisibleSpikeFlat" type="Area2D"]
+collision_layer = 4
+
+[node name="Hitbox" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_invsp")
+debug_color = Color(0.960784, 0, 0, 0)
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("1_inv")]
+type = 1

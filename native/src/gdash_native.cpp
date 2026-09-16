@@ -559,7 +559,8 @@ class NativeTriggerRuntime : public RefCounted {
 		double prev_weight = 0.0;
 		std::vector<ObjectID> members;        // union of the target groups
 		std::vector<Vector2> initial_scales;  // 2067 multiplies from these
-		std::vector<double> initial_alphas;   // 1007 fades from these
+		std::vector<String> group_targets;    // 1007 eases each group's opacity
+		std::vector<double> initial_group_opacities; // captured at fire time
 		ObjectID pivot;                       // rotate/scale centre (key 71)
 		ObjectID channel_data;                // ColorChannelData resource
 		String level_color_property;          // set for bg/ground/line targets
@@ -602,6 +603,23 @@ class NativeTriggerRuntime : public RefCounted {
 	std::vector<ObjectID> frame_players;
 	// Running eased effects.
 	std::vector<Fade> fades;
+	// GD's group opacity: every group keeps a persistent opacity that Fade
+	// (1007) triggers ease, and an object's rendered alpha is its own alpha
+	// times the product of the opacities of every group it belongs to
+	// (gdrender's GameObject::updateOpacity). The previous model eased one
+	// per-object alpha from whatever it currently was, so fades on
+	// overlapping groups fought over a single number: fading one group back
+	// up un-hid objects another group's fade had hidden, which is exactly
+	// how a level's hidden collision blocks came back mid-level.
+	HashMap<String, double> group_opacity;
+	// Each member's own alpha, captured once at registration, so group
+	// products never compound onto an already-faded value.
+	HashMap<ObjectID, double> member_own_alpha;
+	// Reverse of member_index: which effect-referenced groups a member is in.
+	HashMap<ObjectID, std::vector<String>> member_groups;
+	// Budgets for the FADIAG fire-time diagnostic (see report_fade_capture).
+	int64_t fade_capture_count = 0;
+	int64_t fade_capture_reports = 0;
 	// Min-heap ordered by due time/source sequence. Inserting a spawn event is
 	// O(log n), replacing the old full stable_sort after every insertion.
 	std::vector<Event> events;
@@ -764,6 +782,88 @@ class NativeTriggerRuntime : public RefCounted {
 		if (!node) return false;
 		const Ref<Script> script = node->get_script();
 		return script.is_valid() && script->get_path() == String("res://src/DecorationBatch.gd");
+	}
+
+	// A member's own alpha, independent of any group opacity: a decoration
+	// batch carries it in modulate.a, a scene object in its root HSVWatcher.
+	static double read_member_alpha(Object *node) {
+		if (!node) return 1.0;
+		if (is_decoration_batch(Object::cast_to<Node>(node))) {
+			CanvasItem *item = Object::cast_to<CanvasItem>(node);
+			return item ? static_cast<double>(item->get_modulate().a) : 1.0;
+		}
+		if (node->has_meta(StringName("hsv_watcher"))) {
+			Object *watcher = node->get_meta(StringName("hsv_watcher"));
+			return static_cast<double>(watcher->get("alpha"));
+		}
+		return 1.0;
+	}
+
+	// Re-renders one member from its own alpha times the product of all its
+	// groups' opacities. Concurrent fades on different groups stay correct:
+	// each recomputation reads the shared opacity table, never a value some
+	// other fade already wrote onto the object.
+	void refresh_member_alpha(ObjectID id) {
+		Object *node = ObjectDB::get_instance(id);
+		if (!node) return;
+		double alpha = 1.0;
+		const double *own = member_own_alpha.get_ptr(id);
+		if (own) alpha = *own;
+		const std::vector<String> *groups = member_groups.get_ptr(id);
+		if (groups) {
+			for (const String &group : *groups) {
+				const double *opacity = group_opacity.get_ptr(group);
+				if (opacity) alpha *= *opacity;
+			}
+		}
+		if (is_decoration_batch(Object::cast_to<Node>(node))) {
+			CanvasItem *item = Object::cast_to<CanvasItem>(node);
+			if (!item) return;
+			Color modulate = item->get_modulate();
+			modulate.a = static_cast<real_t>(alpha);
+			item->set_modulate(modulate);
+		} else if (node->has_meta(StringName("hsv_watcher"))) {
+			Object *watcher = node->get_meta(StringName("hsv_watcher"));
+			watcher->set("alpha", alpha);
+			watcher->call("update_color");
+		}
+	}
+
+	// Budgeted diagnostic for the invisible-blocks investigation: what each
+	// Fade (1007) fire actually resolved - its target groups, how many
+	// members, and how many of those can actually be faded (watcher or
+	// batch) versus nothing at all. Grep "FADIAG".
+	void report_fade_capture(const TriggerEffect &effect, const Fade &fade) {
+		++fade_capture_count;
+		if (fade_capture_reports >= 60) return;
+		if (fade_capture_count > 20 && (fade_capture_count % 1000) != 0) return;
+		++fade_capture_reports;
+		int64_t watchers = 0, batches = 0, naked = 0;
+		for (ObjectID id : fade.members) {
+			Object *node = ObjectDB::get_instance(id);
+			if (!node) continue;
+			if (is_decoration_batch(Object::cast_to<Node>(node))) {
+				++batches;
+			} else if (node->has_meta(StringName("hsv_watcher"))) {
+				++watchers;
+			} else {
+				++naked;
+			}
+		}
+		String groups_text;
+		for (const String &group : fade.group_targets) {
+			if (!groups_text.is_empty()) groups_text += ",";
+			groups_text += group;
+		}
+		ERR_PRINT(String("[gdash_native] FADIAG fire #")
+			+ String::num_uint64(static_cast<uint64_t>(fade_capture_count))
+			+ " groups=" + groups_text
+			+ " members=" + String::num_uint64(static_cast<uint64_t>(fade.members.size()))
+			+ " watchers=" + String::num_uint64(static_cast<uint64_t>(watchers))
+			+ " batches=" + String::num_uint64(static_cast<uint64_t>(batches))
+			+ " naked=" + String::num_uint64(static_cast<uint64_t>(naked))
+			+ " alpha=" + String::num(effect.alpha, 3)
+			+ " dur=" + String::num(effect.duration, 3));
 	}
 
 	// The live colour of a reserved channel ID.
@@ -1024,21 +1124,14 @@ class NativeTriggerRuntime : public RefCounted {
 			}
 			case TriggerEffectKind::ALPHA: {
 				fade.members = resolve_effect_members(effect);
-				fade.initial_alphas.reserve(fade.members.size());
-				for (ObjectID id : fade.members) {
-					Object *node = ObjectDB::get_instance(id);
-					double initial = 1.0;
-					if (node) {
-						if (is_decoration_batch(Object::cast_to<Node>(node))) {
-							CanvasItem *item = Object::cast_to<CanvasItem>(node);
-							initial = item ? item->get_modulate().a : 1.0;
-						} else if (node->has_meta(StringName("hsv_watcher"))) {
-							Object *watcher = node->get_meta(StringName("hsv_watcher"));
-							initial = static_cast<double>(watcher->get("alpha"));
-						}
-					}
-					fade.initial_alphas.push_back(initial);
+				fade.group_targets.reserve(effect.target_groups.size());
+				fade.initial_group_opacities.reserve(effect.target_groups.size());
+				for (const String &group : effect.target_groups) {
+					if (!group_opacity.has(group)) group_opacity.insert(group, 1.0);
+					fade.group_targets.push_back(group);
+					fade.initial_group_opacities.push_back(group_opacity[group]);
 				}
+				report_fade_capture(effect, fade);
 				break;
 			}
 			case TriggerEffectKind::COLOR:
@@ -1212,21 +1305,21 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			}
 			case TriggerEffectKind::ALPHA: {
-				for (size_t i = 0; i < fade.members.size(); ++i) {
-					Object *node = ObjectDB::get_instance(fade.members[i]);
-					if (!node) continue;
-					const double step = (effect.alpha - fade.initial_alphas[i]) * weight_delta;
-					if (is_decoration_batch(Object::cast_to<Node>(node))) {
-						CanvasItem *item = Object::cast_to<CanvasItem>(node);
-						if (!item) continue;
-						Color modulate = item->get_modulate();
-						modulate.a += static_cast<real_t>(step);
-						item->set_modulate(modulate);
-					} else if (node->has_meta(StringName("hsv_watcher"))) {
-						Object *watcher = node->get_meta(StringName("hsv_watcher"));
-						watcher->set("alpha", static_cast<double>(watcher->get("alpha")) + step);
-						watcher->call("update_color");
-					}
+				// Ease each target group's persistent opacity, then recompute
+				// every affected member from its own alpha times the product
+				// of all its groups' opacities - GD's multiplicative model.
+				// A member shared with another group keeps that group's
+				// opacity in its product, so fading the other group back up
+				// cannot resurrect what this fade hid.
+				for (size_t gi = 0; gi < fade.group_targets.size(); ++gi) {
+					const double initial = fade.initial_group_opacities[gi];
+					// Accumulate: the per-tick weight deltas sum to 1 over
+					// the fade, so this lands exactly on the target.
+					group_opacity[fade.group_targets[gi]] +=
+						(effect.alpha - initial) * weight_delta;
+				}
+				for (ObjectID id : fade.members) {
+					refresh_member_alpha(id);
 				}
 				break;
 			}
@@ -1528,6 +1621,8 @@ public:
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
+		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
+		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); frame_players.clear(); previous_positions.clear();
 		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID();
 	}
@@ -1565,6 +1660,21 @@ public:
 			if (member) ids.push_back(ObjectID(member->get_instance_id()));
 		}
 		member_index[group] = std::move(ids);
+		if (!group_opacity.has(group)) group_opacity[group] = 1.0;
+		for (ObjectID id : member_index[group]) {
+			if (!member_own_alpha.has(id)) {
+				member_own_alpha.insert(id, read_member_alpha(ObjectDB::get_instance(id)));
+			}
+			std::vector<String> &groups = member_groups[id];
+			bool duplicate = false;
+			for (const String &existing : groups) {
+				if (existing == group) {
+					duplicate = true;
+					break;
+				}
+			}
+			if (!duplicate) groups.push_back(group);
+		}
 	}
 	// Every group an effect may resolve against, for the membership snapshot
 	// the owner Node takes at finalize time.
@@ -1798,6 +1908,13 @@ public:
 		// teleport, not a crossing: forget the tracked positions so the
 		// first frame after a restart fires no crossings.
 		fades.clear();
+		// Group opacity is level state, not object state: a restart clears
+		// it (the same fades re-fire as the player crosses them again), and
+		// every member re-renders from its own alpha until they do.
+		group_opacity.clear();
+		for (const KeyValue<ObjectID, std::vector<String>> &entry : member_groups) {
+			refresh_member_alpha(entry.key);
+		}
 		touch_inside_players.clear();
 		frame_players.clear();
 		previous_positions.clear();

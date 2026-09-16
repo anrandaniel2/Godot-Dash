@@ -304,6 +304,26 @@ const MAP: Dictionary[int, Dictionary] = {
 	# 1816 is Geometry Dash's collision block: an invisible solid rectangle
 	# scaled to the creator's chosen size.
 	1816: { "scene": SOLIDS + "GDInvisibleBlock.tscn", "name": "CollisionBlock" },
+	# 1.9's invisible block (146) and plank (147): collision only. Their atlas
+	# frames (invis_square / invis_plank) are the white ghost outlines the GD
+	# editor shows - the real game never draws them - so they must never reach
+	# the generated-scene artwork path (see INVISIBLE_GAMEPLAY_IDS). The
+	# hitboxes replicate the PRISTINE ones the generated scenes carried
+	# (128x128 and 128x59.73).
+	146: { "scene": SOLIDS + "GDInvisibleSquare.tscn", "name": "InvisibleBlock" },
+	147: { "scene": SOLIDS + "GDInvisiblePlank.tscn", "name": "InvisiblePlank" },
+	# The rest of the invisible collision family, hitboxes likewise taken from
+	# the PRISTINE data the generated scenes carry: the invisible spikes
+	# (hazards), the small invisible square / plank, and the invisible
+	# triangles (solids on the slope layer).
+	144: { "scene": HAZARDS + "GDInvisibleSpike.tscn", "name": "InvisibleSpike" },
+	145: { "scene": HAZARDS + "GDInvisibleSpikeSmall.tscn", "name": "InvisibleSpikeSmall" },
+	205: { "scene": HAZARDS + "GDInvisibleSpikeFlat.tscn", "name": "InvisibleSpikeFlat" },
+	459: { "scene": HAZARDS + "GDInvisibleSpikeTiny.tscn", "name": "InvisibleSpikeTiny" },
+	206: { "scene": SOLIDS + "GDInvisibleSquareSmall.tscn", "name": "InvisibleSquareSmall" },
+	204: { "scene": SOLIDS + "GDInvisiblePlankSmall.tscn", "name": "InvisiblePlankSmall" },
+	673: { "scene": SOLIDS + "GDInvisibleTriangle.tscn", "name": "InvisibleTriangle" },
+	674: { "scene": SOLIDS + "GDInvisibleTriangleWide.tscn", "name": "InvisibleTriangleWide" },
 	# 2.2 invisible hazards: kill zones sized by the object's scale.
 	3610: { "scene": HAZARDS + "GDDamageSquare.tscn", "name": "DamageSquare" },
 	3611: { "scene": HAZARDS + "GDDamageCircle.tscn", "name": "DamageCircle" },
@@ -480,6 +500,15 @@ static func gd_scene_path(gd_id: int) -> String:
 	return path if ResourceLoader.exists("res://" + path) else ""
 
 
+## Collision-only Geometry Dash gameplay objects: real GD never draws them in
+## game (the atlas frames are the editor's white ghost outlines), so they must
+## not be swapped to their generated scene nor packed as static artwork, no
+## matter that their scene lives under solids/hazards.
+const INVISIBLE_GAMEPLAY_IDS: Array[int] = [
+	144, 145, 146, 147, 1816, 204, 205, 206, 459, 673, 674,
+]
+
+
 ## [code]true[/code] when [param gd_id] is a [i]static[/i] gameplay object - a
 ## solid block, a slope, a spike or a saw - as opposed to an interactive object
 ## (orb, pad, portal, trigger) or a decoration.
@@ -489,6 +518,8 @@ static func gd_scene_path(gd_id: int) -> String:
 ## from their generated gd scene (atlas art + authored collision) instead of a
 ## hand-made component scene.
 static func is_static_gameplay_object(gd_id: int) -> bool:
+	if gd_id in INVISIBLE_GAMEPLAY_IDS:
+		return false
 	var description := get_object(gd_id)
 	if description.is_empty():
 		return false
