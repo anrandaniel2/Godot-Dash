@@ -154,13 +154,24 @@ func set_channel_blending(additive: bool) -> void:
 		_apply_spin()
 
 
+## The Godot z index for a Geometry Dash z layer / z order pair. The named
+## layers are the odd values (-3..9 = B4..T3) and 4 is the gameplay plane
+## between B1 and T1; the stride of 64 leaves room for the fine order and
+## for decoration batches that share a layer to interleave without spilling
+## into the next one. Shared by the generated-scene draw order, the
+## artwork-swap (hand-made scene) path and the decoration batches, so all
+## three put an object at the same spot on screen.
+static func z_index_for(z_layer_value: int, z_order_value: int) -> int:
+	var fine: int = clampi(z_order_value, -(Z_LAYER_STRIDE / 2 - 1), Z_LAYER_STRIDE / 2 - 1)
+	return clampi(
+		(z_layer_value - Z_LAYER_GAMEPLAY) * Z_LAYER_STRIDE + fine,
+		-Z_INDEX_LIMIT, Z_INDEX_LIMIT,
+	)
+
+
 ## Maps the Geometry Dash z layer and order onto a Godot z index.
 func apply_draw_order() -> void:
-	var fine: int = clampi(z_order, -(Z_LAYER_STRIDE / 2 - 1), Z_LAYER_STRIDE / 2 - 1)
-	z_index = clampi(
-			(z_layer - Z_LAYER_GAMEPLAY) * Z_LAYER_STRIDE + fine,
-			-Z_INDEX_LIMIT, Z_INDEX_LIMIT,
-	)
+	z_index = z_index_for(z_layer, z_order)
 
 
 func _apply_glow() -> void:

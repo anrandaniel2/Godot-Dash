@@ -583,8 +583,16 @@ static func _object_from_properties(
 		"transform": transform,
 		"groups": _groups_from_properties(properties),
 		"color_channels": _color_channels_from_properties(
-				gd_id, properties, description, channel_style, used_channels
+			gd_id, properties, description, channel_style, used_channels
 		),
+		# Draw order, identical to the decoration path: the explicit key 25 /
+		# key 24 overrides when the level sets them, otherwise the object
+		# family's built-in default (blocks and spikes default to T1, the
+		# layer in front of the gameplay plane). Without these keys the
+		# generated-scene path computed its z from a z layer of 0 and every
+		# gameplay object sank to ~B3, behind nearly all decoration.
+		"z_order": _z_order_from_properties(properties, gd_id),
+		"z_layer": _z_layer_from_properties(properties, gd_id),
 		"hsv": {
 			"hsv_shift": _hsv_shift_from_properties(properties),
 			"intensity": 1.0,

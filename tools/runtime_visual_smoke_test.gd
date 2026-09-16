@@ -107,9 +107,51 @@ func _test_hsv_neutral() -> void:
 
 
 
+## Imported gameplay objects must wear the Geometry Dash z mapping on every
+## instantiation path: generated scenes (GDObject.setup), hand-made scenes
+## dressed by the artwork swap, and decoration batches. The named layers are
+## odd values (1 = B2, 3 = B1, 5 = T1) and 4 is the gameplay plane, so a
+## default block (T1) must land above every B-layer decoration batch while a
+## B1 decoration stays behind it.
+func _test_gameplay_z() -> void:
+	assert(GDObject.z_index_for(5, 2) == 66, "z smoke: T1 block (layer 5, order 2)")
+	assert(GDObject.z_index_for(3, -6) == -70, "z smoke: B1 fine order can be negative")
+	assert(
+		GDObject.z_index_for(1, 0) < GDObject.z_index_for(5, 0),
+		"z smoke: a B2 batch index must stay below a T1 object"
+	)
+
+	# Generated-scene path: setup() consumes the converter's z keys.
+	var generated: GDObject = (load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene).instantiate() as GDObject
+	assert(generated != null, "z smoke: generated GD scene missing")
+	generated.setup({
+		"gd_object_id": TEST_ID,
+		"z_layer": 5,
+		"z_order": 2,
+	})
+	assert(generated.z_index == 66, "z smoke: generated scene ignored z keys")
+	generated.free()
+
+	# Hand-made scene path (artwork swap): must not render at z 0 anymore.
+	var swapped: Node2D = Level.instantiate_object_from_data({
+		"name": "ZSmokePortal",
+		"scene_file_path": "scenes/components/level_components/portals/other_portals/GravityPortalNormal.tscn",
+		"gd_object_id": 11,
+		"transform": Transform2D(0.0, Vector2.ZERO),
+		"groups": [],
+		"color_channels": {},
+		"z_layer": 5,
+		"z_order": 0,
+	}, null)
+	assert(swapped != null, "z smoke: portal scene missing")
+	assert(swapped.z_index == 64, "z smoke: artwork-swapped object ignored z layer")
+	swapped.free()
+
+
 func _ready() -> void:
 	_test_batch_order()
 	_test_hsv_neutral()
+	_test_gameplay_z()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()

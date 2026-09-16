@@ -920,6 +920,16 @@ static func instantiate_object_from_data(
 	if object_data.has("gd_object_id"):
 		object.set_meta(&"gd_object_id", int(object_data.gd_object_id))
 		GDArtSwap.apply(object, int(object_data.gd_object_id))
+		# These scenes carry Godot Dash authored prefabs, so they never run
+		# GDObject's draw-order mapping: before this they rendered at z 0,
+		# in front of every background-layer decoration batch. Imported
+		# gameplay objects (orbs, pads, portals, solids without a generated
+		# scene) wear the same z layer/order mapping the generated scenes
+		# and decoration batches compute.
+		object.z_index = GDObject.z_index_for(
+			int(object_data.get("z_layer", GDObject.Z_LAYER_GAMEPLAY)),
+			int(object_data.get("z_order", 0))
+		)
 	# Runtime-only Geometry Dash trigger metadata is intentionally kept on the
 	# root Interactable instead of being expanded into one scheduler node per
 	# property. NativeTriggerBridge packs these records after level construction.
