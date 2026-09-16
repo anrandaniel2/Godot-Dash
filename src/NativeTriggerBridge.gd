@@ -84,6 +84,70 @@ func _register_packed_triggers(level_data: Dictionary) -> void:
 			int(object_data.get("gd_object_id", 0)),
 			object_data.get("gd_properties", {}),
 		)
+	_print_trigger_key_diagnostics(packed_records)
+
+
+## One-shot diagnostic for the white-beams investigation: which property keys
+## the level's packed colour triggers actually carry. The native effect parser
+## reads the classic encoding (7/8/9 RGB, 23 channel, 35 opacity, 50 copy,
+## 15/16 player colour, 17 blending, 10 duration); an Amethyst device run
+## showed 348k recolour events while no channel ever left white - as if every
+## fire parsed as KEEP - so the real key vocabulary of a modern effect level's
+## triggers has to be visible in a logcat. Prints, per colour-family object
+## id, the record count, the flags histogram and a key-presence histogram,
+## plus the three key-richest raw property dictionaries as samples.
+## Grep "TRIGDIAG".
+func _print_trigger_key_diagnostics(packed_records: Array) -> void:
+	if packed_records.is_empty():
+		return
+	const COLOR_FAMILY := {
+		29: true, 30: true, 104: true, 105: true, 221: true, 717: true, 718: true,
+		743: true, 744: true, 899: true, 900: true, 915: true, 1006: true,
+	}
+	var family_counts: Dictionary = {}
+	var key_counts: Dictionary = {}
+	var flag_counts: Dictionary = {}
+	var samples: Dictionary = {}
+	for value: Variant in packed_records:
+		var object_data: Dictionary = value
+		var gd_id := int(object_data.get("gd_object_id", 0))
+		if not COLOR_FAMILY.has(gd_id):
+			continue
+		family_counts[gd_id] = int(family_counts.get(gd_id, 0)) + 1
+		var flags := int(object_data.get("gd_trigger_flags", 0))
+		var flag_key := str(gd_id) + "/" + str(flags)
+		flag_counts[flag_key] = int(flag_counts.get(flag_key, 0)) + 1
+		var properties: Dictionary = object_data.get("gd_properties", {})
+		var counts: Dictionary = key_counts.get(gd_id, {})
+		for key: Variant in properties:
+			var key_text := str(key)
+			counts[key_text] = int(counts.get(key_text, 0)) + 1
+		key_counts[gd_id] = counts
+		# Keep the three key-richest records as full samples: richer records
+		# show more of the vocabulary than the first three.
+		var best: Array = samples.get(gd_id, [])
+		best.append(properties)
+		best.sort_custom(func(a, b) -> bool: return a.size() > b.size())
+		if best.size() > 3:
+			best.resize(3)
+		samples[gd_id] = best
+	if family_counts.is_empty():
+		return
+	var flag_parts: PackedStringArray = []
+	for flag_key: Variant in flag_counts:
+		flag_parts.append("%s=%d" % [flag_key, flag_counts[flag_key]])
+	print("TRIGDIAG flags(spawn=1,touch=2,multi=4) ", " ".join(flag_parts))
+	for gd_id: Variant in family_counts:
+		var counts: Dictionary = key_counts[gd_id]
+		var keys := counts.keys()
+		keys.sort_custom(func(a, b) -> bool: return str(a).to_int() < str(b).to_int())
+		var key_parts: PackedStringArray = []
+		for key: Variant in keys:
+			key_parts.append("%s:%d" % [key, counts[key]])
+		print("TRIGDIAG gd_id=%s n=%d keys=%s" % [gd_id, family_counts[gd_id], ",".join(key_parts)])
+		var best: Array = samples.get(gd_id, [])
+		for i: int in best.size():
+			print("TRIGDIAG gd_id=%s sample%d=%s" % [gd_id, i, str(best[i])])
 
 
 func _configure_runtime_targets(trigger: TriggerInteractable) -> void:

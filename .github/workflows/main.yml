@@ -535,6 +535,47 @@ jobs:
           fi
           echo "GDR self-test passed (engine exit $status; timeout was the backstop)"
 
+      # The Amethyst white-beams investigation found a device run where colour
+      # triggers fired 348k times without recolouring a single channel. This
+      # synthetic run exercises the native colour chain end to end (packed 899
+      # records -> advance() crossing -> fade -> ColorChannelData recolour) so
+      # a parse or lookup regression fails here instead of shipping as white
+      # beams. Gated on the summary line like the GDR self-test: the engine
+      # teardown hang is tolerated, the timeout is the backstop.
+      - name: Native colour-trigger chain self-test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/native_color_selftest.tscn \
+            > native_color_selftest.log 2>&1
+          status=$?
+          set -e
+          cat native_color_selftest.log
+          if grep -nE "Assertion failed|SCRIPT ERROR" native_color_selftest.log; then
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" native_color_selftest.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Native colour self-test script error::${details}"
+            exit 1
+          fi
+          if ! grep -q "NATIVE_COLOR_SELFTEST_SUMMARY.* failed=0$" native_color_selftest.log; then
+            details=$(tail -n 40 native_color_selftest.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Native colour self-test failure (tail 40)::${details}"
+            exit 1
+          fi
+          echo "Native colour self-test passed (engine exit $status; timeout was the backstop)"
+
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.
