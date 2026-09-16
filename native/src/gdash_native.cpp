@@ -1390,13 +1390,16 @@ class NativeTriggerRuntime : public RefCounted {
 					++entry;
 				}
 			}
-			// 2026-09-13 device forensics: five tombstones faulted reading
-			// records[index] inside these searches with index one to four
-			// past records.size(), even though the tables were validated on
-			// entry. Rather than trust the table entries between validation
-			// and use, every record read below goes through a bounds-checked
-			// accessor: an out-of-range index is reported once per call and
-			// sorts outside every player window instead of faulting.
+			// 2026-09-13 device tombstones: five crashes faulted reading
+			// records[index] one to four past records.size() inside this
+			// scan. Solved 2026-09-15: the lower_bound comparator below
+			// had upper_bound's argument order, so the player's X was
+			// being passed to this accessor as a record index - the read
+			// went out of bounds exactly when the player crossed
+			// x = records.size(). The order tables were never corrupt.
+			// The bounds-checked accessor stays as defence in depth:
+			// an out-of-range index is reported once per call and sorts
+			// outside every player window instead of faulting.
 			bool reported_bounds = false;
 			const size_t bounds_count = records.size();
 			auto touch_x = [&](size_t index) -> double {
@@ -1413,9 +1416,22 @@ class NativeTriggerRuntime : public RefCounted {
 				}
 				return INFINITY;
 			};
+			// lower_bound invokes the comparator as comp(element, value):
+			// the record index comes first and the search value (the
+			// window edge) second. This lambda was previously written in
+			// upper_bound's comp(value, element) order, so the PLAYER'S X
+			// was passed to touch_x() as a record index - the moment the
+			// player ran past x = records.size() (5208 records, about two
+			// seconds into Amethyst) every physics tick logged an
+			// out-of-range error, the comparator degenerated to always
+			// true, lower_bound returned end() and no touch trigger ever
+			// activated. That player-X-as-index read is also what the
+			// 2026-09-13 tombstones actually faulted on: the order tables
+			// were never corrupt. upper_bound in advance() uses the
+			// opposite order and is correct as written.
 			auto first = std::lower_bound(touch_order.begin(), touch_order.end(),
 				position.x - TOUCH_HALF_EXTENT,
-				[&](double value, size_t index) { return value < touch_x(index); });
+				[&](size_t index, double value) { return touch_x(index) < value; });
 			for (auto it = first; it != touch_order.end(); ++it) {
 				const size_t index = *it;
 				if (index >= bounds_count) continue;

@@ -685,6 +685,23 @@ jobs:
             } >> amethyst_boot.log
           fi
           cat amethyst_boot.log
+          # Scan-health gate: these ERR_PRINTs mean a native trigger scan is
+          # misbehaving (bad index math, corrupt order table, mid-scan
+          # mutation). The 2026-09-15 touch-scan comparator bug shipped
+          # silently because nothing grepped for them. Never silent again:
+          # error-level annotation even though this step never blocks the APK.
+          if grep -qE "\[gdash_native\] (out-of-range index|corrupt index table|records resized mid-scan)" amethyst_boot.log; then
+            echo "### Native scan errors during Amethyst boot" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "\[gdash_native\] (out-of-range index|corrupt index table|records resized mid-scan)" amethyst_boot.log | head -n 20 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            details=$(grep -E "\[gdash_native\] (out-of-range index|corrupt index table|records resized mid-scan)" amethyst_boot.log | head -n 20)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Native scan errors::${details}"
+            exit 1
+          fi
           if [ $status -ne 0 ] || { ! grep -q "AMETHYST_BOOT_OK" amethyst_boot.log && ! grep -q "AMETHYST_BOOT_SKIPPED" amethyst_boot.log; }; then
             echo "### Amethyst boot failure (status $status)" >> "$GITHUB_STEP_SUMMARY"
             echo '```text' >> "$GITHUB_STEP_SUMMARY"
