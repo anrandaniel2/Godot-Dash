@@ -807,12 +807,12 @@ class NativeTriggerRuntime : public RefCounted {
 		Object *node = ObjectDB::get_instance(id);
 		if (!node) return;
 		double alpha = 1.0;
-		const double *own = member_own_alpha.get_ptr(id);
+		const double *own = member_own_alpha.getptr(id);
 		if (own) alpha = *own;
-		const std::vector<String> *groups = member_groups.get_ptr(id);
+		const std::vector<String> *groups = member_groups.getptr(id);
 		if (groups) {
 			for (const String &group : *groups) {
-				const double *opacity = group_opacity.get_ptr(group);
+				const double *opacity = group_opacity.getptr(group);
 				if (opacity) alpha *= *opacity;
 			}
 		}
