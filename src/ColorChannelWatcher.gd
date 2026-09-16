@@ -33,6 +33,23 @@ static var _channel_cache_level = null
 ## table at all. Reset by Level.setup_color_channel_watchers on each load.
 static var live_recolor_count: int = 0
 static var live_last_channel: String = ""
+## Ring of the last refreshed (channel, colour-as-refreshed) pairs, so the
+## heartbeat can show what recently-triggered channels actually display -
+## the read-side companion to the native colorcap fire-time dump.
+static var live_recent_channels: PackedStringArray = []
+static var live_recent_colors: Array[Color] = []
+
+
+## Records one refreshed channel in the live ring (kept at eight entries).
+static func _note_live_refresh(channel_name: String, refreshed: Color) -> void:
+	if live_recent_channels.size() != live_recent_colors.size():
+		live_recent_channels = PackedStringArray()
+		live_recent_colors = []
+	live_recent_channels.append(channel_name)
+	live_recent_colors.append(refreshed)
+	while live_recent_channels.size() > 8:
+		live_recent_channels.remove_at(0)
+		live_recent_colors.remove_at(0)
 
 
 
@@ -98,6 +115,7 @@ func refresh_objects_color(hsv_watchers: Array[HSVWatcher] = [], _data: ColorCha
 			live_last_channel = String(_data.associated_group).trim_prefix(
 				Constants.COLOR_CHANNEL_GROUP_PREFIX
 			)
+			_note_live_refresh(live_last_channel, _data.color)
 		else:
 			_had_first_refresh = true
 	_apply_blending_if_changed(_data)

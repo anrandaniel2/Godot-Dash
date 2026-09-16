@@ -233,8 +233,22 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 	var camera_x := 0.0
 	if LevelManager.player_camera != null:
 		camera_x = LevelManager.player_camera.global_position.x
+	# Read-side companion to the native colorcap dump: what the recently
+	# refreshed channels actually display right now, plus the live level
+	# colours (pulse triggers can target those instead of channels).
+	var recent_parts: PackedStringArray = []
+	var recent_count: int = mini(
+		ColorChannelWatcher.live_recent_channels.size(),
+		ColorChannelWatcher.live_recent_colors.size()
+	)
+	for i: int in recent_count:
+		var shown: Color = ColorChannelWatcher.live_recent_colors[i]
+		recent_parts.append("%s:(%.2f,%.2f,%.2f)" % [
+			ColorChannelWatcher.live_recent_channels[i],
+			shown.r, shown.g, shown.b,
+		])
 	print(
-		"BEAMDIAG live t=%.0f x=%.0f colored=%d/%d recolors=%d last=%s"
+		"BEAMDIAG live t=%.0f x=%.0f colored=%d/%d recolors=%d last=%s recent=[%s] bg=(%.2f,%.2f,%.2f) ground=(%.2f,%.2f,%.2f) line=(%.2f,%.2f,%.2f)"
 		% [
 			_beamdiag_seconds,
 			camera_x,
@@ -242,6 +256,10 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 			color_channels.size(),
 			ColorChannelWatcher.live_recolor_count,
 			ColorChannelWatcher.live_last_channel,
+			", ".join(recent_parts),
+			background_color.r, background_color.g, background_color.b,
+			ground_color.r, ground_color.g, ground_color.b,
+			line_color.r, line_color.g, line_color.b,
 		]
 	)
 
@@ -397,6 +415,8 @@ func setup_color_channel_watchers() -> void:
 	# play, and a level change must not carry the previous level's recolors.
 	ColorChannelWatcher.live_recolor_count = 0
 	ColorChannelWatcher.live_last_channel = ""
+	ColorChannelWatcher.live_recent_channels = PackedStringArray()
+	ColorChannelWatcher.live_recent_colors = []
 	# Every watcher is constructed before any of them enters the tree: a
 	# copying channel wires itself to its source's watcher on its first
 	# refresh (_ready), so the source's watcher must already exist whatever

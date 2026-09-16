@@ -608,6 +608,9 @@ class NativeTriggerRuntime : public RefCounted {
 	double clock = 0.0;
 	uint64_t event_sequence = 0;
 	bool index_dirty = false;
+	// Budgets for the colorcap fire-time diagnostic (see report_color_capture).
+	int64_t color_capture_count = 0;
+	int64_t color_capture_reports = 0;
 	// Bumped whenever container identity changes (clear/finalize/reset/
 	// restore). Trigger activation can call back into GDScript — including
 	// handlers that restart the level, which clears and re-registers every
@@ -1101,6 +1104,7 @@ class NativeTriggerRuntime : public RefCounted {
 			double alpha_target = effect.opacity;
 			fade.to_color = resolve_source_color(effect, current, alpha_target);
 			fade.alpha_target = alpha_target;
+			report_color_capture(effect, current, fade.to_color, alpha_target);
 			return true;
 		}
 		Object *data = channel_lookup(effect.target_channel);
@@ -1119,7 +1123,36 @@ class NativeTriggerRuntime : public RefCounted {
 		double alpha_target = effect.opacity;
 		fade.to_color = resolve_source_color(effect, current, alpha_target);
 		fade.alpha_target = alpha_target;
+		report_color_capture(effect, current, fade.to_color, alpha_target);
 		return true;
+	}
+
+	// Diagnostic for the white-beams investigation, budgeted so it never
+	// floods logcat: the first colour-target captures print exactly what a
+	// fire resolved - parse flags, the colour it fades FROM and the colour
+	// it fades TO - then every 1000th fire keeps sampling mid-level
+	// behaviour, up to a hard cap of 60 lines per level load. A device run
+	// showed 348k recolour events while no channel ever left white; the
+	// parsed keys (TRIGDIAG) look correct, so the missing fact is what the
+	// fires actually computed. Grep "[gdash_native] colorcap".
+	void report_color_capture(const TriggerEffect &effect, const Color &from, const Color &to, double alpha_target) {
+		++color_capture_count;
+		if (color_capture_reports >= 60) return;
+		if (color_capture_count > 20 && (color_capture_count % 1000) != 0) return;
+		++color_capture_reports;
+		ERR_PRINT(String("[gdash_native] colorcap #")
+			+ String::num_int64(color_capture_count)
+			+ (effect.kind == TriggerEffectKind::PULSE ? " pulse" : " color")
+			+ (effect.channel_is_level_color ? " level" : " channel")
+			+ " ch=" + String::num_int64(effect.target_channel)
+			+ " rgb=" + (effect.has_color ? "y" : "n")
+			+ " copy=" + String::num_int64(effect.copy_channel)
+			+ " player=" + String::num_int64(effect.player_color)
+			+ " from=(" + String::num(from.r, 3) + "," + String::num(from.g, 3) + "," + String::num(from.b, 3) + ")"
+			+ " to=(" + String::num(to.r, 3) + "," + String::num(to.g, 3) + "," + String::num(to.b, 3) + ")"
+			+ " alpha_to=" + String::num(alpha_target, 3)
+			+ " dur=" + String::num(effect.duration, 3)
+			+ (effect.pulse_envelope ? " envelope" : ""));
 	}
 
 	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta) {
@@ -1493,7 +1526,7 @@ public:
 	void clear() {
 		++structure_epoch;
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
-		event_sequence = 0; index_dirty = false;
+		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		touch_inside_players.clear(); frame_players.clear(); previous_positions.clear();
 		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID();
