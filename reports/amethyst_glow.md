@@ -12,6 +12,6 @@ Traceback (most recent call last):
 RuntimeError: could not download the level:
   gdhistory download: HTTPError: HTTP Error 403: Forbidden
   boomlings download: HTTPError: HTTP Error 403: Forbidden
-  gdbrowser download: HTTPError: HTTP Error 500: Internal Server Error
+  gdbrowser download: HTTPError: HTTP Error 403: Forbidden
   snapshot download: FileNotFoundError: no level snapshot committed
 ```
