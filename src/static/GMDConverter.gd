@@ -71,6 +71,7 @@ const Prop := {
 	SECONDARY_HSV_ENABLED = "42",
 	SECONDARY_HSV = "44",
 	HIGH_DETAIL = "103",
+	HIDE = "135",
 	ROTATION_SPEED = "97",
 	DISABLE_ROTATION = "98",
 }
@@ -422,6 +423,12 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			report.note_skipped(gd_id)
 			continue
 
+		# A hidden decoration (key 135) contributes nothing visible and has
+		# no collision: skip it rather than building an invisible batch item.
+		if kind == 1 and properties.get(Prop.HIDE, "0") == "1":
+			report.note_skipped(gd_id)
+			continue
+
 		# A colour trigger needs its target channel to exist at runtime even
 		# when no object has been bound to it yet. A copy-colour trigger also
 		# reads its source channel (key 50) whenever it fires, so that channel
@@ -634,13 +641,20 @@ static func _object_from_properties(
 	if not components.is_empty():
 		object_data["components"] = components
 		object_data["markers"] = []
-	if GMDObjects.is_static_gameplay_object(gd_id):
+	# Key 135 (Hide): Geometry Dash 2.2's per-object "hide" flag. A hidden
+	# object renders nothing in game while keeping its collision and group
+	# membership - the standard way modern effect levels build invisible
+	# geometry. The importer keeps the node (collision, groups, triggers)
+	# but suppresses every artwork path.
+	var hidden := properties.get(Prop.HIDE, "0") == "1"
+	object_data["hidden"] = hidden
+	if GMDObjects.is_static_gameplay_object(gd_id) and not hidden:
 		# Runtime keeps the authored collision node, but sends the identical atlas
 		# artwork through the packed renderer instead of retaining Base/Detail
 		# Sprite2D subtrees for every block, spike and saw.
 		var static_art := _decoration_from_properties(
 				gd_id, properties, index, channel_style, used_channels
-		)
+			)
 		if not static_art.is_empty():
 			# Collision-bearing gameplay artwork is never optional LDM decoration.
 			static_art["high_detail"] = false

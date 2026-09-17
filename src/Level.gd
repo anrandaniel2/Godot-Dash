@@ -910,8 +910,11 @@ static func instantiate_object_from_data(
 		var gd_object := object as GDObject
 		if object_data.has("gd_object_id"):
 			gd_object.set_meta(&"gd_object_id", int(object_data.gd_object_id))
-		gd_object.set_meta(GD_GAMEPLAY_META, true)
-		_configure_gd_object(gd_object, object_data, level)
+			gd_object.set_meta(GD_GAMEPLAY_META, true)
+			_configure_gd_object(gd_object, object_data, level)
+		# Key 135 (Hide): collision and groups stay, artwork does not.
+		if bool(object_data.get("hidden", false)):
+			gd_object.visible = false
 		return object
 	# Hand-made scenes (interactables, and older gameplay data) keep their
 	# scene - it carries collision, components and editor behaviour - but wear
@@ -919,7 +922,11 @@ static func instantiate_object_from_data(
 	# half Godot Dash placeholder art.
 	if object_data.has("gd_object_id"):
 		object.set_meta(&"gd_object_id", int(object_data.gd_object_id))
-		GDArtSwap.apply(object, int(object_data.gd_object_id))
+		# A hidden object never needs the artwork swap; skip the sprite
+		# search entirely for the tens of thousands of hidden collision
+		# blocks a modern effect level carries.
+		if not bool(object_data.get("hidden", false)):
+			GDArtSwap.apply(object, int(object_data.gd_object_id))
 		# These scenes carry Godot Dash authored prefabs, so they never run
 		# GDObject's draw-order mapping: before this they rendered at z 0,
 		# in front of every background-layer decoration batch. Imported
@@ -930,6 +937,9 @@ static func instantiate_object_from_data(
 			int(object_data.get("z_layer", GDObject.Z_LAYER_GAMEPLAY)),
 			int(object_data.get("z_order", 0))
 		)
+		# Key 135 (Hide): invisible, but physics and groups keep working.
+		if bool(object_data.get("hidden", false)):
+			object.visible = false
 	# Runtime-only Geometry Dash trigger metadata is intentionally kept on the
 	# root Interactable instead of being expanded into one scheduler node per
 	# property. NativeTriggerBridge packs these records after level construction.
@@ -1145,6 +1155,10 @@ static func deserialize_data_to_object(object_data: Dictionary, object: Node2D, 
 		# Ensure objects are toggled on
 		object.show()
 		object.process_mode = Node.PROCESS_MODE_INHERIT
+
+	# Key 135 (Hide) survives reloads; the show() above only undoes toggles.
+	if bool(object_data.get("hidden", false)):
+		object.hide()
 
 	# Physics
 	if "physics" in object_data:

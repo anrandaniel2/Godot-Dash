@@ -2791,6 +2791,7 @@ class NativeLevelBuildJob : public RefCounted {
 			return;
 		}
 		const Dictionary static_art = object_data.get("native_static_art", Dictionary());
+		const bool hidden = static_cast<bool>(object_data.get("hidden", false));
 		if (!static_art.is_empty()) decoration_data.append(static_art);
 		Variant value = level_script->call("instantiate_object_from_data", object_data, level);
 		Object *object = value;
@@ -2798,8 +2799,10 @@ class NativeLevelBuildJob : public RefCounted {
 		if (!node) return;
 		// Static gameplay art is now represented by a node-free native renderer.
 		// Preserve the root/group transform and authored Collision subtree, while
-		// dropping Sprite2D descendants and their per-node render state.
-		if (!static_art.is_empty()) {
+		// dropping Sprite2D descendants and their per-node render state. Hidden
+		// objects (key 135) have no packed art but their scene sprites must go
+		// too: they render nothing while keeping collision.
+		if (!static_art.is_empty() || hidden) {
 			node->set_meta("_gd_native_packed_art", true);
 			for (const char *name : {"Base", "Detail"}) {
 				Node *visual = node->get_node_or_null(NodePath(name));

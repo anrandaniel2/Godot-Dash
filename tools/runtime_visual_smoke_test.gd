@@ -204,11 +204,55 @@ func _test_invisible_blocks() -> void:
 	triangle.free()
 
 
+## Key 135 (Hide) is Geometry Dash 2.2's per-object hide flag: the node keeps
+## its collision and group membership but renders nothing - the standard way
+## modern effect levels build invisible geometry out of regular blocks.
+func _test_hidden_objects() -> void:
+	# The converter carries the flag and suppresses the packed static art.
+	var object_data: Dictionary = GMDConverter._object_from_properties(
+		1, {"1": "1", "2": "0", "3": "0", "135": "1"}, 0, {}, {}
+	)
+	assert(bool(object_data.get("hidden", false)), "hide smoke: converter dropped key 135")
+	assert(not object_data.has("native_static_art"), "hide smoke: hidden block packed static art")
+
+	var hidden_block: Node2D = Level.instantiate_object_from_data({
+		"name": "HiddenSmoke",
+		"scene_file_path": "scenes/components/level_components/solids/GDInvisibleSquare.tscn",
+		"gd_object_id": 146,
+		"transform": Transform2D(0.0, Vector2.ZERO),
+		"groups": [],
+		"color_channels": {},
+		"z_layer": 5,
+		"z_order": 2,
+		"hidden": true,
+	}, null)
+	assert(hidden_block != null, "hide smoke: hidden object failed to build")
+	assert(not hidden_block.visible, "hide smoke: hidden object renders")
+	assert(hidden_block.get_node_or_null(^"Hitbox") != null, "hide smoke: hidden object lost its collision")
+	hidden_block.free()
+	# A hidden hand-made object skips the artwork swap as well.
+	var hidden_portal: Node2D = Level.instantiate_object_from_data({
+		"name": "HiddenPortalSmoke",
+		"scene_file_path": "scenes/components/level_components/portals/other_portals/GravityPortalNormal.tscn",
+		"gd_object_id": 11,
+		"transform": Transform2D(0.0, Vector2.ZERO),
+		"groups": [],
+		"color_channels": {},
+		"z_layer": 5,
+		"z_order": 0,
+		"hidden": true,
+	}, null)
+	assert(hidden_portal != null, "hide smoke: hidden portal failed to build")
+	assert(not hidden_portal.visible, "hide smoke: hidden portal renders")
+	hidden_portal.free()
+
+
 func _ready() -> void:
 	_test_batch_order()
 	_test_hsv_neutral()
 	_test_gameplay_z()
 	_test_invisible_blocks()
+	_test_hidden_objects()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()
