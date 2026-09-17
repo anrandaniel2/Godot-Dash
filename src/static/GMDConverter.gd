@@ -132,11 +132,12 @@ const HeaderKey := {
 	MINI = "kA3",
 	SPEED = "kA4",
 	DUAL = "kA8",
-	START_POS = "kA11",
+	START_POS = "kA9",
 	SONG_OFFSET = "kA13",
+	LINE_COLOR = "kA17",
+	REVERSE = "kA20",
 	PLATFORMER = "kA22",
 	FLIP_GRAVITY = "kA11",
-	LINE_COLOR = "kA17",
 }
 
 ## The Geometry Dash colour trigger.
@@ -505,10 +506,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"start_freefly": true,
 		"start_speed": Level.START_SPEED[clampi(start_speed_preset, 0, Level.START_SPEED.size() - 1)],
 		"start_speed_preset": start_speed_preset,
-		"start_reverse": false,
+		"start_reverse": header.get(HeaderKey.REVERSE, "0") == "1",
 		"start_gameplay_rotation_degrees": 0.0,
 		"start_gravity_multiplier": 1.0,
-		"start_gravity_flip": 1,
+		"start_gravity_flip": -1 if header.get(HeaderKey.FLIP_GRAVITY, "0") == "1" else 1,
 		"default_background_color": _background_color(header, color_channels),
 		"default_ground_color": _ground_color(header, color_channels),
 		"default_line_color": _line_color(header, color_channels),

@@ -330,7 +330,9 @@ static int32_t legacy_color_trigger_channel(int64_t gd_id) {
 		case 717: return 2;
 		case 718: return 3;
 		case 743: return 4;
-		case 899: case 900: case 915: return 1;
+		case 899: return 1;
+		case 900: return 1009; // Ground 2 (decompiled GameObject::getColorIndex)
+		case 915: return 1002; // Line (decompiled GameObject::getColorIndex)
 		default: return 0;
 	}
 }
@@ -474,6 +476,11 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 				effect.target_channel = channel;
 			}
 			parse_color_source(properties, effect);
+			if ((gd_id == 915 || gd_id == 104) && !properties.has("17")) {
+				// Decompiled EffectGameObject::customSetup: 915 (Line) defaults blending to true
+				effect.has_blending = true;
+				effect.blending = true;
+			}
 			break;
 		}
 		case TriggerEffectKind::PULSE: {
@@ -2183,6 +2190,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("version"), &GdashNative::version);
 		ClassDB::bind_method(D_METHOD("add", "a", "b"), &GdashNative::add);
 		ClassDB::bind_method(D_METHOD("parse_gd_pairs", "chunk"), &GdashNative::parse_gd_pairs);
+		ClassDB::bind_method(D_METHOD("parse_channel_styles", "color_string"), &GdashNative::parse_channel_styles);
 		ClassDB::bind_method(D_METHOD("parse_online_level", "level_string"), &GdashNative::parse_online_level);
 		ClassDB::bind_method(D_METHOD("decode_level_string", "encoded"), &GdashNative::decode_level_string);
 		ClassDB::bind_method(D_METHOD("encode_level_string", "plain"), &GdashNative::encode_level_string);
@@ -2197,7 +2205,7 @@ public:
 	String build_string() const {
 		return String("gdash_native 1.10.0 / native animation / spatial retained RIDs / worker culling / native color channels / api 4.7");
 	}
-	int64_t version() const { return 20; }
+	int64_t version() const { return 21; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -2214,6 +2222,10 @@ public:
 		const int64_t length = chunk.length();
 		for (int64_t cursor = 0; cursor <= length; ++cursor) {
 			if (cursor < length && chunk[cursor] != ',') continue;
+			if (cursor == length && token_start == cursor && expecting_key) {
+				// Trailing delimiter at the end of the chunk; no trailing key.
+				break;
+			}
 			const String token = chunk.substr(token_start, cursor - token_start);
 			token_start = cursor + 1;
 			if (expecting_key) {
@@ -2239,6 +2251,328 @@ public:
 		return parse_pairs(chunk);
 	}
 
+	// Synthesizes a modern kS38 color channel string from pre-2.0 / 1.9 / pre-1.9 level headers
+	// matching decompiled Geometry Dash (LevelSettingsObject::setupColorsFromLegacyMode and 1.9 kS29-kS37).
+	static void resolve_legacy_header_colors(Dictionary &header) {
+		if (header.has("kS38") && !String(header["kS38"]).strip_edges().is_empty()) {
+			return;
+		}
+
+		// 1. Check 1.9 format: kS29 through kS37
+		bool has_1_9 = false;
+		for (int i = 29; i <= 37; ++i) {
+			const String key = String("kS") + String::num_int64(i);
+			if (header.has(key) && !String(header[key]).strip_edges().is_empty()) {
+				has_1_9 = true;
+				break;
+			}
+		}
+
+		if (has_1_9) {
+			static const int k_channel_ids[9] = { 1000, 1001, 1002, 1004, 1, 2, 3, 4, 1003 };
+			PackedStringArray synthesized_channels;
+
+			for (int i = 0; i < 9; ++i) {
+				const String key = String("kS") + String::num_int64(29 + i);
+				const int target_channel = k_channel_ids[i];
+				if (!header.has(key)) continue;
+				String val = String(header[key]).strip_edges();
+				if (val.is_empty()) continue;
+
+				if (val.contains(",") && !val.contains("_")) {
+					val = val.replace(",", "_");
+				}
+
+				if (!val.contains("6_") && !val.contains("_6_") && !val.begins_with("6_")) {
+					val += String("_6_") + String::num_int64(target_channel);
+				}
+				if (!val.contains("7_") && !val.contains("_7_") && !val.begins_with("7_")) {
+					val += String("_7_1");
+				}
+				if (target_channel == 1002 && !val.contains("5_") && !val.contains("_5_") && !val.begins_with("5_")) {
+					val += String("_5_1");
+				}
+				synthesized_channels.append(val);
+			}
+			if (!synthesized_channels.is_empty()) {
+				header["kS38"] = String("|").join(synthesized_channels);
+				return;
+			}
+		}
+
+		// 2. Check pre-1.9 format: kS1 ... kS28
+		bool has_pre_1_9 = false;
+		for (int i = 1; i <= 28; ++i) {
+			const String key = String("kS") + String::num_int64(i);
+			if (header.has(key) && !String(header[key]).strip_edges().is_empty()) {
+				has_pre_1_9 = true;
+				break;
+			}
+		}
+
+		if (has_pre_1_9) {
+			PackedStringArray synthesized_channels;
+
+			auto get_int_prop = [&](const String &key, int def) -> int {
+				if (!header.has(key)) return def;
+				const String str = String(header[key]).strip_edges();
+				return str.is_valid_int() ? static_cast<int>(str.to_int()) : def;
+			};
+
+			const int bg_r = get_int_prop("kS1", 40);
+			const int bg_g = get_int_prop("kS2", 125);
+			const int bg_b = get_int_prop("kS3", 255);
+			const int bg_pcol = get_int_prop("kS16", 0);
+			synthesized_channels.append(String("1_") + String::num_int64(bg_r) +
+					"_2_" + String::num_int64(bg_g) +
+					"_3_" + String::num_int64(bg_b) +
+					"_4_" + String::num_int64(bg_pcol) +
+					"_6_1000_7_1");
+
+			const int g_r = get_int_prop("kS4", 0);
+			const int g_g = get_int_prop("kS5", 102);
+			const int g_b = get_int_prop("kS6", 255);
+			const int g_pcol = get_int_prop("kS17", 0);
+			synthesized_channels.append(String("1_") + String::num_int64(g_r) +
+					"_2_" + String::num_int64(g_g) +
+					"_3_" + String::num_int64(g_b) +
+					"_4_" + String::num_int64(g_pcol) +
+					"_6_1001_7_1");
+
+			if (header.has("kS7")) {
+				const int l_r = get_int_prop("kS7", 255);
+				const int l_g = get_int_prop("kS8", 255);
+				const int l_b = get_int_prop("kS9", 255);
+				const int l_pcol = get_int_prop("kS18", 0);
+				synthesized_channels.append(String("1_") + String::num_int64(l_r) +
+						"_2_" + String::num_int64(l_g) +
+						"_3_" + String::num_int64(l_b) +
+						"_4_" + String::num_int64(l_pcol) +
+						"_5_1_6_1002_7_1");
+
+				const int o_r = get_int_prop("kS10", 255);
+				const int o_g = get_int_prop("kS11", 255);
+				const int o_b = get_int_prop("kS12", 255);
+				const int o_pcol = get_int_prop("kS19", 0);
+				synthesized_channels.append(String("1_") + String::num_int64(o_r) +
+						"_2_" + String::num_int64(o_g) +
+						"_3_" + String::num_int64(o_b) +
+						"_4_" + String::num_int64(o_pcol) +
+						"_6_1004_7_1");
+
+				const int c1_r = get_int_prop("kS13", 255);
+				const int c1_g = get_int_prop("kS14", 255);
+				const int c1_b = get_int_prop("kS15", 255);
+				const int c1_pcol = get_int_prop("kS20", 0);
+				const int c1_blend = (String(header.get("kA5", "0")) == "1") ? 1 : 0;
+				synthesized_channels.append(String("1_") + String::num_int64(c1_r) +
+						"_2_" + String::num_int64(c1_g) +
+						"_3_" + String::num_int64(c1_b) +
+						"_4_" + String::num_int64(c1_pcol) +
+						"_5_" + String::num_int64(c1_blend) +
+						"_6_1_7_1");
+
+				const int c2_r = get_int_prop("kS21", 255);
+				const int c2_g = get_int_prop("kS22", 255);
+				const int c2_b = get_int_prop("kS23", 255);
+				const int c2_pcol = get_int_prop("kS28", 0);
+				synthesized_channels.append(String("1_") + String::num_int64(c2_r) +
+						"_2_" + String::num_int64(c2_g) +
+						"_3_" + String::num_int64(c2_b) +
+						"_4_" + String::num_int64(c2_pcol) +
+						"_6_2_7_1");
+
+				const int c3_r = get_int_prop("kS24", 255);
+				const int c3_g = get_int_prop("kS25", 255);
+				const int c3_b = get_int_prop("kS26", 255);
+				const int c3_blend = (String(header.get("kA12", "0")) == "1") ? 1 : 0;
+				synthesized_channels.append(String("1_") + String::num_int64(c3_r) +
+						"_2_" + String::num_int64(c3_g) +
+						"_3_" + String::num_int64(c3_b) +
+						"_5_" + String::num_int64(c3_blend) +
+						"_6_3_7_1");
+
+				synthesized_channels.append("1_255_2_255_3_255_6_4_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1003_7_1");
+			} else {
+				synthesized_channels.append("1_255_2_255_3_255_5_1_6_1002_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1004_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_2_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_3_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_4_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1003_7_1");
+			}
+
+			header["kS38"] = String("|").join(synthesized_channels);
+		}
+	}
+
+	Dictionary parse_channel_styles(const String &color_string) const {
+		Dictionary styles;
+		Dictionary entries;
+
+		if (!color_string.strip_edges().is_empty()) {
+			const PackedStringArray raw_entries = color_string.split("|", false);
+			for (int64_t i = 0; i < raw_entries.size(); ++i) {
+				const String entry = raw_entries[i].strip_edges();
+				if (entry.is_empty()) continue;
+				const char delim = entry.contains("_") ? '_' : ',';
+				Dictionary pairs;
+				String key;
+				bool expecting_key = true;
+				int64_t token_start = 0;
+				const int64_t len = entry.length();
+				for (int64_t cursor = 0; cursor <= len; ++cursor) {
+					if (cursor < len && entry[cursor] != delim) continue;
+					if (cursor == len && token_start == cursor && expecting_key) break;
+					const String token = entry.substr(token_start, cursor - token_start);
+					token_start = cursor + 1;
+					if (expecting_key) {
+						key = token.strip_edges();
+						expecting_key = false;
+					} else {
+						if (!key.is_empty()) {
+							pairs[key] = token;
+						}
+						expecting_key = true;
+					}
+				}
+				const String ch_str = String(pairs.get("6", String())).strip_edges();
+				if (ch_str.is_valid_int() && ch_str.to_int() > 0) {
+					entries[ch_str.to_int()] = pairs;
+				}
+			}
+		}
+
+		auto literal_color = [&](int64_t channel_id, const Color &fallback) -> Color {
+			if (!entries.has(channel_id)) return fallback;
+			const Dictionary val = entries[channel_id];
+			const String r_str = String(val.get("1", String())).strip_edges();
+			const String g_str = String(val.get("2", String())).strip_edges();
+			const String b_str = String(val.get("3", String())).strip_edges();
+			if (!r_str.is_valid_int() || !g_str.is_valid_int() || !b_str.is_valid_int()) return fallback;
+			return Color(
+				static_cast<real_t>(Math::clamp(r_str.to_int(), static_cast<int64_t>(0), static_cast<int64_t>(255)) / 255.0),
+				static_cast<real_t>(Math::clamp(g_str.to_int(), static_cast<int64_t>(0), static_cast<int64_t>(255)) / 255.0),
+				static_cast<real_t>(Math::clamp(b_str.to_int(), static_cast<int64_t>(0), static_cast<int64_t>(255)) / 255.0),
+				1.0
+			);
+		};
+
+		const Color default_bg = Color(static_cast<real_t>(40.0 / 255.0), static_cast<real_t>(125.0 / 255.0), 1.0);
+		const Color default_ground = Color(0.0, static_cast<real_t>(102.0 / 255.0), 1.0);
+		const Color default_line = Color(1.0, 1.0, 1.0);
+
+		const Color bg_col = literal_color(1000, default_bg);
+		const Color g1_col = literal_color(1001, default_ground);
+		const Color line_col = literal_color(1002, default_line);
+		const Color g2_col = literal_color(1009, g1_col);
+
+		const int64_t reserved_ids[] = { 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1009, 1010, 1011, 1012, 1013, 1014 };
+		for (int64_t r_id : reserved_ids) {
+			Dictionary ch;
+			Color base_c = Color(1.0, 1.0, 1.0);
+			if (r_id == 1000) base_c = bg_col;
+			else if (r_id == 1001) base_c = g1_col;
+			else if (r_id == 1002) base_c = line_col;
+			else if (r_id == 1007) base_c = bg_col.lightened(0.2f);
+			else if (r_id == 1009) base_c = g2_col;
+			else if (r_id == 1010) base_c = Color(0.0, 0.0, 0.0);
+			ch["color"] = base_c;
+			ch["alpha"] = 1.0;
+			ch["blending"] = (r_id == 1002);
+			styles[r_id] = ch;
+		}
+
+		const Array all_entry_keys = entries.keys();
+		for (int64_t i = 0; i < all_entry_keys.size(); ++i) {
+			const int64_t cid = all_entry_keys[i];
+			const Dictionary val = entries[cid];
+			Dictionary ch;
+			if (styles.has(cid)) {
+				ch = styles[cid];
+			} else {
+				ch["color"] = Color(1.0, 1.0, 1.0);
+				ch["alpha"] = 1.0;
+				ch["blending"] = false;
+			}
+			if (val.has("1") || val.has("2") || val.has("3")) {
+				ch["color"] = literal_color(cid, Color(ch["color"]));
+			}
+			if (val.has("5")) {
+				ch["blending"] = String(val["5"]) == "1";
+			}
+			if (val.has("7")) {
+				ch["alpha"] = Math::clamp(String(val["7"]).to_float(), 0.0, 1.0);
+			}
+			const String copy_id_str = String(val.get("9", String())).strip_edges();
+			if (copy_id_str.is_valid_int() && copy_id_str.to_int() > 0) {
+				ch["copy_source"] = copy_id_str.to_int();
+				ch["copy_hsv"] = String(val.get("10", String()));
+				ch["copy_opacity"] = String(val.get("17", "0")) == "1";
+			}
+			styles[cid] = ch;
+		}
+
+		for (int iter = 0; iter < COPY_RESOLUTION_BUDGET; ++iter) {
+			bool changed = false;
+			for (int64_t i = 0; i < all_entry_keys.size(); ++i) {
+				const int64_t cid = all_entry_keys[i];
+				const Dictionary val = entries[cid];
+				const String source_str = String(val.get("9", String())).strip_edges();
+				if (!source_str.is_valid_int()) continue;
+				const int64_t source_id = source_str.to_int();
+				if (source_id <= 0 || source_id == cid || !styles.has(source_id)) continue;
+
+				const Dictionary source_style = styles[source_id];
+				const Color source_color = source_style.get("color", Color(1.0, 1.0, 1.0));
+				const String hsv_str = String(val.get("10", String()));
+
+				Color shifted = source_color;
+				if (!hsv_str.is_empty()) {
+					PackedStringArray parts = hsv_str.split("a", false);
+					if (parts.size() >= 3) {
+						double dh = String(parts[0]).to_float() / 360.0;
+						double ds = String(parts[1]).to_float();
+						double dv = String(parts[2]).to_float();
+						bool s_add = parts.size() > 3 && String(parts[3]) == "1";
+						bool v_add = parts.size() > 4 && String(parts[4]) == "1";
+						double h = static_cast<double>(source_color.get_h()) + dh;
+						h -= Math::floor(h);
+						double s = Math::clamp(
+							s_add ? static_cast<double>(source_color.get_s()) + ds
+								  : static_cast<double>(source_color.get_s()) * ds,
+							0.0, 1.0);
+						double v = Math::clamp(
+							v_add ? static_cast<double>(source_color.get_v()) + dv
+								  : static_cast<double>(source_color.get_v()) * dv,
+							0.0, 1.0);
+						shifted = Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), source_color.a);
+					}
+				}
+
+				double alpha = static_cast<double>(Dictionary(styles[cid]).get("alpha", 1.0));
+				if (String(val.get("17", "0")) == "1") {
+					alpha = static_cast<double>(source_style.get("alpha", 1.0));
+				}
+
+				Dictionary cur = styles[cid];
+				Color cur_c = cur.get("color", Color(1.0, 1.0, 1.0));
+				double cur_a = cur.get("alpha", 1.0);
+				if (cur_c != shifted || !Math::is_equal_approx(cur_a, alpha)) {
+					cur["color"] = shifted;
+					cur["alpha"] = alpha;
+					styles[cid] = cur;
+					changed = true;
+				}
+			}
+			if (!changed) break;
+		}
+
+		return styles;
+	}
+
 	// Parses one complete decompressed server level in a single native pass.
 	// The online download response can contain hundreds of thousands of comma
 	// pairs; crossing the GDScript/native boundary once per object was both
@@ -2261,9 +2595,68 @@ public:
 		double max_x = -INFINITY;
 		bool have_header = false;
 
-		// Scan semicolon chunks directly. String::split retained a second complete
-		// array of object strings until the entire parse ended, peaking badly on
-		// levels with hundreds of thousands of placements.
+		auto validate_and_record_object = [&](Dictionary &properties, int64_t chunk_odd) {
+			++source_chunks;
+			odd_pair_chunks += chunk_odd;
+
+			// Handle legacy 1.9 object color selection key 19 (decompiled GameObject::newObjectFromVector):
+			if (properties.has("19") && !properties.has("21")) {
+				const String raw19 = String(properties["19"]).strip_edges();
+				if (raw19.is_valid_int()) {
+					const int64_t old_id = raw19.to_int();
+					int64_t mapped_id = 0;
+					switch (old_id) {
+						case 1: mapped_id = 1005; break; // Player 1
+						case 2: mapped_id = 1006; break; // Player 2
+						case 3: mapped_id = 1; break;    // Color 1
+						case 4: mapped_id = 2; break;    // Color 2
+						case 5: mapped_id = 1007; break; // Tint / LBG
+						case 6: mapped_id = 3; break;    // Color 3
+						case 7: mapped_id = 4; break;    // Color 4
+						case 8: mapped_id = 1003; break; // 3DL
+						default: mapped_id = 0; break;
+					}
+					if (mapped_id > 0) {
+						properties["21"] = String::num_int64(mapped_id);
+					}
+				}
+			}
+
+			// Handle scale fallback: key 32 to 128 / 129
+			if (properties.has("32")) {
+				if (!properties.has("128")) properties["128"] = properties["32"];
+				if (!properties.has("129")) properties["129"] = properties["32"];
+			}
+
+			objects.append(properties);
+			object_validity.append(0);
+			if (chunk_odd != 0 || !properties.has("1") || !properties.has("2") || !properties.has("3")) {
+				++malformed_objects;
+				return;
+			}
+			const String id_text = String(properties["1"]).strip_edges();
+			const String x_text = String(properties["2"]).strip_edges();
+			const String y_text = String(properties["3"]).strip_edges();
+			if (!id_text.is_valid_int() || !x_text.is_valid_float() || !y_text.is_valid_float()) {
+				++invalid_numeric_objects;
+				++malformed_objects;
+				return;
+			}
+			const int64_t object_id = id_text.to_int();
+			if (object_id <= 0) {
+				++invalid_numeric_objects;
+				++malformed_objects;
+				return;
+			}
+			++valid_objects;
+			object_validity.set(object_validity.size() - 1, 1);
+			object_id_counts[object_id] = static_cast<int64_t>(object_id_counts.get(object_id, 0)) + 1;
+			const double x = x_text.to_float();
+			min_x = std::min(min_x, x);
+			max_x = std::max(max_x, x);
+		};
+
+		// Scan semicolon chunks directly.
 		int64_t chunk_start = 0;
 		const int64_t length = level_string.length();
 		for (int64_t cursor = 0; cursor <= length; ++cursor) {
@@ -2273,42 +2666,44 @@ public:
 			if (chunk.strip_edges().is_empty()) continue;
 			if (!have_header) {
 				int64_t header_odd = 0;
-				header = parse_pairs(chunk, &header_odd, &duplicate_keys, &empty_keys);
-				odd_pair_chunks += header_odd;
+				Dictionary test_chunk = parse_pairs(chunk, &header_odd, &duplicate_keys, &empty_keys);
+
+				// In Geometry Dash, level start / header keys start with 'k' (e.g. kA, kS, kCEK).
+				// An object chunk has numeric keys (1 for object ID, 2 for X, 3 for Y).
+				bool is_header = true;
+				if (test_chunk.has("1") && !test_chunk.has("kA1") && !test_chunk.has("kA2") &&
+						!test_chunk.has("kS38") && !test_chunk.has("kS1") && !test_chunk.has("kS29")) {
+					bool has_k_key = false;
+					const Array keys = test_chunk.keys();
+					for (int64_t ki = 0; ki < keys.size(); ++ki) {
+						if (String(keys[ki]).begins_with("k")) {
+							has_k_key = true;
+							break;
+						}
+					}
+					if (!has_k_key) {
+						is_header = false;
+					}
+				}
+
+				if (is_header) {
+					header = test_chunk;
+					odd_pair_chunks += header_odd;
+					have_header = true;
+					resolve_legacy_header_colors(header);
+					continue;
+				}
+
+				// Headerless object stream: chunk is the first object!
 				have_header = true;
+				resolve_legacy_header_colors(header);
+				validate_and_record_object(test_chunk, header_odd);
 				continue;
 			}
 
-			++source_chunks;
 			int64_t chunk_odd = 0;
-			const Dictionary properties = parse_pairs(chunk, &chunk_odd, &duplicate_keys, &empty_keys);
-			odd_pair_chunks += chunk_odd;
-			objects.append(properties);
-			object_validity.append(0);
-			if (chunk_odd != 0 || !properties.has("1") || !properties.has("2") || !properties.has("3")) {
-				++malformed_objects;
-				continue;
-			}
-			const String id_text = String(properties["1"]).strip_edges();
-			const String x_text = String(properties["2"]).strip_edges();
-			const String y_text = String(properties["3"]).strip_edges();
-			if (!id_text.is_valid_int() || !x_text.is_valid_float() || !y_text.is_valid_float()) {
-				++invalid_numeric_objects;
-				++malformed_objects;
-				continue;
-			}
-			const int64_t object_id = id_text.to_int();
-			if (object_id <= 0) {
-				++invalid_numeric_objects;
-				++malformed_objects;
-				continue;
-			}
-			++valid_objects;
-			object_validity.set(object_validity.size() - 1, 1);
-			object_id_counts[object_id] = static_cast<int64_t>(object_id_counts.get(object_id, 0)) + 1;
-			const double x = x_text.to_float();
-			min_x = std::min(min_x, x);
-			max_x = std::max(max_x, x);
+			Dictionary properties = parse_pairs(chunk, &chunk_odd, &duplicate_keys, &empty_keys);
+			validate_and_record_object(properties, chunk_odd);
 		}
 
 		parsed["header"] = header;
@@ -2324,22 +2719,23 @@ public:
 		parsed["object_id_counts"] = object_id_counts;
 		parsed["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
 		parsed["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
+		parsed["channel_styles"] = parse_channel_styles(String(header.get("kS38", String())));
 		return parsed;
 	}
 
 	String decode_level_string(const String &encoded) const {
 		String data = encoded.strip_edges();
 		if (data.is_empty()) return String();
-		if (data.begins_with("kS") || data.begins_with("kA") || data.begins_with("1,") || data.contains(";1,")) return data;
+		if (data.contains(";") || data.begins_with("kS") || data.begins_with("kA") || data.begins_with("1,")) return data;
 
 		Marshalls *marshalls = Marshalls::get_singleton();
 		if (!marshalls) return String();
 
-		// Downloaded user levels carry a complete URL-safe Base64 payload.  The
+		// Downloaded user levels carry a complete URL-safe Base64 payload. The
 		// 13-character H4sIAAAAAAAAA prefix is omitted ONLY by bundled official
-		// levels.  Prefixing every payload whose text did not happen to begin
+		// levels. Prefixing every payload whose text did not happen to begin
 		// with H4sI corrupted valid user levels with a different gzip timestamp or
-		// a zlib wrapper.  Decode first, inspect the binary wrapper, and use the
+		// a zlib wrapper. Decode first, inspect the binary wrapper, and use the
 		// official-level compatibility prefix only as a final fallback.
 		auto decode_payload = [&](const String &payload) -> String {
 			const PackedByteArray bytes = marshalls->base64_to_raw(standard_base64(payload));
@@ -2355,15 +2751,14 @@ public:
 				inflated = bytes.decompress_dynamic(-1, 1); // FileAccess::COMPRESSION_DEFLATE
 			} else {
 				const String plain = bytes.get_string_from_utf8();
-				if (plain.begins_with("kS") || plain.begins_with("kA") || plain.contains(";1,")) return plain;
+				if (plain.contains(";") || plain.begins_with("k") || plain.begins_with("1,")) return plain;
 				return String();
 			}
 			if (inflated.is_empty()) return String();
 			const String plain = inflated.get_string_from_utf8();
 			// A successful inflate is not sufficient: reject binary garbage before
 			// it reaches the object parser.
-			if (!plain.begins_with("kS") && !plain.begins_with("kA") &&
-					!plain.begins_with("1,") && !plain.contains(";1,")) return String();
+			if (!plain.contains(";") && !plain.begins_with("k") && !plain.begins_with("1,")) return String();
 			return plain;
 		};
 
