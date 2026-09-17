@@ -646,7 +646,7 @@ static func _object_from_properties(
 	# membership - the standard way modern effect levels build invisible
 	# geometry. The importer keeps the node (collision, groups, triggers)
 	# but suppresses every artwork path.
-	var hidden := properties.get(Prop.HIDE, "0") == "1"
+	var hidden: bool = properties.get(Prop.HIDE, "0") == "1"
 	object_data["hidden"] = hidden
 	if GMDObjects.is_static_gameplay_object(gd_id) and not hidden:
 		# Runtime keeps the authored collision node, but sends the identical atlas
