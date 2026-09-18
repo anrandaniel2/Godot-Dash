@@ -663,7 +663,37 @@ func _test_native_core() -> void:
 	add_child(effect_level)
 	var effect_camera := Camera2D.new()
 	add_child(effect_camera)
-	effect_runtime.call(&"bind_context", effect_level, effect_camera, null)
+	var shader_layer := CanvasLayer.new()
+	shader_layer.name = "ShaderLayer"
+	add_child(shader_layer)
+	var gray_rect := ColorRect.new()
+	gray_rect.name = "Grayscale"
+	var gray_mat := ShaderMaterial.new()
+	gray_mat.shader = load("res://resources/shaders/Grayscale.gdshader")
+	gray_mat.set_shader_parameter(&"grayscale_factor", 0.0)
+	gray_rect.material = gray_mat
+	gray_rect.visible = false
+	shader_layer.add_child(gray_rect)
+
+	var sepia_rect := ColorRect.new()
+	sepia_rect.name = "Sepia"
+	var sepia_mat := ShaderMaterial.new()
+	sepia_mat.shader = load("res://resources/shaders/Sepia.gdshader")
+	sepia_mat.set_shader_parameter(&"sepia_factor", 0.0)
+	sepia_rect.material = sepia_mat
+	sepia_rect.visible = false
+	shader_layer.add_child(sepia_rect)
+
+	var lens_rect := ColorRect.new()
+	lens_rect.name = "LensCircle"
+	var lens_mat := ShaderMaterial.new()
+	lens_mat.shader = load("res://resources/shaders/LensCircle.gdshader")
+	lens_mat.set_shader_parameter(&"alpha", 0.0)
+	lens_rect.material = lens_mat
+	lens_rect.visible = false
+	shader_layer.add_child(lens_rect)
+
+	effect_runtime.call(&"bind_context", effect_level, effect_camera, null, shader_layer)
 	var effect_channel := ColorChannelData.new()
 	effect_channel.associated_group = "c_5"
 	effect_runtime.call(&"register_channel", "c_5", effect_channel)
@@ -704,13 +734,22 @@ func _test_native_core() -> void:
 	# 1935 Timewarp: 50% over 1s.
 	effect_runtime.call(&"register_packed_trigger", 90.0, 0.0, 0, 5, PackedStringArray(), 1935,
 		{"1": "1935", "120": "0.5", "10": "1.0"})
+	# 2919 Grayscale: fade to 1.0 over 1s.
+	effect_runtime.call(&"register_packed_trigger", 92.0, 0.0, 0, 8, PackedStringArray(), 2919,
+		{"1": "2919", "35": "1.0", "10": "1.0"})
+	# 2920 Sepia: fade to 0.8 over 1s.
+	effect_runtime.call(&"register_packed_trigger", 94.0, 0.0, 0, 9, PackedStringArray(), 2920,
+		{"1": "2920", "35": "0.8", "10": "1.0"})
+	# 2913 Lens Circle: fade to 1.0 over 1s.
+	effect_runtime.call(&"register_packed_trigger", 96.0, 0.0, 0, 10, PackedStringArray(), 2913,
+		{"1": "2913", "35": "1.0", "10": "1.0"})
 	# 1612 Hide Player has no fade at all.
 	effect_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"})
 	effect_runtime.call(&"finalize")
 	effect_runtime.call(&"advance", effect_player, 0.0, 120.0)
 	assert(toggled.visible == false, "native smoke: toggle trigger did not hide its group")
 	assert(effect_player.visible == false, "native smoke: hide player trigger did not run")
-	assert(int(effect_runtime.call(&"active_fade_count")) == 5, "native smoke: move/colour/pulse/zoom/timewarp fades missing")
+	assert(int(effect_runtime.call(&"active_fade_count")) == 8, "native smoke: move/colour/pulse/zoom/timewarp/shader fades missing")
 	effect_runtime.call(&"tick", 0.5)
 	assert(is_equal_approx(moved.global_position.x, 128.0) and is_equal_approx(moved.global_position.y, -64.0),
 		"native smoke: move trigger offset wrong at half weight")
@@ -720,6 +759,12 @@ func _test_native_core() -> void:
 	assert(pulse_channel.color.is_equal_approx(Color8(255, 0, 0)), "native smoke: pulse did not reach its colour at hold")
 	assert(is_equal_approx(effect_camera.zoom.x, 0.7), "native smoke: camera zoom did not ease halfway")
 	assert(is_equal_approx(Engine.time_scale, 0.75), "native smoke: timewarp did not ease halfway")
+	assert(gray_rect.visible, "native smoke: grayscale shader did not become visible")
+	assert(is_equal_approx(float(gray_mat.get_shader_parameter(&"grayscale_factor")), 0.5), "native smoke: grayscale factor did not fade halfway")
+	assert(sepia_rect.visible, "native smoke: sepia shader did not become visible")
+	assert(is_equal_approx(float(sepia_mat.get_shader_parameter(&"sepia_factor")), 0.4), "native smoke: sepia factor did not fade halfway")
+	assert(lens_rect.visible, "native smoke: lens circle shader did not become visible")
+	assert(is_equal_approx(float(lens_mat.get_shader_parameter(&"alpha")), 0.5), "native smoke: lens circle alpha did not fade halfway")
 	effect_runtime.call(&"tick", 0.5)
 	assert(moved.global_position == Vector2(256.0, -128.0), "native smoke: move trigger did not finish")
 	assert(effect_channel.color.is_equal_approx(Color8(10, 200, 30)), "native smoke: colour trigger did not reach its target")
@@ -727,11 +772,20 @@ func _test_native_core() -> void:
 	assert(pulse_channel.color == Color.WHITE, "native smoke: pulse did not fade back out")
 	assert(is_equal_approx(effect_camera.zoom.x, 0.4), "native smoke: camera zoom did not reach its target")
 	assert(is_equal_approx(Engine.time_scale, 0.5), "native smoke: timewarp did not reach its target")
+	assert(is_equal_approx(float(gray_mat.get_shader_parameter(&"grayscale_factor")), 1.0), "native smoke: grayscale did not reach target")
+	assert(is_equal_approx(float(sepia_mat.get_shader_parameter(&"sepia_factor")), 0.8), "native smoke: sepia did not reach target")
+	assert(is_equal_approx(float(lens_mat.get_shader_parameter(&"alpha")), 1.0), "native smoke: lens circle did not reach target")
 	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: finished fades were not retired")
 	Engine.time_scale = 1.0
 	# Reset clears activation state and running fades.
 	effect_runtime.call(&"reset")
 	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
+	assert(not gray_rect.visible, "native smoke: grayscale not hidden on reset")
+	assert(is_zero_approx(float(gray_mat.get_shader_parameter(&"grayscale_factor"))), "native smoke: grayscale not reset")
+	assert(not sepia_rect.visible, "native smoke: sepia not hidden on reset")
+	assert(is_zero_approx(float(sepia_mat.get_shader_parameter(&"sepia_factor"))), "native smoke: sepia not reset")
+	assert(not lens_rect.visible, "native smoke: lens circle not hidden on reset")
+	assert(is_zero_approx(float(lens_mat.get_shader_parameter(&"alpha"))), "native smoke: lens circle not reset")
 	# --- 1007 Fade: GD's multiplicative group-opacity model ----------------
 	# A fade eases its GROUP's persistent opacity, and a member renders as
 	# its own alpha times the product of all its groups' opacities. Two

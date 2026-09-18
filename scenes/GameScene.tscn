@@ -34,18 +34,19 @@ normal = Vector2(0, 1)
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_fr71x"]
 shader = ExtResource("10_tgbxk")
-shader_parameter/grayscale_factor = 1.0
+shader_parameter/grayscale_factor = 0.0
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_ussf4"]
 shader = ExtResource("11_bdlmb")
 shader_parameter/scale = Vector2(1, 1)
-shader_parameter/alpha = 1.0
+shader_parameter/alpha = 0.0
 shader_parameter/inner_radius = 0.0
 shader_parameter/outer_radius = 0.25
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_yg2l0"]
 shader = ExtResource("11_yix40")
 shader_parameter/base = Color(0.952941, 0.666667, 0.364706, 1)
+shader_parameter/sepia_factor = 0.0
 
 [sub_resource type="LabelSettings" id="LabelSettings_21xg8"]
 font = ExtResource("14_kxqg4")

@@ -17,9 +17,14 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	if _runtime == null or _runtime is not Node:
 		return false
 	add_child(_runtime as Node)
-	# Colour/camera/player effects execute in C++: they need the level's own
-	# colours, the channel table and the live camera and Config objects.
-	_runtime.call(&"bind_context", level, LevelManager.player_camera, Config)
+	# Colour/camera/player/shader effects execute in C++: they need the level's own
+	# colours, the channel table, the live camera, Config, and ShaderLayer objects.
+	var shader_layer: CanvasLayer = null
+	if LevelManager.game_scene:
+		shader_layer = LevelManager.game_scene.get_node_or_null(^"ShaderLayer")
+	elif level and level.get_parent() and level.get_parent().get_parent():
+		shader_layer = level.get_parent().get_parent().get_node_or_null(^"ShaderLayer")
+	_runtime.call(&"bind_context", level, LevelManager.player_camera, Config, shader_layer)
 	for channel: ColorChannelData in level.color_channels:
 		if not channel.associated_group.is_empty():
 			_runtime.call(&"register_channel", channel.associated_group, channel)

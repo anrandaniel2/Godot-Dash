@@ -68,8 +68,16 @@ int main() {
 	expect_true("family of easing 5 is elastic", 5 >= 4 && 5 <= 6);
 	expect_true("mode of easing 5 is in", (5 - 1) % 3 == 1);
 
+	// is_shader_kind helper test
+	expect_true("gray is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_GRAYSCALE));
+	expect_true("sepia is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_SEPIA));
+	expect_true("lens is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_LENS_CIRCLE));
+	expect_true("invert is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_INVERT_COLOR));
+	expect_true("move is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::MOVE));
+	expect_true("color is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::COLOR));
+
 	if (failures == 0) {
-		std::printf("trigger easing curves: all checks passed\n");
+		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;
 	}
 	std::printf("trigger easing curves: %d failure(s)\n", failures);

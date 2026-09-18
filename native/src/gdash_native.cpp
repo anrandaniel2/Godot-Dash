@@ -104,6 +104,10 @@ enum class TriggerEffectKind : int32_t {
 	CAMERA_ROTATE, // 2015 Rotate Camera
 	SHAKE,         // 1520 Shake
 	TELEPORT,      // 3022 Teleport
+	SHADER_GRAYSCALE,   // 2919 Grayscale
+	SHADER_SEPIA,       // 2920 Sepia
+	SHADER_LENS_CIRCLE, // 2913 Lens Circle
+	SHADER_INVERT_COLOR,// 2921 Invert Color
 };
 
 // GD easing index to curve, mirroring GMDConverter._easing_from_property:
@@ -248,6 +252,8 @@ struct TriggerEffect {
 	double camera_zoom = 1.0;    // 1913: key 371 (GD zoom percentage)
 	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
 	double camera_rotation_degrees = 0.0; // 2015: key 68
+	double shader_value = 1.0;   // 2913/2919/2920/2921: key 35
+	bool shader_use_lum = false; // 2919: key 138
 };
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
@@ -416,6 +422,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2015: effect.kind = TriggerEffectKind::CAMERA_ROTATE; break;
 		case 1520: effect.kind = TriggerEffectKind::SHAKE; break;
 		case 3022: effect.kind = TriggerEffectKind::TELEPORT; break;
+		case 2919: effect.kind = TriggerEffectKind::SHADER_GRAYSCALE; break;
+		case 2920: effect.kind = TriggerEffectKind::SHADER_SEPIA; break;
+		case 2913: effect.kind = TriggerEffectKind::SHADER_LENS_CIRCLE; break;
+		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
 		default: return effect; // inert
 	}
 	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
@@ -526,6 +536,15 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			// multiplier: 50 means half the player camera's default 0.8.
 			effect.camera_zoom = Math::max(0.01, prop_float(properties, "371", 100.0) / 100.0);
 			break;
+		case TriggerEffectKind::SHADER_GRAYSCALE:
+			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+			effect.shader_use_lum = prop_int(properties, "138", 0) != 0;
+			break;
+		case TriggerEffectKind::SHADER_SEPIA:
+		case TriggerEffectKind::SHADER_LENS_CIRCLE:
+		case TriggerEffectKind::SHADER_INVERT_COLOR:
+			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+			break;
 		default:
 			break;
 	}
@@ -586,6 +605,8 @@ class NativeTriggerRuntime : public RefCounted {
 		double initial_time_scale = 1.0;
 		double linear_eased_weight = 0.0;     // shake noise position
 		Ref<FastNoiseLite> noise;
+		double initial_shader_value = 0.0;
+		double target_shader_value = 1.0;
 	};
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
@@ -604,6 +625,7 @@ class NativeTriggerRuntime : public RefCounted {
 	ObjectID level_id;
 	ObjectID camera_id;
 	ObjectID config_id;
+	ObjectID shader_layer_id;
 	// Records with the touch-only flag, in x order, for hitbox overlap checks.
 	std::vector<size_t> touch_order;
 	// Which touch records each player currently overlaps, so multi-activate
@@ -1131,6 +1153,10 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::CAMERA_OFFSET:
 			case TriggerEffectKind::CAMERA_ROTATE:
 			case TriggerEffectKind::SHAKE:
+			case TriggerEffectKind::SHADER_GRAYSCALE:
+			case TriggerEffectKind::SHADER_SEPIA:
+			case TriggerEffectKind::SHADER_LENS_CIRCLE:
+			case TriggerEffectKind::SHADER_INVERT_COLOR:
 				start_fade(index, effect, player);
 				break;
 			default:
@@ -1179,12 +1205,95 @@ class NativeTriggerRuntime : public RefCounted {
 		}
 	}
 
+public:
+	static bool is_shader_kind(TriggerEffectKind kind) {
+		return kind == TriggerEffectKind::SHADER_GRAYSCALE
+			|| kind == TriggerEffectKind::SHADER_SEPIA
+			|| kind == TriggerEffectKind::SHADER_LENS_CIRCLE
+			|| kind == TriggerEffectKind::SHADER_INVERT_COLOR;
+	}
+
+private:
+
+	CanvasItem *get_shader_node(const StringName &name) {
+		Node *sl = nullptr;
+		if (shader_layer_id.is_valid()) {
+			sl = Object::cast_to<Node>(ObjectDB::get_instance(shader_layer_id));
+		}
+		if (!sl && level_id.is_valid()) {
+			Node *n = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+			while (n) {
+				Node *candidate = n->get_node_or_null(NodePath("ShaderLayer"));
+				if (candidate) {
+					shader_layer_id = candidate->get_instance_id();
+					sl = candidate;
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+		if (!sl) return nullptr;
+		Node *child = sl->get_node_or_null(NodePath(name));
+		if (!child && sl->get_name() == name) return Object::cast_to<CanvasItem>(sl);
+		return Object::cast_to<CanvasItem>(child);
+	}
+
+	static double get_shader_param(CanvasItem *item, const StringName &param, double default_val = 0.0) {
+		if (!item) return default_val;
+		Ref<Material> mat = item->get_material();
+		if (mat.is_null()) return default_val;
+		Variant val = mat->call("get_shader_parameter", param);
+		if (val.get_type() == Variant::NIL) return default_val;
+		return static_cast<double>(val);
+	}
+
+	static void set_shader_param(CanvasItem *item, const StringName &param, const Variant &val) {
+		if (!item) return;
+		Ref<Material> mat = item->get_material();
+		if (mat.is_valid()) {
+			mat->call("set_shader_parameter", param, val);
+		}
+	}
+
+	void reset_shaders() {
+		CanvasItem *gray = get_shader_node(StringName("Grayscale"));
+		if (gray) {
+			gray->set_visible(false);
+			set_shader_param(gray, StringName("grayscale_factor"), 0.0);
+		}
+		CanvasItem *sepia = get_shader_node(StringName("Sepia"));
+		if (sepia) {
+			sepia->set_visible(false);
+			set_shader_param(sepia, StringName("sepia_factor"), 0.0);
+		}
+		CanvasItem *lens = get_shader_node(StringName("LensCircle"));
+		if (lens) {
+			lens->set_visible(false);
+			set_shader_param(lens, StringName("alpha"), 0.0);
+		}
+		CanvasItem *invert = get_shader_node(StringName("InvertColor"));
+		if (invert) {
+			invert->set_visible(false);
+			set_shader_param(invert, StringName("invert_factor"), 0.0);
+		}
+	}
+
 	void start_fade(size_t index, const TriggerEffect &effect, Object *player) {
 		// prevent_restart_during_animation: re-activating a record mid-fade is
 		// ignored, like EasingComponent's default guard.
 		const ObjectID player_id = ObjectID(player->get_instance_id());
 		for (const Fade &existing : fades) {
 			if (existing.record_index == index && existing.player == player_id) return;
+		}
+		// If another shader fade of the same kind is active, remove it so the new trigger smoothly takes over
+		if (is_shader_kind(effect.kind)) {
+			for (size_t fi = 0; fi < fades.size(); ) {
+				if (fades[fi].record_index < records.size() && records[fades[fi].record_index].effect.kind == effect.kind) {
+					fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(fi));
+				} else {
+					++fi;
+				}
+			}
 		}
 		Fade fade;
 		fade.record_index = index;
@@ -1248,6 +1357,45 @@ class NativeTriggerRuntime : public RefCounted {
 				fade.noise.instantiate();
 				if (fade.noise.is_valid()) fade.noise->set_seed(static_cast<int64_t>(std::rand()));
 				break;
+			case TriggerEffectKind::SHADER_GRAYSCALE: {
+				CanvasItem *node = get_shader_node(StringName("Grayscale"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("grayscale_factor"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+					if (effect.shader_use_lum) {
+						set_shader_param(node, StringName("use_lum"), true);
+					}
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			case TriggerEffectKind::SHADER_SEPIA: {
+				CanvasItem *node = get_shader_node(StringName("Sepia"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("sepia_factor"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			case TriggerEffectKind::SHADER_LENS_CIRCLE: {
+				CanvasItem *node = get_shader_node(StringName("LensCircle"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("alpha"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			case TriggerEffectKind::SHADER_INVERT_COLOR: {
+				CanvasItem *node = get_shader_node(StringName("InvertColor"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("invert_factor"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
 			default:
 				break;
 		}
@@ -1444,6 +1592,58 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::SHAKE:
 				apply_shake(fade, effect, weight);
 				break;
+			case TriggerEffectKind::SHADER_GRAYSCALE: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("Grayscale"));
+				if (node) {
+					set_shader_param(node, StringName("grayscale_factor"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SHADER_SEPIA: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("Sepia"));
+				if (node) {
+					set_shader_param(node, StringName("sepia_factor"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SHADER_LENS_CIRCLE: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("LensCircle"));
+				if (node) {
+					set_shader_param(node, StringName("alpha"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SHADER_INVERT_COLOR: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("InvertColor"));
+				if (node) {
+					set_shader_param(node, StringName("invert_factor"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
 			default:
 				break;
 		}
@@ -1681,7 +1881,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger, DEFVAL(0.0));
-		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config"), &NativeTriggerRuntime::bind_context);
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer"), &NativeTriggerRuntime::bind_context, DEFVAL(Variant()));
+		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeTriggerRuntime::bind_shader_layer);
 		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeTriggerRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("set_group_members", "group", "members"), &NativeTriggerRuntime::set_group_members);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
@@ -1709,7 +1910,8 @@ public:
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); frame_players.clear(); previous_positions.clear();
-		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID();
+		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID(); shader_layer_id = ObjectID();
+		reset_shaders();
 	}
 	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		Record record;
@@ -1728,11 +1930,27 @@ public:
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return register_trigger(nullptr, x, y, flags, source_order, groups, gd_id, properties);
 	}
-	// Level, camera and Config objects the effects read/write.
-	void bind_context(Object *level, Object *camera, Object *config) {
+	// Level, camera, Config and ShaderLayer objects the effects read/write.
+	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr) {
 		if (level) level_id = level->get_instance_id();
 		if (camera) camera_id = camera->get_instance_id();
 		if (config) config_id = config->get_instance_id();
+		if (shader_layer) {
+			shader_layer_id = shader_layer->get_instance_id();
+		} else if (level) {
+			Node *n = Object::cast_to<Node>(level);
+			while (n) {
+				Node *sl = n->get_node_or_null(NodePath("ShaderLayer"));
+				if (sl) {
+					shader_layer_id = sl->get_instance_id();
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+	}
+	void bind_shader_layer(Object *shader_layer) {
+		if (shader_layer) shader_layer_id = shader_layer->get_instance_id();
 	}
 	void register_channel(const String &name, Object *data) {
 		if (data && !name.is_empty()) channel_index[name] = data->get_instance_id();
@@ -2027,6 +2245,7 @@ public:
 		touch_inside_players.clear();
 		frame_players.clear();
 		previous_positions.clear();
+		reset_shaders();
 	}
 	Dictionary snapshot() const {
 		Dictionary state; PackedByteArray active;
@@ -2142,7 +2361,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("clear"), &NativeLevelRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger, DEFVAL(0.0));
-		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config"), &NativeLevelRuntime::bind_context);
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer"), &NativeLevelRuntime::bind_context, DEFVAL(Variant()));
+		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeLevelRuntime::bind_shader_layer);
 		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeLevelRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
@@ -2217,10 +2437,13 @@ public:
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return triggers->register_packed_trigger(x, y, flags, source_order, groups, gd_id, properties);
 	}
-	void bind_context(Object *level, Object *camera, Object *config) {
+	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr) {
 		Node *level_node = Object::cast_to<Node>(level);
 		if (level_node) context_level = level_node;
-		triggers->bind_context(level, camera, config);
+		triggers->bind_context(level, camera, config, shader_layer);
+	}
+	void bind_shader_layer(Object *shader_layer) {
+		triggers->bind_shader_layer(shader_layer);
 	}
 	void register_channel(const String &name, Object *data) { triggers->register_channel(name, data); }
 	void finalize() {
