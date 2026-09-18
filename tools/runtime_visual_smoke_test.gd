@@ -759,8 +759,17 @@ func _test_native_core() -> void:
 	# 1612 Hide Player has no fade at all.
 	effect_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"})
 	effect_runtime.call(&"finalize")
+	var expected_anchor: Vector2 = effect_runtime.call(
+		&"compute_ui_anchor",
+		Vector2(-1012.5, 0.0), 3, 0, false, false,
+		effect_camera.get_viewport().get_visible_rect().size, 0.8)
+	var static_1080p: Vector2 = effect_runtime.call(
+		&"compute_ui_anchor",
+		Vector2(-1012.5, 0.0), 3, 0, false, false,
+		Vector2(1920.0, 1080.0), 0.8)
+	assert(is_equal_approx(static_1080p.x, -1200.0), "native smoke: 1080p UI anchor computation")
 	assert(ui_node.get_parent() != effect_level, "native smoke: UI trigger reparented node to UI root")
-	assert(is_equal_approx(ui_node.position.x, -1200.0), "native smoke: UI left alignment applied on finalize")
+	assert(is_equal_approx(ui_node.position.x, expected_anchor.x), "native smoke: UI left alignment applied on finalize")
 	effect_runtime.call(&"advance", effect_player, 0.0, 120.0)
 	assert(toggled.visible == false, "native smoke: toggle trigger did not hide its group")
 	assert(effect_player.visible == false, "native smoke: hide player trigger did not run")
@@ -805,7 +814,7 @@ func _test_native_core() -> void:
 	assert(is_equal_approx(ui_node.position.x, -1012.5), "native smoke: UI node position restored on reset")
 	effect_runtime.call(&"apply_ui_triggers")
 	assert(ui_node.get_parent() != effect_level, "native smoke: apply_ui_triggers reapplied UI parenting")
-	assert(is_equal_approx(ui_node.position.x, -1200.0), "native smoke: apply_ui_triggers reapplied alignment")
+	assert(is_equal_approx(ui_node.position.x, expected_anchor.x), "native smoke: apply_ui_triggers reapplied alignment")
 	effect_runtime.call(&"reset")
 	# --- 1007 Fade: GD's multiplicative group-opacity model ----------------
 	# A fade eases its GROUP's persistent opacity, and a member renders as
