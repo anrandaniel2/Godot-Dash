@@ -303,18 +303,15 @@ static Color shift_copy_hsv(const Color &base, Object *data) {
 		return base;
 	const bool saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
 	const bool value_additive = static_cast<bool>(data->get("copy_value_additive"));
-	if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value)) {
-		return base;
-	}
 	double h = static_cast<double>(base.get_h()) + hue;
 	h -= Math::floor(h);
 	const double s = Math::clamp(
 		saturation_additive ? static_cast<double>(base.get_s()) + saturation
-							: (Math::is_zero_approx(base.get_s()) && saturation > 0.0 ? saturation : static_cast<double>(base.get_s()) * saturation),
+							: static_cast<double>(base.get_s()) * saturation,
 		0.0, 1.0);
 	const double v = Math::clamp(
 		value_additive ? static_cast<double>(base.get_v()) + value
-					   : (Math::is_zero_approx(base.get_v()) && value > 0.0 ? value : static_cast<double>(base.get_v()) * value),
+					   : static_cast<double>(base.get_v()) * value,
 		0.0, 1.0);
 	return Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), base.a);
 }
@@ -1072,10 +1069,10 @@ class NativeTriggerRuntime : public RefCounted {
 			hue -= Math::floor(hue);
 			const double saturation = effect.copy_saturation_additive
 				? Math::clamp(static_cast<double>(base.get_s()) + effect.copy_saturation, 0.0, 1.0)
-				: Math::clamp(Math::is_zero_approx(base.get_s()) && effect.copy_saturation > 0.0 ? effect.copy_saturation : static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
+				: Math::clamp(static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
 			const double value = effect.copy_value_additive
 				? Math::clamp(static_cast<double>(base.get_v()) + effect.copy_value, 0.0, 1.0)
-				: Math::clamp(Math::is_zero_approx(base.get_v()) && effect.copy_value > 0.0 ? effect.copy_value : static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
+				: Math::clamp(static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
 			return Color::from_hsv(
 				static_cast<real_t>(hue), static_cast<real_t>(saturation),
 				static_cast<real_t>(value), base.a);

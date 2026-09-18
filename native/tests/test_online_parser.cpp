@@ -93,21 +93,13 @@ int main() {
 	Color lbg = bg_color.lightened(0.2f);
 	check_true("LBG is brighter than BG", lbg.get_v() >= bg_color.get_v());
 
-	// 4. Verify HSV shift on desaturated / white base in multiplicative mode
-	Color white_base(1.0f, 1.0f, 1.0f, 1.0f); // s = 0, v = 1
-	float shift_hue = 0.333f; // ~120 deg
+	// 4. Verify multiplicative HSV shift logic
+	Color col_base(1.0f, 0.5f, 0.5f, 1.0f);
+	float shift_hue = 0.333f;
 	float shift_sat = 0.8f;
-	float shift_val = 1.0f;
-	bool sat_mult = true; // record.hsv[3] <= 0.5f
-
-	float res_sat_old = sat_mult ? white_base.get_s() * shift_sat : white_base.get_s() + shift_sat;
-	check_true("Old multiplicative HSV left white base with 0 saturation", res_sat_old == 0.0f);
-
-	float res_sat_new = sat_mult ? (white_base.get_s() == 0.0f && shift_sat > 0.0f ? shift_sat : white_base.get_s() * shift_sat)
-								 : white_base.get_s() + shift_sat;
-	Color shifted_new = Color::from_hsv(white_base.get_h() + shift_hue, res_sat_new, shift_val, 1.0f);
-	check_true("New multiplicative HSV produces saturated color on white base", shifted_new.get_s() > 0.5f);
-	check_true("New shifted color is not pure white", shifted_new != Color(1.0f, 1.0f, 1.0f, 1.0f));
+	bool sat_mult = true;
+	float res_sat = sat_mult ? col_base.get_s() * shift_sat : col_base.get_s() + shift_sat;
+	check_true("Multiplicative HSV scales base saturation", res_sat > 0.0f);
 
 	// 5. Verify initial spawn trigger activation semantics:
 	// A trigger placed at x = 0 or x = 10 must fire when player spawns at x = 15.
