@@ -262,20 +262,26 @@ func _physics_process(delta: float) -> void:
 
 	# Slope collision resolution
 	# Reset collision shape and set it back to the slope collider if needed
-	_ground_collider.shape = default_collider
+	if _ground_collider.shape != default_collider:
+		_ground_collider.shape = default_collider
+		_ground_snap_cast.shape = default_collider
+		_solid_overlap_check_collider.shape = default_collider
 	_ground_collider.rotation = gameplay_rotation
-	_ground_snap_cast.shape = default_collider
-	_solid_overlap_check_collider.shape = default_collider
 	last_collision = move_and_collide(speed.y * Vector2.DOWN * delta, true)
 	_handle_collision(last_collision, true)
 
-	for i in range(4):
+	for i in range(2):
 		last_collision = move_and_collide(velocity * delta, true)
+		if last_collision == null:
+			break
+		var prev_shape: Shape2D = _ground_collider.shape
 		_handle_collision(last_collision, i != 0)
 		# Collide down with solids so the wave can crash into them
 		if internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0:
 			last_collision = move_and_collide(speed.y * Vector2.DOWN * delta, true)
 			_handle_collision(last_collision, true)
+		if _ground_collider.shape == prev_shape:
+			break
 
 	# Apply movement
 	move_and_slide()
@@ -1234,77 +1240,75 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 		return
 	#endregion
 
-	#region cube
-	if not is_on_floor() and not is_on_ceiling() and speed_multiplier != 0.0:
-		_icon_cube.rotation_degrees += delta * gravity_flip * 390 * get_direction() * gravity_multiplier
-	else:
-		_icon_cube.rotation = lerp_angle(
-			_icon_cube.rotation,
-			snapped(_icon_cube.rotation - sprite_floor_angle, PI / 2) + sprite_floor_angle,
-			ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
-		)
-	#endregion
-
-	#region ship/swing
-	if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
-		_icon_ship.rotation = lerp_angle(
-			_icon_ship.rotation,
-			velocity_angle,
-			SHIP_ROTATION_LERP_FACTOR * delta * 60,
-		)
-		_icon_swing.rotation = lerp_angle(
-			_icon_swing.rotation,
-			velocity_angle,
-			SHIP_ROTATION_LERP_FACTOR * delta * 60,
-		)
-	else:
-		_icon_ship.rotation = lerp_angle(_icon_ship.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
-		_icon_swing.rotation = lerp_angle(_icon_swing.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
-	#endregion
-
-	#region wave
-	if direction != 0 or jump_state != 0:
-		_wave_rotation_goal = velocity_angle
-	if is_on_floor():
-		_wave_rotation_goal = sprite_floor_angle
-	_icon_wave.rotation = lerp_angle(
-		_icon_wave.rotation,
-		_wave_rotation_goal,
-		0.25 * delta * 60,
-	)
-	#endregion
-
-	#region ufo
-	if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
-		_icon_ufo.rotation_degrees = lerpf(
-			_icon_ufo.rotation_degrees,
-			velocity.rotated(-gameplay_rotation).y * delta * direction * 0.5 + gameplay_rotation_degrees,
-			ICON_LERP_FACTOR * delta * 60,
-		)
-	else:
-		_icon_ufo.rotation = lerp_angle(_icon_ufo.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
-	var jetpack_rotation_target: float = deg_to_rad(absf(local_velocity.x) / speed_multiplier * delta * 5) if not is_zero_approx(speed_multiplier) else 0.0
-	_icon_jetpack.rotation = lerp_angle(
-		_icon_jetpack.rotation,
-		jetpack_rotation_target + sprite_floor_angle,
-		ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
-	)
-	if jump_state > 0:
-		var ufo_particle := UFO_PARTICLE.instantiate()
-		_icon_ufo_particles_origin.add_child(ufo_particle)
-	#endregion
-
-	#region spider/robot
-	_icon_spider.rotation = lerp_angle(
-		_icon_spider.rotation,
-		sprite_floor_angle,
-		ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
-	)
-	_icon_robot.rotation = lerp_angle(
-		_icon_robot.rotation,
-		sprite_floor_angle,
-		ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
-	)
+	#region gamemode rotation
+	match displayed_gamemode:
+		Gamemode.CUBE:
+			if not is_on_floor() and not is_on_ceiling() and speed_multiplier != 0.0:
+				_icon_cube.rotation_degrees += delta * gravity_flip * 390 * get_direction() * gravity_multiplier
+			else:
+				_icon_cube.rotation = lerp_angle(
+					_icon_cube.rotation,
+					snapped(_icon_cube.rotation - sprite_floor_angle, PI / 2) + sprite_floor_angle,
+					ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
+				)
+		Gamemode.SHIP:
+			if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
+				_icon_ship.rotation = lerp_angle(
+					_icon_ship.rotation,
+					velocity_angle,
+					SHIP_ROTATION_LERP_FACTOR * delta * 60,
+				)
+			else:
+				_icon_ship.rotation = lerp_angle(_icon_ship.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
+		Gamemode.SWING:
+			if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
+				_icon_swing.rotation = lerp_angle(
+					_icon_swing.rotation,
+					velocity_angle,
+					SHIP_ROTATION_LERP_FACTOR * delta * 60,
+				)
+			else:
+				_icon_swing.rotation = lerp_angle(_icon_swing.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
+		Gamemode.WAVE:
+			if direction != 0 or jump_state != 0:
+				_wave_rotation_goal = velocity_angle
+			if is_on_floor():
+				_wave_rotation_goal = sprite_floor_angle
+			_icon_wave.rotation = lerp_angle(
+				_icon_wave.rotation,
+				_wave_rotation_goal,
+				0.25 * delta * 60,
+			)
+		Gamemode.UFO:
+			if not is_on_floor() and not is_on_ceiling() and speed_multiplier > 0.0:
+				_icon_ufo.rotation_degrees = lerpf(
+					_icon_ufo.rotation_degrees,
+					velocity.rotated(-gameplay_rotation).y * delta * direction * 0.5 + gameplay_rotation_degrees,
+					ICON_LERP_FACTOR * delta * 60,
+				)
+			else:
+				_icon_ufo.rotation = lerp_angle(_icon_ufo.rotation, sprite_floor_angle, ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0)
+			var jetpack_rotation_target: float = deg_to_rad(absf(local_velocity.x) / speed_multiplier * delta * 5) if not is_zero_approx(speed_multiplier) else 0.0
+			_icon_jetpack.rotation = lerp_angle(
+				_icon_jetpack.rotation,
+				jetpack_rotation_target + sprite_floor_angle,
+				ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
+			)
+			if jump_state > 0:
+				var ufo_particle := UFO_PARTICLE.instantiate()
+				_icon_ufo_particles_origin.add_child(ufo_particle)
+		Gamemode.SPIDER:
+			_icon_spider.rotation = lerp_angle(
+				_icon_spider.rotation,
+				sprite_floor_angle,
+				ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
+			)
+		Gamemode.ROBOT:
+			_icon_robot.rotation = lerp_angle(
+				_icon_robot.rotation,
+				sprite_floor_angle,
+				ICON_LERP_FACTOR * delta * 60 if not _snap_sprite_rotation else 1.0,
+			)
 	#endregion
 
 
@@ -1363,6 +1367,8 @@ func _update_robot_fire(delta: float, jump_state: int) -> void:
 
 
 func _update_wave_trail(delta: float) -> void:
+	if displayed_gamemode != Gamemode.WAVE and is_zero_approx(_wave_trail.modulate.a):
+		return
 	var wave_trail_width := WAVE_TRAIL_WIDTH
 	var player_camera_zoom_x: float
 	player_camera_zoom_x = LevelManager.player_camera.zoom.x if LevelManager.player_camera else 1.0

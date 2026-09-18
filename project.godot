@@ -419,8 +419,8 @@ updater/show_new_release_info_on_editor_launch_in_output=false
 
 [physics]
 
-common/physics_ticks_per_second=240
-common/max_physics_steps_per_frame=24
+common/physics_ticks_per_second=120
+common/max_physics_steps_per_frame=12
 common/physics_interpolation=true
 
 [rendering]

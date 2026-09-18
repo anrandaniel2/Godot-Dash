@@ -37,8 +37,12 @@ const FILE_EXTENSION := ".gdr"
 const MAX_IMPORT_TICKS := 240 * 60 * 60
 
 
+## GDR files are 240 ticks/s standard across the ecosystem.
+const GDR_STANDARD_FRAMERATE := 240.0
+
+
 static func physics_framerate() -> float:
-	return float(ProjectSettings.get_setting("physics/common/physics_ticks_per_second", 240.0))
+	return GDR_STANDARD_FRAMERATE
 
 
 static func to_bytes(replay: Replay) -> PackedByteArray:

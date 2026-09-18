@@ -7,8 +7,8 @@ const VELOCITY_REDIRECTORS_LAYER: int = 1 << 10
 ## an exact read (not smoothed) so resuming is seamless, and the pad hitbox
 ## only reacts to the factor within a 700 px approach anyway. Culling managers
 ## never hide interactables, so without this gate every orb and pad in the
-## level read the player's velocity and transform at 240 Hz.
-const TRACK_RANGE: float = 3500.0
+## level read the player's velocity and transform at high frequency.
+const TRACK_RANGE: float = 900.0
 
 @export var _pulse_circle: PulseCircle
 @export var _sprite: ReboundSprite
