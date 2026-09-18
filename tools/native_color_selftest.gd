@@ -129,6 +129,27 @@ func _ready() -> void:
 		var cls: Dictionary = native.call(&"classify_collision", deg_to_rad(5.0), deg_to_rad(45.0))
 		_expect("Native physics classify 5 deg as floor", bool(cls["is_floor"]))
 
+		var flags: int = native.call(&"classify_collision_flags", deg_to_rad(5.0), deg_to_rad(45.0))
+		_expect("Native physics classify_collision_flags floor bit set", (flags & 1) != 0)
+
+		# Packed physics array test
+		var p_packed := PackedFloat64Array()
+		p_packed.resize(30)
+		p_packed[0] = 1.0 / 60.0
+		p_packed[1] = 0.0
+		p_packed[2] = 0.0
+		p_packed[3] = 1.0
+		p_packed[4] = 0.0
+		p_packed[11] = 0.0 # CUBE
+		p_packed[12] = 1.0
+		p_packed[13] = 1250.0
+		p_packed[14] = 2395.0
+		p_packed[15] = 1.0
+		p_packed[16] = 1.0
+		p_packed[17] = 1.0
+		var packed_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
+		_expect("Native physics packed cube gravity falls", absf(packed_res[3] - (10600.0 / 60.0)) < 0.1)
+
 	# HSV test on white base (preventing glow/white turning red)
 	var white_test_channel := ColorChannelData.new()
 	white_test_channel.color = Color.WHITE

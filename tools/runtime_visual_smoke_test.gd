@@ -1031,6 +1031,20 @@ func _test_native_core() -> void:
 	var zlib_encoded := Marshalls.raw_to_base64(plain.to_utf8_buffer().compress(FileAccess.COMPRESSION_DEFLATE)) \
 			.replace("+", "-").replace("/", "_")
 	assert(native.call(&"decode_level_string", zlib_encoded) == plain, "native smoke: documented zlib level decode")
+	var col_flags: int = native.call(&"classify_collision_flags", deg_to_rad(5.0), deg_to_rad(45.0))
+	assert((col_flags & 1) != 0 and (col_flags & 4) == 0, "native smoke: collision flags floor")
+	var p_packed := PackedFloat64Array()
+	p_packed.resize(30)
+	p_packed[0] = 1.0 / 60.0
+	p_packed[3] = 1.0
+	p_packed[13] = 1250.0
+	p_packed[14] = 2395.0
+	p_packed[15] = 1.0
+	p_packed[16] = 1.0
+	p_packed[17] = 1.0
+	var packed_physics_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
+	assert(packed_physics_res.size() == 11, "native smoke: packed physics result size")
+	assert(absf(packed_physics_res[3] - (10600.0 / 60.0)) < 0.1, "native smoke: packed physics gravity fall")
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
 
 

@@ -212,13 +212,28 @@ struct CollisionFlags {
 	bool is_slope = false;
 };
 
-CollisionFlags classify_collision_core(double collision_angle, double floor_max_angle) {
-	CollisionFlags result;
+int64_t classify_collision_flags_core(double collision_angle, double floor_max_angle) {
+	int64_t flags = 0;
 	constexpr double PI = 3.14159265358979323846;
-	result.is_floor = collision_angle <= (10.0 * PI / 180.0);
-	result.is_ceiling = collision_angle >= (170.0 * PI / 180.0);
-	result.is_wall = collision_angle > floor_max_angle && collision_angle < (PI - floor_max_angle);
-	result.is_slope = !result.is_floor && !result.is_ceiling && !result.is_wall;
+	if (collision_angle <= (10.0 * PI / 180.0)) {
+		flags |= 1; // is_floor
+	} else if (collision_angle >= (170.0 * PI / 180.0)) {
+		flags |= 2; // is_ceiling
+	} else if (collision_angle > floor_max_angle && collision_angle < (PI - floor_max_angle)) {
+		flags |= 4; // is_wall
+	} else {
+		flags |= 8; // is_slope
+	}
+	return flags;
+}
+
+CollisionFlags classify_collision_core(double collision_angle, double floor_max_angle) {
+	const int64_t flags = classify_collision_flags_core(collision_angle, floor_max_angle);
+	CollisionFlags result;
+	result.is_floor = (flags & 1) != 0;
+	result.is_ceiling = (flags & 2) != 0;
+	result.is_wall = (flags & 4) != 0;
+	result.is_slope = (flags & 8) != 0;
 	return result;
 }
 
@@ -354,6 +369,58 @@ int main() {
 
 		CollisionFlags col_slope = classify_collision_core(30.0 * PI / 180.0, 45.0 * PI / 180.0);
 		check_true("Angle 30 deg is slope", col_slope.is_slope);
+
+		int64_t flags_floor = classify_collision_flags_core(5.0 * PI / 180.0, 45.0 * PI / 180.0);
+		check_true("Flags floor bit 0 set", (flags_floor & 1) != 0);
+		check_true("Flags wall bit 2 not set for 5 deg", (flags_floor & 4) == 0);
+
+		int64_t flags_wall = classify_collision_flags_core(90.0 * PI / 180.0, 45.0 * PI / 180.0);
+		check_true("Flags wall bit 2 set", (flags_wall & 4) != 0);
+	}
+
+	// 9. Robot jumping and variable height
+	{
+		PlayerPhysicsState p;
+		p.delta = 1.0 / 60.0;
+		p.previous_velocity = Vector2D(1250, 0);
+		p.direction = 1;
+		p.jump_state = 1;
+		p.internal_gamemode = 5; // ROBOT
+		p.robot_timer_time_left = 0.2;
+		PlayerPhysicsResult res = compute_player_velocity_core(p);
+		check_true("Robot holding jump gives -1250 boost", std::abs(res.velocity.y - (-1250.0)) < 1e-2);
+	}
+
+	// 10. Mini and Big wave vertical speed scaling
+	{
+		PlayerPhysicsState p;
+		p.delta = 1.0 / 60.0;
+		p.previous_velocity = Vector2D(1250, 0);
+		p.direction = 1;
+		p.jump_state = 1;
+		p.internal_gamemode = 4; // WAVE
+		p.player_scale = 0; // MINI
+		PlayerPhysicsResult res_mini = compute_player_velocity_core(p);
+		check_true("Mini wave has 2x vertical speed (-2500)", std::abs(res_mini.velocity.y - (-2500.0)) < 1e-2);
+
+		p.player_scale = 2; // BIG
+		PlayerPhysicsResult res_big = compute_player_velocity_core(p);
+		check_true("Big wave has 0.5x vertical speed (-625)", std::abs(res_big.velocity.y - (-625.0)) < 1e-2);
+	}
+
+	// 11. UFO jump impulse
+	{
+		PlayerPhysicsState p;
+		p.delta = 1.0 / 60.0;
+		p.previous_velocity = Vector2D(1250, 500);
+		p.direction = 1;
+		p.jump_state = 1;
+		p.internal_gamemode = 2; // UFO
+		p.speed = Vector2D(1250, 2395);
+		PlayerPhysicsResult res = compute_player_velocity_core(p);
+		double expected_ufo_y = -2395.0 * PLAYER_UFO_GRAVITY_MULTIPLIER;
+		check_true("UFO jump gives immediate upward impulse", std::abs(res.velocity.y - expected_ufo_y) < 1e-2);
+		check_true("UFO instant jump mode reported", res.instant_jump_mode == 2);
 	}
 
 	if (failures == 0) {

@@ -2525,15 +2525,17 @@ protected:
 		ClassDB::bind_method(D_METHOD("commit_collision_shapes", "body", "source", "descriptors"), &GdashNative::commit_collision_shapes);
 		ClassDB::bind_method(D_METHOD("reenable_collision_shapes", "container"), &GdashNative::reenable_collision_shapes);
 		ClassDB::bind_method(D_METHOD("compute_player_velocity", "params"), &GdashNative::compute_player_velocity);
+		ClassDB::bind_method(D_METHOD("compute_player_velocity_packed", "params"), &GdashNative::compute_player_velocity_packed);
 		ClassDB::bind_method(D_METHOD("classify_collision", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision);
+		ClassDB::bind_method(D_METHOD("classify_collision_flags", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision_flags);
 		ClassDB::bind_method(D_METHOD("extract_object_geometry", "object"), &GdashNative::extract_object_geometry);
 	}
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.10.0 / native animation / spatial retained RIDs / worker culling / native color channels / api 4.7");
+		return String("gdash_native 1.11.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / api 4.7");
 	}
-	int64_t version() const { return 21; }
+	int64_t version() const { return 22; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)
@@ -3191,35 +3193,46 @@ public:
 		}
 	}
 
-	Dictionary compute_player_velocity(const Dictionary &params) const {
-		const double delta = params.get("delta", 1.0 / 60.0);
-		const Vector2 previous_velocity = params.get("previous_velocity", Vector2());
-		const int64_t direction = params.get("direction", 1);
-		const int64_t jump_state = params.get("jump_state", 0);
-		const bool was_sliding_on_slope = params.get("was_sliding_on_slope", false);
-		const bool has_last_slide_collision = params.get("has_last_slide_collision", false);
-		const double floor_angle = params.get("floor_angle", 0.0);
-		const double floor_max_angle = params.get("floor_max_angle", 0.785398);
-		Vector2 slope_velocity = params.get("slope_velocity", Vector2());
-		const int64_t internal_gamemode = params.get("internal_gamemode", 0);
-		const int64_t player_scale = params.get("player_scale", 1);
-		const Vector2 speed = params.get("speed", Vector2(1250.0, 2395.0));
-		const double speed_multiplier = params.get("speed_multiplier", 1.0);
-		double gravity_flip = params.get("gravity_flip", 1.0);
-		const double gravity_multiplier = params.get("gravity_multiplier", 1.0);
-		const double gameplay_rotation = params.get("gameplay_rotation", 0.0);
-		const bool is_on_floor = params.get("is_on_floor", false);
-		const bool is_on_ceiling = params.get("is_on_ceiling", false);
-		const bool is_platformer = params.get("is_platformer", false);
-		const bool colliding_pad = params.get("colliding_pad", false);
-		const bool has_dash_control = params.get("has_dash_control", false);
-		const bool orb_queue_empty = params.get("orb_queue_empty", true);
-		const double robot_timer_time_left = params.get("robot_timer_time_left", 0.0);
-		const bool deferred_velocity_redirect = params.get("deferred_velocity_redirect", false);
-		double coyote_time = params.get("coyote_time", 0.0);
-		int64_t spider_dash_frames = params.get("spider_dash_frames", 0);
-		int64_t slope_exit_velocity_frames = params.get("slope_exit_velocity_frames", 0);
+	struct PlayerPhysicsOutput {
+		Vector2 local_velocity;
+		Vector2 world_velocity;
+		Vector2 slope_velocity;
+		double gravity_flip = 1.0;
+		double coyote_time = 0.0;
+		int64_t spider_dash_frames = 0;
+		int64_t slope_exit_velocity_frames = 0;
+		int64_t instant_jump_mode = -1;
+	};
 
+	static PlayerPhysicsOutput run_player_physics_kernel(
+			double delta,
+			const Vector2 &previous_velocity,
+			int64_t direction,
+			int64_t jump_state,
+			bool was_sliding_on_slope,
+			bool has_last_slide_collision,
+			double floor_angle,
+			double floor_max_angle,
+			Vector2 slope_velocity,
+			int64_t internal_gamemode,
+			int64_t player_scale,
+			const Vector2 &speed,
+			double speed_multiplier,
+			double gravity_flip,
+			double gravity_multiplier,
+			double gameplay_rotation,
+			bool is_on_floor,
+			bool is_on_ceiling,
+			bool is_platformer,
+			bool colliding_pad,
+			bool has_dash_control,
+			bool orb_queue_empty,
+			double robot_timer_time_left,
+			bool deferred_velocity_redirect,
+			double coyote_time,
+			int64_t spider_dash_frames,
+			int64_t slope_exit_velocity_frames) {
+		PlayerPhysicsOutput out;
 		Vector2 local_velocity = previous_velocity.rotated(static_cast<real_t>(-gameplay_rotation));
 
 		if (spider_dash_frames > 0) {
@@ -3339,28 +3352,145 @@ public:
 
 		Vector2 world_velocity = local_velocity.rotated(static_cast<real_t>(gameplay_rotation));
 
+		out.local_velocity = local_velocity;
+		out.world_velocity = world_velocity;
+		out.slope_velocity = slope_velocity;
+		out.gravity_flip = gravity_flip;
+		out.coyote_time = coyote_time;
+		out.spider_dash_frames = spider_dash_frames;
+		out.slope_exit_velocity_frames = slope_exit_velocity_frames;
+		out.instant_jump_mode = instant_jump_mode;
+		return out;
+	}
+
+	Dictionary compute_player_velocity(const Dictionary &params) const {
+		const double delta = params.get("delta", 1.0 / 60.0);
+		const Vector2 previous_velocity = params.get("previous_velocity", Vector2());
+		const int64_t direction = params.get("direction", 1);
+		const int64_t jump_state = params.get("jump_state", 0);
+		const bool was_sliding_on_slope = params.get("was_sliding_on_slope", false);
+		const bool has_last_slide_collision = params.get("has_last_slide_collision", false);
+		const double floor_angle = params.get("floor_angle", 0.0);
+		const double floor_max_angle = params.get("floor_max_angle", 0.785398);
+		const Vector2 slope_velocity = params.get("slope_velocity", Vector2());
+		const int64_t internal_gamemode = params.get("internal_gamemode", 0);
+		const int64_t player_scale = params.get("player_scale", 1);
+		const Vector2 speed = params.get("speed", Vector2(1250.0, 2395.0));
+		const double speed_multiplier = params.get("speed_multiplier", 1.0);
+		const double gravity_flip = params.get("gravity_flip", 1.0);
+		const double gravity_multiplier = params.get("gravity_multiplier", 1.0);
+		const double gameplay_rotation = params.get("gameplay_rotation", 0.0);
+		const bool is_on_floor = params.get("is_on_floor", false);
+		const bool is_on_ceiling = params.get("is_on_ceiling", false);
+		const bool is_platformer = params.get("is_platformer", false);
+		const bool colliding_pad = params.get("colliding_pad", false);
+		const bool has_dash_control = params.get("has_dash_control", false);
+		const bool orb_queue_empty = params.get("orb_queue_empty", true);
+		const double robot_timer_time_left = params.get("robot_timer_time_left", 0.0);
+		const bool deferred_velocity_redirect = params.get("deferred_velocity_redirect", false);
+		const double coyote_time = params.get("coyote_time", 0.0);
+		const int64_t spider_dash_frames = params.get("spider_dash_frames", 0);
+		const int64_t slope_exit_velocity_frames = params.get("slope_exit_velocity_frames", 0);
+
+		PlayerPhysicsOutput out = run_player_physics_kernel(
+			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
+			has_last_slide_collision, floor_angle, floor_max_angle, slope_velocity,
+			internal_gamemode, player_scale, speed, speed_multiplier, gravity_flip,
+			gravity_multiplier, gameplay_rotation, is_on_floor, is_on_ceiling,
+			is_platformer, colliding_pad, has_dash_control, orb_queue_empty,
+			robot_timer_time_left, deferred_velocity_redirect, coyote_time,
+			spider_dash_frames, slope_exit_velocity_frames);
+
 		Dictionary result;
-		result["local_velocity"] = local_velocity;
-		result["velocity"] = world_velocity;
-		result["slope_velocity"] = slope_velocity;
-		result["gravity_flip"] = gravity_flip;
-		result["coyote_time"] = coyote_time;
-		result["spider_dash_frames"] = spider_dash_frames;
-		result["slope_exit_velocity_frames"] = slope_exit_velocity_frames;
-		result["instant_jump_mode"] = instant_jump_mode;
+		result["local_velocity"] = out.local_velocity;
+		result["velocity"] = out.world_velocity;
+		result["slope_velocity"] = out.slope_velocity;
+		result["gravity_flip"] = out.gravity_flip;
+		result["coyote_time"] = out.coyote_time;
+		result["spider_dash_frames"] = out.spider_dash_frames;
+		result["slope_exit_velocity_frames"] = out.slope_exit_velocity_frames;
+		result["instant_jump_mode"] = out.instant_jump_mode;
 		return result;
 	}
 
+	PackedFloat64Array compute_player_velocity_packed(const PackedFloat64Array &params) const {
+		if (params.size() < 30) {
+			return PackedFloat64Array();
+		}
+		const double delta = params[0];
+		const Vector2 previous_velocity(static_cast<real_t>(params[1]), static_cast<real_t>(params[2]));
+		const int64_t direction = static_cast<int64_t>(params[3]);
+		const int64_t jump_state = static_cast<int64_t>(params[4]);
+		const bool was_sliding_on_slope = params[5] != 0.0;
+		const bool has_last_slide_collision = params[6] != 0.0;
+		const double floor_angle = params[7];
+		const double floor_max_angle = params[8];
+		const Vector2 slope_velocity(static_cast<real_t>(params[9]), static_cast<real_t>(params[10]));
+		const int64_t internal_gamemode = static_cast<int64_t>(params[11]);
+		const int64_t player_scale = static_cast<int64_t>(params[12]);
+		const Vector2 speed(static_cast<real_t>(params[13]), static_cast<real_t>(params[14]));
+		const double speed_multiplier = params[15];
+		const double gravity_flip = params[16];
+		const double gravity_multiplier = params[17];
+		const double gameplay_rotation = params[18];
+		const bool is_on_floor = params[19] != 0.0;
+		const bool is_on_ceiling = params[20] != 0.0;
+		const bool is_platformer = params[21] != 0.0;
+		const bool colliding_pad = params[22] != 0.0;
+		const bool has_dash_control = params[23] != 0.0;
+		const bool orb_queue_empty = params[24] != 0.0;
+		const double robot_timer_time_left = params[25];
+		const bool deferred_velocity_redirect = params[26] != 0.0;
+		const double coyote_time = params[27];
+		const int64_t spider_dash_frames = static_cast<int64_t>(params[28]);
+		const int64_t slope_exit_velocity_frames = static_cast<int64_t>(params[29]);
+
+		PlayerPhysicsOutput out = run_player_physics_kernel(
+			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
+			has_last_slide_collision, floor_angle, floor_max_angle, slope_velocity,
+			internal_gamemode, player_scale, speed, speed_multiplier, gravity_flip,
+			gravity_multiplier, gameplay_rotation, is_on_floor, is_on_ceiling,
+			is_platformer, colliding_pad, has_dash_control, orb_queue_empty,
+			robot_timer_time_left, deferred_velocity_redirect, coyote_time,
+			spider_dash_frames, slope_exit_velocity_frames);
+
+		PackedFloat64Array result;
+		result.resize(11);
+		result.set(0, static_cast<double>(out.local_velocity.x));
+		result.set(1, static_cast<double>(out.local_velocity.y));
+		result.set(2, static_cast<double>(out.world_velocity.x));
+		result.set(3, static_cast<double>(out.world_velocity.y));
+		result.set(4, static_cast<double>(out.slope_velocity.x));
+		result.set(5, static_cast<double>(out.slope_velocity.y));
+		result.set(6, out.gravity_flip);
+		result.set(7, out.coyote_time);
+		result.set(8, static_cast<double>(out.spider_dash_frames));
+		result.set(9, static_cast<double>(out.slope_exit_velocity_frames));
+		result.set(10, static_cast<double>(out.instant_jump_mode));
+		return result;
+	}
+
+	int64_t classify_collision_flags(double collision_angle, double floor_max_angle) const {
+		int64_t flags = 0;
+		if (collision_angle <= Math::deg_to_rad(10.0)) {
+			flags |= 1; // is_floor
+		} else if (collision_angle >= Math::deg_to_rad(180.0 - 10.0)) {
+			flags |= 2; // is_ceiling
+		} else if (collision_angle > floor_max_angle && collision_angle < Math::PI - floor_max_angle) {
+			flags |= 4; // is_wall
+		} else {
+			flags |= 8; // is_slope
+		}
+		return flags;
+	}
+
 	Dictionary classify_collision(double collision_angle, double floor_max_angle) const {
+		const int64_t flags = classify_collision_flags(collision_angle, floor_max_angle);
 		Dictionary result;
-		bool is_floor = collision_angle <= Math::deg_to_rad(10.0);
-		bool is_ceiling = collision_angle >= Math::deg_to_rad(180.0 - 10.0);
-		bool is_wall = collision_angle > floor_max_angle && collision_angle < Math::PI - floor_max_angle;
-		bool is_slope = !is_floor && !is_ceiling && !is_wall;
-		result["is_floor"] = is_floor;
-		result["is_ceiling"] = is_ceiling;
-		result["is_wall"] = is_wall;
-		result["is_slope"] = is_slope;
+		result["is_floor"] = (flags & 1) != 0;
+		result["is_ceiling"] = (flags & 2) != 0;
+		result["is_wall"] = (flags & 4) != 0;
+		result["is_slope"] = (flags & 8) != 0;
 		return result;
 	}
 

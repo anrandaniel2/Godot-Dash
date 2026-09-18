@@ -219,8 +219,11 @@ var _just_spawned: bool = false
 @onready var _wave_trail: Line2D = %WaveTrail
 @onready var _debug_trail: Line2D = $DebugTrail
 
+var _physics_params: PackedFloat64Array = PackedFloat64Array()
+
 
 func _ready() -> void:
+	_physics_params.resize(30)
 	refresh_textures()
 	set_meta(Constants.HSV_WATCHER_META, $"HSVWatcher")
 	platform_on_leave = PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_UPWARD_VELOCITY if not LevelManager.platformer else PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_VELOCITY
@@ -553,11 +556,11 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 	var is_wall: bool
 	var is_slope: bool
 	if native != null:
-		var cls: Dictionary = native.call(&"classify_collision", collision.get_angle(up_direction), floor_max_angle)
-		is_floor = bool(cls["is_floor"])
-		is_ceiling = bool(cls["is_ceiling"])
-		is_wall = bool(cls["is_wall"])
-		is_slope = bool(cls["is_slope"])
+		var flags: int = native.call(&"classify_collision_flags", collision.get_angle(up_direction), floor_max_angle)
+		is_floor = bool(flags & 1)
+		is_ceiling = bool(flags & 2)
+		is_wall = bool(flags & 4)
+		is_slope = bool(flags & 8)
 	else:
 		var collision_angle: float = collision.get_angle(up_direction)
 		is_floor = collision_angle <= deg_to_rad(10.0)
@@ -771,48 +774,76 @@ func _compute_velocity(
 		elif _is_flying_gamemode and is_on_floor() and has_last_slide and jump_state == 1:
 			floor_angle = _get_floor_angle_signed(true, jump_state)
 
-		var params := {
-			"delta": delta,
-			"previous_velocity": previous_velocity,
-			"direction": direction,
-			"jump_state": jump_state,
-			"was_sliding_on_slope": was_sliding_on_slope,
-			"has_last_slide_collision": has_last_slide,
-			"floor_angle": floor_angle,
-			"floor_max_angle": floor_max_angle,
-			"slope_velocity": slope_velocity,
-			"internal_gamemode": int(internal_gamemode),
-			"player_scale": int(player_scale),
-			"speed": speed,
-			"speed_multiplier": speed_multiplier,
-			"gravity_flip": float(gravity_flip),
-			"gravity_multiplier": gravity_multiplier,
-			"gameplay_rotation": gameplay_rotation,
-			"is_on_floor": is_on_floor(),
-			"is_on_ceiling": is_on_ceiling(),
-			"is_platformer": LevelManager.platformer,
-			"colliding_pad": colliding_pad != null,
-			"has_dash_control": dash_control != null,
-			"orb_queue_empty": orb_queue.is_empty(),
-			"robot_timer_time_left": _robot_timer.time_left,
-			"deferred_velocity_redirect": _deferred_velocity_redirect,
-			"coyote_time": coyote_time,
-			"spider_dash_frames": _spider_dash_frames,
-			"slope_exit_velocity_frames": _slope_exit_velocity_frames,
-		}
-		var res: Dictionary = native.call(&"compute_player_velocity", params)
-		var local_velocity: Vector2 = res["local_velocity"]
-		slope_velocity = res["slope_velocity"]
-		gravity_flip = int(res["gravity_flip"])
-		coyote_time = float(res["coyote_time"])
-		_spider_dash_frames = int(res["spider_dash_frames"])
-		_slope_exit_velocity_frames = int(res["slope_exit_velocity_frames"])
+		_physics_params[0] = delta
+		_physics_params[1] = previous_velocity.x
+		_physics_params[2] = previous_velocity.y
+		_physics_params[3] = float(direction)
+		_physics_params[4] = float(jump_state)
+		_physics_params[5] = 1.0 if was_sliding_on_slope else 0.0
+		_physics_params[6] = 1.0 if has_last_slide else 0.0
+		_physics_params[7] = floor_angle
+		_physics_params[8] = floor_max_angle
+		_physics_params[9] = slope_velocity.x
+		_physics_params[10] = slope_velocity.y
+		_physics_params[11] = float(internal_gamemode)
+		_physics_params[12] = float(player_scale)
+		_physics_params[13] = speed.x
+		_physics_params[14] = speed.y
+		_physics_params[15] = speed_multiplier
+		_physics_params[16] = float(gravity_flip)
+		_physics_params[17] = gravity_multiplier
+		_physics_params[18] = gameplay_rotation
+		_physics_params[19] = 1.0 if is_on_floor() else 0.0
+		_physics_params[20] = 1.0 if is_on_ceiling() else 0.0
+		_physics_params[21] = 1.0 if LevelManager.platformer else 0.0
+		_physics_params[22] = 1.0 if colliding_pad != null else 0.0
+		_physics_params[23] = 1.0 if dash_control != null else 0.0
+		_physics_params[24] = 1.0 if orb_queue.is_empty() else 0.0
+		_physics_params[25] = _robot_timer.time_left
+		_physics_params[26] = 1.0 if _deferred_velocity_redirect else 0.0
+		_physics_params[27] = coyote_time
+		_physics_params[28] = float(_spider_dash_frames)
+		_physics_params[29] = float(_slope_exit_velocity_frames)
+
+		var res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", _physics_params)
+		var local_velocity: Vector2
+		var instant_mode: int = -1
+		if res.size() >= 11:
+			local_velocity = Vector2(res[0], res[1])
+			slope_velocity = Vector2(res[4], res[5])
+			gravity_flip = int(res[6])
+			coyote_time = res[7]
+			_spider_dash_frames = int(res[8])
+			_slope_exit_velocity_frames = int(res[9])
+			instant_mode = int(res[10])
+		else:
+			var legacy_res: Dictionary = native.call(&"compute_player_velocity", {
+				"delta": delta, "previous_velocity": previous_velocity, "direction": direction,
+				"jump_state": jump_state, "was_sliding_on_slope": was_sliding_on_slope,
+				"has_last_slide_collision": has_last_slide, "floor_angle": floor_angle,
+				"floor_max_angle": floor_max_angle, "slope_velocity": slope_velocity,
+				"internal_gamemode": int(internal_gamemode), "player_scale": int(player_scale),
+				"speed": speed, "speed_multiplier": speed_multiplier, "gravity_flip": float(gravity_flip),
+				"gravity_multiplier": gravity_multiplier, "gameplay_rotation": gameplay_rotation,
+				"is_on_floor": is_on_floor(), "is_on_ceiling": is_on_ceiling(),
+				"is_platformer": LevelManager.platformer, "colliding_pad": colliding_pad != null,
+				"has_dash_control": dash_control != null, "orb_queue_empty": orb_queue.is_empty(),
+				"robot_timer_time_left": _robot_timer.time_left,
+				"deferred_velocity_redirect": _deferred_velocity_redirect,
+				"coyote_time": coyote_time, "spider_dash_frames": _spider_dash_frames,
+				"slope_exit_velocity_frames": _slope_exit_velocity_frames,
+			})
+			local_velocity = legacy_res["local_velocity"]
+			slope_velocity = legacy_res["slope_velocity"]
+			gravity_flip = int(legacy_res["gravity_flip"])
+			coyote_time = float(legacy_res["coyote_time"])
+			_spider_dash_frames = int(legacy_res["spider_dash_frames"])
+			_slope_exit_velocity_frames = int(legacy_res["slope_exit_velocity_frames"])
+			instant_mode = int(legacy_res["instant_jump_mode"])
 
 		if colliding_pad:
 			local_velocity = _handle_velocity_interactable(local_velocity, colliding_pad, direction)
 			_trail.add_points = true
-
-		var instant_mode: int = int(res["instant_jump_mode"])
 		if instant_mode == Gamemode.SPIDER:
 			_update_spider_cast_rotation()
 			var dash_data: PackedFloat64Array = _get_spider_dash_data()
