@@ -1685,6 +1685,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("set_group_members", "group", "members"), &NativeTriggerRuntime::set_group_members);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("advance", "player", "previous_x", "current_x"), &NativeTriggerRuntime::advance);
+		ClassDB::bind_method(D_METHOD("advance_player", "player"), &NativeTriggerRuntime::advance_player);
 		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
 		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
 		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
