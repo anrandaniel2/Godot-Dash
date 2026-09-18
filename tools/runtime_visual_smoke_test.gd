@@ -743,9 +743,24 @@ func _test_native_core() -> void:
 	# 2913 Lens Circle: fade to 1.0 over 1s.
 	effect_runtime.call(&"register_packed_trigger", 96.0, 0.0, 0, 10, PackedStringArray(), 2913,
 		{"1": "2913", "35": "1.0", "10": "1.0"})
+	# 3613 UI Trigger: anchor group 20 to left edge relative to guide group 21
+	var ui_node := Node2D.new()
+	ui_node.position = Vector2(-1012.5, 0.0)
+	ui_node.add_to_group(&"g_20")
+	effect_level.add_child(ui_node)
+	effect_runtime.call(&"set_group_members", &"g_20", [ui_node])
+	var ui_guide := Node2D.new()
+	ui_guide.position = Vector2.ZERO
+	ui_guide.add_to_group(&"g_21")
+	effect_level.add_child(ui_guide)
+	effect_runtime.call(&"set_group_members", &"g_21", [ui_guide])
+	effect_runtime.call(&"register_packed_trigger", 98.0, 0.0, 0, 11, PackedStringArray(), 3613,
+		{"1": "3613", "51": "20", "71": "21", "385": "3", "386": "0", "387": "0", "388": "0"})
 	# 1612 Hide Player has no fade at all.
 	effect_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"})
 	effect_runtime.call(&"finalize")
+	assert(ui_node.get_parent() != effect_level, "native smoke: UI trigger reparented node to UI root")
+	assert(is_equal_approx(ui_node.position.x, -1200.0), "native smoke: UI left alignment applied on finalize")
 	effect_runtime.call(&"advance", effect_player, 0.0, 120.0)
 	assert(toggled.visible == false, "native smoke: toggle trigger did not hide its group")
 	assert(effect_player.visible == false, "native smoke: hide player trigger did not run")
@@ -786,6 +801,12 @@ func _test_native_core() -> void:
 	assert(is_zero_approx(float(sepia_mat.get_shader_parameter(&"sepia_factor"))), "native smoke: sepia not reset")
 	assert(not lens_rect.visible, "native smoke: lens circle not hidden on reset")
 	assert(is_zero_approx(float(lens_mat.get_shader_parameter(&"alpha"))), "native smoke: lens circle not reset")
+	assert(ui_node.get_parent() == effect_level, "native smoke: UI node restored to effect_level on reset")
+	assert(is_equal_approx(ui_node.position.x, -1012.5), "native smoke: UI node position restored on reset")
+	effect_runtime.call(&"apply_ui_triggers")
+	assert(ui_node.get_parent() != effect_level, "native smoke: apply_ui_triggers reapplied UI parenting")
+	assert(is_equal_approx(ui_node.position.x, -1200.0), "native smoke: apply_ui_triggers reapplied alignment")
+	effect_runtime.call(&"reset")
 	# --- 1007 Fade: GD's multiplicative group-opacity model ----------------
 	# A fade eases its GROUP's persistent opacity, and a member renders as
 	# its own alpha times the product of all its groups' opacities. Two

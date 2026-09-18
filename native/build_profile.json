@@ -3,6 +3,7 @@
     "Camera2D",
     "CanvasItem",
     "CanvasItemMaterial",
+    "CanvasLayer",
     "CollisionShape2D",
     "Engine",
     "FastNoiseLite",

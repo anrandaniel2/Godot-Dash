@@ -266,6 +266,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
+[node name="UILayer" type="CanvasLayer" parent="." unique_id=4189283741]
+layer = 60
+
 [node name="PercentageLayer" type="CanvasLayer" parent="." unique_id=252280668 node_paths=PackedStringArray("label")]
 visible = false
 script = ExtResource("14_21xg8")

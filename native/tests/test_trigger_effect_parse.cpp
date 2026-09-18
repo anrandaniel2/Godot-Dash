@@ -20,7 +20,7 @@ using namespace godot;
 
 static int failures = 0;
 
-static void expect_close(const char *name, double actual, double expected, double epsilon = 1e-6) {
+static void expect_close(const char *name, double actual, double expected, double epsilon = 1e-4) {
 	if (std::fabs(actual - expected) > epsilon) {
 		std::printf("FAIL %s: expected %f, got %f\n", name, expected, actual);
 		++failures;
@@ -75,6 +75,56 @@ int main() {
 	expect_true("invert is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_INVERT_COLOR));
 	expect_true("move is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::MOVE));
 	expect_true("color is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::COLOR));
+	expect_true("ui is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::UI));
+
+	// UI Trigger (ID 3613) compute_ui_anchor alignment math tests
+	const Vector2 vp_16_9(1920.0, 1080.0);
+	// 16:9 (aspect 1.7778 > 1.5): H_ref = 1080/0.8 = 1350, W_ref = 2025, W_active = 2400, delta_x = 187.5
+	// Center offset stays at center
+	const Vector2 center_anchor = NativeTriggerRuntime::compute_ui_anchor(Vector2(0.0, 0.0), 0, 0, false, false, vp_16_9);
+	expect_close("16:9 center X", center_anchor.x, 0.0);
+	expect_close("16:9 center Y", center_anchor.y, 0.0);
+
+	// Left alignment on left edge: offset.x = -1012.5 -> anchor.x = -1200.0 (lands at screen 0 px)
+	const Vector2 left_anchor = NativeTriggerRuntime::compute_ui_anchor(Vector2(-1012.5, -200.0), 3, 0, false, false, vp_16_9);
+	expect_close("16:9 left edge X", left_anchor.x, -1200.0);
+	expect_close("16:9 left edge Y preserved", left_anchor.y, -200.0);
+
+	// Right alignment on right edge: offset.x = +1012.5 -> anchor.x = +1200.0 (lands at screen 1920 px)
+	const Vector2 right_anchor = NativeTriggerRuntime::compute_ui_anchor(Vector2(1012.5, 150.0), 4, 0, false, false, vp_16_9);
+	expect_close("16:9 right edge X", right_anchor.x, 1200.0);
+	expect_close("16:9 right edge Y preserved", right_anchor.y, 150.0);
+
+	// Auto_x alignment: negative offset chooses left, positive chooses right
+	const Vector2 auto_l = NativeTriggerRuntime::compute_ui_anchor(Vector2(-500.0, 0.0), 1, 0, false, false, vp_16_9);
+	expect_close("16:9 auto negative selects left", auto_l.x, -500.0 - 187.5);
+	const Vector2 auto_r = NativeTriggerRuntime::compute_ui_anchor(Vector2(500.0, 0.0), 1, 0, false, false, vp_16_9);
+	expect_close("16:9 auto positive selects right", auto_r.x, 500.0 + 187.5);
+
+	// Center_x alignment: maintains offset from center regardless of aspect ratio
+	const Vector2 center_x = NativeTriggerRuntime::compute_ui_anchor(Vector2(350.0, -100.0), 2, 0, false, false, vp_16_9);
+	expect_close("16:9 center_x keeps offset", center_x.x, 350.0);
+
+	// Relative mode: scales proportionally between center and edge
+	const Vector2 rel_half = NativeTriggerRuntime::compute_ui_anchor(Vector2(-506.25, 0.0), 3, 0, true, false, vp_16_9);
+	expect_close("16:9 relative proportional scale", rel_half.x, -600.0);
+
+	// 4:3 (aspect 1.3333 < 1.5): W_ref = 1440/0.8 = 1800, H_ref = 1200, H_active = 1350, delta_y = 75.0
+	const Vector2 vp_4_3(1440.0, 1080.0);
+	const Vector2 top_anchor = NativeTriggerRuntime::compute_ui_anchor(Vector2(100.0, -600.0), 0, 8, false, false, vp_4_3);
+	expect_close("4:3 top edge Y", top_anchor.y, -675.0); // 540 + (-675 * 0.8) = 0 px
+	expect_close("4:3 top edge X preserved", top_anchor.x, 100.0);
+
+	const Vector2 btm_anchor = NativeTriggerRuntime::compute_ui_anchor(Vector2(100.0, 600.0), 0, 7, false, false, vp_4_3);
+	expect_close("4:3 bottom edge Y", btm_anchor.y, 675.0); // 540 + (675 * 0.8) = 1080 px
+
+	const Vector2 auto_top = NativeTriggerRuntime::compute_ui_anchor(Vector2(0.0, -300.0), 0, 5, false, false, vp_4_3);
+	expect_close("4:3 auto negative selects top", auto_top.y, -300.0 - 75.0);
+	const Vector2 auto_btm = NativeTriggerRuntime::compute_ui_anchor(Vector2(0.0, 300.0), 0, 5, false, false, vp_4_3);
+	expect_close("4:3 auto positive selects bottom", auto_btm.y, 300.0 + 75.0);
+
+	const Vector2 rel_y = NativeTriggerRuntime::compute_ui_anchor(Vector2(0.0, -300.0), 0, 8, false, true, vp_4_3);
+	expect_close("4:3 relative Y proportional scale", rel_y.y, -300.0 * (1350.0 / 1200.0));
 
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");

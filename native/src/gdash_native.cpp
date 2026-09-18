@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/camera2d.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/canvas_item_material.hpp>
+#include <godot_cpp/classes/canvas_layer.hpp>
 #include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/fast_noise_lite.hpp>
@@ -51,6 +52,7 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -108,6 +110,20 @@ enum class TriggerEffectKind : int32_t {
 	SHADER_SEPIA,       // 2920 Sepia
 	SHADER_LENS_CIRCLE, // 2913 Lens Circle
 	SHADER_INVERT_COLOR,// 2921 Invert Color
+	UI,                 // 3613 UI Trigger
+};
+
+// Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
+enum class UIRef : int32_t {
+	DEFAULT = 0,
+	AUTO_X = 1,
+	CENTER_X = 2,
+	LEFT = 3,
+	RIGHT = 4,
+	AUTO_Y = 5,
+	CENTER_Y = 6,
+	BOTTOM = 7,
+	TOP = 8,
 };
 
 // GD easing index to curve, mirroring GMDConverter._easing_from_property:
@@ -217,6 +233,19 @@ static int64_t prop_int(const Dictionary &properties, const char *key, int64_t f
 	}
 }
 
+static bool prop_bool(const Dictionary &properties, const char *key, bool fallback = false) {
+	const Variant value = properties.get(key, Variant());
+	switch (value.get_type()) {
+		case Variant::NIL: return fallback;
+		case Variant::BOOL: return static_cast<bool>(value);
+		case Variant::STRING: {
+			const String text = String(value).strip_edges();
+			return text == "1" || text.to_lower() == "true";
+		}
+		default: return static_cast<int64_t>(value) != 0;
+	}
+}
+
 // A trigger's effect, parsed once at registration. Field meanings follow the
 // converter's component arms so native execution is behaviour-identical.
 struct TriggerEffect {
@@ -254,6 +283,10 @@ struct TriggerEffect {
 	double camera_rotation_degrees = 0.0; // 2015: key 68
 	double shader_value = 1.0;   // 2913/2919/2920/2921: key 35
 	bool shader_use_lum = false; // 2919: key 138
+	int32_t xref_pos = 0;        // 3613: key 385 (UIRef enum)
+	int32_t yref_pos = 0;        // 3613: key 386 (UIRef enum)
+	bool xref_relative = false;  // 3613: key 387
+	bool yref_relative = false;  // 3613: key 388
 };
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
@@ -290,6 +323,91 @@ static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) 
 	effect.copy_saturation_additive = parts.size() > 3 && String(parts[3]) == "1";
 	effect.copy_value_additive = parts.size() > 4 && String(parts[4]) == "1";
 	return true;
+}
+
+// Computes anchored UI local coordinates for GD 2.2 UI Trigger (ID 3613).
+// Reference screen is 3:2 (aspect 1.5). At aspect >= 1.5, XRef is active; at aspect < 1.5, YRef is active.
+static Vector2 compute_ui_anchor(
+	const Vector2 &offset_from_target,
+	int32_t xref_pos,
+	int32_t yref_pos,
+	bool xref_relative,
+	bool yref_relative,
+	const Vector2 &viewport_size,
+	double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
+{
+	const double aspect = (viewport_size.y > 0.0) ? (viewport_size.x / viewport_size.y) : (16.0 / 9.0);
+	constexpr double ref_aspect = 1.5; // 3:2 GD reference aspect ratio
+
+	const double safe_zoom = (zoom > 0.0) ? zoom : PLAYER_CAMERA_DEFAULT_ZOOM;
+	double W_ref = 0.0, H_ref = 0.0, W_active = 0.0, H_active = 0.0, delta_x = 0.0, delta_y = 0.0;
+
+	if (aspect >= ref_aspect) {
+		// Wider than 3:2: vertical dimension is fixed to reference height
+		H_ref = viewport_size.y / safe_zoom;
+		W_ref = H_ref * ref_aspect;
+		H_active = H_ref;
+		W_active = H_ref * aspect;
+		delta_x = (W_active - W_ref) * 0.5;
+		delta_y = 0.0;
+	} else {
+		// Taller than 3:2: horizontal dimension is fixed to reference width
+		W_ref = viewport_size.x / safe_zoom;
+		H_ref = W_ref / ref_aspect;
+		W_active = W_ref;
+		H_active = W_ref / aspect;
+		delta_x = 0.0;
+		delta_y = (H_active - H_ref) * 0.5;
+	}
+
+	double new_x = offset_from_target.x;
+	if (aspect >= ref_aspect) {
+		int xref = xref_pos;
+		if (xref == static_cast<int32_t>(UIRef::AUTO_X)) {
+			xref = (offset_from_target.x < 0.0) ? static_cast<int32_t>(UIRef::LEFT) : static_cast<int32_t>(UIRef::RIGHT);
+		}
+		if (xref == static_cast<int32_t>(UIRef::LEFT)) {
+			if (xref_relative) {
+				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
+			} else {
+				new_x = offset_from_target.x - delta_x;
+			}
+		} else if (xref == static_cast<int32_t>(UIRef::RIGHT)) {
+			if (xref_relative) {
+				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
+			} else {
+				new_x = offset_from_target.x + delta_x;
+			}
+		} else if (xref == static_cast<int32_t>(UIRef::CENTER_X) || xref == static_cast<int32_t>(UIRef::DEFAULT)) {
+			new_x = offset_from_target.x;
+		}
+	}
+
+	double new_y = offset_from_target.y;
+	if (aspect < ref_aspect) {
+		int yref = yref_pos;
+		if (yref == static_cast<int32_t>(UIRef::AUTO_Y)) {
+			// In Godot, Y increases downwards, so offset.y < 0 is TOP, offset.y >= 0 is BOTTOM
+			yref = (offset_from_target.y < 0.0) ? static_cast<int32_t>(UIRef::TOP) : static_cast<int32_t>(UIRef::BOTTOM);
+		}
+		if (yref == static_cast<int32_t>(UIRef::TOP)) {
+			if (yref_relative) {
+				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
+			} else {
+				new_y = offset_from_target.y - delta_y;
+			}
+		} else if (yref == static_cast<int32_t>(UIRef::BOTTOM)) {
+			if (yref_relative) {
+				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
+			} else {
+				new_y = offset_from_target.y + delta_y;
+			}
+		} else if (yref == static_cast<int32_t>(UIRef::CENTER_Y) || yref == static_cast<int32_t>(UIRef::DEFAULT)) {
+			new_y = offset_from_target.y;
+		}
+	}
+
+	return Vector2(static_cast<real_t>(new_x), static_cast<real_t>(new_y));
 }
 
 // The copy-chain recursion budget, matching ColorChannelWatcher.COPY_ITERATIONS
@@ -426,6 +544,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2920: effect.kind = TriggerEffectKind::SHADER_SEPIA; break;
 		case 2913: effect.kind = TriggerEffectKind::SHADER_LENS_CIRCLE; break;
 		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
+		case 3613: effect.kind = TriggerEffectKind::UI; break;
 		default: return effect; // inert
 	}
 	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
@@ -545,6 +664,12 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case TriggerEffectKind::SHADER_INVERT_COLOR:
 			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
 			break;
+		case TriggerEffectKind::UI:
+			effect.xref_pos = static_cast<int32_t>(prop_int(properties, "385", 0));
+			effect.yref_pos = static_cast<int32_t>(prop_int(properties, "386", 0));
+			effect.xref_relative = prop_bool(properties, "387", false);
+			effect.yref_relative = prop_bool(properties, "388", false);
+			break;
 		default:
 			break;
 	}
@@ -626,6 +751,28 @@ class NativeTriggerRuntime : public RefCounted {
 	ObjectID camera_id;
 	ObjectID config_id;
 	ObjectID shader_layer_id;
+	ObjectID ui_layer_id;
+	ObjectID ui_root_id;
+	bool ui_triggers_applied = false;
+
+	struct UIObjectState {
+		ObjectID node_id;
+		ObjectID original_parent_id;
+		int32_t original_index = 0;
+		Transform2D original_transform;
+		int32_t original_z_index = 0;
+		bool original_z_as_relative = true;
+		uint32_t original_collision_layer = 0;
+		uint32_t original_collision_mask = 0;
+		bool had_collision = false;
+		bool original_monitoring = false;
+		bool original_monitorable = false;
+		bool was_area = false;
+		bool original_cull = false;
+		bool was_batch = false;
+	};
+	std::vector<UIObjectState> ui_objects;
+	std::unordered_set<uint64_t> ui_affected_objects;
 	// Records with the touch-only flag, in x order, for hitbox overlap checks.
 	std::vector<size_t> touch_order;
 	// Which touch records each player currently overlaps, so multi-activate
@@ -750,6 +897,7 @@ class NativeTriggerRuntime : public RefCounted {
 
 	void activate(size_t index, Object *player, bool forced = false) {
 		if (index >= records.size()) return;
+		if (records[index].effect.kind == TriggerEffectKind::UI) return; // on-load only
 		const uint64_t epoch = structure_epoch;
 		const int32_t flags = records[index].flags;
 		if (records[index].activated && !(flags & MULTI_ACTIVATE)) return;
@@ -1309,9 +1457,10 @@ private:
 				fade.members = resolve_effect_members(effect);
 				fade.pivot = resolve_pivot(effect);
 				fade.initial_scales.reserve(fade.members.size());
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
 				for (ObjectID id : fade.members) {
 					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
-					fade.initial_scales.push_back(node ? node->get_global_scale() : Vector2(1.0f, 1.0f));
+					fade.initial_scales.push_back(node ? (ui_root && node->get_parent() == ui_root ? node->get_scale() : node->get_global_scale()) : Vector2(1.0f, 1.0f));
 				}
 				break;
 			}
@@ -1486,15 +1635,22 @@ private:
 			case TriggerEffectKind::MOVE: {
 				const Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
 				if (offset == Vector2()) break;
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
 				for (ObjectID id : fade.members) {
 					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
-					if (node) node->set_global_position(node->get_global_position() + offset);
+					if (!node) continue;
+					if (ui_root && node->get_parent() == ui_root) {
+						node->set_position(node->get_position() + offset);
+					} else {
+						node->set_global_position(node->get_global_position() + offset);
+					}
 				}
 				break;
 			}
 			case TriggerEffectKind::ROTATE: {
 				const double delta_degrees = effect.degrees * weight_delta;
 				Node2D *pivot = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
 				for (ObjectID id : fade.members) {
 					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
 					if (!node) continue;
@@ -1504,16 +1660,24 @@ private:
 						node->set_global_rotation_degrees(node->get_global_rotation_degrees() + delta_degrees);
 					}
 					if (pivot) {
-						const Vector2 relative = node->get_global_position() - pivot->get_global_position();
+						const bool both_in_ui = ui_root && node->get_parent() == ui_root && pivot->get_parent() == ui_root;
+						const Vector2 relative = both_in_ui
+							? (node->get_position() - pivot->get_position())
+							: (node->get_global_position() - pivot->get_global_position());
 						const Vector2 rotated = relative.rotated(
 							static_cast<real_t>(Math::deg_to_rad(delta_degrees))) - relative;
-						node->set_global_position(node->get_global_position() + rotated);
+						if (ui_root && node->get_parent() == ui_root) {
+							node->set_position(node->get_position() + rotated);
+						} else {
+							node->set_global_position(node->get_global_position() + rotated);
+						}
 					}
 				}
 				break;
 			}
 			case TriggerEffectKind::SCALE: {
 				Node2D *pivot = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
 				for (size_t i = 0; i < fade.members.size(); ++i) {
 					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.members[i]));
 					if (!node) continue;
@@ -1521,13 +1685,24 @@ private:
 					const Vector2 scale_delta = (initial * effect.scale_factor - initial)
 						* static_cast<real_t>(weight_delta);
 					if (pivot) {
-						const Vector2 current = node->get_global_scale();
+						const Vector2 current = (ui_root && node->get_parent() == ui_root) ? node->get_scale() : node->get_global_scale();
 						if (Math::is_zero_approx(current.x) || Math::is_zero_approx(current.y)) continue;
-						const Vector2 relative = node->get_global_position() - pivot->get_global_position();
+						const bool both_in_ui = ui_root && node->get_parent() == ui_root && pivot->get_parent() == ui_root;
+						const Vector2 relative = both_in_ui
+							? (node->get_position() - pivot->get_position())
+							: (node->get_global_position() - pivot->get_global_position());
 						const Vector2 position_delta = relative * ((current + scale_delta) / current) - relative;
-						node->set_global_position(node->get_global_position() + position_delta);
+						if (ui_root && node->get_parent() == ui_root) {
+							node->set_position(node->get_position() + position_delta);
+						} else {
+							node->set_global_position(node->get_global_position() + position_delta);
+						}
 					}
-					node->set_global_scale(node->get_global_scale() + scale_delta);
+					if (ui_root && node->get_parent() == ui_root) {
+						node->set_scale(node->get_scale() + scale_delta);
+					} else {
+						node->set_global_scale(node->get_global_scale() + scale_delta);
+					}
 					if (node->is_class("StaticBody2D") && scale_delta != Vector2()) {
 						if (Node *absolute_size = node->get_node_or_null(NodePath("NinePatchSprite2DAbsoluteSize"))) {
 							absolute_size->call("update_size");
@@ -1881,8 +2056,13 @@ protected:
 		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger, DEFVAL(0.0));
-		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer"), &NativeTriggerRuntime::bind_context, DEFVAL(Variant()));
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeTriggerRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
 		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeTriggerRuntime::bind_shader_layer);
+		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeTriggerRuntime::bind_ui_layer);
+		ClassDB::bind_method(D_METHOD("apply_ui_triggers"), &NativeTriggerRuntime::apply_ui_triggers);
+		ClassDB::bind_method(D_METHOD("restore_ui_objects"), &NativeTriggerRuntime::restore_ui_objects);
+		ClassDB::bind_method(D_METHOD("is_ui_applied"), &NativeTriggerRuntime::is_ui_applied);
+		ClassDB::bind_static_method("NativeTriggerRuntime", D_METHOD("compute_ui_anchor", "offset_from_target", "xref_pos", "yref_pos", "xref_relative", "yref_relative", "viewport_size", "zoom"), &NativeTriggerRuntime::compute_ui_anchor, DEFVAL(PLAYER_CAMERA_DEFAULT_ZOOM));
 		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeTriggerRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("set_group_members", "group", "members"), &NativeTriggerRuntime::set_group_members);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
@@ -1902,8 +2082,26 @@ protected:
 	}
 
 public:
+	static Vector2 compute_ui_anchor(
+		const Vector2 &offset_from_target,
+		int32_t xref_pos,
+		int32_t yref_pos,
+		bool xref_relative,
+		bool yref_relative,
+		const Vector2 &viewport_size,
+		double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
+	{
+		return ::godot::compute_ui_anchor(offset_from_target, xref_pos, yref_pos, xref_relative, yref_relative, viewport_size, zoom);
+	}
+
+	~NativeTriggerRuntime() {
+		restore_ui_objects();
+	}
+
 	void clear() {
 		++structure_epoch;
+		restore_ui_objects();
+		ui_triggers_applied = false;
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
@@ -1911,6 +2109,7 @@ public:
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); frame_players.clear(); previous_positions.clear();
 		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID(); shader_layer_id = ObjectID();
+		ui_layer_id = ObjectID(); ui_root_id = ObjectID();
 		reset_shaders();
 	}
 	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
@@ -1930,8 +2129,8 @@ public:
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return register_trigger(nullptr, x, y, flags, source_order, groups, gd_id, properties);
 	}
-	// Level, camera, Config and ShaderLayer objects the effects read/write.
-	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr) {
+	// Level, camera, Config, ShaderLayer and UILayer objects the effects read/write.
+	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
 		if (level) level_id = level->get_instance_id();
 		if (camera) camera_id = camera->get_instance_id();
 		if (config) config_id = config->get_instance_id();
@@ -1948,10 +2147,230 @@ public:
 				n = n->get_parent();
 			}
 		}
+		if (ui_layer) {
+			ui_layer_id = ui_layer->get_instance_id();
+		} else if (level) {
+			Node *n = Object::cast_to<Node>(level);
+			while (n) {
+				Node *ul = n->get_node_or_null(NodePath("UILayer"));
+				if (ul && ul->is_class("CanvasLayer")) {
+					ui_layer_id = ul->get_instance_id();
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
 	}
 	void bind_shader_layer(Object *shader_layer) {
 		if (shader_layer) shader_layer_id = shader_layer->get_instance_id();
 	}
+	void bind_ui_layer(Object *ui_layer) {
+		if (ui_layer) ui_layer_id = ui_layer->get_instance_id();
+	}
+
+	Vector2 get_viewport_size() const {
+		Camera2D *cam = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+		if (cam) {
+			Viewport *vp = cam->get_viewport();
+			if (vp) {
+				Vector2 sz = vp->get_visible_rect().size;
+				if (sz.x > 0.0 && sz.y > 0.0) return sz;
+			}
+		}
+		Node *lvl = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+		if (lvl) {
+			Viewport *vp = lvl->get_viewport();
+			if (vp) {
+				Vector2 sz = vp->get_visible_rect().size;
+				if (sz.x > 0.0 && sz.y > 0.0) return sz;
+			}
+		}
+		return Vector2(1920.0, 1080.0);
+	}
+
+	Node2D *ensure_ui_root() {
+		CanvasLayer *layer = Object::cast_to<CanvasLayer>(ObjectDB::get_instance(ui_layer_id));
+		if (!layer) {
+			Node *level = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+			Node *n = level;
+			while (n) {
+				Node *found = n->get_node_or_null(NodePath("UILayer"));
+				if (found && found->is_class("CanvasLayer")) {
+					layer = Object::cast_to<CanvasLayer>(found);
+					ui_layer_id = layer->get_instance_id();
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+		if (!layer) {
+			Node *level = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+			if (level) {
+				layer = memnew(CanvasLayer);
+				layer->set_name(StringName("UILayer"));
+				layer->set_layer(60);
+				level->add_child(layer);
+				ui_layer_id = layer->get_instance_id();
+			}
+		}
+		if (!layer) return nullptr;
+
+		Node2D *root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
+		if (!root || root->get_parent() != layer) {
+			root = Object::cast_to<Node2D>(layer->get_node_or_null(NodePath("UIRoot")));
+			if (!root) {
+				root = memnew(Node2D);
+				root->set_name(StringName("UIRoot"));
+				layer->add_child(root);
+			}
+			ui_root_id = root->get_instance_id();
+		}
+
+		const Vector2 vp_size = get_viewport_size();
+		root->set_position(vp_size * 0.5);
+		root->set_scale(Vector2(PLAYER_CAMERA_DEFAULT_ZOOM, PLAYER_CAMERA_DEFAULT_ZOOM));
+		return root;
+	}
+
+	void apply_ui_triggers() {
+		if (ui_triggers_applied) return;
+		ui_triggers_applied = true;
+
+		Node2D *ui_root = ensure_ui_root();
+		const Vector2 vp_size = get_viewport_size();
+
+		for (size_t i = 0; i < records.size(); ++i) {
+			Record &rec = records[i];
+			if (rec.effect.kind != TriggerEffectKind::UI) continue;
+			rec.activated = true;
+
+			const TriggerEffect &effect = rec.effect;
+			std::vector<ObjectID> target_members = resolve_effect_members(effect);
+			if (target_members.empty()) continue;
+
+			Vector2 target_center;
+			bool has_target_center = false;
+			if (!effect.center_group.is_empty()) {
+				Node2D *guide = resolve_first_member(effect.center_group);
+				if (guide) {
+					target_center = guide->get_global_position();
+					has_target_center = true;
+				}
+			}
+			if (!has_target_center) {
+				Rect2 bounds;
+				bool first = true;
+				for (ObjectID id : target_members) {
+					Node2D *n = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (!n) continue;
+					if (first) {
+						bounds = Rect2(n->get_global_position(), Vector2());
+						first = false;
+					} else {
+						bounds = bounds.expand(n->get_global_position());
+					}
+				}
+				target_center = first ? Vector2() : bounds.get_center();
+			}
+
+			for (ObjectID id : target_members) {
+				if (ui_affected_objects.count(static_cast<uint64_t>(id)) > 0) continue;
+				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+				if (!node) continue;
+
+				ui_affected_objects.insert(static_cast<uint64_t>(id));
+
+				UIObjectState state;
+				state.node_id = id;
+				Node *parent = node->get_parent();
+				if (parent) {
+					state.original_parent_id = parent->get_instance_id();
+					state.original_index = node->get_index();
+				}
+				state.original_transform = node->get_transform();
+				state.original_z_index = node->get_z_index();
+				state.original_z_as_relative = node->is_z_relative();
+
+				if (node->is_class("CollisionObject2D")) {
+					state.had_collision = true;
+					state.original_collision_layer = node->call("get_collision_layer");
+					state.original_collision_mask = node->call("get_collision_mask");
+					node->call("set_collision_layer", 0);
+					node->call("set_collision_mask", 0);
+				}
+				if (node->is_class("Area2D")) {
+					state.was_area = true;
+					state.original_monitoring = node->call("is_monitoring");
+					state.original_monitorable = node->call("is_monitorable");
+					node->call("set_monitoring", false);
+					node->call("set_monitorable", false);
+				}
+				if (is_decoration_batch(node)) {
+					state.was_batch = true;
+					state.original_cull = node->get("_cull");
+					node->set("_cull", false);
+					node->queue_redraw();
+				}
+
+				ui_objects.push_back(state);
+
+				const Vector2 offset = node->get_global_position() - target_center;
+				const Vector2 ui_anchor = compute_ui_anchor(
+					offset, effect.xref_pos, effect.yref_pos,
+					effect.xref_relative, effect.yref_relative,
+					vp_size, PLAYER_CAMERA_DEFAULT_ZOOM);
+
+				if (ui_root && parent) {
+					parent->remove_child(node);
+					ui_root->add_child(node);
+					node->set_position(ui_anchor);
+				} else {
+					node->set_global_position(target_center + ui_anchor);
+				}
+			}
+		}
+	}
+
+	void restore_ui_objects() {
+		if (ui_objects.empty()) {
+			ui_affected_objects.clear();
+			return;
+		}
+		std::sort(ui_objects.begin(), ui_objects.end(), [](const UIObjectState &a, const UIObjectState &b) {
+			return a.original_index < b.original_index;
+		});
+
+		for (const UIObjectState &state : ui_objects) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(state.node_id));
+			Node *parent = Object::cast_to<Node>(ObjectDB::get_instance(state.original_parent_id));
+			if (node && parent) {
+				Node *cur_parent = node->get_parent();
+				if (cur_parent) cur_parent->remove_child(node);
+				parent->add_child(node);
+				int max_idx = parent->get_child_count() - 1;
+				parent->move_child(node, Math::clamp(state.original_index, 0, max_idx));
+				node->set_transform(state.original_transform);
+				node->set_z_index(state.original_z_index);
+				node->set_z_as_relative(state.original_z_as_relative);
+				if (state.had_collision) {
+					node->call("set_collision_layer", state.original_collision_layer);
+					node->call("set_collision_mask", state.original_collision_mask);
+				}
+				if (state.was_area) {
+					node->call("set_monitoring", state.original_monitoring);
+					node->call("set_monitorable", state.original_monitorable);
+				}
+				if (state.was_batch) {
+					node->set("_cull", state.original_cull);
+					node->queue_redraw();
+				}
+			}
+		}
+		ui_objects.clear();
+		ui_affected_objects.clear();
+	}
+
+	bool is_ui_applied() const { return ui_triggers_applied; }
 	void register_channel(const String &name, Object *data) {
 		if (data && !name.is_empty()) channel_index[name] = data->get_instance_id();
 	}
@@ -2024,6 +2443,7 @@ public:
 			if (records[index].flags & TOUCH_ONLY) touch_order.push_back(index);
 		}
 		touch_order.shrink_to_fit();
+		apply_ui_triggers();
 	}
 	void advance(Object *player, double previous_x, double current_x) {
 		if (!player) return;
@@ -2228,6 +2648,8 @@ public:
 	}
 	void reset() {
 		++structure_epoch;
+		restore_ui_objects();
+		ui_triggers_applied = false;
 		for (Record &record : records) record.activated = false;
 		events.clear(); clock = 0.0; event_sequence = 0;
 		// Restarts rebuild object transforms from level data; running fades
@@ -2361,8 +2783,13 @@ protected:
 		ClassDB::bind_method(D_METHOD("clear"), &NativeLevelRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger, DEFVAL(0.0));
-		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer"), &NativeLevelRuntime::bind_context, DEFVAL(Variant()));
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeLevelRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
 		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeLevelRuntime::bind_shader_layer);
+		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeLevelRuntime::bind_ui_layer);
+		ClassDB::bind_method(D_METHOD("apply_ui_triggers"), &NativeLevelRuntime::apply_ui_triggers);
+		ClassDB::bind_method(D_METHOD("restore_ui_objects"), &NativeLevelRuntime::restore_ui_objects);
+		ClassDB::bind_method(D_METHOD("is_ui_applied"), &NativeLevelRuntime::is_ui_applied);
+		ClassDB::bind_static_method("NativeLevelRuntime", D_METHOD("compute_ui_anchor", "offset_from_target", "xref_pos", "yref_pos", "xref_relative", "yref_relative", "viewport_size", "zoom"), &NativeLevelRuntime::compute_ui_anchor, DEFVAL(PLAYER_CAMERA_DEFAULT_ZOOM));
 		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeLevelRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
@@ -2402,6 +2829,9 @@ protected:
 		}
 		if (what != Node::NOTIFICATION_PHYSICS_PROCESS || !level_manager || !triggers.is_valid()) return;
 		if (!static_cast<bool>(level_manager->get("level_playing"))) return;
+		if (!triggers->is_ui_applied()) {
+			triggers->apply_ui_triggers();
+		}
 		// 2026-09-13 device forensics: an interacted handler reached from
 		// advance_player()/tick() can free this node synchronously (an
 		// immediate free() of an ancestor in the scene). Snapshot every
@@ -2437,13 +2867,36 @@ public:
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return triggers->register_packed_trigger(x, y, flags, source_order, groups, gd_id, properties);
 	}
-	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr) {
+	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
 		Node *level_node = Object::cast_to<Node>(level);
 		if (level_node) context_level = level_node;
-		triggers->bind_context(level, camera, config, shader_layer);
+		triggers->bind_context(level, camera, config, shader_layer, ui_layer);
 	}
 	void bind_shader_layer(Object *shader_layer) {
 		triggers->bind_shader_layer(shader_layer);
+	}
+	void bind_ui_layer(Object *ui_layer) {
+		triggers->bind_ui_layer(ui_layer);
+	}
+	void apply_ui_triggers() {
+		triggers->apply_ui_triggers();
+	}
+	void restore_ui_objects() {
+		triggers->restore_ui_objects();
+	}
+	bool is_ui_applied() const {
+		return triggers->is_ui_applied();
+	}
+	static Vector2 compute_ui_anchor(
+		const Vector2 &offset_from_target,
+		int32_t xref_pos,
+		int32_t yref_pos,
+		bool xref_relative,
+		bool yref_relative,
+		const Vector2 &viewport_size,
+		double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
+	{
+		return ::godot::compute_ui_anchor(offset_from_target, xref_pos, yref_pos, xref_relative, yref_relative, viewport_size, zoom);
 	}
 	void register_channel(const String &name, Object *data) { triggers->register_channel(name, data); }
 	void finalize() {
