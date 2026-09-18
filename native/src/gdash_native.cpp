@@ -2297,6 +2297,9 @@ protected:
 		ClassDB::bind_method(D_METHOD("visible_bucket_keys", "keys", "first", "last"), &GdashNative::visible_bucket_keys);
 		ClassDB::bind_method(D_METHOD("commit_collision_shapes", "body", "source", "descriptors"), &GdashNative::commit_collision_shapes);
 		ClassDB::bind_method(D_METHOD("reenable_collision_shapes", "container"), &GdashNative::reenable_collision_shapes);
+		ClassDB::bind_method(D_METHOD("compute_player_velocity", "params"), &GdashNative::compute_player_velocity);
+		ClassDB::bind_method(D_METHOD("classify_collision", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision);
+		ClassDB::bind_method(D_METHOD("extract_object_geometry", "object"), &GdashNative::extract_object_geometry);
 	}
 
 public:
@@ -2959,6 +2962,218 @@ public:
 				if (shape && static_cast<bool>(shape->get("disabled"))) shape->set("disabled", false);
 			}
 		}
+	}
+
+	Dictionary compute_player_velocity(const Dictionary &params) const {
+		const double delta = params.get("delta", 1.0 / 60.0);
+		const Vector2 previous_velocity = params.get("previous_velocity", Vector2());
+		const int64_t direction = params.get("direction", 1);
+		const int64_t jump_state = params.get("jump_state", 0);
+		const bool was_sliding_on_slope = params.get("was_sliding_on_slope", false);
+		const bool has_last_slide_collision = params.get("has_last_slide_collision", false);
+		const double floor_angle = params.get("floor_angle", 0.0);
+		const double floor_max_angle = params.get("floor_max_angle", 0.785398);
+		Vector2 slope_velocity = params.get("slope_velocity", Vector2());
+		const int64_t internal_gamemode = params.get("internal_gamemode", 0);
+		const int64_t player_scale = params.get("player_scale", 1);
+		const Vector2 speed = params.get("speed", Vector2(1250.0, 2395.0));
+		const double speed_multiplier = params.get("speed_multiplier", 1.0);
+		double gravity_flip = params.get("gravity_flip", 1.0);
+		const double gravity_multiplier = params.get("gravity_multiplier", 1.0);
+		const double gameplay_rotation = params.get("gameplay_rotation", 0.0);
+		const bool is_on_floor = params.get("is_on_floor", false);
+		const bool is_on_ceiling = params.get("is_on_ceiling", false);
+		const bool is_platformer = params.get("is_platformer", false);
+		const bool colliding_pad = params.get("colliding_pad", false);
+		const bool has_dash_control = params.get("has_dash_control", false);
+		const bool orb_queue_empty = params.get("orb_queue_empty", true);
+		const double robot_timer_time_left = params.get("robot_timer_time_left", 0.0);
+		const bool deferred_velocity_redirect = params.get("deferred_velocity_redirect", false);
+		double coyote_time = params.get("coyote_time", 0.0);
+		int64_t spider_dash_frames = params.get("spider_dash_frames", 0);
+		int64_t slope_exit_velocity_frames = params.get("slope_exit_velocity_frames", 0);
+
+		Vector2 local_velocity = previous_velocity.rotated(static_cast<real_t>(-gameplay_rotation));
+
+		if (spider_dash_frames > 0) {
+			spider_dash_frames--;
+		}
+		if (slope_exit_velocity_frames > 0) {
+			slope_exit_velocity_frames--;
+		}
+
+		// Slope physics
+		if (was_sliding_on_slope && has_last_slide_collision) {
+			if (std::abs(std::sin(floor_angle)) < std::sin(floor_max_angle)) {
+				slope_velocity.y = static_cast<real_t>(std::tan(-floor_angle) * std::abs(local_velocity.x) * direction);
+				slope_exit_velocity_frames = 4;
+			}
+		}
+
+		// Ball or Swing gravity flip on jump press
+		if ((internal_gamemode == 7 /*SWING*/ || internal_gamemode == 3 /*BALL*/) && jump_state == 1 && orb_queue_empty) {
+			gravity_flip *= -1.0;
+		}
+
+		static constexpr double GRAVITY = 10600.0;
+		static constexpr double FLY_GRAVITY_MULTIPLIER = 0.5;
+		static constexpr double UFO_GRAVITY_MULTIPLIER = 0.7;
+		static constexpr double SPIDER_GRAVITY_MULTIPLIER = 0.65;
+		static constexpr double FLY_TERMINAL_VELOCITY_Y = 1800.0;
+		static constexpr double TERMINAL_VELOCITY_Y = 3000.0;
+		static constexpr double PLATFORMER_ACCELERATION = 5.0;
+
+		if (!has_dash_control) {
+			if (internal_gamemode == 1 /*SHIP*/) {
+				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1.0 * FLY_GRAVITY_MULTIPLIER);
+				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
+			} else if (internal_gamemode == 7 /*SWING*/) {
+				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * FLY_GRAVITY_MULTIPLIER);
+				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
+			} else if (internal_gamemode == 4 /*WAVE*/) {
+				local_velocity.y = static_cast<real_t>(1250.0 * gravity_flip * gravity_multiplier * jump_state * -1.0);
+				if (speed_multiplier > 0.0) {
+					local_velocity.y = static_cast<real_t>(local_velocity.y * speed_multiplier);
+				}
+				if (player_scale == 0 /*MINI*/) {
+					local_velocity.y *= 2.0f;
+				} else if (player_scale == 2 /*BIG*/) {
+					local_velocity.y *= 0.5f;
+				}
+			} else if (internal_gamemode == 6 /*SPIDER*/) {
+				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1.0 * SPIDER_GRAVITY_MULTIPLIER);
+				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
+			} else if (!is_on_floor) {
+				if (internal_gamemode == 2 /*UFO*/) {
+					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER);
+				} else {
+					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier);
+				}
+			}
+		}
+
+		bool flying_gamemode_slope_boost = (internal_gamemode == 1 || internal_gamemode == 7) &&
+			((is_on_ceiling && jump_state >= 0) ||
+			(is_on_floor && has_last_slide_collision && floor_angle != 0.0 && direction != 0 && jump_state == 1));
+		bool isnt_jumping = is_on_floor && jump_state <= 0 && !deferred_velocity_redirect;
+
+		if ((!colliding_pad && flying_gamemode_slope_boost) || isnt_jumping) {
+			local_velocity.y = slope_velocity.y;
+		}
+
+		// Robot hold jump
+		if (jump_state == 1 && robot_timer_time_left > 0.0 && internal_gamemode == 5 /*ROBOT*/) {
+			local_velocity.y = static_cast<real_t>(1250.0 * gravity_flip * -1.0);
+		}
+
+		int64_t instant_jump_mode = -1;
+		bool is_instant_jump = (internal_gamemode == 6 || internal_gamemode == 3 || internal_gamemode == 2 || internal_gamemode == 0);
+		if (is_instant_jump && jump_state == 1 && !colliding_pad && orb_queue_empty) {
+			instant_jump_mode = internal_gamemode;
+			if (internal_gamemode == 3 /*BALL*/) {
+				local_velocity.y = static_cast<real_t>(speed.y * gravity_flip * 0.5);
+			} else if (internal_gamemode == 2 /*UFO*/) {
+				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip * UFO_GRAVITY_MULTIPLIER);
+			} else if (internal_gamemode == 0 /*CUBE*/) {
+				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip);
+			}
+		}
+
+		// Horizontal velocity
+		if (!is_platformer || internal_gamemode == 4 /*WAVE*/) {
+			if (direction != 0) {
+				local_velocity.x = static_cast<real_t>(direction * speed.x * speed_multiplier);
+			} else {
+				local_velocity.x = 0.0f;
+			}
+		} else {
+			double target_x = direction != 0 ? direction * speed.x * speed_multiplier : 0.0;
+			local_velocity.x = static_cast<real_t>(Math::move_toward(
+				static_cast<double>(local_velocity.x), target_x,
+				speed.x * delta * speed_multiplier * PLATFORMER_ACCELERATION));
+		}
+
+		// Coyote time
+		bool is_falling = local_velocity.y * gravity_flip > 0.0f;
+		if (is_on_floor) {
+			coyote_time = 2.0 / 60.0;
+		} else {
+			if (is_falling) {
+				coyote_time = std::max(0.0, coyote_time - delta);
+			} else {
+				coyote_time = 0.0;
+			}
+		}
+
+		// Reset slope velocity if needed
+		if (!is_on_floor && slope_exit_velocity_frames == 0) {
+			slope_velocity = Vector2();
+		}
+
+		Vector2 world_velocity = local_velocity.rotated(static_cast<real_t>(gameplay_rotation));
+
+		Dictionary result;
+		result["local_velocity"] = local_velocity;
+		result["velocity"] = world_velocity;
+		result["slope_velocity"] = slope_velocity;
+		result["gravity_flip"] = gravity_flip;
+		result["coyote_time"] = coyote_time;
+		result["spider_dash_frames"] = spider_dash_frames;
+		result["slope_exit_velocity_frames"] = slope_exit_velocity_frames;
+		result["instant_jump_mode"] = instant_jump_mode;
+		return result;
+	}
+
+	Dictionary classify_collision(double collision_angle, double floor_max_angle) const {
+		Dictionary result;
+		bool is_floor = collision_angle <= Math::deg_to_rad(10.0);
+		bool is_ceiling = collision_angle >= Math::deg_to_rad(180.0 - 10.0);
+		bool is_wall = collision_angle > floor_max_angle && collision_angle < Math::PI - floor_max_angle;
+		bool is_slope = !is_floor && !is_ceiling && !is_wall;
+		result["is_floor"] = is_floor;
+		result["is_ceiling"] = is_ceiling;
+		result["is_wall"] = is_wall;
+		result["is_slope"] = is_slope;
+		return result;
+	}
+
+	Dictionary extract_object_geometry(Node2D *object) const {
+		Dictionary geometry;
+		geometry["collision_layer"] = 0;
+		geometry["descriptors"] = Array();
+		if (!object) return geometry;
+		if (object->has_meta("_gd_level_physics_descriptors")) {
+			return object->get_meta("_gd_level_physics_descriptors");
+		}
+		Node2D *body = nullptr;
+		Node *collision_child = object->get_node_or_null(NodePath("Collision"));
+		if (collision_child) {
+			body = Object::cast_to<Node2D>(collision_child);
+		} else {
+			body = object;
+		}
+		if (!body) return geometry;
+		const int64_t collision_layer = body->get("collision_layer");
+		geometry["collision_layer"] = collision_layer;
+		Array descriptors;
+		const Transform2D inverse = object->get_global_transform().affine_inverse();
+		const Array children = body->get_children();
+		for (int64_t i = 0; i < children.size(); ++i) {
+			CollisionShape2D *shape_node = Object::cast_to<CollisionShape2D>(children[i]);
+			if (!shape_node) continue;
+			Ref<Shape2D> shape = shape_node->get_shape();
+			if (shape.is_null()) continue;
+			Dictionary desc;
+			desc["resource"] = shape;
+			desc["local_xform"] = inverse * shape_node->get_global_transform();
+			desc["debug_color"] = shape_node->get_debug_color();
+			descriptors.append(desc);
+		}
+		geometry["descriptors"] = descriptors;
+		if (!descriptors.is_empty()) {
+			object->set_meta("_gd_level_physics_descriptors", geometry);
+		}
+		return geometry;
 	}
 };
 

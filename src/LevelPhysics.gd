@@ -290,6 +290,9 @@ static func _dynamic_transform_groups(level: Level) -> Dictionary:
 static func _object_geometry(object: Node2D) -> Dictionary:
 	if object.has_meta(DESCRIPTORS_META):
 		return object.get_meta(DESCRIPTORS_META)
+	var native := NativeCore.backend()
+	if native != null:
+		return native.call(&"extract_object_geometry", object)
 	var geometry := {
 		"collision_layer": 0,
 		"descriptors": [],

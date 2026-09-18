@@ -98,6 +98,37 @@ func _ready() -> void:
 	_expect("copy link persisted at completion", copied.copied_channel_id == 37)
 	_expect_color("copying reserved channel 1010 (Black) lands on black", copied_black, Color.BLACK)
 	_expect_color("source channel untouched", source, Color(0.2, 0.4, 0.9))
+
+	# Native physics verification
+	var native := NativeCore.backend()
+	_expect("NativeCore backend available", native != null)
+	if native != null:
+		var p_cube := {
+			"delta": 1.0 / 60.0,
+			"previous_velocity": Vector2(0, 0),
+			"direction": 1,
+			"jump_state": 0,
+			"internal_gamemode": 0,
+			"is_on_floor": false,
+		}
+		var res_cube: Dictionary = native.call(&"compute_player_velocity", p_cube)
+		var v_cube: Vector2 = res_cube["velocity"]
+		_expect("Native physics cube gravity falls", absf(v_cube.y - (10600.0 / 60.0)) < 0.1)
+
+		var p_wave := {
+			"delta": 1.0 / 60.0,
+			"previous_velocity": Vector2(1250, 0),
+			"direction": 1,
+			"jump_state": 1,
+			"internal_gamemode": 4,
+		}
+		var res_wave: Dictionary = native.call(&"compute_player_velocity", p_wave)
+		var v_wave: Vector2 = res_wave["velocity"]
+		_expect("Native physics wave ascends at -1250", absf(v_wave.y - (-1250.0)) < 0.1)
+
+		var cls: Dictionary = native.call(&"classify_collision", deg_to_rad(5.0), deg_to_rad(45.0))
+		_expect("Native physics classify 5 deg as floor", bool(cls["is_floor"]))
+
 	_finish()
 
 

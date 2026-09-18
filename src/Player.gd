@@ -547,11 +547,23 @@ func _should_process() -> bool:
 func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: bool) -> void:
 	if not collision:
 		return
-	var collision_angle: float = collision.get_angle(up_direction)
-	var is_floor: bool = collision_angle <= deg_to_rad(10.0)
-	var is_ceiling: bool = collision_angle >= deg_to_rad(180.0 - 10.0)
-	var is_wall: bool = collision_angle > floor_max_angle and collision_angle < PI - floor_max_angle
-	var is_slope: bool = not is_floor and not is_ceiling and not is_wall
+	var native := NativeCore.backend()
+	var is_floor: bool
+	var is_ceiling: bool
+	var is_wall: bool
+	var is_slope: bool
+	if native != null:
+		var cls: Dictionary = native.call(&"classify_collision", collision.get_angle(up_direction), floor_max_angle)
+		is_floor = bool(cls["is_floor"])
+		is_ceiling = bool(cls["is_ceiling"])
+		is_wall = bool(cls["is_wall"])
+		is_slope = bool(cls["is_slope"])
+	else:
+		var collision_angle: float = collision.get_angle(up_direction)
+		is_floor = collision_angle <= deg_to_rad(10.0)
+		is_ceiling = collision_angle >= deg_to_rad(180.0 - 10.0)
+		is_wall = collision_angle > floor_max_angle and collision_angle < PI - floor_max_angle
+		is_slope = not is_floor and not is_ceiling and not is_wall
 	var is_lower_corner: bool = _ground_cast.is_colliding() and not _invalid_corner_cast.is_colliding()
 	var should_snap: bool = is_lower_corner and is_wall and not is_slope and internal_gamemode != Gamemode.WAVE
 
@@ -742,8 +754,110 @@ func _compute_velocity(
 		jump_state: int,
 		was_sliding_on_slope: bool,
 ) -> Vector2:
-	var local_velocity: Vector2 = previous_velocity.rotated(-gameplay_rotation)
 	_is_flying_gamemode = (internal_gamemode == Gamemode.SHIP or internal_gamemode == Gamemode.SWING or internal_gamemode == Gamemode.WAVE)
+
+	_ground_collider.rotation = gameplay_rotation
+	_solid_overlap_check.rotation = gameplay_rotation
+	_kill_collider_solid.rotation = gameplay_rotation
+	_kill_collider_rectangular.rotation = gameplay_rotation
+	_kill_collider_circular.rotation = gameplay_rotation
+
+	var native := NativeCore.backend()
+	if native != null:
+		var has_last_slide: bool = get_last_slide_collision() != null
+		var floor_angle: float = 0.0
+		if was_sliding_on_slope and has_last_slide:
+			floor_angle = _get_floor_angle_signed(true, jump_state)
+		elif _is_flying_gamemode and is_on_floor() and has_last_slide and jump_state == 1:
+			floor_angle = _get_floor_angle_signed(true, jump_state)
+
+		var params := {
+			"delta": delta,
+			"previous_velocity": previous_velocity,
+			"direction": direction,
+			"jump_state": jump_state,
+			"was_sliding_on_slope": was_sliding_on_slope,
+			"has_last_slide_collision": has_last_slide,
+			"floor_angle": floor_angle,
+			"floor_max_angle": floor_max_angle,
+			"slope_velocity": slope_velocity,
+			"internal_gamemode": int(internal_gamemode),
+			"player_scale": int(player_scale),
+			"speed": speed,
+			"speed_multiplier": speed_multiplier,
+			"gravity_flip": float(gravity_flip),
+			"gravity_multiplier": gravity_multiplier,
+			"gameplay_rotation": gameplay_rotation,
+			"is_on_floor": is_on_floor(),
+			"is_on_ceiling": is_on_ceiling(),
+			"is_platformer": LevelManager.platformer,
+			"colliding_pad": colliding_pad != null,
+			"has_dash_control": dash_control != null,
+			"orb_queue_empty": orb_queue.is_empty(),
+			"robot_timer_time_left": _robot_timer.time_left,
+			"deferred_velocity_redirect": _deferred_velocity_redirect,
+			"coyote_time": coyote_time,
+			"spider_dash_frames": _spider_dash_frames,
+			"slope_exit_velocity_frames": _slope_exit_velocity_frames,
+		}
+		var res: Dictionary = native.call(&"compute_player_velocity", params)
+		var local_velocity: Vector2 = res["local_velocity"]
+		slope_velocity = res["slope_velocity"]
+		gravity_flip = int(res["gravity_flip"])
+		coyote_time = float(res["coyote_time"])
+		_spider_dash_frames = int(res["spider_dash_frames"])
+		_slope_exit_velocity_frames = int(res["slope_exit_velocity_frames"])
+
+		if colliding_pad:
+			local_velocity = _handle_velocity_interactable(local_velocity, colliding_pad, direction)
+			_trail.add_points = true
+
+		var instant_mode: int = int(res["instant_jump_mode"])
+		if instant_mode == Gamemode.SPIDER:
+			_update_spider_cast_rotation()
+			var dash_data: PackedFloat64Array = _get_spider_dash_data()
+			var dash_height: float = dash_data[0]
+			var displacement: Vector2 = Vector2.UP.rotated(gameplay_rotation) * dash_height
+			position += displacement
+			var trail: SpiderTrail = SPIDER_TRAIL.instantiate()
+			trail.start.call_deferred(self, displacement)
+			add_child(trail)
+			gravity_flip *= -1
+			allow_ceiling_hit_count += 1
+			up_direction = Vector2.UP.rotated(gameplay_rotation) * sign(gravity_flip)
+			last_collision = move_and_collide(displacement.normalized() * Constants.CELL_SIZE, true)
+			_ground_collider.rotation = gameplay_rotation
+			_handle_collision(last_collision, false)
+			allow_ceiling_hit_count -= 1
+			var f_angle: float = dash_data[1]
+			local_velocity.y = tan(-f_angle - gameplay_rotation) * abs(local_velocity.x) * direction
+			slope_velocity = Vector2.ZERO
+			_spider_dash_frames = 4
+			defer_snap_sprite_rotation()
+
+		if not orb_queue.is_empty() and (
+				_click_buffer_state == ClickBufferState.JUMPING
+				or InputUtils.is_action_just_pressed(&"jump")
+		):
+			var colliding_orb: OrbInteractable = orb_queue.pop_front()
+			_click_buffer_state = ClickBufferState.BUFFER_USED
+			colliding_orb.interacted.emit(self)
+			local_velocity = _handle_velocity_interactable(local_velocity, colliding_orb, direction)
+			if not colliding_orb.has(SingleUsageComponent):
+				orb_queue.append(colliding_orb)
+			_trail.add_points = true
+
+		if dash_control:
+			local_velocity = dash_control.get_velocity(self)
+			if not InputUtils.is_action_pressed(&"jump"):
+				stop_dash()
+
+		_deferred_velocity_redirect = _ensure_velocity_redirect(delta, local_velocity.rotated(gameplay_rotation))
+		if colliding_pad:
+			colliding_pad = null
+		return local_velocity.rotated(gameplay_rotation)
+
+	var local_velocity: Vector2 = previous_velocity.rotated(-gameplay_rotation)
 
 	if _spider_dash_frames > 0:
 		_spider_dash_frames -= 1
