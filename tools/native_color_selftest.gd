@@ -44,28 +44,44 @@ func _ready() -> void:
 	source.color = Color(0.2, 0.4, 0.9)
 	var copied := ColorChannelData.new()
 	copied.associated_group = "c_38"
+	var copied_black := ColorChannelData.new()
+	copied_black.associated_group = "c_39"
+	var spawn_triggered_channel := ColorChannelData.new()
+	spawn_triggered_channel.associated_group = "c_40"
 
 	runtime.call(&"bind_context", self, null, null)
 	runtime.call(&"register_channel", "c_35", faded)
 	runtime.call(&"register_channel", "c_36", keep)
 	runtime.call(&"register_channel", "c_37", source)
 	runtime.call(&"register_channel", "c_38", copied)
+	runtime.call(&"register_channel", "c_39", copied_black)
+	runtime.call(&"register_channel", "c_40", spawn_triggered_channel)
 
+	# Trigger at x = 0 (before player spawn x = 15): instant recolour of c_40
+	runtime.call(&"register_packed_trigger", 0.0, 0.0, 0, 0, PackedStringArray(), 899,
+		{"7": "50", "8": "150", "9": "250", "23": "40"})
 	# Classic 899: RGB fade over 0.5 s on channel 35.
-	runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 0, PackedStringArray(), 899,
+	runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 1, PackedStringArray(), 899,
 		{"7": "30", "8": "200", "9": "120", "23": "35", "10": "0.5"})
 	# KEEP variant: no 7/8/9 and no copy, so only the opacity fades; instant
 	# (no duration key) so it applies at fire time. Channel 36.
-	runtime.call(&"register_packed_trigger", 200.0, 0.0, 0, 1, PackedStringArray(), 899,
+	runtime.call(&"register_packed_trigger", 200.0, 0.0, 0, 2, PackedStringArray(), 899,
 		{"35": "0.4", "23": "36"})
 	# Copy variant: channel 38 fades towards channel 37's colour (0.3 s) and
 	# then keeps following it through the persisted copy link.
-	runtime.call(&"register_packed_trigger", 300.0, 0.0, 0, 2, PackedStringArray(), 899,
+	runtime.call(&"register_packed_trigger", 300.0, 0.0, 0, 3, PackedStringArray(), 899,
 		{"50": "37", "23": "38", "10": "0.3"})
+	# Copy reserved channel 1010 (Black)
+	runtime.call(&"register_packed_trigger", 320.0, 0.0, 0, 4, PackedStringArray(), 899,
+		{"50": "1010", "23": "39", "10": "0.0"})
 	runtime.call(&"finalize")
 
 	var player := Node2D.new()
+	player.global_position = Vector2(15.0, 0.0)
 	add_child(player)
+	# Initial spawn: advance_player must activate setup triggers at x <= 15 (e.g. x=0)
+	runtime.call(&"advance_player", player)
+
 	# Crossings in x order; each interval ends inside the next record.
 	runtime.call(&"advance", player, 50.0, 150.0)
 	runtime.call(&"advance", player, 150.0, 250.0)
@@ -73,12 +89,14 @@ func _ready() -> void:
 	# Both fading triggers started at clock 0; 0.6 s completes them (weight 1).
 	runtime.call(&"tick", 0.6)
 
+	_expect_color("spawn-time trigger at x=0 fired for player at x=15", spawn_triggered_channel, Color(50.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0))
 	_expect_color("RGB fade recolours the channel", faded, Color(30.0 / 255.0, 200.0 / 255.0, 120.0 / 255.0))
 	_expect_alpha("instant KEEP opacity", keep, 0.4)
 	_expect("KEEP variant left colour untouched", keep.color == Color.WHITE)
 	_expect("KEEP variant severed no copy link", keep.copied_channel_id == 0)
 	_expect_color("copy fade lands on the source colour", copied, Color(0.2, 0.4, 0.9))
 	_expect("copy link persisted at completion", copied.copied_channel_id == 37)
+	_expect_color("copying reserved channel 1010 (Black) lands on black", copied_black, Color.BLACK)
 	_expect_color("source channel untouched", source, Color(0.2, 0.4, 0.9))
 	_finish()
 

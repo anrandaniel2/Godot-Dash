@@ -215,6 +215,12 @@ static func live_special_color(id: int) -> Color:
 			return Config.primary_color
 		1006:
 			return Config.secondary_color
+		1007:
+			return level.background_color.lightened(0.2)
+		1010:
+			return Color.BLACK
+		1011:
+			return Color.WHITE
 		_:
 			return Color.WHITE
 
@@ -268,7 +274,7 @@ static func resolve_channel_alpha(channel_data: ColorChannelData, iterations: in
 
 
 static func _is_special_id(id: int) -> bool:
-	return id == 1000 or id == 1001 or id == 1002 or id == 1005 or id == 1006 or id == 1009
+	return id >= 1000 and id <= 1014
 
 
 ## Applies a channel's copy HSV adjustment (kS38 key 10 / trigger key 49) to a
@@ -278,16 +284,18 @@ static func _shift_copy_hsv(base: Color, channel_data: ColorChannelData) -> Colo
 	if is_zero_approx(channel_data.copy_hue) and is_zero_approx(channel_data.copy_saturation) \
 			and is_zero_approx(channel_data.copy_value):
 		return base
+	var sat_val: float = (
+		channel_data.copy_saturation if (!channel_data.copy_saturation_additive and is_zero_approx(base.s) and channel_data.copy_saturation > 0.0)
+		else (base.s + channel_data.copy_saturation if channel_data.copy_saturation_additive else base.s * channel_data.copy_saturation)
+	)
+	var val_val: float = (
+		channel_data.copy_value if (!channel_data.copy_value_additive and is_zero_approx(base.v) and channel_data.copy_value > 0.0)
+		else (base.v + channel_data.copy_value if channel_data.copy_value_additive else base.v * channel_data.copy_value)
+	)
 	return Color.from_hsv(
 		fposmod(base.h + channel_data.copy_hue, 1.0),
-		clampf(
-			base.s + channel_data.copy_saturation if channel_data.copy_saturation_additive
-			else base.s * channel_data.copy_saturation,
-			0.0, 1.0),
-		clampf(
-			base.v + channel_data.copy_value if channel_data.copy_value_additive
-			else base.v * channel_data.copy_value,
-			0.0, 1.0),
+		clampf(sat_val, 0.0, 1.0),
+		clampf(val_val, 0.0, 1.0),
 		base.a,
 	)
 

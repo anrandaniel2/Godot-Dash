@@ -159,8 +159,8 @@ const LEGACY_COLOR_TRIGGER_CHANNELS: Dictionary[int, int] = {
 	743: 4,
 	744: CHANNEL_3DL,
 	899: 1,
-	900: 1,
-	915: 1,
+	900: CHANNEL_G2,
+	915: CHANNEL_LINE,
 }
 
 ## Geometry Dash uses a 30x30 pixel grid, Godot Dash uses [member
@@ -857,8 +857,13 @@ static func _is_colorable_channel(channel_style: Dictionary[int, Dictionary], ch
 		return false
 	if channel_style.has(channel_id):
 		return true
-	if channel_id < CHANNEL_BG:
-		channel_style[channel_id] = DEFAULT_STYLE.duplicate()
+	if channel_id < CHANNEL_BG or (channel_id >= CHANNEL_BG and channel_id <= CHANNEL_MG2):
+		var default_col: Color = Color.WHITE
+		if channel_id == CHANNEL_BLACK:
+			default_col = Color.BLACK
+		elif channel_id == CHANNEL_3DL:
+			default_col = Color.WHITE
+		channel_style[channel_id] = { "color": default_col, "alpha": 1.0, "blending": channel_id == CHANNEL_LINE }
 		return true
 	return false
 
@@ -1028,10 +1033,18 @@ static func _apply_hsv_shift(
 	if is_zero_approx(hue) and is_zero_approx(saturation) and is_zero_approx(value):
 		return color
 
+	var sat_val: float = (
+		saturation if (not saturation_additive and is_zero_approx(color.s) and saturation > 0.0)
+		else (color.s + saturation if saturation_additive else color.s * saturation)
+	)
+	var val_val: float = (
+		value if (not value_additive and is_zero_approx(color.v) and value > 0.0)
+		else (color.v + value if value_additive else color.v * value)
+	)
 	var shifted := Color.from_hsv(
 			fposmod(color.h + hue, 1.0),
-			clampf(color.s + saturation if saturation_additive else color.s * saturation, 0.0, 1.0),
-			clampf(color.v + value if value_additive else color.v * value, 0.0, 1.0),
+			clampf(sat_val, 0.0, 1.0),
+			clampf(val_val, 0.0, 1.0),
 			color.a,
 	)
 	return shifted
@@ -1604,10 +1617,18 @@ static func _shift_hsv_string(color: Color, hsv: String) -> Color:
 	var value_additive: bool = parts.size() > 4 and parts[4] == "1"
 	var saturation: float = float(parts[1])
 	var value: float = float(parts[2])
+	var sat_val: float = (
+		saturation if (not saturation_additive and is_zero_approx(color.s) and saturation > 0.0)
+		else (color.s + saturation if saturation_additive else color.s * saturation)
+	)
+	var val_val: float = (
+		value if (not value_additive and is_zero_approx(color.v) and value > 0.0)
+		else (color.v + value if value_additive else color.v * value)
+	)
 	return Color.from_hsv(
 			fposmod(color.h + float(parts[0]) / 360.0, 1.0),
-			clampf(color.s + saturation if saturation_additive else color.s * saturation, 0.0, 1.0),
-			clampf(color.v + value if value_additive else color.v * value, 0.0, 1.0),
+			clampf(sat_val, 0.0, 1.0),
+			clampf(val_val, 0.0, 1.0),
 			color.a,
 	)
 

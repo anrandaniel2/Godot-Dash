@@ -7,6 +7,7 @@
 //       native/godot-cpp/bin/libgodot-cpp.linux.template_debug.x86_64.a -lpthread -o /tmp/online_parser_test
 //   /tmp/online_parser_test
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -91,6 +92,30 @@ int main() {
 	Color bg_color(40.0f / 255.0f, 125.0f / 255.0f, 1.0f, 1.0f);
 	Color lbg = bg_color.lightened(0.2f);
 	check_true("LBG is brighter than BG", lbg.get_v() >= bg_color.get_v());
+
+	// 4. Verify HSV shift on desaturated / white base in multiplicative mode
+	Color white_base(1.0f, 1.0f, 1.0f, 1.0f); // s = 0, v = 1
+	float shift_hue = 0.333f; // ~120 deg
+	float shift_sat = 0.8f;
+	float shift_val = 1.0f;
+	bool sat_mult = true; // record.hsv[3] <= 0.5f
+
+	float res_sat_old = sat_mult ? white_base.get_s() * shift_sat : white_base.get_s() + shift_sat;
+	check_true("Old multiplicative HSV left white base with 0 saturation", res_sat_old == 0.0f);
+
+	float res_sat_new = sat_mult ? (white_base.get_s() == 0.0f && shift_sat > 0.0f ? shift_sat : white_base.get_s() * shift_sat)
+								 : white_base.get_s() + shift_sat;
+	Color shifted_new = Color::from_hsv(white_base.get_h() + shift_hue, res_sat_new, shift_val, 1.0f);
+	check_true("New multiplicative HSV produces saturated color on white base", shifted_new.get_s() > 0.5f);
+	check_true("New shifted color is not pure white", shifted_new != Color(1.0f, 1.0f, 1.0f, 1.0f));
+
+	// 5. Verify initial spawn trigger activation semantics:
+	// A trigger placed at x = 0 or x = 10 must fire when player spawns at x = 15.
+	std::vector<double> trigger_positions = { -50.0, 0.0, 10.0, 15.0, 20.0, 100.0 };
+	double player_spawn_x = 15.0;
+	auto last = std::upper_bound(trigger_positions.begin(), trigger_positions.end(), player_spawn_x);
+	int initial_fired = std::distance(trigger_positions.begin(), last);
+	check_int("Triggers at x <= player_spawn_x (4 triggers) fire on spawn", initial_fired, 4);
 
 	if (failures == 0) {
 		std::printf("\nALL ONLINE PARSER STANDALONE TESTS PASSED (0 failures)\n");

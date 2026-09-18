@@ -383,16 +383,18 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 				and is_zero_approx(item.hsv_shift[1])
 				and is_zero_approx(item.hsv_shift[2])
 			):
+				var sat_val: float = (
+					item.hsv_shift[1] if (item.hsv_shift[3] <= 0.5 and is_zero_approx(tinted.s) and item.hsv_shift[1] > 0.0)
+					else (tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1])
+				)
+				var val_val: float = (
+					item.hsv_shift[2] if (item.hsv_shift[4] <= 0.5 and is_zero_approx(tinted.v) and item.hsv_shift[2] > 0.0)
+					else (tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2])
+				)
 				tinted = Color.from_hsv(
 					fposmod(tinted.h + item.hsv_shift[0], 1.0),
-					clampf(
-						tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1],
-						0.0, 1.0,
-					),
-					clampf(
-						tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2],
-						0.0, 1.0,
-					),
+					clampf(sat_val, 0.0, 1.0),
+					clampf(val_val, 0.0, 1.0),
 				)
 		# color.a already carries the channel's opacity; base_alpha is only the
 		# object's own. Multiplying the channel alpha in twice squares it and

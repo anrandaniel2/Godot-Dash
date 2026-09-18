@@ -70,11 +70,17 @@ func update_color() -> void:
 		and is_zero_approx(hsv_shift[2])
 	):
 		if saturation_multiplies:
-			shifted_modulate.s *= hsv_shift[1]
+			if is_zero_approx(shifted_modulate.s) and hsv_shift[1] > 0.0:
+				shifted_modulate.s = hsv_shift[1]
+			else:
+				shifted_modulate.s *= hsv_shift[1]
 		else:
 			shifted_modulate.s += hsv_shift[1]
 		if value_multiplies:
-			shifted_modulate.v *= hsv_shift[2]
+			if is_zero_approx(shifted_modulate.v) and hsv_shift[2] > 0.0:
+				shifted_modulate.v = hsv_shift[2]
+			else:
+				shifted_modulate.v *= hsv_shift[2]
 		else:
 			shifted_modulate.v += hsv_shift[2]
 		shifted_modulate.h += hsv_shift[0]

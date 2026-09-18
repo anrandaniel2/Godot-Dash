@@ -303,15 +303,18 @@ static Color shift_copy_hsv(const Color &base, Object *data) {
 		return base;
 	const bool saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
 	const bool value_additive = static_cast<bool>(data->get("copy_value_additive"));
+	if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value)) {
+		return base;
+	}
 	double h = static_cast<double>(base.get_h()) + hue;
 	h -= Math::floor(h);
 	const double s = Math::clamp(
 		saturation_additive ? static_cast<double>(base.get_s()) + saturation
-							: static_cast<double>(base.get_s()) * saturation,
+							: (Math::is_zero_approx(base.get_s()) && saturation > 0.0 ? saturation : static_cast<double>(base.get_s()) * saturation),
 		0.0, 1.0);
 	const double v = Math::clamp(
 		value_additive ? static_cast<double>(base.get_v()) + value
-					   : static_cast<double>(base.get_v()) * value,
+					   : (Math::is_zero_approx(base.get_v()) && value > 0.0 ? value : static_cast<double>(base.get_v()) * value),
 		0.0, 1.0);
 	return Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), base.a);
 }
@@ -879,10 +882,25 @@ class NativeTriggerRuntime : public RefCounted {
 		Object *config = ObjectDB::get_instance(config_id);
 		const String property = level_color_property_for_channel(channel);
 		if (!property.is_empty() && level) return level->get(property);
-		if (!config) return Color(1.0f, 1.0f, 1.0f);
-		if (channel == 1005) return config->get("primary_color");
-		if (channel == 1006) return config->get("secondary_color");
-		return config->get("glow_color");
+		if (channel == 1005 && config) return config->get("primary_color");
+		if (channel == 1006 && config) return config->get("secondary_color");
+		if (channel == 1007 && level) {
+			const Color bg = level->get("background_color");
+			return bg.lightened(0.2f);
+		}
+		if (channel == 1010) return Color(0.0f, 0.0f, 0.0f);
+		if (channel == 1011) return Color(1.0f, 1.0f, 1.0f);
+		if (channel == 1003 || channel == 1004 || channel == 1012 || channel == 1013 || channel == 1014) {
+			Object *data = channel_lookup(channel);
+			if (data) return resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET);
+			if (channel == 1012) {
+				Object *obj_data = channel_lookup(1004);
+				if (obj_data) return resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
+			}
+			return Color(1.0f, 1.0f, 1.0f);
+		}
+		if (config) return config->get("glow_color");
+		return Color(1.0f, 1.0f, 1.0f);
 	}
 	Dictionary resolve_copied_channel(int32_t copy_id) const {
 		Dictionary empty;
@@ -904,8 +922,42 @@ class NativeTriggerRuntime : public RefCounted {
 			result["alpha"] = 1.0;
 			return result;
 		}
+		if (copy_id == 1007) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (!level) return empty;
+			const Color bg = level->get("background_color");
+			Dictionary result;
+			result["color"] = bg.lightened(0.2f);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1010) {
+			Dictionary result;
+			result["color"] = Color(0.0f, 0.0f, 0.0f);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1011) {
+			Dictionary result;
+			result["color"] = Color(1.0f, 1.0f, 1.0f);
+			result["alpha"] = 1.0;
+			return result;
+		}
 		Object *data = channel_lookup(copy_id);
-		if (!data) return empty;
+		if (!data) {
+			if (copy_id == 1003 || copy_id == 1004 || copy_id == 1012 || copy_id == 1013 || copy_id == 1014) {
+				Color col = Color(1.0f, 1.0f, 1.0f);
+				if (copy_id == 1012) {
+					Object *obj_data = channel_lookup(1004);
+					if (obj_data) col = resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
+				}
+				Dictionary result;
+				result["color"] = col;
+				result["alpha"] = 1.0;
+				return result;
+			}
+			return empty;
+		}
 		// The source resolves through its own state - special link, ordinary
 		// copy link or literal - exactly like ColorChannelWatcher does for
 		// rendering, so a copy of a copy lands on the same colour the level
@@ -949,10 +1001,34 @@ class NativeTriggerRuntime : public RefCounted {
 			Object *config = ObjectDB::get_instance(config_id);
 			if (config) color = config->get(link == 1005 ? "primary_color" : "secondary_color");
 			else color = Color(1.0f, 1.0f, 1.0f);
+		} else if (link == 1007) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (level) {
+				const Color bg = level->get("background_color");
+				color = bg.lightened(0.2f);
+			} else {
+				color = Color(1.0f, 1.0f, 1.0f);
+			}
+		} else if (link == 1010) {
+			color = Color(0.0f, 0.0f, 0.0f);
+		} else if (link == 1011) {
+			color = Color(1.0f, 1.0f, 1.0f);
 		} else {
 			Object *source = channel_lookup(link);
-			if (!source) return static_cast<Color>(data->get("color"));
-			color = resolve_channel_data_color(source, budget - 1);
+			if (!source) {
+				if (link == 1003 || link == 1004 || link == 1012 || link == 1013 || link == 1014) {
+					if (link == 1012) {
+						Object *obj_data = channel_lookup(1004);
+						color = obj_data ? resolve_channel_data_color(obj_data, budget - 1).lightened(0.2f) : Color(1.0f, 1.0f, 1.0f);
+					} else {
+						color = Color(1.0f, 1.0f, 1.0f);
+					}
+				} else {
+					return static_cast<Color>(data->get("color"));
+				}
+			} else {
+				color = resolve_channel_data_color(source, budget - 1);
+			}
 		}
 		return shift_copy_hsv(color, data);
 	}
@@ -966,7 +1042,7 @@ class NativeTriggerRuntime : public RefCounted {
 			return static_cast<double>(data->get("alpha"));
 		if (budget <= 0) return 1.0;
 		const String level_property = level_color_property_for_channel(link);
-		if (!level_property.is_empty() || link == 1005 || link == 1006) return 1.0;
+		if (!level_property.is_empty() || link == 1005 || link == 1006 || link == 1007 || link == 1010 || link == 1011) return 1.0;
 		Object *source = channel_lookup(link);
 		if (!source) return static_cast<double>(data->get("alpha"));
 		return resolve_channel_data_alpha(source, budget - 1);
@@ -996,10 +1072,10 @@ class NativeTriggerRuntime : public RefCounted {
 			hue -= Math::floor(hue);
 			const double saturation = effect.copy_saturation_additive
 				? Math::clamp(static_cast<double>(base.get_s()) + effect.copy_saturation, 0.0, 1.0)
-				: Math::clamp(static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
+				: Math::clamp(Math::is_zero_approx(base.get_s()) && effect.copy_saturation > 0.0 ? effect.copy_saturation : static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
 			const double value = effect.copy_value_additive
 				? Math::clamp(static_cast<double>(base.get_v()) + effect.copy_value, 0.0, 1.0)
-				: Math::clamp(static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
+				: Math::clamp(Math::is_zero_approx(base.get_v()) && effect.copy_value > 0.0 ? effect.copy_value : static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
 			return Color::from_hsv(
 				static_cast<real_t>(hue), static_cast<real_t>(saturation),
 				static_cast<real_t>(value), base.a);
@@ -1795,10 +1871,34 @@ public:
 		const uint64_t id = static_cast<uint64_t>(player->get_instance_id());
 		const double x = node->get_global_position().x;
 		auto previous = previous_positions.find(id);
-		const double from = previous != previous_positions.end() ? previous->second : x;
+		const bool is_first_registration = (previous == previous_positions.end());
+		const bool is_initial_spawn = previous_positions.empty();
+		const double from = !is_first_registration ? previous->second : x;
 		// Update the tracking map before advance(): activate() inside it can
 		// re-enter GDScript and retire this runtime for the rest of the step.
 		previous_positions[id] = x;
+
+		if (is_initial_spawn) {
+			repair_index_tables();
+			const uint64_t epoch = structure_epoch;
+			const size_t bounds_count = records.size();
+			auto trigger_x = [&](size_t index) -> double {
+				return index < bounds_count ? records[index].x : INFINITY;
+			};
+			auto last = std::upper_bound(x_order.begin(), x_order.end(), x,
+				[&](double value, size_t index) { return value < trigger_x(index); });
+			for (auto it = x_order.begin(); it != last; ++it) {
+				if (structure_epoch != epoch) return;
+				activate(*it, player);
+			}
+			return;
+		}
+
+		if (is_first_registration) {
+			// A dual player spawned mid-level: start tracking from current position without re-triggering past events.
+			return;
+		}
+
 		// 2026-09-13 device forensics: a portal at the Amethyst spawn
 		// teleports the player on the first physics frame, and treating the
 		// jump as a crossing activated the ENTIRE level's trigger range in
@@ -2542,11 +2642,11 @@ public:
 						h -= Math::floor(h);
 						double s = Math::clamp(
 							s_add ? static_cast<double>(source_color.get_s()) + ds
-								  : static_cast<double>(source_color.get_s()) * ds,
+								  : (Math::is_zero_approx(source_color.get_s()) && ds > 0.0 ? ds : static_cast<double>(source_color.get_s()) * ds),
 							0.0, 1.0);
 						double v = Math::clamp(
 							v_add ? static_cast<double>(source_color.get_v()) + dv
-								  : static_cast<double>(source_color.get_v()) * dv,
+								  : (Math::is_zero_approx(source_color.get_v()) && dv > 0.0 ? dv : static_cast<double>(source_color.get_v()) * dv),
 							0.0, 1.0);
 						shifted = Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), source_color.a);
 					}
@@ -2568,6 +2668,15 @@ public:
 				}
 			}
 			if (!changed) break;
+		}
+
+		if (!entries.has(1012) && styles.has(1004)) {
+			Color obj_c = Color(Dictionary(styles[1004]).get("color", Color(1.0, 1.0, 1.0)));
+			Dictionary ch;
+			ch["color"] = obj_c.lightened(0.2f);
+			ch["alpha"] = 1.0;
+			ch["blending"] = false;
+			styles[1012] = ch;
 		}
 
 		return styles;
@@ -3099,10 +3208,24 @@ public:
 			// and DecorationBatch paths match this).
 			Color shifted = modulate;
 			if (!(record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f)) {
-				if (record.sat_multiplies) shifted.set_s(shifted.get_s() * record.hsv[1]);
-				else shifted.set_s(shifted.get_s() + record.hsv[1]);
-				if (record.val_multiplies) shifted.set_v(shifted.get_v() * record.hsv[2]);
-				else shifted.set_v(shifted.get_v() + record.hsv[2]);
+				if (record.sat_multiplies) {
+					if (Math::is_zero_approx(shifted.get_s()) && record.hsv[1] > 0.0f) {
+						shifted.set_s(record.hsv[1]);
+					} else {
+						shifted.set_s(shifted.get_s() * record.hsv[1]);
+					}
+				} else {
+					shifted.set_s(shifted.get_s() + record.hsv[1]);
+				}
+				if (record.val_multiplies) {
+					if (Math::is_zero_approx(shifted.get_v()) && record.hsv[2] > 0.0f) {
+						shifted.set_v(record.hsv[2]);
+					} else {
+						shifted.set_v(shifted.get_v() * record.hsv[2]);
+					}
+				} else {
+					shifted.set_v(shifted.get_v() + record.hsv[2]);
+				}
 				shifted.set_h(shifted.get_h() + record.hsv[0]);
 			}
 			Color parent_modulate = shifted * (record.intensity * static_cast<float>(intensity));
@@ -3610,8 +3733,8 @@ public:
 			// HSVShift.shiftColor returns the colour unchanged then.
 			if (record.has_hsv && !(record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f)) {
 				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
-				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
-				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
+				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : (Math::is_zero_approx(tinted.get_s()) && record.hsv[1] > 0.0f ? record.hsv[1] : tinted.get_s() * record.hsv[1]), 0.0f, 1.0f);
+				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : (Math::is_zero_approx(tinted.get_v()) && record.hsv[2] > 0.0f ? record.hsv[2] : tinted.get_v() * record.hsv[2]), 0.0f, 1.0f);
 				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
 			}
 			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
