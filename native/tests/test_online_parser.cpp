@@ -101,6 +101,13 @@ int main() {
 	float res_sat = sat_mult ? col_base.get_s() * shift_sat : col_base.get_s() + shift_sat;
 	check_true("Multiplicative HSV scales base saturation", res_sat > 0.0f);
 
+	// Verify white base in multiplicative HSV does NOT gain saturation and turn red
+	Color white_base(1.0f, 1.0f, 1.0f, 1.0f);
+	float white_res_sat = sat_mult ? white_base.get_s() * shift_sat : white_base.get_s() + shift_sat;
+	check_true("White base retains 0 saturation under multiplicative HSV", white_res_sat == 0.0f);
+	Color white_shifted = Color::from_hsv(white_base.get_h() + shift_hue, white_res_sat, 1.0f, 1.0f);
+	check_true("White base remains pure white and does not turn red", white_shifted == Color(1.0f, 1.0f, 1.0f, 1.0f));
+
 	// 5. Verify initial spawn trigger activation semantics:
 	// A trigger placed at x = 0 or x = 10 must fire when player spawns at x = 15.
 	std::vector<double> trigger_positions = { -50.0, 0.0, 10.0, 15.0, 20.0, 100.0 };

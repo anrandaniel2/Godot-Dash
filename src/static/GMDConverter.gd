@@ -1032,15 +1032,13 @@ static func _apply_hsv_shift(
 	# path (_shift_copy_hsv); this must match it.
 	if is_zero_approx(hue) and is_zero_approx(saturation) and is_zero_approx(value):
 		return color
+	if is_zero_approx(fposmod(hue, 1.0)) \
+			and is_equal_approx(saturation, 0.0 if saturation_additive else 1.0) \
+			and is_equal_approx(value, 0.0 if value_additive else 1.0):
+		return color
 
-	var sat_val: float = (
-		saturation if (not saturation_additive and is_zero_approx(color.s) and saturation > 0.0)
-		else (color.s + saturation if saturation_additive else color.s * saturation)
-	)
-	var val_val: float = (
-		value if (not value_additive and is_zero_approx(color.v) and value > 0.0)
-		else (color.v + value if value_additive else color.v * value)
-	)
+	var sat_val: float = color.s + saturation if saturation_additive else color.s * saturation
+	var val_val: float = color.v + value if value_additive else color.v * value
 	var shifted := Color.from_hsv(
 			fposmod(color.h + hue, 1.0),
 			clampf(sat_val, 0.0, 1.0),
@@ -1615,18 +1613,21 @@ static func _shift_hsv_string(color: Color, hsv: String) -> Color:
 		return color
 	var saturation_additive: bool = parts.size() > 3 and parts[3] == "1"
 	var value_additive: bool = parts.size() > 4 and parts[4] == "1"
+	var hue: float = float(parts[0]) / 360.0
 	var saturation: float = float(parts[1])
 	var value: float = float(parts[2])
-	var sat_val: float = (
-		saturation if (not saturation_additive and is_zero_approx(color.s) and saturation > 0.0)
-		else (color.s + saturation if saturation_additive else color.s * saturation)
-	)
-	var val_val: float = (
-		value if (not value_additive and is_zero_approx(color.v) and value > 0.0)
-		else (color.v + value if value_additive else color.v * value)
-	)
+
+	if is_zero_approx(hue) and is_zero_approx(saturation) and is_zero_approx(value):
+		return color
+	if is_zero_approx(fposmod(hue, 1.0)) \
+			and is_equal_approx(saturation, 0.0 if saturation_additive else 1.0) \
+			and is_equal_approx(value, 0.0 if value_additive else 1.0):
+		return color
+
+	var sat_val: float = color.s + saturation if saturation_additive else color.s * saturation
+	var val_val: float = color.v + value if value_additive else color.v * value
 	return Color.from_hsv(
-			fposmod(color.h + float(parts[0]) / 360.0, 1.0),
+			fposmod(color.h + hue, 1.0),
 			clampf(sat_val, 0.0, 1.0),
 			clampf(val_val, 0.0, 1.0),
 			color.a,

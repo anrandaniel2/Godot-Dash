@@ -129,6 +129,22 @@ func _ready() -> void:
 		var cls: Dictionary = native.call(&"classify_collision", deg_to_rad(5.0), deg_to_rad(45.0))
 		_expect("Native physics classify 5 deg as floor", bool(cls["is_floor"]))
 
+	# HSV test on white base (preventing glow/white turning red)
+	var white_test_channel := ColorChannelData.new()
+	white_test_channel.color = Color.WHITE
+	var shifted_white: Color = ColorChannelWatcher.resolve_channel_color(white_test_channel)
+	_expect("White channel resolves to white", shifted_white == Color.WHITE)
+
+	var copy_white := ColorChannelData.new()
+	copy_white.color = Color.WHITE
+	copy_white.copy_hue = 0.0
+	copy_white.copy_saturation = 1.0
+	copy_white.copy_value = 1.0
+	copy_white.copy_saturation_additive = false
+	copy_white.copy_value_additive = false
+	var shifted_copy_white: Color = ColorChannelWatcher._shift_copy_hsv(Color.WHITE, copy_white)
+	_expect("White with default copy HSV stays white and does not turn red", shifted_copy_white == Color.WHITE)
+
 	_finish()
 
 

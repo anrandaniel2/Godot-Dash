@@ -378,19 +378,19 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 			# An all-zero shift with multiplicative sliders is Geometry
 			# Dash's "HSV enabled but untouched" encoding; multiplying by
 			# those zeros paints the item black (GDRweb's shiftColor guard).
-			if not (
+			var is_zero_shift: bool = (
 				is_zero_approx(item.hsv_shift[0])
 				and is_zero_approx(item.hsv_shift[1])
 				and is_zero_approx(item.hsv_shift[2])
-			):
-				var sat_val: float = (
-					item.hsv_shift[1] if (item.hsv_shift[3] <= 0.5 and is_zero_approx(tinted.s) and item.hsv_shift[1] > 0.0)
-					else (tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1])
-				)
-				var val_val: float = (
-					item.hsv_shift[2] if (item.hsv_shift[4] <= 0.5 and is_zero_approx(tinted.v) and item.hsv_shift[2] > 0.0)
-					else (tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2])
-				)
+			)
+			var is_neutral_shift: bool = (
+				is_zero_approx(item.hsv_shift[0])
+				and is_equal_approx(item.hsv_shift[1], 0.0 if item.hsv_shift[3] > 0.5 else 1.0)
+				and is_equal_approx(item.hsv_shift[2], 0.0 if item.hsv_shift[4] > 0.5 else 1.0)
+			)
+			if not is_zero_shift and not is_neutral_shift:
+				var sat_val: float = tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1]
+				var val_val: float = tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2]
 				tinted = Color.from_hsv(
 					fposmod(tinted.h + item.hsv_shift[0], 1.0),
 					clampf(sat_val, 0.0, 1.0),

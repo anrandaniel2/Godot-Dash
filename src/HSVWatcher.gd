@@ -64,23 +64,23 @@ func update_color() -> void:
 	# Dash's "HSV enabled but untouched" encoding; multiplying by those zeros
 	# would black the object out. GDRweb's HSVShift.shiftColor returns the
 	# colour unchanged in that case, and so does the copy-HSV path.
-	if not (
+	var is_zero_shift: bool = (
 		is_zero_approx(hsv_shift[0])
 		and is_zero_approx(hsv_shift[1])
 		and is_zero_approx(hsv_shift[2])
-	):
+	)
+	var is_neutral_shift: bool = (
+		is_zero_approx(hsv_shift[0])
+		and is_equal_approx(hsv_shift[1], 1.0 if saturation_multiplies else 0.0)
+		and is_equal_approx(hsv_shift[2], 1.0 if value_multiplies else 0.0)
+	)
+	if not is_zero_shift and not is_neutral_shift:
 		if saturation_multiplies:
-			if is_zero_approx(shifted_modulate.s) and hsv_shift[1] > 0.0:
-				shifted_modulate.s = hsv_shift[1]
-			else:
-				shifted_modulate.s *= hsv_shift[1]
+			shifted_modulate.s *= hsv_shift[1]
 		else:
 			shifted_modulate.s += hsv_shift[1]
 		if value_multiplies:
-			if is_zero_approx(shifted_modulate.v) and hsv_shift[2] > 0.0:
-				shifted_modulate.v = hsv_shift[2]
-			else:
-				shifted_modulate.v *= hsv_shift[2]
+			shifted_modulate.v *= hsv_shift[2]
 		else:
 			shifted_modulate.v += hsv_shift[2]
 		shifted_modulate.h += hsv_shift[0]

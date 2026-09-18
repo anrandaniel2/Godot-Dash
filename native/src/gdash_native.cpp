@@ -303,6 +303,10 @@ static Color shift_copy_hsv(const Color &base, Object *data) {
 		return base;
 	const bool saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
 	const bool value_additive = static_cast<bool>(data->get("copy_value_additive"));
+	if (Math::is_zero_approx(hue) &&
+		Math::is_equal_approx(saturation, saturation_additive ? 0.0 : 1.0) &&
+		Math::is_equal_approx(value, value_additive ? 0.0 : 1.0))
+		return base;
 	double h = static_cast<double>(base.get_h()) + hue;
 	h -= Math::floor(h);
 	const double s = Math::clamp(
@@ -2643,11 +2647,11 @@ public:
 						h -= Math::floor(h);
 						double s = Math::clamp(
 							s_add ? static_cast<double>(source_color.get_s()) + ds
-								  : (Math::is_zero_approx(source_color.get_s()) && ds > 0.0 ? ds : static_cast<double>(source_color.get_s()) * ds),
+								  : static_cast<double>(source_color.get_s()) * ds,
 							0.0, 1.0);
 						double v = Math::clamp(
 							v_add ? static_cast<double>(source_color.get_v()) + dv
-								  : (Math::is_zero_approx(source_color.get_v()) && dv > 0.0 ? dv : static_cast<double>(source_color.get_v()) * dv),
+								  : static_cast<double>(source_color.get_v()) * dv,
 							0.0, 1.0);
 						shifted = Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), source_color.a);
 					}
@@ -3420,22 +3424,18 @@ public:
 			// object out (GDRweb's shiftColor guard; the GDScript watcher
 			// and DecorationBatch paths match this).
 			Color shifted = modulate;
-			if (!(record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f)) {
+			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
+				(record.hsv[0] == 0.0f &&
+				 record.hsv[1] == (record.sat_multiplies ? 1.0f : 0.0f) &&
+				 record.hsv[2] == (record.val_multiplies ? 1.0f : 0.0f));
+			if (!is_neutral) {
 				if (record.sat_multiplies) {
-					if (Math::is_zero_approx(shifted.get_s()) && record.hsv[1] > 0.0f) {
-						shifted.set_s(record.hsv[1]);
-					} else {
-						shifted.set_s(shifted.get_s() * record.hsv[1]);
-					}
+					shifted.set_s(shifted.get_s() * record.hsv[1]);
 				} else {
 					shifted.set_s(shifted.get_s() + record.hsv[1]);
 				}
 				if (record.val_multiplies) {
-					if (Math::is_zero_approx(shifted.get_v()) && record.hsv[2] > 0.0f) {
-						shifted.set_v(record.hsv[2]);
-					} else {
-						shifted.set_v(shifted.get_v() * record.hsv[2]);
-					}
+					shifted.set_v(shifted.get_v() * record.hsv[2]);
 				} else {
 					shifted.set_v(shifted.get_v() + record.hsv[2]);
 				}
@@ -3944,10 +3944,14 @@ public:
 			// zeros would otherwise multiply saturation and value to 0 and
 			// render the item as a black silhouette. GDRweb's
 			// HSVShift.shiftColor returns the colour unchanged then.
-			if (record.has_hsv && !(record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f)) {
+			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
+				(record.hsv[0] == 0.0f &&
+				 record.hsv[1] == (record.hsv[3] > 0.5f ? 0.0f : 1.0f) &&
+				 record.hsv[2] == (record.hsv[4] > 0.5f ? 0.0f : 1.0f));
+			if (record.has_hsv && !is_neutral) {
 				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
-				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : (Math::is_zero_approx(tinted.get_s()) && record.hsv[1] > 0.0f ? record.hsv[1] : tinted.get_s() * record.hsv[1]), 0.0f, 1.0f);
-				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : (Math::is_zero_approx(tinted.get_v()) && record.hsv[2] > 0.0f ? record.hsv[2] : tinted.get_v() * record.hsv[2]), 0.0f, 1.0f);
+				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
+				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
 				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
 			}
 			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;

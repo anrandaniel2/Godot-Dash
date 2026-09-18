@@ -33,20 +33,12 @@ static Color reference_parent_modulate(Color watcher_modulate, const WatcherStat
 		float channel_intensity, float channel_alpha) {
 	Color shifted = watcher_modulate;
 	if (state.sat_multiplies) {
-		if (std::fabs(shifted.get_s()) <= 1e-6f && state.hsv[1] > 0.0f) {
-			shifted.set_s(state.hsv[1]);
-		} else {
-			shifted.set_s(shifted.get_s() * state.hsv[1]);
-		}
+		shifted.set_s(shifted.get_s() * state.hsv[1]);
 	} else {
 		shifted.set_s(shifted.get_s() + state.hsv[1]);
 	}
 	if (state.val_multiplies) {
-		if (std::fabs(shifted.get_v()) <= 1e-6f && state.hsv[2] > 0.0f) {
-			shifted.set_v(state.hsv[2]);
-		} else {
-			shifted.set_v(shifted.get_v() * state.hsv[2]);
-		}
+		shifted.set_v(shifted.get_v() * state.hsv[2]);
 	} else {
 		shifted.set_v(shifted.get_v() + state.hsv[2]);
 	}
@@ -65,20 +57,12 @@ static Color native_parent_modulate(const Color &channel_color, float sh, float 
 	modulate.set_h(modulate.get_h() + sh);
 	Color shifted = modulate;
 	if (record.sat_multiplies) {
-		if (std::fabs(shifted.get_s()) <= 1e-6f && record.hsv[1] > 0.0f) {
-			shifted.set_s(record.hsv[1]);
-		} else {
-			shifted.set_s(shifted.get_s() * record.hsv[1]);
-		}
+		shifted.set_s(shifted.get_s() * record.hsv[1]);
 	} else {
 		shifted.set_s(shifted.get_s() + record.hsv[1]);
 	}
 	if (record.val_multiplies) {
-		if (std::fabs(shifted.get_v()) <= 1e-6f && record.hsv[2] > 0.0f) {
-			shifted.set_v(record.hsv[2]);
-		} else {
-			shifted.set_v(shifted.get_v() * record.hsv[2]);
-		}
+		shifted.set_v(shifted.get_v() * record.hsv[2]);
 	} else {
 		shifted.set_v(shifted.get_v() + record.hsv[2]);
 	}
