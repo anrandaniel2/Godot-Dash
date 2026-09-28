@@ -21,7 +21,8 @@ func _ready() -> void:
 	_on_ui_color_value_changed(Config.ui_color)
 	_on_texture_filtering_value_changed(Config.texture_filtering)
 	_on_touch_screen_mode_value_changed(Config.touch_screen_mode)
-	_on_window_mode_value_changed(Config.window_mode)
+	if not OS.has_feature("web"):
+		_on_window_mode_value_changed(Config.window_mode)
 	_on_anti_aliasing_value_changed(Config.anti_aliasing)
 	_on_render_scale_value_changed(int(Config.render_scale * 100.0))
 	%"Render Scale".set_value_no_signal(int(Config.render_scale * 100.0))

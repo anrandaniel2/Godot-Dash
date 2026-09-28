@@ -248,7 +248,9 @@ static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 	if proxy_prefix.is_empty():
 		proxy_prefix = str(ProjectSettings.get_setting("network/cors_proxy", ""))
 	if proxy_prefix.is_empty():
-		proxy_prefix = "https://proxy.corsfix.com/?"
+		proxy_prefix = "https://api.cors.lol/?url="
+	if proxy_prefix.contains("?"):
+		return proxy_prefix + endpoint.uri_encode()
 	return proxy_prefix + endpoint
 
 
@@ -321,17 +323,27 @@ static func _platform_id() -> String:
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
 	var last: Dictionary = _error("RobTop request failed.")
-	var max_attempts := NETWORK_ATTEMPTS if not OS.has_feature("web") else 2
-	for attempt in max_attempts:
-		var proxy_override := ""
-		if OS.has_feature("web") and attempt == 1:
-			proxy_override = "https://api.allorigins.win/raw?url="
+	var proxies: PackedStringArray = []
+	if OS.has_feature("web"):
+		var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+		if not custom_proxy.is_empty():
+			proxies.append(custom_proxy)
+		for fallback in ["https://api.cors.lol/?url=", "https://corsproxy.org/?url=", "https://proxy.corsfix.com/?"]:
+			if fallback not in proxies:
+				proxies.append(fallback)
+	else:
+		proxies.append("")
+
+	for attempt in proxies.size():
+		var proxy_override := proxies[attempt]
 		last = await _post_once(url, fields, proxy_override)
-		if last.ok or not bool(last.get("retryable", false)):
+		if last.ok:
 			return last
-		if attempt + 1 < max_attempts:
-			var delay := 0.5 * pow(2.0, attempt)
-			push_warning("[RobTop] transient HTTP failure; retry %d/%d in %.1fs" % [attempt + 2, max_attempts, delay])
+		if not bool(last.get("retryable", false)) and not OS.has_feature("web"):
+			return last
+		if attempt + 1 < proxies.size():
+			var delay := 0.3 * pow(1.5, attempt)
+			push_warning("[RobTop] request failed (%s); trying fallback proxy in %.1fs" % [last.get("error", ""), delay])
 			await get_tree().create_timer(delay).timeout
 	return last
 
@@ -394,15 +406,15 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 			return {
 				"ok": false,
 				"error": "RobTop connection blocked by browser CORS policy. Set network/cors_proxy or use desktop/Android.",
-				"retryable": false,
+				"retryable": OS.has_feature("web"),
 			}
 		return {"ok": false, "error": "RobTop connection failed (result %d)" % result, "retryable": true}
 	if status == 401 or status == 403:
 		return {
 			"ok": false,
-			"error": "Proxy returned HTTP %d (unauthorized). Set a custom CORS proxy in settings." % status,
+			"error": "Proxy returned HTTP %d. Set a custom CORS proxy in settings." % status,
 			"status": status,
-			"retryable": proxy_override.is_empty() and OS.has_feature("web"),
+			"retryable": OS.has_feature("web"),
 		}
 	if status < 200 or status >= 300:
 		return {"ok": false, "error": "RobTop server returned HTTP %d" % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}

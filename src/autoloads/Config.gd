@@ -209,12 +209,20 @@ func _init():
 		refresh_rate = 60
 	max_fps = config_file.get_value("Graphics", "max_fps", refresh_rate)
 	vsync = config_file.get_value("Graphics", "vsync", vsync)
-	window_mode = config_file.get_value("Graphics", "window_mode", window_mode)
+	window_mode = config_file.get_value("Graphics", "window_mode", WindowMode.WINDOWED if OS.has_feature("web") else window_mode)
+	if OS.has_feature("web") and window_mode != WindowMode.WINDOWED:
+		# Web browsers forbid entering fullscreen without a direct user gesture.
+		window_mode = WindowMode.WINDOWED
 	render_scale = config_file.get_value("Graphics", "render_scale", render_scale)
 	anti_aliasing = config_file.get_value("Graphics", "anti_aliasing", anti_aliasing)
 	texture_filtering = config_file.get_value("Graphics", "texture_filtering", texture_filtering)
 	bloom = config_file.get_value("Graphics", "bloom", bloom)
-	menu_blur = config_file.get_value("Graphics", "menu_blur", menu_blur)
+	menu_blur = config_file.get_value("Graphics", "menu_blur", false if OS.has_feature("web") else menu_blur)
+	if OS.has_feature("web"):
+		menu_blur = false
+		var blur_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
+		if blur_mat:
+			blur_mat.shader = preload("res://resources/shaders/BackgroundBlurWeb.gdshader")
 	blur_strength = config_file.get_value("Graphics", "blur_strength", blur_strength)
 	ui_color = config_file.get_value("Graphics", "ui_color", ui_color)
 	transition_duration = config_file.get_value("Graphics", "transition_duration", transition_duration)

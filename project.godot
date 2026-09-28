@@ -66,7 +66,7 @@ general/default_playback_type.web=0
 
 [network]
 
-cors_proxy="https://proxy.corsfix.com/?"
+cors_proxy="https://api.cors.lol/?url="
 
 [autoload]
 
