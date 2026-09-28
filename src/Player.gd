@@ -359,7 +359,8 @@ func refresh_textures() -> void:
 	%Trail.texture = load(Config.icon_paths[PreviewIcon.Icon.TRAIL])
 	%Trail.width = %Trail.texture.get_width()
 	%WaveTrail.default_color = Config.primary_color
-	var empty_frame := Texture2D.new()
+	var empty_frame := PlaceholderTexture2D.new()
+	empty_frame.size = Vector2(1, 1)
 	$DeathEffect.sprite_frames.add_frame(&"default", empty_frame)
 	$DeathEffect.frame = $DeathEffect.sprite_frames.get_frame_count(&"default") - 1
 	for player_icon: PlayerIcon in $Icon.get_children():

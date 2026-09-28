@@ -18,7 +18,7 @@ static func backend() -> Object:
 		_checked = true
 		if Config.use_native_core and ClassDB.class_exists(&"GdashNative"):
 			_backend = ClassDB.instantiate(&"GdashNative")
-		elif Config.use_native_core:
+		elif Config.use_native_core and not OS.has_feature("web"):
 			var manifest := ConfigFile.new()
 			var manifest_error := manifest.load(MANIFEST_PATH)
 			var library_keys := manifest.get_section_keys("libraries") if manifest.has_section("libraries") else PackedStringArray()

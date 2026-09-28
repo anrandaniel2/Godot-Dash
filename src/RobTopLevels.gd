@@ -115,10 +115,9 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var encoded: String = values.get("4", "")
 	if encoded.is_empty():
 		return _error("RobTop returned level %d without compressed object data" % level_id)
-	# Online imports are required to use the dedicated C++ decoder/parser. Do
-	# not silently fall back to GDScript when an APK packaged its native library
-	# incorrectly; that hid the actual deployment fault in earlier device logs.
-	if not NativeCore.available():
+	# Online imports on desktop/mobile are required to use the dedicated C++
+	# decoder/parser. Web builds use the pure GDScript parser fallback.
+	if not NativeCore.available() and not OS.has_feature("web"):
 		return _error("The online C++ level parser is unavailable in this build. Reinstall the latest APK.")
 	var level_string := GMD.decode_level_string(encoded)
 	if level_string.is_empty():
@@ -246,7 +245,7 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 func _download_audio_once(url: String, destination: String) -> Dictionary:
 	print("[RobTop] GET custom song")
 	var request := HTTPRequest.new()
-	request.use_threads = true
+	request.use_threads = not OS.has_feature("web")
 	request.timeout = 30.0
 	request.max_redirects = 5
 	request.download_file = destination
@@ -269,6 +268,9 @@ func _download_audio_once(url: String, destination: String) -> Dictionary:
 		return {"ok": false, "error": "Music download timed out after 30 seconds.", "retryable": true}
 	request.queue_free()
 	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
+		var is_cors := OS.has_feature("web") and int(completed[0]) == HTTPRequest.RESULT_CANT_CONNECT
+		if is_cors:
+			return {"ok": false, "error": "Music download blocked by browser CORS policy.", "retryable": false}
 		return {"ok": false, "error": "Music download failed (result %d)." % int(completed[0]), "retryable": true}
 	var status := int(completed[1])
 	if status < 200 or status >= 300:
@@ -325,9 +327,8 @@ func _post_once(url: String, fields: Dictionary) -> Dictionary:
 	# DNS and TLS connection setup can block the main thread when HTTPRequest
 	# uses its default non-threaded mode. On affected Android networks that
 	# froze both the loading UI and our watchdog before either could update.
-	# Run transport work off the render/UI thread so timeout and cancellation
-	# remain functional even if Cloudflare's connection stalls.
-	request.use_threads = true
+	# On the Web platform, HTTPClientWeb does not support blocking mode.
+	request.use_threads = not OS.has_feature("web")
 	request.timeout = 15.0
 	add_child(request)
 	var completed: Array = []
@@ -367,6 +368,13 @@ func _post_once(url: String, fields: Dictionary) -> Dictionary:
 	var bytes: PackedByteArray = completed[3]
 	print("[RobTop] result=%d HTTP=%d bytes=%d" % [result, status, bytes.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
+		var is_cors := OS.has_feature("web") and result == HTTPRequest.RESULT_CANT_CONNECT
+		if is_cors:
+			return {
+				"ok": false,
+				"error": "RobTop connection blocked by browser CORS policy. Direct boomlings requests require desktop/Android or a CORS proxy.",
+				"retryable": false,
+			}
 		return {"ok": false, "error": "RobTop connection failed (result %d)" % result, "retryable": true}
 	if status < 200 or status >= 300:
 		return {"ok": false, "error": "RobTop server returned HTTP %d" % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
