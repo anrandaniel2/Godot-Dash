@@ -242,13 +242,14 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 	return last
 
 
-static func _resolve_url(endpoint: String) -> String:
+static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 	if not OS.has_feature("web"):
 		return endpoint
-	var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
-	if not custom_proxy.is_empty():
-		return custom_proxy + endpoint.uri_encode()
-	return "https://corsproxy.io/?url=" + endpoint.uri_encode()
+	if proxy_prefix.is_empty():
+		proxy_prefix = str(ProjectSettings.get_setting("network/cors_proxy", ""))
+	if proxy_prefix.is_empty():
+		proxy_prefix = "https://proxy.corsfix.com/?"
+	return proxy_prefix + endpoint
 
 
 func _download_audio_once(url: String, destination: String) -> Dictionary:
@@ -320,22 +321,26 @@ static func _platform_id() -> String:
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
 	var last: Dictionary = _error("RobTop request failed.")
-	for attempt in NETWORK_ATTEMPTS:
-		last = await _post_once(url, fields)
+	var max_attempts := NETWORK_ATTEMPTS if not OS.has_feature("web") else 2
+	for attempt in max_attempts:
+		var proxy_override := ""
+		if OS.has_feature("web") and attempt == 1:
+			proxy_override = "https://api.allorigins.win/raw?url="
+		last = await _post_once(url, fields, proxy_override)
 		if last.ok or not bool(last.get("retryable", false)):
 			return last
-		if attempt + 1 < NETWORK_ATTEMPTS:
+		if attempt + 1 < max_attempts:
 			var delay := 0.5 * pow(2.0, attempt)
-			push_warning("[RobTop] transient HTTP failure; retry %d/%d in %.1fs" % [attempt + 2, NETWORK_ATTEMPTS, delay])
+			push_warning("[RobTop] transient HTTP failure; retry %d/%d in %.1fs" % [attempt + 2, max_attempts, delay])
 			await get_tree().create_timer(delay).timeout
 	return last
 
 
-func _post_once(url: String, fields: Dictionary) -> Dictionary:
+func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:
 	# Keep diagnostics metadata-only: never log request bodies or credentials.
 	# Android logcat tags Godot's print output as `godot`, making these lines
 	# usable even when package-name filtering only captures system messages.
-	var target_url := _resolve_url(url)
+	var target_url := _resolve_url(url, proxy_override)
 	print("[RobTop] POST %s" % target_url)
 	var request := HTTPRequest.new()
 	# DNS and TLS connection setup can block the main thread when HTTPRequest
@@ -388,10 +393,17 @@ func _post_once(url: String, fields: Dictionary) -> Dictionary:
 		if is_cors:
 			return {
 				"ok": false,
-				"error": "RobTop connection blocked by browser CORS policy. Direct boomlings requests require desktop/Android or a CORS proxy.",
+				"error": "RobTop connection blocked by browser CORS policy. Set network/cors_proxy or use desktop/Android.",
 				"retryable": false,
 			}
 		return {"ok": false, "error": "RobTop connection failed (result %d)" % result, "retryable": true}
+	if status == 401 or status == 403:
+		return {
+			"ok": false,
+			"error": "Proxy returned HTTP %d (unauthorized). Set a custom CORS proxy in settings." % status,
+			"status": status,
+			"retryable": proxy_override.is_empty() and OS.has_feature("web"),
+		}
 	if status < 200 or status >= 300:
 		return {"ok": false, "error": "RobTop server returned HTTP %d" % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
 	return {"ok": true, "text": bytes.get_string_from_utf8().strip_edges()}

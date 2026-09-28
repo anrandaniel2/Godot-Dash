@@ -64,6 +64,10 @@ config/windows_native_icon="res://assets/logo/logo.ico"
 buses/default_bus_layout="uid://htget5gliwyv"
 general/default_playback_type.web=0
 
+[network]
+
+cors_proxy="https://proxy.corsfix.com/?"
+
 [autoload]
 
 LevelManager="*res://src/autoloads/LevelManager.gd"
