@@ -217,9 +217,8 @@ func _init():
 	anti_aliasing = config_file.get_value("Graphics", "anti_aliasing", anti_aliasing)
 	texture_filtering = config_file.get_value("Graphics", "texture_filtering", texture_filtering)
 	bloom = config_file.get_value("Graphics", "bloom", bloom)
-	menu_blur = config_file.get_value("Graphics", "menu_blur", false if OS.has_feature("web") else menu_blur)
+	menu_blur = config_file.get_value("Graphics", "menu_blur", menu_blur)
 	if OS.has_feature("web"):
-		menu_blur = false
 		var blur_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
 		if blur_mat:
 			blur_mat.shader = preload("res://resources/shaders/BackgroundBlurWeb.gdshader")

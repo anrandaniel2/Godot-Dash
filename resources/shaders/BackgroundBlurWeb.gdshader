@@ -1,6 +1,9 @@
 shader_type canvas_item;
 
+global uniform bool menu_blur = true;
+global uniform float blur_strength : hint_range(0.0, 5) = 3.0;
 global uniform vec4 ui_color : source_color;
+uniform sampler2D SCREEN_TEXTURE : hint_screen_texture, filter_linear;
 
 vec3 rgb2hsv(vec3 c) {
 	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -14,8 +17,26 @@ vec3 rgb2hsv(vec3 c) {
 
 void fragment() {
 	float use_original_color = step(rgb2hsv(COLOR.xyz).z, 0.3);
-	if (use_original_color != 0.0) {
-		COLOR.rgb = ui_color.rgb;
-		COLOR.a *= ui_color.a;
+	if (menu_blur) {
+		float radius = blur_strength * 4.0 * smoothstep(0.0, 1.0, COLOR.a);
+		vec2 ps = SCREEN_PIXEL_SIZE * radius;
+		vec4 blurred = texture(SCREEN_TEXTURE, SCREEN_UV) * 0.22;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2(-ps.x, -ps.y)) * 0.10;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2( ps.x, -ps.y)) * 0.10;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2(-ps.x,  ps.y)) * 0.10;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2( ps.x,  ps.y)) * 0.10;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2(-ps.x * 2.2, 0.0)) * 0.095;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2( ps.x * 2.2, 0.0)) * 0.095;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2(0.0, -ps.y * 2.2)) * 0.095;
+		blurred += texture(SCREEN_TEXTURE, SCREEN_UV + vec2(0.0,  ps.y * 2.2)) * 0.095;
+		blurred *= mix(vec4(1.0), ui_color, COLOR.a);
+
+		COLOR.rgb = mix(COLOR.rgb, blurred.rgb, use_original_color);
+		COLOR.a = mix(COLOR.a, 1.0, use_original_color);
+	} else {
+		if (use_original_color != 0.0) {
+			COLOR.rgb = ui_color.rgb;
+			COLOR.a *= ui_color.a;
+		}
 	}
 }
