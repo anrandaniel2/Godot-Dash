@@ -307,8 +307,9 @@ func _init():
 
 
 func _ready() -> void:
-	if window_mode == WindowMode.WINDOWED:
-		get_tree().root.set_size(saved_window_size)
+	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
+		if saved_window_size.x > 0 and saved_window_size.y > 0:
+			get_tree().root.set_size(saved_window_size)
 
 
 func _notification(what):

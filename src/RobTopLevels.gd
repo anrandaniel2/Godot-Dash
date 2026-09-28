@@ -159,6 +159,10 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	if OS.has_feature("web"):
+		var web_res := await _download_gdbrowser(level_id, summary)
+		if web_res.ok:
+			return web_res
+		push_warning("[RobTop] Web GDBrowser download fallback to GDHistory: %s" % str(web_res.get("error", "")))
 		var gd_res := await _download_gdhistory(level_id, summary)
 		if gd_res.ok:
 			return gd_res
@@ -239,8 +243,67 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	}
 
 
+func _download_gdbrowser(level_id: int, summary: Dictionary = {}) -> Dictionary:
+	var url := "https://gdbrowser.com/api/level/%d?download=1" % level_id
+	print("[RobTop] Web level download via GDBrowser: %s" % url)
+	var res := await _get_json(url)
+	if not res.ok:
+		return _error("GDBrowser download request failed: %s" % str(res.get("error", "")))
+	var data: Variant = res.get("data")
+	if not (data is Dictionary):
+		return _error("Level %d was not found on GDBrowser" % level_id)
+	var dict_data: Dictionary = data
+	var encoded: String = str(dict_data.get("data", "")).strip_edges()
+	if encoded.is_empty() or encoded == "-1":
+		return _error("Level %d has no downloadable data on GDBrowser" % level_id)
+
+	var level_string := GMD.decode_level_string(encoded)
+	if level_string.is_empty():
+		return _error("Level %d data could not be decompressed" % level_id)
+
+	var level_name: String = str(dict_data.get("name", summary.get("name", "Level %d" % level_id)))
+	var report := GMDConverter.ImportReport.new()
+	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
+	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
+	print("[RobTop] GDBrowser conversion: %s" % report.summary())
+	if imported_objects.is_empty():
+		return _error("Level %d contains no objects supported by parser (%s)" % [level_id, report.summary()])
+
+	level_data.name = level_name
+	level_data.creator = str(dict_data.get("author", summary.get("creator", "Unknown")))
+	level_data.description = str(dict_data.get("description", summary.get("description", "")))
+	level_data.rating = -1
+	level_data["robtop_level_id"] = level_id
+	level_data["robtop_downloads"] = int(dict_data.get("downloads", summary.get("downloads", 0)))
+	level_data["robtop_likes"] = int(dict_data.get("likes", summary.get("likes", 0)))
+
+	level_data.song_start_time = maxf(0.0, float(level_data.get("song_start_time", 0.0)))
+	var audio_warning := ""
+	var custom_song_id := int(dict_data.get("customSong", summary.get("custom_song_id", 0)))
+	var official_song_id := int(dict_data.get("officialSong", summary.get("official_song_id", 0)))
+	var song_link: String = str(dict_data.get("songLink", summary.get("song_link", "")))
+
+	if custom_song_id > 0:
+		var song := await _download_custom_song(custom_song_id, song_link)
+		if song.ok:
+			level_data.song_path = song.file_name
+		else:
+			audio_warning = song.error
+	elif official_song_id > 0:
+		audio_warning = "This level uses built-in Geometry Dash song %d, which is not included in Godot Dash." % official_song_id
+
+	return {
+		"ok": true,
+		"level_data": level_data,
+		"report": report,
+		"audio_warning": audio_warning,
+	}
+
+
 func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var info_url := "https://history.geometrydash.eu/api/v1/level/%d/" % level_id
+	if OS.has_feature("web"):
+		info_url = "https://api.allorigins.win/raw?url=" + info_url.uri_encode()
 	print("[RobTop] Web level download via GDHistory: %s" % info_url)
 	var info_res := await _get_json(info_url)
 	if not info_res.ok:
@@ -262,6 +325,8 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		return _error("Level %d has no downloadable string in online archive" % level_id)
 
 	var download_url := "https://history.geometrydash.eu/level/%d/%d/download/" % [level_id, chosen_record_id]
+	if OS.has_feature("web"):
+		download_url = "https://api.allorigins.win/raw?url=" + download_url.uri_encode()
 	print("[RobTop] Fetching level plist: %s" % download_url)
 	var text_res := await _get_text(download_url)
 	if not text_res.ok:
