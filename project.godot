@@ -62,6 +62,7 @@ config/windows_native_icon="res://assets/logo/logo.ico"
 [audio]
 
 buses/default_bus_layout="uid://htget5gliwyv"
+general/default_playback_type.web=0
 
 [autoload]
 

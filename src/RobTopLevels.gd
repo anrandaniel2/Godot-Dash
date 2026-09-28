@@ -242,8 +242,18 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 	return last
 
 
+static func _resolve_url(endpoint: String) -> String:
+	if not OS.has_feature("web"):
+		return endpoint
+	var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+	if not custom_proxy.is_empty():
+		return custom_proxy + endpoint.uri_encode()
+	return "https://corsproxy.io/?url=" + endpoint.uri_encode()
+
+
 func _download_audio_once(url: String, destination: String) -> Dictionary:
-	print("[RobTop] GET custom song")
+	var target_url := _resolve_url(url)
+	print("[RobTop] GET custom song from %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
 	request.timeout = 30.0
@@ -255,7 +265,10 @@ func _download_audio_once(url: String, destination: String) -> Dictionary:
 	request.request_completed.connect(func(result: int, status: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
 		completed.assign([result, status])
 	)
-	var error := request.request(url, PackedStringArray(["User-Agent: Godot-Dash/1", "Accept: audio/*"]))
+	var headers := PackedStringArray(["Accept: audio/*"])
+	if not OS.has_feature("web"):
+		headers.append("User-Agent: Godot-Dash/1")
+	var error := request.request(target_url, headers)
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start the music download (error %d)." % error)
@@ -322,7 +335,8 @@ func _post_once(url: String, fields: Dictionary) -> Dictionary:
 	# Keep diagnostics metadata-only: never log request bodies or credentials.
 	# Android logcat tags Godot's print output as `godot`, making these lines
 	# usable even when package-name filtering only captures system messages.
-	print("[RobTop] POST %s" % url)
+	var target_url := _resolve_url(url)
+	print("[RobTop] POST %s" % target_url)
 	var request := HTTPRequest.new()
 	# DNS and TLS connection setup can block the main thread when HTTPRequest
 	# uses its default non-threaded mode. On affected Android networks that
@@ -338,13 +352,15 @@ func _post_once(url: String, fields: Dictionary) -> Dictionary:
 	var body_parts := PackedStringArray()
 	for key: String in fields:
 		body_parts.append("%s=%s" % [key.uri_encode(), str(fields[key]).uri_encode()])
+	var headers := PackedStringArray([
+		"Content-Type: application/x-www-form-urlencoded",
+		"Accept: text/plain",
+	])
+	if not OS.has_feature("web"):
+		headers.append("User-Agent:") # RobTop rejects many non-empty user agents on native sockets.
 	var error := request.request(
-			url,
-			PackedStringArray([
-				"Content-Type: application/x-www-form-urlencoded",
-				"User-Agent:", # RobTop rejects many non-empty user agents.
-				"Accept: text/plain",
-			]),
+			target_url,
+			headers,
 			HTTPClient.METHOD_POST,
 			"&".join(body_parts),
 	)

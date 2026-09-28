@@ -22,11 +22,13 @@ func _on_config_menu_loop_changed(menu_loop: String) -> void:
 	var seek_to: float = get_playback_position() + AudioServer.get_time_since_last_mix()
 	if menu_loop.is_empty():
 		stream = default_menu_loop
-		playing = was_playing
-		seek(seek_to)
+		if was_playing:
+			playing = true
+			seek(seek_to)
 		return
 	AssetManager.load_song_threaded_request(menu_loop)
 	stream = AssetManager.load_song_threaded_get(menu_loop)
-	playing = was_playing
-	seek(seek_to)
+	if was_playing:
+		playing = true
+		seek(seek_to)
 	finished.connect(play)
