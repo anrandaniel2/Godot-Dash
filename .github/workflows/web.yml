@@ -1,0 +1,164 @@
+name: Build Web HTML5
+
+# Builds a standalone HTML5 Web package automatically.
+#
+#   - Every push to main / arena branches (and manual dispatch) exports
+#     the HTML5 package and uploads it as a workflow artifact.
+#     Grab it from Actions run -> Artifacts -> godot-dash-web-html5.
+#   - Every successful export also updates the rolling "web-html5" prerelease
+#     with the newest ZIP:
+#       https://github.com/anrandaniel2/Godot-Dash/releases/download/web-html5/godot-dash-web-html5.zip
+#   - Multi-threading is enabled (variant/thread_support=true) with PWA
+#     Cross-Origin Isolation headers for SharedArrayBuffer support.
+#   - Mobile renderer is requested (renderer/rendering_method.web="mobile")
+#     with automatic fallback to Compatibility (WebGL 2.0) when needed.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, "arena/**"]
+    tags: ["release*"]
+
+concurrency:
+  group: web-html-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_TPZ_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  WEB_DIR: export/Web
+  ZIP_NAME: godot-dash-web-html5.zip
+
+jobs:
+  web-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------- Godot
+      - name: Cache Godot binary
+        uses: actions/cache@v4
+        id: cache-godot
+        with:
+          path: godot-bin
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot binary
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$GODOT_BIN_URL" -O godot.zip
+          mkdir -p godot-bin
+          unzip -q -o godot.zip -d godot-bin
+          rm -f godot.zip
+          chmod +x "$GODOT_BIN"
+
+      - name: Cache export templates
+        uses: actions/cache@v4
+        id: cache-templates
+        with:
+          path: godot-export-templates.tpz
+          key: godot-templates-${{ env.GODOT_VERSION }}
+
+      - name: Download export templates
+        if: steps.cache-templates.outputs.cache-hit != 'true'
+        run: wget -q "$GODOT_TPZ_URL" -O godot-export-templates.tpz
+
+      - name: Install export templates
+        run: |
+          set -euo pipefail
+          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+          mkdir -p "$TPZ_DIR"
+          unzip -q -o godot-export-templates.tpz -d "$TPZ_DIR"
+          if [ -d "$TPZ_DIR/templates" ]; then
+            mv -f "$TPZ_DIR"/templates/* "$TPZ_DIR"/
+            rmdir "$TPZ_DIR/templates"
+          fi
+          ls -1 "$TPZ_DIR" | head -n 20
+
+      # -------------------------------------------------------- Project Build
+      - name: Import project resources
+        run: |
+          set -euo pipefail
+          "$GODOT_BIN" --headless --editor --quit
+
+      - name: Export Web (multi-threaded, mobile renderer if possible)
+        run: |
+          set -euo pipefail
+          mkdir -p "$WEB_DIR"
+          "$GODOT_BIN" --headless --export-release "Web" "$WEB_DIR/index.html" || \
+          "$GODOT_BIN" --headless --export-debug "Web" "$WEB_DIR/index.html"
+          echo "Web export folder contents:"
+          ls -la "$WEB_DIR"
+
+      - name: Verify Web Export Artifacts
+        run: |
+          set -euo pipefail
+          test -f "$WEB_DIR/index.html"
+          test -f "$WEB_DIR/index.js"
+          test -f "$WEB_DIR/index.pck"
+          test -f "$WEB_DIR/index.wasm"
+          echo "Verified core Web files exist."
+          if ls "$WEB_DIR"/*worker* 1> /dev/null 2>&1; then
+            echo "Multi-threaded worker / service worker files:"
+            ls -la "$WEB_DIR"/*worker*
+          fi
+
+      - name: Package Web HTML5 zip
+        run: |
+          set -euo pipefail
+          cd "$WEB_DIR"
+          zip -r "../../$ZIP_NAME" ./*
+          cd ../..
+          ls -lh "$ZIP_NAME"
+
+      # -------------------------------------------------------------- Outputs
+      - name: Upload Web HTML5 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-dash-web-html5-${{ github.sha }}
+          path: ${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Attach Web zip to release (release* tags only)
+        if: startsWith(github.ref, 'refs/tags/release')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+          generate_release_notes: true
+
+      # ------------------------------------------------ Rolling debug release
+      - name: Publish rolling web-html5 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="web-html5"
+          ARTIFACT_NAME="godot-dash-web-html5-${GITHUB_SHA::8}.zip"
+          cp "$ZIP_NAME" "$ARTIFACT_NAME"
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "Automatic Web (HTML5) multi-threaded build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
+            echo ""
+            echo "Download and unzip to host on any web server or static hosting service."
+            echo "- Multi-threading: Enabled (SharedArrayBuffer)"
+            echo "- Renderer: Mobile renderer preferred, with fallback to WebGL 2.0 (Compatibility)"
+            echo "- Cross-Origin Isolation: PWA service worker enabled"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$NOTES_FILE"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
+          fi
+          gh release create "$RELEASE_TAG" "$ARTIFACT_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Web HTML5 build — $GITHUB_REF_NAME ${GITHUB_SHA::8}" \
+            --notes-file "$NOTES_FILE" \
+            --prerelease
+          rm -f "$NOTES_FILE" "$ARTIFACT_NAME"
+          echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
