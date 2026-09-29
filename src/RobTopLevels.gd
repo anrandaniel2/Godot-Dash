@@ -158,45 +158,42 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## Downloads and converts one public GD level. The returned `level_data` is the
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	if OS.has_feature("web"):
-		var web_res := await _download_gdbrowser(level_id, summary)
-		if web_res.ok:
-			return web_res
-		push_warning("[RobTop] Web GDBrowser download fallback to GDHistory: %s" % str(web_res.get("error", "")))
-		var gd_res := await _download_gdhistory(level_id, summary)
-		if gd_res.ok:
-			return gd_res
-		push_warning("[RobTop] Web GDHistory download fallback to boomlings: %s" % str(gd_res.get("error", "")))
+	var response := await _download_direct(level_id, summary)
+	if response.ok:
+		return response
+	push_warning("[RobTop] downloadGJLevel22 failed (%s); trying GDHistory fallback" % str(response.get("error", "")))
+	var gd_res := await _download_gdhistory(level_id, summary)
+	if gd_res.ok:
+		return gd_res
+	return response
 
-	var response := await _post(DOWNLOAD_URL, {
+
+func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
+	# Canonical RobTop level download endpoint documented by boomlings.dev:
+	# downloadGJLevel22.php accepts POST with levelID, secret, gameVersion, binaryVersion.
+	var fields := {
+		"levelID": str(level_id),
 		"secret": COMMON_SECRET,
 		"gameVersion": GAME_VERSION,
 		"binaryVersion": _binary_version(),
-		"dvs": _platform_id(),
-		"levelID": str(level_id),
-		"inc": "0",
-		"extras": "0",
-	})
+	}
+	var response := await _post(DOWNLOAD_URL, fields)
 	if not response.ok:
 		return response
 	var text: String = response.text
 	if text == "-1" or text.is_empty():
 		return _error("Level %d was not found or is unavailable" % level_id)
-	# downloadGJLevel22 is documented as
-	#   level#hash1#hash2#user#songs#extraArtistNames
-	# (only the first three sections on older binary versions). Reject a
-	# truncated response instead of accidentally treating metadata as level data.
+
+	# downloadGJLevel22 response format per boomlings.dev:
+	#   {level}#{hash1}#{hash2}#{user}#{songs}#{extraArtistNames}
 	var sections := text.split("#", true)
-	if sections.size() < 3 or not _looks_like_sha1(sections[1]) or not _looks_like_sha1(sections[2]):
-		return _error("RobTop returned a malformed or incomplete level download")
+	if sections.is_empty() or sections[0].is_empty():
+		return _error("RobTop returned an empty level response")
 	var values := _pairs(sections[0], ":")
 	var encoded: String = values.get("4", "")
 	if encoded.is_empty():
 		return _error("RobTop returned level %d without compressed object data" % level_id)
-	# Online imports on desktop/mobile are required to use the dedicated C++
-	# decoder/parser. Web builds use the pure GDScript parser fallback.
-	if not NativeCore.available() and not OS.has_feature("web"):
-		return _error("The online C++ level parser is unavailable in this build. Reinstall the latest APK.")
+
 	var level_string := GMD.decode_level_string(encoded)
 	if level_string.is_empty():
 		return _error("RobTop returned level %d without readable object data" % level_id)
@@ -207,101 +204,34 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
 	print("[RobTop] native conversion: %s" % report.summary())
 	if imported_objects.is_empty():
-		return _error("Level %d contains no objects supported by the online C++ parser (%s)" % [level_id, report.summary()])
+		return _error("Level %d contains no objects supported by the online parser (%s)" % [level_id, report.summary()])
+
 	level_data.name = level_name
-	level_data.creator = summary.get("creator", "Unknown")
+	var creator_name: String = str(summary.get("creator", ""))
+	if (creator_name.is_empty() or creator_name == "Unknown") and sections.size() > 3 and not sections[3].is_empty():
+		var user_parts := sections[3].split(":")
+		if user_parts.size() >= 2 and not user_parts[1].is_empty():
+			creator_name = user_parts[1]
+	level_data.creator = creator_name if not creator_name.is_empty() else "Unknown"
 	level_data.description = _decode_base64(values.get("3", ""))
 	level_data.rating = -1
 	level_data["robtop_level_id"] = level_id
 	level_data["robtop_downloads"] = int(values.get("10", summary.get("downloads", 0)))
 	level_data["robtop_likes"] = int(values.get("14", summary.get("likes", 0)))
 
-	# The object string only contains timing. Song identity lives in the level
-	# response (12 = built-in song, 35 = custom/Newgrounds song), so importing
-	# objects alone necessarily produced silent online levels. Download custom
-	# music anonymously from the URL RobTop returns and point the ordinary level
-	# player at the cached file. A music failure does not discard a valid level.
 	level_data.song_start_time = maxf(0.0, float(level_data.get("song_start_time", 0.0)))
 	var audio_warning := ""
 	var custom_song_id := int(values.get("35", summary.get("custom_song_id", 0)))
-	var official_song_id := int(values.get("12", "0"))
-	var song_link: String = summary.get("song_link", "")
-	if custom_song_id > 0:
-		var song := await _download_custom_song(custom_song_id, song_link)
-		if song.ok:
-			level_data.song_path = song.file_name
-		else:
-			audio_warning = song.error
-	elif official_song_id > 0:
-		audio_warning = "This level uses built-in Geometry Dash song %d, which is not included in Godot Dash." % official_song_id
+	var official_song_id := int(values.get("12", summary.get("official_song_id", 0)))
+	var song_link: String = str(summary.get("song_link", ""))
 
-	return {
-		"ok": true,
-		"level_data": level_data,
-		"report": report,
-		"audio_warning": audio_warning,
-	}
-
-
-func _download_gdbrowser(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	# 1. GDBrowser official level analysis endpoint (/api/analyze/id)
-	# Per GDBrowser documentation: returns decrypted plain-text level data under 'data',
-	# level metadata under 'level', and settings under 'settings'.
-	var analyze_url := "https://gdbrowser.com/api/analyze/%d" % level_id
-	print("[RobTop] Web level download via GDBrowser analyze: %s" % analyze_url)
-	var res := await _get_json(analyze_url)
-	var dict_data: Dictionary = {}
-	if res.ok and (res.data is Dictionary) and (res.data.has("data") or res.data.has("level")):
-		dict_data = res.data
-	else:
-		# Fallback: /api/level/id?download
-		var level_url := "https://gdbrowser.com/api/level/%d?download" % level_id
-		print("[RobTop] GDBrowser analyze fallback to level endpoint: %s" % level_url)
-		var level_res := await _get_json(level_url)
-		if level_res.ok and (level_res.data is Dictionary):
-			dict_data = level_res.data
-		else:
-			return _error("GDBrowser download request failed: %s" % str(res.get("error", "")))
-
-	var raw_data: String = ""
-	if dict_data.has("data"):
-		raw_data = str(dict_data.get("data", "")).strip_edges()
-	elif dict_data.get("level") is Dictionary:
-		raw_data = str(dict_data["level"].get("data", "")).strip_edges()
-
-	if raw_data.is_empty() or raw_data == "-1":
-		return _error("Level %d has no downloadable data on GDBrowser" % level_id)
-
-	var level_string := GMD.decode_level_string(raw_data)
-	if level_string.is_empty():
-		return _error("Level %d data could not be parsed" % level_id)
-
-	var level_info: Dictionary = dict_data.get("level", {}) if (dict_data.get("level") is Dictionary) else dict_data
-	var level_name: String = str(level_info.get("name", summary.get("name", "Level %d" % level_id)))
-	var report := GMDConverter.ImportReport.new()
-	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
-	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
-	print("[RobTop] GDBrowser conversion: %s" % report.summary())
-	if imported_objects.is_empty():
-		return _error("Level %d contains no objects supported by parser (%s)" % [level_id, report.summary()])
-
-	level_data.name = level_name
-	level_data.creator = str(level_info.get("author", summary.get("creator", "Unknown")))
-	level_data.description = str(level_info.get("description", summary.get("description", "")))
-	level_data.rating = -1
-	level_data["robtop_level_id"] = level_id
-	level_data["robtop_downloads"] = int(summary.get("downloads", level_info.get("downloads", 0)))
-	level_data["robtop_likes"] = int(summary.get("likes", level_info.get("likes", 0)))
-
-	var song_offset := 0.0
-	if dict_data.has("settings") and (dict_data["settings"] is Dictionary):
-		song_offset = float(dict_data["settings"].get("songOffset", 0.0))
-	level_data.song_start_time = maxf(song_offset, float(level_data.get("song_start_time", 0.0)))
-
-	var audio_warning := ""
-	var custom_song_id := int(summary.get("custom_song_id", level_info.get("customSong", 0)))
-	var official_song_id := int(summary.get("official_song_id", level_info.get("officialSong", 0)))
-	var song_link: String = str(summary.get("song_link", level_info.get("songLink", "")))
+	# Parse song link from sections[4] ({songs}) of downloadGJLevel22 response if available:
+	if song_link.is_empty() and sections.size() > 4 and not sections[4].is_empty():
+		for raw_song in sections[4].split("~:~", false):
+			var s_pairs := _pairs(raw_song, "~|~")
+			if int(s_pairs.get("1", "0")) == custom_song_id:
+				song_link = s_pairs.get("10", "").uri_decode()
+				break
 
 	if custom_song_id > 0:
 		var song := await _download_custom_song(custom_song_id, song_link)
@@ -522,16 +452,13 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 	if not OS.has_feature("web"):
 		return endpoint
-	# CDNs and open APIs (gdbrowser.com, history.geometrydash.eu, b-cdn.net) provide
-	# full CORS headers natively. Only boomlings.com requires a CORS proxy on Web.
 	if "boomlings.com" not in endpoint:
 		return endpoint
 	if proxy_prefix.is_empty():
-		proxy_prefix = str(ProjectSettings.get_setting("network/cors_proxy", ""))
-	if proxy_prefix.is_empty():
-		proxy_prefix = "https://api.cors.lol/?url="
-	if proxy_prefix.contains("?"):
-		return proxy_prefix + endpoint.uri_encode()
+		return endpoint
+	# Modern CORS proxies (corsfix, killcors, cors.x2u.in, thingproxy)
+	# take the target URL as-is (e.g. https://proxy.corsfix.com/?https://www.boomlings.com/...)
+	# URI-encoding the scheme/slashes creates invalid query syntax and triggers 400 Bad Request.
 	return proxy_prefix + endpoint
 
 
@@ -648,8 +575,6 @@ static func _platform_id() -> String:
 		return "3"
 	if OS.has_feature("macos"):
 		return "8"
-	# RobTop has no Linux platform value. Anonymous reads do not require dvs;
-	# Windows is the closest desktop wire format and the field is optional.
 	return "3"
 
 
@@ -660,7 +585,15 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
 		if not custom_proxy.is_empty():
 			proxies.append(custom_proxy)
-		for fallback in ["https://api.cors.lol/?url=", "https://corsproxy.org/?url=", "https://proxy.corsfix.com/?"]:
+		for fallback in [
+			"https://proxy.corsfix.com/?",
+			"https://proxy.killcors.com?url=",
+			"https://cors.x2u.in/",
+			"https://thingproxy.freeboard.io/fetch/",
+			"https://api.cors.lol/?url=",
+			"https://corsproxy.org/?url=",
+			"",
+		]:
 			if fallback not in proxies:
 				proxies.append(fallback)
 	else:
@@ -674,25 +607,18 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		if not bool(last.get("retryable", false)) and not OS.has_feature("web"):
 			return last
 		if attempt + 1 < proxies.size():
-			var delay := 0.3 * pow(1.5, attempt)
+			var delay := 0.2 * pow(1.4, attempt)
 			push_warning("[RobTop] request failed (%s); trying fallback proxy in %.1fs" % [last.get("error", ""), delay])
 			await get_tree().create_timer(delay).timeout
 	return last
 
 
 func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:
-	# Keep diagnostics metadata-only: never log request bodies or credentials.
-	# Android logcat tags Godot's print output as `godot`, making these lines
-	# usable even when package-name filtering only captures system messages.
 	var target_url := _resolve_url(url, proxy_override)
 	print("[RobTop] POST %s" % target_url)
 	var request := HTTPRequest.new()
-	# DNS and TLS connection setup can block the main thread when HTTPRequest
-	# uses its default non-threaded mode. On affected Android networks that
-	# froze both the loading UI and our watchdog before either could update.
-	# On the Web platform, HTTPClientWeb does not support blocking mode.
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 15.0
+	request.timeout = 25.0
 	add_child(request)
 	var completed: Array = []
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
@@ -703,10 +629,9 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 		body_parts.append("%s=%s" % [key.uri_encode(), str(fields[key]).uri_encode()])
 	var headers := PackedStringArray([
 		"Content-Type: application/x-www-form-urlencoded",
-		"Accept: text/plain",
 	])
 	if not OS.has_feature("web"):
-		headers.append("User-Agent:") # RobTop rejects many non-empty user agents on native sockets.
+		headers.append("User-Agent:") # RobTop requires empty user agent per boomlings.dev.
 	var error := request.request(
 			target_url,
 			headers,
@@ -718,14 +643,14 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 		push_warning("[RobTop] request could not start: error %d" % error)
 		return _error("Could not start the RobTop request (error %d)" % error)
 
-	var deadline := Time.get_ticks_msec() + 15_000
+	var deadline := Time.get_ticks_msec() + 25_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		push_warning("[RobTop] timed out after 15 seconds: %s" % url)
-		return {"ok": false, "error": "RobTop did not respond within 15 seconds", "retryable": true}
+		push_warning("[RobTop] timed out after 25 seconds: %s" % url)
+		return {"ok": false, "error": "RobTop did not respond within 25 seconds", "retryable": true}
 
 	request.queue_free()
 	var result: int = completed[0]
@@ -737,19 +662,24 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 		if is_cors:
 			return {
 				"ok": false,
-				"error": "RobTop connection blocked by browser CORS policy. Set network/cors_proxy or use desktop/Android.",
-				"retryable": OS.has_feature("web"),
+				"error": "RobTop connection blocked by browser CORS policy. Trying fallback proxy.",
+				"retryable": true,
 			}
 		return {"ok": false, "error": "RobTop connection failed (result %d)" % result, "retryable": true}
 	if status == 401 or status == 403:
 		return {
 			"ok": false,
-			"error": "Proxy returned HTTP %d. Set a custom CORS proxy in settings." % status,
+			"error": "Server returned HTTP %d" % status,
 			"status": status,
 			"retryable": OS.has_feature("web"),
 		}
 	if status < 200 or status >= 300:
-		return {"ok": false, "error": "RobTop server returned HTTP %d" % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
+		return {
+			"ok": false,
+			"error": "RobTop server returned HTTP %d" % status,
+			"status": status,
+			"retryable": status in TRANSIENT_HTTP_STATUSES or (OS.has_feature("web") and status == 400),
+		}
 	return {"ok": true, "text": bytes.get_string_from_utf8().strip_edges()}
 
 
