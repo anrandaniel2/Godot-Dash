@@ -3474,8 +3474,15 @@ public:
 						if (cur57.is_empty()) {
 							properties["57"] = grp;
 						} else {
+							bool found = false;
 							const PackedStringArray grps = cur57.split(".");
-							if (!grps.has(grp)) {
+							for (int64_t gi = 0; gi < grps.size(); ++gi) {
+								if (grps[gi] == grp) {
+									found = true;
+									break;
+								}
+							}
+							if (!found) {
 								properties["57"] = cur57 + "." + grp;
 							}
 						}
