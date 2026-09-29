@@ -1957,6 +1957,19 @@ metadata/_smooth_scroll_default_mouse_filter_set = true
 script = ExtResource("6_p6jor")
 config_property = &"discord_rich_presence"
 
+[node name="CORS Proxy" type="BoxContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet/VBoxContainer" unique_id=314159265]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("16_c7um1")
+placeholder = "e.g. /cors-proxy?url="
+metadata/_custom_type_script = "uid://c1ejd8ud4q1b6"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer/Internet/VBoxContainer/CORS Proxy" unique_id=314159266]
+script = ExtResource("6_p6jor")
+config_property = &"cors_proxy"
+
 [node name="Operating System" type="FoldableContainer" parent="EnumButtonTabContainer/System/SmoothScrollContainer/VBoxContainer" unique_id=39703967]
 layout_mode = 2
 mouse_filter = 1

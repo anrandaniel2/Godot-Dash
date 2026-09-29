@@ -202,6 +202,86 @@ int main() {
 	int initial_fired = std::distance(trigger_positions.begin(), last);
 	check_int("Triggers at x <= player_spawn_x (4 triggers) fire on spawn", initial_fired, 4);
 
+	// 6. Verify HTML error response detection
+	auto check_is_html_error = [](const std::string &response) -> bool {
+		std::string str = response;
+		while (!str.empty() && (str.front() == ' ' || str.front() == '\t' || str.front() == '\r' || str.front() == '\n')) str.erase(0, 1);
+		while (!str.empty() && (str.back() == ' ' || str.back() == '\t' || str.back() == '\r' || str.back() == '\n')) str.pop_back();
+		if (str.empty()) return false;
+		std::string lower = str;
+		for (char &c : lower) c = std::tolower(c);
+		if (lower.rfind("<!doctype", 0) == 0 || lower.rfind("<html", 0) == 0 || lower.rfind("<head", 0) == 0) return true;
+		if (lower.find("<html") != std::string::npos && (
+				lower.find("522") != std::string::npos || lower.find("502") != std::string::npos ||
+				lower.find("503") != std::string::npos || lower.find("500") != std::string::npos ||
+				lower.find("404") != std::string::npos || lower.find("403") != std::string::npos ||
+				lower.find("cloudflare") != std::string::npos || lower.find("error") != std::string::npos)) {
+			return true;
+		}
+		return false;
+	};
+
+	check_true("Cloudflare 522 detected as HTML error", check_is_html_error("<!DOCTYPE html><html><head><title>522 Connection timed out</title></head></html>"));
+	check_true("404 Not Found HTML detected", check_is_html_error("<html><head><title>404 Not Found</title></head><body>error</body></html>"));
+	check_true("GDHistory shorthand payload is NOT HTML error", !check_is_html_error("k1 _123_ k2 ~~Test Level~~ k4 ~~H4sICCM47lsAA...~~"));
+	check_true("Raw RobTop payload is NOT HTML error", !check_is_html_error("1:123:2:Test:4:H4sICCM47lsAA...#hash"));
+	check_true("XML plist is NOT HTML error", !check_is_html_error("<?xml version=\"1.0\"?><plist><dict><k>k4</k><s>H4sI...</s></dict></plist>"));
+
+	// 7. Verify level data string extraction logic
+	auto extract_k4_test = [&](const std::string &payload) -> std::string {
+		if (check_is_html_error(payload)) return "";
+		std::string s = payload;
+		// Shorthand k4 ~~...~~
+		size_t pos = s.find("k4 ~~");
+		if (pos == std::string::npos) pos = s.find("k4~~");
+		if (pos != std::string::npos) {
+			size_t start = s.find("~~", pos);
+			if (start != std::string::npos) {
+				start += 2;
+				size_t finish = s.find("~~", start);
+				if (finish != std::string::npos) {
+					return s.substr(start, finish - start);
+				}
+			}
+		}
+		// Shorthand k4 _..._
+		pos = s.find("k4 _");
+		if (pos != std::string::npos) {
+			size_t start = pos + 4;
+			size_t finish = s.find("_", start);
+			if (finish != std::string::npos) {
+				return s.substr(start, finish - start);
+			}
+		}
+		// RobTop colon separated :4: or 4:
+		pos = s.find(":4:");
+		if (pos != std::string::npos) {
+			size_t val_start = pos + 3;
+			size_t val_end = s.find(":", val_start);
+			if (val_end == std::string::npos) val_end = s.find("#", val_start);
+			if (val_end != std::string::npos) return s.substr(val_start, val_end - val_start);
+			return s.substr(val_start);
+		}
+		// XML plist short
+		pos = s.find("<k>k4</k>");
+		if (pos != std::string::npos) {
+			size_t s_start = s.find("<s>", pos);
+			if (s_start != std::string::npos) {
+				size_t s_end = s.find("</s>", s_start + 3);
+				if (s_end != std::string::npos) return s.substr(s_start + 3, s_end - (s_start + 3));
+			}
+		}
+		if (s.rfind("H4sI", 0) == 0) return s;
+		return s;
+	};
+
+	check_true("Extract k4 from GDHistory tilde shorthand", extract_k4_test("k1 _123_ k2 ~~Test~~ k4 ~~H4sICCM47lsAA...~~ k3 ~~desc~~") == "H4sICCM47lsAA...");
+	check_true("Extract k4 from GDHistory underscore shorthand", extract_k4_test("k1 _123_ k4 _H4sICCM47lsAA..._ k2 _Test_") == "H4sICCM47lsAA...");
+	check_true("Extract k4 from RobTop colon pairs", extract_k4_test("1:123:2:Test:4:H4sICCM47lsAA...:10:500#hash") == "H4sICCM47lsAA...");
+	check_true("Extract k4 from XML plist", extract_k4_test("<plist><dict><k>k4</k><s>H4sICCM47lsAA...</s></dict></plist>") == "H4sICCM47lsAA...");
+	check_true("Extract k4 from raw base64 gzip", extract_k4_test("H4sICCM47lsAA...") == "H4sICCM47lsAA...");
+	check_true("Extract k4 from HTML error returns empty", extract_k4_test("<!DOCTYPE html><html>error</html>") == "");
+
 	if (failures == 0) {
 		std::printf("\nALL ONLINE PARSER STANDALONE TESTS PASSED (0 failures)\n");
 		return 0;

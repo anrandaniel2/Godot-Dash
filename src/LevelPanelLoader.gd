@@ -63,6 +63,8 @@ func _setup_online_controls() -> void:
 	online_search.text_submitted.connect(_online_search_submitted)
 	online_search.text_changed.connect(_online_search_changed)
 	online_category.item_selected.connect(_online_category_changed)
+	if online_category.selected < 0 or online_category.selected >= ONLINE_CATEGORY_TYPES.size():
+		online_category.selected = 2
 	previous_page_button.pressed.connect(_change_online_page.bind(-1))
 	next_page_button.pressed.connect(_change_online_page.bind(1))
 	search_timer.timeout.connect(_restart_online_search)

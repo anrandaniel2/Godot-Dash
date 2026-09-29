@@ -26,7 +26,7 @@ const TRANSIENT_HTTP_STATUSES := [408, 425, 429, 500, 502, 503, 504]
 const NETWORK_ATTEMPTS := 3
 
 
-func search(query: String, page: int = 0, category: int = 4) -> Dictionary:
+func search(query: String, page: int = 0, category: int = 1) -> Dictionary:
 	if OS.has_feature("web"):
 		var web_res := await _search_web(query, page, category)
 		if web_res.ok:
@@ -110,8 +110,8 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 	var cat_map := {
 		4: "recent",
 		3: "trending",
-		1: "mostDownloaded",
-		2: "mostLiked",
+		1: "mostdownloaded",
+		2: "mostliked",
 		6: "featured",
 		11: "awarded",
 	}
@@ -122,6 +122,8 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 	]
 	if clean_query.is_empty() and cat_map.has(category):
 		url += "&type=" + cat_map[category]
+	elif clean_query.is_empty():
+		url += "&type=mostdownloaded"
 
 	print("[RobTop] Web search: %s" % url)
 	var res := await _get_json(url)
@@ -214,6 +216,8 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var text: String = response.text
 	if text == "-1" or text.is_empty():
 		return _error("Level %d was not found or is unavailable" % level_id)
+	if NativeCore.is_html_error_response(text):
+		return _error("Server returned HTML error response instead of level data")
 
 	# downloadGJLevel22 response format per boomlings.dev:
 	#   {level}#{hash1}#{hash2}#{user}#{songs}#{extraArtistNames}
@@ -382,11 +386,16 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	if not text_res.ok:
 		return _error("Could not download level file from archive (%s)" % text_res.error)
 	var gmd_text: String = text_res.text
+	if NativeCore.is_html_error_response(gmd_text):
+		return _error("Online archive returned an HTML error response instead of level data")
 	if gmd_text.begins_with("{") and gmd_text.contains("\"contents\""):
 		var parsed_wrap = JSON.parse_string(gmd_text)
 		if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
 			gmd_text = str(parsed_wrap["contents"])
-	var doc := GMD.parse(gmd_text)
+	var trimmed_text := gmd_text.strip_edges()
+	var doc: GMD = null
+	if trimmed_text.begins_with("<?xml") or trimmed_text.begins_with("<plist"):
+		doc = GMD.parse(gmd_text)
 	var level_string := ""
 	if doc != null and not doc.level_string.is_empty():
 		level_string = doc.level_string
@@ -871,13 +880,18 @@ static func _length_from_string(length_str: String) -> int:
 
 
 static func _extract_k4(text: String) -> String:
-	var doc := GMD.parse(text)
-	if doc != null and not doc.level_string.is_empty():
-		return doc.level_string
+	return NativeCore.extract_level_data_string(text)
 
+
+static func extract_k4_fallback(text: String) -> String:
 	var clean := text.strip_edges()
 	if clean.is_empty():
 		return ""
+
+	if clean.begins_with("<?xml") or clean.begins_with("<plist"):
+		var doc := GMD.parse(clean)
+		if doc != null and not doc.level_string.is_empty():
+			return doc.level_string
 
 	# 1. GDHistory / CCLocalLevels shorthand: k4 ~~<string>~~
 	var tilde_idx := clean.find("k4 ~~")
@@ -918,10 +932,9 @@ static func _extract_k4(text: String) -> String:
 	if k_pos != -1:
 		var s_start := clean.find("<s>", k_pos)
 		if s_start != -1:
-			s_start += 3
-			var s_end := clean.find("</s>", s_start)
+			var s_end := clean.find("</s>", s_start + 3)
 			if s_end != -1:
-				return clean.substr(s_start, s_end - s_start).strip_edges()
+				return clean.substr(s_start + 3, s_end - (s_start + 3)).strip_edges()
 
 	# 5. RobTop database response format: key 4 in colon-separated pairs
 	if clean.contains(":4:") or clean.begins_with("4:"):

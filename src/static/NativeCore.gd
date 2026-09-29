@@ -33,3 +33,25 @@ static func backend() -> Object:
 
 static func available() -> bool:
 	return backend() != null
+
+
+static func is_html_error_response(response: String) -> bool:
+	var b: Object = backend()
+	if b != null and b.has_method(&"is_html_error_response"):
+		return bool(b.is_html_error_response(response))
+	var s := response.strip_edges().to_lower()
+	if s.is_empty():
+		return false
+	if s.begins_with("<!doctype") or s.begins_with("<html") or s.begins_with("<head"):
+		return true
+	if s.contains("<html") and (s.contains("522") or s.contains("502") or s.contains("503") or s.contains("500") or s.contains("404") or s.contains("403") or s.contains("cloudflare") or s.contains("error") or s.contains("access denied")):
+		return true
+	return false
+
+
+static func extract_level_data_string(payload: String) -> String:
+	var b: Object = backend()
+	if b != null and b.has_method(&"extract_level_data_string"):
+		return str(b.extract_level_data_string(payload))
+	return RobTopLevels.extract_k4_fallback(payload)
+

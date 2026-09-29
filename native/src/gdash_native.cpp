@@ -2983,6 +2983,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("classify_collision", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision);
 		ClassDB::bind_method(D_METHOD("classify_collision_flags", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision_flags);
 		ClassDB::bind_method(D_METHOD("extract_object_geometry", "object"), &GdashNative::extract_object_geometry);
+		ClassDB::bind_method(D_METHOD("is_html_error_response", "response"), &GdashNative::is_html_error_response);
+		ClassDB::bind_method(D_METHOD("extract_level_data_string", "payload"), &GdashNative::extract_level_data_string);
 	}
 
 public:
@@ -3656,6 +3658,123 @@ public:
 		}
 		Marshalls *marshalls = Marshalls::get_singleton();
 		return marshalls ? url_base64(marshalls->raw_to_base64(compressed)) : String();
+	}
+
+	bool is_html_error_response(const String &response) const {
+		const String trimmed = response.strip_edges();
+		if (trimmed.is_empty()) return false;
+		const String lower = trimmed.to_lower();
+		if (lower.begins_with("<!doctype") || lower.begins_with("<html") || lower.begins_with("<head")) {
+			return true;
+		}
+		if (lower.contains("<html") && (lower.contains("522") || lower.contains("502") || lower.contains("503") ||
+				lower.contains("500") || lower.contains("404") || lower.contains("403") ||
+				lower.contains("cloudflare") || lower.contains("error") || lower.contains("access denied") ||
+				lower.contains("ray id:"))) {
+			return true;
+		}
+		return false;
+	}
+
+	String extract_level_data_string(const String &payload) const {
+		String text = payload.strip_edges();
+		if (text.is_empty() || is_html_error_response(text)) {
+			return String();
+		}
+
+		if (text.begins_with("{") && text.contains("\"contents\"")) {
+			const int64_t c_pos = text.find("\"contents\"");
+			const int64_t colon = text.find(":", c_pos);
+			if (colon != -1) {
+				const int64_t q1 = text.find("\"", colon);
+				if (q1 != -1) {
+					const int64_t q2 = text.rfind("\"");
+					if (q2 > q1) {
+						text = text.substr(q1 + 1, q2 - q1 - 1).replace("\\\"", "\"").replace("\\\\", "\\").strip_edges();
+					}
+				}
+			}
+		}
+
+		if (text.contains("#")) {
+			const int64_t hash_idx = text.find("#");
+			const String sec0 = text.substr(0, hash_idx);
+			const PackedStringArray pairs = sec0.split(":");
+			for (int64_t i = 0; i + 1 < pairs.size(); i += 2) {
+				if (pairs[i].strip_edges() == "4") {
+					const String val = pairs[i + 1].strip_edges();
+					if (!val.is_empty()) return val;
+				}
+			}
+		}
+
+		int64_t tilde_idx = text.find("k4 ~~");
+		if (tilde_idx == -1) tilde_idx = text.find("k4~~");
+		if (tilde_idx != -1) {
+			int64_t start = text.find("~~", tilde_idx);
+			if (start != -1) {
+				start += 2;
+				const int64_t finish = text.find("~~", start);
+				if (finish != -1) {
+					const String cand = text.substr(start, finish - start).strip_edges();
+					if (!cand.is_empty()) return cand;
+				}
+			}
+		}
+
+		const int64_t under_idx = text.find("k4 _");
+		if (under_idx != -1) {
+			const int64_t start = under_idx + 4;
+			const int64_t finish = text.find("_", start);
+			if (finish != -1) {
+				const String cand = text.substr(start, finish - start).strip_edges();
+				if (!cand.is_empty()) return cand;
+			}
+		}
+
+		if (text.contains(":4:") || text.begins_with("4:")) {
+			const PackedStringArray pairs = text.split(":");
+			for (int64_t i = 0; i + 1 < pairs.size(); i += 2) {
+				if (pairs[i].strip_edges() == "4") {
+					const String val = pairs[i + 1].strip_edges();
+					if (!val.is_empty()) return val;
+				}
+			}
+		}
+
+		int64_t k_pos = text.find("<k>k4</k>");
+		if (k_pos == -1) k_pos = text.find("<k>k4 </k>");
+		if (k_pos != -1) {
+			const int64_t s_start = text.find("<s>", k_pos);
+			if (s_start != -1) {
+				const int64_t s_end = text.find("</s>", s_start + 3);
+				if (s_end != -1) {
+					const String cand = text.substr(s_start + 3, s_end - (s_start + 3)).strip_edges();
+					if (!cand.is_empty()) return cand;
+				}
+			}
+		}
+
+		const int64_t key_idx = text.find("<key>k4</key>");
+		if (key_idx != -1) {
+			const int64_t str_start = text.find("<string>", key_idx);
+			if (str_start != -1) {
+				const int64_t str_end = text.find("</string>", str_start + 8);
+				if (str_end != -1) {
+					const String cand = text.substr(str_start + 8, str_end - (str_start + 8)).strip_edges();
+					if (!cand.is_empty()) return cand;
+				}
+			}
+		}
+
+		if (text.begins_with("H4sI") || text.begins_with("eJ") || text.begins_with("H4sIA")) {
+			return text;
+		}
+		if (text.contains(";") || text.begins_with("kS") || text.begins_with("kA") || text.begins_with("1,")) {
+			return text;
+		}
+
+		return text;
 	}
 
 	PackedInt32Array sort_decoration_indices(const PackedInt32Array &z_orders,
