@@ -35,15 +35,26 @@ func search(query: String, page: int = 0, category: int = 4) -> Dictionary:
 
 	var clean_query := query.strip_edges()
 	var fields := {
-		"secret": COMMON_SECRET,
-		"gameVersion": GAME_VERSION,
-		"binaryVersion": _binary_version(),
+		"gameVersion": "21",
+		"binaryVersion": "35",
+		"gdw": "0",
+		"accountID": "0",
+		"gjp": "",
+		"uuid": "0",
 		"type": str(category) if clean_query.is_empty() else "0",
 		"str": clean_query,
+		"diff": "-",
+		"len": "-",
 		"page": str(maxi(0, page)),
 		"total": "0",
-		"len": "-",
-		"diff": "-",
+		"uncompleted": "0",
+		"onlyCompleted": "0",
+		"featured": "0",
+		"original": "0",
+		"twoPlayer": "0",
+		"coins": "0",
+		"epic": "0",
+		"secret": COMMON_SECRET,
 	}
 	var response := await _post(SEARCH_URL, fields)
 	if not response.ok:
@@ -159,48 +170,43 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	if OS.has_feature("web"):
-		# On Web, browser security blocks direct HTTP POST to RobTop boomlings (mixed content
-		# and missing CORS headers). Prioritize HTTPS GET-based archives (GDHistory and GDBrowser).
-		var gd_res := await _download_gdhistory(level_id, summary)
-		if gd_res.ok:
-			return gd_res
-		push_warning("[RobTop] GDHistory failed (%s); trying GDBrowser fallback" % str(gd_res.get("error", "")))
+		# On Web, try GDBrowser first (native CORS support like GDRWeb), then GDHistory archive, then direct RobTop.
 		var gdb_res := await _download_gdbrowser(level_id, summary)
 		if gdb_res.ok:
 			return gdb_res
-		push_warning("[RobTop] GDBrowser failed (%s); trying direct RobTop endpoint" % str(gdb_res.get("error", "")))
+		var gd_res := await _download_gdhistory(level_id, summary)
+		if gd_res.ok:
+			return gd_res
 		var direct_res := await _download_direct(level_id, summary)
 		if direct_res.ok:
 			return direct_res
-		var err_msg: String = str(gd_res.get("error", ""))
-		if err_msg.is_empty():
-			err_msg = str(gdb_res.get("error", ""))
-		if err_msg.is_empty():
-			err_msg = str(direct_res.get("error", "Web level download failed"))
-		return _error(err_msg)
+		return _error("Could not download level %d: %s" % [level_id, gdb_res.get("error", "unavailable")])
 
 	var response := await _download_direct(level_id, summary)
 	if response.ok:
 		return response
-	push_warning("[RobTop] downloadGJLevel22 failed (%s); trying GDHistory fallback" % str(response.get("error", "")))
-	var gd_res := await _download_gdhistory(level_id, summary)
-	if gd_res.ok:
-		return gd_res
-	push_warning("[RobTop] GDHistory fallback failed (%s); trying GDBrowser fallback" % str(gd_res.get("error", "")))
 	var gdb_res := await _download_gdbrowser(level_id, summary)
 	if gdb_res.ok:
 		return gdb_res
+	var gd_res := await _download_gdhistory(level_id, summary)
+	if gd_res.ok:
+		return gd_res
 	return response
 
 
 func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	# Canonical RobTop level download endpoint documented by boomlings.dev:
-	# downloadGJLevel22.php accepts POST with levelID, secret, gameVersion, binaryVersion.
+	# Matches GDRWeb / RobTop exact client parameters:
 	var fields := {
+		"gameVersion": "21",
+		"binaryVersion": "35",
+		"gdw": "0",
+		"accountID": "0",
+		"gjp": "",
+		"uuid": "0",
 		"levelID": str(level_id),
+		"inc": "1",
+		"extras": "0",
 		"secret": COMMON_SECRET,
-		"gameVersion": GAME_VERSION,
-		"binaryVersion": _binary_version(),
 	}
 	var response := await _post(DOWNLOAD_URL, fields)
 	if not response.ok:
@@ -538,14 +544,9 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 	if OS.has_feature("web"):
 		var custom_proxy := _get_custom_proxy()
 		if not custom_proxy.is_empty():
-			proxies.append(custom_proxy)
-		for p in [
-			"https://api.codetabs.com/v1/proxy?quest=",
-			"https://api.allorigins.win/raw?url=",
-			"https://cors.eu.org/",
-		]:
-			if p not in proxies:
-				proxies.append(p)
+			proxies.insert(0, custom_proxy)
+		proxies.append("https://api.codetabs.com/v1/proxy?quest=")
+		proxies.append("https://api.allorigins.win/raw?url=")
 	for attempt in proxies.size():
 		var proxy := proxies[attempt]
 		var target_url := _resolve_url(url, proxy)
@@ -554,8 +555,6 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 		last = await _download_audio_once(target_url, destination)
 		if last.ok:
 			return last
-		if attempt + 1 < proxies.size() and OS.has_feature("web"):
-			await get_tree().create_timer(0.2).timeout
 	return last
 
 
@@ -585,29 +584,16 @@ func _get_json(url: String) -> Dictionary:
 	var err := json.parse(text)
 	if err != OK:
 		return _error("Failed to parse JSON response: %s" % json.get_error_message())
-	var data: Variant = json.data
-	# Handle wrapped JSON proxies like api.allorigins.win/get?url=
-	if data is Dictionary and data.has("contents") and data.has("status"):
-		var inner_text: String = str(data["contents"]).strip_edges()
-		var inner_json := JSON.new()
-		if inner_json.parse(inner_text) == OK:
-			return {"ok": true, "data": inner_json.data}
-	return {"ok": true, "data": data}
+	return {"ok": true, "data": json.data}
 
 
 func _get_text(url: String) -> Dictionary:
 	var last := await _get_text_once(url)
-	if last.ok:
-		return last
-	if not OS.has_feature("web"):
+	if last.ok or not OS.has_feature("web"):
 		return last
 	var proxies: PackedStringArray = [
 		"https://api.codetabs.com/v1/proxy?quest=",
 		"https://api.allorigins.win/raw?url=",
-		"https://api.allorigins.win/get?url=",
-		"https://thingproxy.freeboard.io/fetch/",
-		"https://cors.eu.org/",
-		"https://test.cors.workers.dev/?",
 	]
 	var custom_proxy := _get_custom_proxy()
 	if not custom_proxy.is_empty():
@@ -616,13 +602,6 @@ func _get_text(url: String) -> Dictionary:
 		var proxied_url := _resolve_url(url, proxy)
 		var res := await _get_text_once(proxied_url)
 		if res.ok:
-			if res.has("text"):
-				var raw_text: String = str(res["text"]).strip_edges()
-				# If wrapped by allorigins /get?url=, unwrap contents:
-				if raw_text.begins_with("{\"contents\":") or raw_text.begins_with("{\n  \"contents\":"):
-					var parsed_wrap = JSON.parse_string(raw_text)
-					if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
-						res["text"] = str(parsed_wrap["contents"]).strip_edges()
 			return res
 	return last
 
@@ -734,35 +713,8 @@ static func _platform_id() -> String:
 
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
-	var last: Dictionary = _error("RobTop request failed.")
-	var proxies: PackedStringArray = []
-	if OS.has_feature("web"):
-		var custom_proxy := _get_custom_proxy()
-		if not custom_proxy.is_empty():
-			proxies.append(custom_proxy)
-		for fallback in [
-			"https://cors.eu.org/",
-			"https://test.cors.workers.dev/?",
-			"https://cors.netnr.workers.dev/",
-			"",
-		]:
-			if fallback not in proxies:
-				proxies.append(fallback)
-	else:
-		proxies.append("")
-
-	for attempt in proxies.size():
-		var proxy_override := proxies[attempt]
-		last = await _post_once(url, fields, proxy_override)
-		if last.ok:
-			return last
-		if not bool(last.get("retryable", false)) and not OS.has_feature("web"):
-			return last
-		if attempt + 1 < proxies.size():
-			var delay := 0.1 * pow(1.2, attempt)
-			push_warning("[RobTop] request failed (%s); trying fallback proxy in %.1fs" % [last.get("error", ""), delay])
-			await get_tree().create_timer(delay).timeout
-	return last
+	var custom_proxy := _get_custom_proxy() if OS.has_feature("web") else ""
+	return await _post_once(url, fields, custom_proxy)
 
 
 func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:
