@@ -1667,7 +1667,7 @@ static func _parse_pairs(chunk: String) -> Dictionary:
 	if native != null:
 		return native.call(&"parse_gd_pairs", chunk)
 	var pairs: Dictionary[String, String] = { }
-	var fields: PackedStringArray = chunk.split(",", false)
+	var fields: PackedStringArray = chunk.split(",", true)
 	for i in range(0, fields.size() - 1, 2):
 		pairs[fields[i]] = fields[i + 1]
 	return pairs
