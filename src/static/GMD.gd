@@ -198,7 +198,7 @@ static func _decode_level_payload(data: String) -> String:
 	if inflated.is_empty():
 		return ""
 	var plain := inflated.get_string_from_utf8()
-	if not plain.begins_with("kS") and not plain.begins_with("kA") and not plain.begins_with("1,") and not plain.contains(";1,"):
+	if not plain.contains(";") and not plain.begins_with("k") and not plain.begins_with("1,"):
 		return ""
 	return plain
 

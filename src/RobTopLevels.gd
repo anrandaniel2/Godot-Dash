@@ -331,21 +331,26 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var data: Dictionary = info_res.data if (info_res.data is Dictionary) else {}
 	var records: Array = data.get("records", [])
 	var chosen_record_id := -1
+	var chosen_version := -1
 	for record: Variant in records:
 		if not (record is Dictionary):
 			continue
 		if bool(record.get("level_string_available", false)) and not bool(record.get("is_invalid", false)):
 			var rid := int(record.get("id", -1))
-			if str(record.get("record_type", "")) == "download":
-				chosen_record_id = rid
-				break
+			var ver := int(record.get("level_version", 1))
+			var is_download := str(record.get("record_type", "")) == "download"
+			if is_download:
+				if ver > chosen_version or (ver == chosen_version and rid > chosen_record_id):
+					chosen_record_id = rid
+					chosen_version = ver
 			elif chosen_record_id == -1 or rid > chosen_record_id:
-				chosen_record_id = rid
+				if chosen_version <= 0:
+					chosen_record_id = rid
 	if chosen_record_id == -1:
 		return _error("Level %d has no downloadable string in online archive" % level_id)
 
 	var download_url := "https://history.geometrydash.eu/level/%d/%d/download/" % [level_id, chosen_record_id]
-	print("[RobTop] Fetching level plist: %s" % download_url)
+	print("[RobTop] Fetching level archive: %s (record %d, ver %d)" % [download_url, chosen_record_id, chosen_version])
 	var text_res := await _get_text(download_url)
 	if not text_res.ok:
 		return _error("Could not download level file from archive (%s)" % text_res.error)
@@ -512,7 +517,7 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 		for p in [
 			"https://api.codetabs.com/v1/proxy?quest=",
 			"https://api.allorigins.win/raw?url=",
-			"https://cors.deno.dev/",
+			"https://cors.eu.org/",
 		]:
 			if p not in proxies:
 				proxies.append(p)
@@ -569,7 +574,6 @@ func _get_text(url: String) -> Dictionary:
 	var proxies: PackedStringArray = [
 		"https://api.codetabs.com/v1/proxy?quest=",
 		"https://api.allorigins.win/raw?url=",
-		"https://cors.deno.dev/",
 		"https://cors.eu.org/",
 		"https://test.cors.workers.dev/?",
 	]
@@ -588,7 +592,8 @@ func _get_text_once(target_url: String) -> Dictionary:
 	print("[RobTop] GET %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 25.0
+	request.timeout = 45.0
+	request.body_size_limit = -1
 	add_child(request)
 	var completed: Array = []
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
@@ -601,13 +606,13 @@ func _get_text_once(target_url: String) -> Dictionary:
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start GET request (error %d)" % error)
-	var deadline := Time.get_ticks_msec() + 25_000
+	var deadline := Time.get_ticks_msec() + 45_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Request timed out after 25 seconds", "retryable": true}
+		return {"ok": false, "error": "Request timed out after 45 seconds", "retryable": true}
 	request.queue_free()
 	var result: int = completed[0]
 	var status: int = completed[1]
@@ -627,7 +632,7 @@ func _download_audio_once(url: String, destination: String) -> Dictionary:
 	print("[RobTop] GET custom song from %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 30.0
+	request.timeout = 45.0
 	request.max_redirects = 5
 	request.download_file = destination
 	request.body_size_limit = MAX_SONG_BYTES
@@ -643,13 +648,13 @@ func _download_audio_once(url: String, destination: String) -> Dictionary:
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start the music download (error %d)." % error)
-	var deadline := Time.get_ticks_msec() + 30_000
+	var deadline := Time.get_ticks_msec() + 45_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Music download timed out after 30 seconds.", "retryable": true}
+		return {"ok": false, "error": "Music download timed out after 45 seconds.", "retryable": true}
 	request.queue_free()
 	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
 		var is_cors := OS.has_feature("web") and int(completed[0]) == HTTPRequest.RESULT_CANT_CONNECT
@@ -695,7 +700,6 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		if not custom_proxy.is_empty():
 			proxies.append(custom_proxy)
 		for fallback in [
-			"https://cors.deno.dev/",
 			"https://cors.eu.org/",
 			"https://test.cors.workers.dev/?",
 			"https://cors.netnr.workers.dev/",
@@ -725,7 +729,7 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 	print("[RobTop] POST %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 25.0
+	request.timeout = 30.0
 	add_child(request)
 	var completed: Array = []
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
@@ -750,7 +754,7 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 		push_warning("[RobTop] request could not start: error %d" % error)
 		return _error("Could not start the RobTop request (error %d)" % error)
 
-	var deadline := Time.get_ticks_msec() + 25_000
+	var deadline := Time.get_ticks_msec() + 30_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
@@ -873,23 +877,71 @@ static func _length_from_string(length_str: String) -> int:
 		_: return 0
 
 
-static func _extract_k4(plist_text: String) -> String:
-	var doc := GMD.parse(plist_text)
+static func _extract_k4(text: String) -> String:
+	var doc := GMD.parse(text)
 	if doc != null and not doc.level_string.is_empty():
 		return doc.level_string
-	var k_pos := plist_text.find("<k>k4</k>")
+
+	var clean := text.strip_edges()
+	if clean.is_empty():
+		return ""
+
+	# 1. GDHistory / CCLocalLevels shorthand: k4 ~~<string>~~
+	var tilde_idx := clean.find("k4 ~~")
+	if tilde_idx == -1:
+		tilde_idx = clean.find("k4~~")
+	if tilde_idx != -1:
+		var start := clean.find("~~", tilde_idx) + 2
+		var finish := clean.find("~~", start)
+		if finish != -1:
+			var candidate := clean.substr(start, finish - start).strip_edges()
+			if not candidate.is_empty():
+				return candidate
+
+	# 2. GDHistory / CCLocalLevels with single underscore: k4 _<string>_
+	var under_idx := clean.find("k4 _")
+	if under_idx != -1:
+		var start := under_idx + 4
+		var finish := clean.find("_", start)
+		if finish != -1:
+			var candidate := clean.substr(start, finish - start).strip_edges()
+			if not candidate.is_empty():
+				return candidate
+
+	# 3. Standard plist XML: <key>k4</key> ... <string>...</string>
+	var key_idx := clean.find("<key>k4</key>")
+	if key_idx != -1:
+		var str_start := clean.find("<string>", key_idx)
+		if str_start != -1:
+			str_start += 8
+			var str_end := clean.find("</string>", str_start)
+			if str_end != -1:
+				return clean.substr(str_start, str_end - str_start).strip_edges()
+
+	# 4. Short plist XML: <k>k4</k> ... <s>...</s>
+	var k_pos := clean.find("<k>k4</k>")
 	if k_pos == -1:
-		k_pos = plist_text.find("<k>k4 </k>")
-	if k_pos == -1:
-		return ""
-	var s_start := plist_text.find("<s>", k_pos)
-	if s_start == -1:
-		return ""
-	s_start += 3
-	var s_end := plist_text.find("</s>", s_start)
-	if s_end == -1:
-		return ""
-	return plist_text.substr(s_start, s_end - s_start).strip_edges()
+		k_pos = clean.find("<k>k4 </k>")
+	if k_pos != -1:
+		var s_start := clean.find("<s>", k_pos)
+		if s_start != -1:
+			s_start += 3
+			var s_end := clean.find("</s>", s_start)
+			if s_end != -1:
+				return clean.substr(s_start, s_end - s_start).strip_edges()
+
+	# 5. RobTop database response format: key 4 in colon-separated pairs
+	if clean.contains(":4:") or clean.begins_with("4:"):
+		var parts := clean.split(":")
+		for i in range(0, parts.size() - 1, 2):
+			if parts[i].strip_edges() == "4":
+				return parts[i + 1].strip_edges()
+
+	# 6. Raw base64 compressed data:
+	if clean.begins_with("H4sI") or clean.begins_with("eJ") or clean.begins_with("H4sIA"):
+		return clean
+
+	return ""
 
 
 static func _error(message: String) -> Dictionary:
