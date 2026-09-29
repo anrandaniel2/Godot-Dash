@@ -15,9 +15,25 @@
 #include <unordered_map>
 #include <vector>
 
+#if __has_include(<godot_cpp/variant/color.hpp>)
 #include <godot_cpp/variant/color.hpp>
-
 using godot::Color;
+#else
+struct Color {
+	float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
+	Color() = default;
+	Color(float pr, float pg, float pb, float pa = 1.0f) : r(pr), g(pg), b(pb), a(pa) {}
+	float get_h() const { return 0.0f; }
+	float get_s() const { return (r == g && g == b) ? 0.0f : 0.5f; }
+	float get_v() const { return std::max({r, g, b}); }
+	Color lightened(float amt) const { return Color(r + (1.0f - r) * amt, g + (1.0f - g) * amt, b + (1.0f - b) * amt, a); }
+	static Color from_hsv(float h, float s, float v, float a = 1.0f) {
+		if (s == 0.0f) return Color(v, v, v, a);
+		return Color(v, v * (1.0f - s), v * (1.0f - s), a);
+	}
+	bool operator==(const Color &o) const { return r == o.r && g == o.g && b == o.b && a == o.a; }
+};
+#endif
 
 static int failures = 0;
 
@@ -67,6 +83,44 @@ static inline int64_t legacy_object_color_channel(int64_t old_color_id) {
 	}
 }
 
+// Mirror of GameObject::newObjectFromVector object substitution from decompiled GD
+static inline int64_t substitute_object_id(int64_t key, int64_t &target_color, bool &uses_blending) {
+	int64_t key_orig = -1;
+	int64_t new_key = key;
+	switch (key) {
+		case 104:
+			key_orig = key;
+			new_key = 915;
+			break;
+		case 221:
+		case 717:
+		case 718:
+		case 743:
+			key_orig = key;
+			new_key = 899;
+			break;
+		case 675: new_key = 1734; break;
+		case 676: new_key = 1735; break;
+		case 677: new_key = 1736; break;
+		case 1008: new_key = 1292; break;
+		default:
+			if (key >= 1964 && key < 2012) {
+				new_key = 1964;
+			}
+			break;
+	}
+	if (key_orig != -1) {
+		switch (key_orig) {
+			case 104: uses_blending = true; break;
+			case 221: target_color = 1; break;
+			case 717: target_color = 2; break;
+			case 718: target_color = 3; break;
+			case 743: target_color = 4; break;
+		}
+	}
+	return new_key;
+}
+
 int main() {
 	// 1. Verify legacy trigger channel mappings match decompiled GD EffectGameObject::customSetup
 	check_int("trigger 29 -> BG (1000)", legacy_color_trigger_channel(29), 1000);
@@ -86,6 +140,38 @@ int main() {
 	check_int("legacy color 6 -> Col 3 (3)", legacy_object_color_channel(6), 3);
 	check_int("legacy color 7 -> Col 4 (4)", legacy_object_color_channel(7), 4);
 	check_int("legacy color 8 -> 3DL (1003)", legacy_object_color_channel(8), 1003);
+
+	// 2b. Verify object ID substitutions match decompiled GD GameObject::newObjectFromVector
+	int64_t target_col = 0;
+	bool uses_blend = false;
+	check_int("object 104 -> 915", substitute_object_id(104, target_col, uses_blend), 915);
+	check_true("object 104 uses blending", uses_blend);
+
+	target_col = 0; uses_blend = false;
+	check_int("object 221 -> 899", substitute_object_id(221, target_col, uses_blend), 899);
+	check_int("object 221 target color 1", target_col, 1);
+
+	target_col = 0; uses_blend = false;
+	check_int("object 717 -> 899", substitute_object_id(717, target_col, uses_blend), 899);
+	check_int("object 717 target color 2", target_col, 2);
+
+	target_col = 0; uses_blend = false;
+	check_int("object 718 -> 899", substitute_object_id(718, target_col, uses_blend), 899);
+	check_int("object 718 target color 3", target_col, 3);
+
+	target_col = 0; uses_blend = false;
+	check_int("object 743 -> 899", substitute_object_id(743, target_col, uses_blend), 899);
+	check_int("object 743 target color 4", target_col, 4);
+
+	target_col = 0; uses_blend = false;
+	check_int("object 675 -> 1734", substitute_object_id(675, target_col, uses_blend), 1734);
+	check_int("object 676 -> 1735", substitute_object_id(676, target_col, uses_blend), 1735);
+	check_int("object 677 -> 1736", substitute_object_id(677, target_col, uses_blend), 1736);
+	check_int("object 1008 -> 1292", substitute_object_id(1008, target_col, uses_blend), 1292);
+	check_int("object 1964 -> 1964", substitute_object_id(1964, target_col, uses_blend), 1964);
+	check_int("object 2000 -> 1964", substitute_object_id(2000, target_col, uses_blend), 1964);
+	check_int("object 2011 -> 1964", substitute_object_id(2011, target_col, uses_blend), 1964);
+	check_int("object 2012 -> 2012 (not substituted)", substitute_object_id(2012, target_col, uses_blend), 2012);
 
 	// 3. Verify color math with godot-cpp Color
 	Color line_color(1.0f, 1.0f, 1.0f, 1.0f);

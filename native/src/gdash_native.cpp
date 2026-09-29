@@ -3391,6 +3391,57 @@ public:
 			++source_chunks;
 			odd_pair_chunks += chunk_odd;
 
+			// Handle legacy object ID substitution and initial property setup (decompiled GameObject::newObjectFromVector):
+			if (properties.has("1")) {
+				const String raw1 = String(properties["1"]).strip_edges();
+				if (raw1.is_valid_int()) {
+					int64_t key = raw1.to_int();
+					int64_t key_orig = -1;
+					switch (key) {
+						case 104:
+							key_orig = key;
+							key = 915;
+							break;
+						case 221:
+						case 717:
+						case 718:
+						case 743:
+							key_orig = key;
+							key = 899;
+							break;
+						case 675: key = 1734; break;
+						case 676: key = 1735; break;
+						case 677: key = 1736; break;
+						case 1008: key = 1292; break;
+						default:
+							if (key >= 1964 && key < 2012) {
+								key = 1964;
+							}
+							break;
+					}
+					if (key != raw1.to_int()) {
+						properties["1"] = String::num_int64(key);
+					}
+					if (key_orig != -1) {
+						switch (key_orig) {
+							case 104:
+								if (!properties.has("17")) properties["17"] = "1"; // usesBlending
+								break;
+							case 221: if (!properties.has("23")) properties["23"] = "1"; break;
+							case 717: if (!properties.has("23")) properties["23"] = "2"; break;
+							case 718: if (!properties.has("23")) properties["23"] = "3"; break;
+							case 743: if (!properties.has("23")) properties["23"] = "4"; break;
+						}
+					}
+					if ((key == 9 || key == 1715) && !properties.has("25")) {
+						properties["25"] = "2";
+					} else if (key == 3613) {
+						if (!properties.has("24")) properties["24"] = "5";
+						if (!properties.has("25")) properties["25"] = "2";
+					}
+				}
+			}
+
 			// Handle legacy 1.9 object color selection key 19 (decompiled GameObject::newObjectFromVector):
 			if (properties.has("19") && !properties.has("21")) {
 				const String raw19 = String(properties["19"]).strip_edges();
@@ -3414,10 +3465,35 @@ public:
 				}
 			}
 
-			// Handle scale fallback: key 32 to 128 / 129
+			// Handle legacy groups: merge keys 26 and 33 into 57 (decompiled GameObject::newObjectFromVector):
+			for (const char *group_key : {"26", "33"}) {
+				if (properties.has(group_key)) {
+					const String grp = String(properties[group_key]).strip_edges();
+					if (!grp.is_empty() && grp != "0") {
+						const String cur57 = properties.has("57") ? String(properties["57"]).strip_edges() : String();
+						if (cur57.is_empty()) {
+							properties["57"] = grp;
+						} else {
+							const PackedStringArray grps = cur57.split(".");
+							if (!grps.has(grp)) {
+								properties["57"] = cur57 + "." + grp;
+							}
+						}
+					}
+				}
+			}
+
+			// Handle scale fallback: key 32 to 128 / 129 (decompiled GameObject::newObjectFromVector)
 			if (properties.has("32")) {
-				if (!properties.has("128")) properties["128"] = properties["32"];
-				if (!properties.has("129")) properties["129"] = properties["32"];
+				const String s32 = String(properties["32"]).strip_edges();
+				if (!s32.is_empty() && s32.to_float() != 0.0f) {
+					bool need_128 = !properties.has("128") || String(properties["128"]).strip_edges().to_float() == 0.0f;
+					bool need_129 = !properties.has("129") || String(properties["129"]).strip_edges().to_float() == 0.0f;
+					if (need_128 && need_129) {
+						properties["128"] = s32;
+						properties["129"] = s32;
+					}
+				}
 			}
 
 			objects.append(properties);
