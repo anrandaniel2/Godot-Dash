@@ -48,6 +48,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <iterator>
 #include <map>
 #include <numeric>
@@ -3466,7 +3467,9 @@ public:
 			}
 
 			// Handle legacy groups: merge keys 26 and 33 into 57 (decompiled GameObject::newObjectFromVector):
-			for (const char *group_key : {"26", "33"}) {
+			static const char *legacy_group_keys[2] = { "26", "33" };
+			for (int gi = 0; gi < 2; ++gi) {
+				const char *group_key = legacy_group_keys[gi];
 				if (properties.has(group_key)) {
 					const String grp = String(properties[group_key]).strip_edges();
 					if (!grp.is_empty() && grp != "0") {
@@ -3476,8 +3479,8 @@ public:
 						} else {
 							bool found = false;
 							const PackedStringArray grps = cur57.split(".");
-							for (int64_t gi = 0; gi < grps.size(); ++gi) {
-								if (grps[gi] == grp) {
+							for (int64_t i = 0; i < grps.size(); ++i) {
+								if (String(grps[i]).strip_edges() == grp) {
 									found = true;
 									break;
 								}
