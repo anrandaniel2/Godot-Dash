@@ -25,6 +25,8 @@ concurrency:
 
 env:
   GODOT_VERSION: "4.7.2"
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  EM_VERSION: 3.1.64
   GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
   GODOT_TPZ_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
   GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
@@ -40,6 +42,63 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ------------------------------------------------- Native GDExtension (WebAssembly)
+      - name: Install scons
+        run: pip3 install --break-system-packages -q scons
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EM_VERSION }}
+
+      - name: Verify Emscripten
+        run: emcc -v
+
+      - name: Cache scons build cache
+        uses: actions/cache@v4
+        with:
+          path: native/scons-cache
+          key: native-scons-web-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Build gdash_native for Web (WASM multi-threaded)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          mkdir -p bin/web
+
+          emit_scons_error() {
+            echo "scons FAILED; tail of $1:"
+            tail -n 50 "$1"
+          }
+
+          echo "Compiling template_release (threads=yes)..."
+          if ! scons platform=web target=template_release arch=wasm32 threads=yes api_version=4.7 debug_symbols=no -j2 > /tmp/scons_web_release.log 2>&1; then
+            emit_scons_error /tmp/scons_web_release.log
+            exit 1
+          fi
+          tail -n 5 /tmp/scons_web_release.log
+
+          echo "Compiling template_debug (threads=yes)..."
+          if ! scons platform=web target=template_debug arch=wasm32 threads=yes api_version=4.7 debug_symbols=yes -j2 > /tmp/scons_web_debug.log 2>&1; then
+            emit_scons_error /tmp/scons_web_debug.log
+            exit 1
+          fi
+          tail -n 5 /tmp/scons_web_debug.log
+
+          ls -lh bin/web/
+          test -f bin/web/libgdash_native.web.template_release.wasm32.wasm || { echo "::error::Release wasm missing"; exit 1; }
+          test -f bin/web/libgdash_native.web.template_debug.wasm32.wasm || { echo "::error::Debug wasm missing"; exit 1; }
 
       # ---------------------------------------------------------------- Godot
       - name: Cache Godot binary
