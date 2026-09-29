@@ -506,13 +506,13 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 	var last: Dictionary = _error("Music download failed.")
 	var proxies: PackedStringArray = [""]
 	if OS.has_feature("web"):
-		var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+		var custom_proxy := _get_custom_proxy()
 		if not custom_proxy.is_empty():
 			proxies.append(custom_proxy)
 		for p in [
-			"https://test.cors.workers.dev/?",
-			"https://cors.netnr.workers.dev/",
-			"https://corsproxy.io/?url=",
+			"https://api.codetabs.com/v1/proxy?quest=",
+			"https://api.allorigins.win/raw?url=",
+			"https://cors.deno.dev/",
 		]:
 			if p not in proxies:
 				proxies.append(p)
@@ -529,12 +529,21 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 	return last
 
 
+static func _get_custom_proxy() -> String:
+	var p := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+	if p.is_empty() and Config != null:
+		p = str(Config.cors_proxy)
+	if p.is_empty() and Config != null and Config.config_file != null:
+		p = str(Config.config_file.get_value("Internet", "cors_proxy", ""))
+	return p.strip_edges()
+
+
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 	if not OS.has_feature("web"):
 		return endpoint
 	if proxy_prefix.is_empty():
 		return endpoint
-	if proxy_prefix.ends_with("?url="):
+	if proxy_prefix.ends_with("="):
 		return proxy_prefix + endpoint.uri_encode()
 	return proxy_prefix + endpoint
 
@@ -558,12 +567,13 @@ func _get_text(url: String) -> Dictionary:
 	if not OS.has_feature("web"):
 		return last
 	var proxies: PackedStringArray = [
+		"https://api.codetabs.com/v1/proxy?quest=",
+		"https://api.allorigins.win/raw?url=",
+		"https://cors.deno.dev/",
+		"https://cors.eu.org/",
 		"https://test.cors.workers.dev/?",
-		"https://cors.netnr.workers.dev/",
-		"https://corsproxy.io/?url=",
-		"https://proxy.killcors.com/?url=",
 	]
-	var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+	var custom_proxy := _get_custom_proxy()
 	if not custom_proxy.is_empty():
 		proxies.insert(0, custom_proxy)
 	for proxy in proxies:
@@ -681,15 +691,14 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 	var last: Dictionary = _error("RobTop request failed.")
 	var proxies: PackedStringArray = []
 	if OS.has_feature("web"):
-		var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+		var custom_proxy := _get_custom_proxy()
 		if not custom_proxy.is_empty():
 			proxies.append(custom_proxy)
 		for fallback in [
+			"https://cors.deno.dev/",
+			"https://cors.eu.org/",
 			"https://test.cors.workers.dev/?",
 			"https://cors.netnr.workers.dev/",
-			"https://corsproxy.io/?url=",
-			"https://proxy.killcors.com/?url=",
-			"https://cors-anywhere.herokuapp.com/",
 			"",
 		]:
 			if fallback not in proxies:

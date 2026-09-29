@@ -169,6 +169,7 @@ var menu_loop: String:
 @export_group("Internet")
 @export var check_for_updates: bool = true
 @export var discord_rich_presence: bool = true
+@export var cors_proxy: String = ""
 
 # Icons
 @export_group("Icon")
@@ -294,6 +295,7 @@ func _init():
 	# Internet
 	check_for_updates = config_file.get_value("Internet", "check_for_updates", check_for_updates)
 	discord_rich_presence = config_file.get_value("Internet", "discord_rich_presence", discord_rich_presence)
+	cors_proxy = config_file.get_value("Internet", "cors_proxy", cors_proxy)
 
 	saved_window_size = config_file.get_value("Misc", "saved_window_size", saved_window_size)
 
@@ -391,6 +393,7 @@ func save() -> void:
 	# Internet
 	config_file.set_value("Internet", "check_for_updates", check_for_updates)
 	config_file.set_value("Internet", "discord_rich_presence", discord_rich_presence)
+	config_file.set_value("Internet", "cors_proxy", cors_proxy)
 
 	# Icons
 	config_file.set_value("Icons", "primary_color", primary_color)
