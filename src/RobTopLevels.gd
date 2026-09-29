@@ -244,24 +244,40 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 
 
 func _download_gdbrowser(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	var url := "https://gdbrowser.com/api/level/%d?download=1" % level_id
-	print("[RobTop] Web level download via GDBrowser: %s" % url)
-	var res := await _get_json(url)
-	if not res.ok:
-		return _error("GDBrowser download request failed: %s" % str(res.get("error", "")))
-	var data: Variant = res.get("data")
-	if not (data is Dictionary):
-		return _error("Level %d was not found on GDBrowser" % level_id)
-	var dict_data: Dictionary = data
-	var encoded: String = str(dict_data.get("data", "")).strip_edges()
-	if encoded.is_empty() or encoded == "-1":
+	# 1. GDBrowser official level analysis endpoint (/api/analyze/id)
+	# Per GDBrowser documentation: returns decrypted plain-text level data under 'data',
+	# level metadata under 'level', and settings under 'settings'.
+	var analyze_url := "https://gdbrowser.com/api/analyze/%d" % level_id
+	print("[RobTop] Web level download via GDBrowser analyze: %s" % analyze_url)
+	var res := await _get_json(analyze_url)
+	var dict_data: Dictionary = {}
+	if res.ok and (res.data is Dictionary) and (res.data.has("data") or res.data.has("level")):
+		dict_data = res.data
+	else:
+		# Fallback: /api/level/id?download
+		var level_url := "https://gdbrowser.com/api/level/%d?download" % level_id
+		print("[RobTop] GDBrowser analyze fallback to level endpoint: %s" % level_url)
+		var level_res := await _get_json(level_url)
+		if level_res.ok and (level_res.data is Dictionary):
+			dict_data = level_res.data
+		else:
+			return _error("GDBrowser download request failed: %s" % str(res.get("error", "")))
+
+	var raw_data: String = ""
+	if dict_data.has("data"):
+		raw_data = str(dict_data.get("data", "")).strip_edges()
+	elif dict_data.get("level") is Dictionary:
+		raw_data = str(dict_data["level"].get("data", "")).strip_edges()
+
+	if raw_data.is_empty() or raw_data == "-1":
 		return _error("Level %d has no downloadable data on GDBrowser" % level_id)
 
-	var level_string := GMD.decode_level_string(encoded)
+	var level_string := GMD.decode_level_string(raw_data)
 	if level_string.is_empty():
-		return _error("Level %d data could not be decompressed" % level_id)
+		return _error("Level %d data could not be parsed" % level_id)
 
-	var level_name: String = str(dict_data.get("name", summary.get("name", "Level %d" % level_id)))
+	var level_info: Dictionary = dict_data.get("level", {}) if (dict_data.get("level") is Dictionary) else dict_data
+	var level_name: String = str(level_info.get("name", summary.get("name", "Level %d" % level_id)))
 	var report := GMDConverter.ImportReport.new()
 	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
 	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
@@ -270,18 +286,22 @@ func _download_gdbrowser(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		return _error("Level %d contains no objects supported by parser (%s)" % [level_id, report.summary()])
 
 	level_data.name = level_name
-	level_data.creator = str(dict_data.get("author", summary.get("creator", "Unknown")))
-	level_data.description = str(dict_data.get("description", summary.get("description", "")))
+	level_data.creator = str(level_info.get("author", summary.get("creator", "Unknown")))
+	level_data.description = str(level_info.get("description", summary.get("description", "")))
 	level_data.rating = -1
 	level_data["robtop_level_id"] = level_id
-	level_data["robtop_downloads"] = int(dict_data.get("downloads", summary.get("downloads", 0)))
-	level_data["robtop_likes"] = int(dict_data.get("likes", summary.get("likes", 0)))
+	level_data["robtop_downloads"] = int(summary.get("downloads", level_info.get("downloads", 0)))
+	level_data["robtop_likes"] = int(summary.get("likes", level_info.get("likes", 0)))
 
-	level_data.song_start_time = maxf(0.0, float(level_data.get("song_start_time", 0.0)))
+	var song_offset := 0.0
+	if dict_data.has("settings") and (dict_data["settings"] is Dictionary):
+		song_offset = float(dict_data["settings"].get("songOffset", 0.0))
+	level_data.song_start_time = maxf(song_offset, float(level_data.get("song_start_time", 0.0)))
+
 	var audio_warning := ""
-	var custom_song_id := int(dict_data.get("customSong", summary.get("custom_song_id", 0)))
-	var official_song_id := int(dict_data.get("officialSong", summary.get("official_song_id", 0)))
-	var song_link: String = str(dict_data.get("songLink", summary.get("song_link", "")))
+	var custom_song_id := int(summary.get("custom_song_id", level_info.get("customSong", 0)))
+	var official_song_id := int(summary.get("official_song_id", level_info.get("officialSong", 0)))
+	var song_link: String = str(summary.get("song_link", level_info.get("songLink", "")))
 
 	if custom_song_id > 0:
 		var song := await _download_custom_song(custom_song_id, song_link)
@@ -532,7 +552,7 @@ func _get_text(url: String) -> Dictionary:
 	print("[RobTop] GET %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 15.0
+	request.timeout = 30.0
 	add_child(request)
 	var completed: Array = []
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
@@ -545,13 +565,13 @@ func _get_text(url: String) -> Dictionary:
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start GET request (error %d)" % error)
-	var deadline := Time.get_ticks_msec() + 15_000
+	var deadline := Time.get_ticks_msec() + 30_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Request timed out after 15 seconds", "retryable": true}
+		return {"ok": false, "error": "Request timed out after 30 seconds", "retryable": true}
 	request.queue_free()
 	var result: int = completed[0]
 	var status: int = completed[1]
