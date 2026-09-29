@@ -3486,7 +3486,7 @@ public:
 								}
 							}
 							if (!found) {
-								properties["57"] = cur57 + "." + grp;
+								properties["57"] = cur57 + String(".") + grp;
 							}
 						}
 					}
