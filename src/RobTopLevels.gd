@@ -393,7 +393,7 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
 			gmd_text = str(parsed_wrap["contents"])
 	var trimmed_text := gmd_text.strip_edges()
-	var doc: GMD = null
+	var doc: GMD.Document = null
 	if trimmed_text.begins_with("<?xml") or trimmed_text.begins_with("<plist"):
 		doc = GMD.parse(gmd_text)
 	var level_string := ""
@@ -880,10 +880,13 @@ static func _length_from_string(length_str: String) -> int:
 
 
 static func _extract_k4(text: String) -> String:
-	return NativeCore.extract_level_data_string(text)
+	var extracted := NativeCore.extract_level_data_string(text)
+	if not extracted.is_empty():
+		return extracted
+	return _extract_k4_fallback(text)
 
 
-static func extract_k4_fallback(text: String) -> String:
+static func _extract_k4_fallback(text: String) -> String:
 	var clean := text.strip_edges()
 	if clean.is_empty():
 		return ""

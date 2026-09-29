@@ -53,5 +53,5 @@ static func extract_level_data_string(payload: String) -> String:
 	var b: Object = backend()
 	if b != null and b.has_method(&"extract_level_data_string"):
 		return str(b.extract_level_data_string(payload))
-	return RobTopLevels.extract_k4_fallback(payload)
+	return ""
 
