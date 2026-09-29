@@ -158,6 +158,27 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## Downloads and converts one public GD level. The returned `level_data` is the
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
+	if OS.has_feature("web"):
+		# On Web, browser security blocks direct HTTP POST to RobTop boomlings (mixed content
+		# and missing CORS headers). Prioritize HTTPS GET-based archives (GDHistory and GDBrowser).
+		var gd_res := await _download_gdhistory(level_id, summary)
+		if gd_res.ok:
+			return gd_res
+		push_warning("[RobTop] GDHistory failed (%s); trying GDBrowser fallback" % str(gd_res.get("error", "")))
+		var gdb_res := await _download_gdbrowser(level_id, summary)
+		if gdb_res.ok:
+			return gdb_res
+		push_warning("[RobTop] GDBrowser failed (%s); trying direct RobTop endpoint" % str(gdb_res.get("error", "")))
+		var direct_res := await _download_direct(level_id, summary)
+		if direct_res.ok:
+			return direct_res
+		var err_msg: String = str(gd_res.get("error", ""))
+		if err_msg.is_empty():
+			err_msg = str(gdb_res.get("error", ""))
+		if err_msg.is_empty():
+			err_msg = str(direct_res.get("error", "Web level download failed"))
+		return _error(err_msg)
+
 	var response := await _download_direct(level_id, summary)
 	if response.ok:
 		return response
@@ -355,6 +376,10 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	if not text_res.ok:
 		return _error("Could not download level file from archive (%s)" % text_res.error)
 	var gmd_text: String = text_res.text
+	if gmd_text.begins_with("{") and gmd_text.contains("\"contents\""):
+		var parsed_wrap = JSON.parse_string(gmd_text)
+		if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
+			gmd_text = str(parsed_wrap["contents"])
 	var doc := GMD.parse(gmd_text)
 	var level_string := ""
 	if doc != null and not doc.level_string.is_empty():
@@ -548,8 +573,6 @@ static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 		return endpoint
 	if proxy_prefix.is_empty():
 		return endpoint
-	if proxy_prefix.ends_with("="):
-		return proxy_prefix + endpoint.uri_encode()
 	return proxy_prefix + endpoint
 
 
@@ -562,7 +585,14 @@ func _get_json(url: String) -> Dictionary:
 	var err := json.parse(text)
 	if err != OK:
 		return _error("Failed to parse JSON response: %s" % json.get_error_message())
-	return {"ok": true, "data": json.data}
+	var data: Variant = json.data
+	# Handle wrapped JSON proxies like api.allorigins.win/get?url=
+	if data is Dictionary and data.has("contents") and data.has("status"):
+		var inner_text: String = str(data["contents"]).strip_edges()
+		var inner_json := JSON.new()
+		if inner_json.parse(inner_text) == OK:
+			return {"ok": true, "data": inner_json.data}
+	return {"ok": true, "data": data}
 
 
 func _get_text(url: String) -> Dictionary:
@@ -574,6 +604,8 @@ func _get_text(url: String) -> Dictionary:
 	var proxies: PackedStringArray = [
 		"https://api.codetabs.com/v1/proxy?quest=",
 		"https://api.allorigins.win/raw?url=",
+		"https://api.allorigins.win/get?url=",
+		"https://thingproxy.freeboard.io/fetch/",
 		"https://cors.eu.org/",
 		"https://test.cors.workers.dev/?",
 	]
@@ -584,6 +616,13 @@ func _get_text(url: String) -> Dictionary:
 		var proxied_url := _resolve_url(url, proxy)
 		var res := await _get_text_once(proxied_url)
 		if res.ok:
+			if res.has("text"):
+				var raw_text: String = str(res["text"]).strip_edges()
+				# If wrapped by allorigins /get?url=, unwrap contents:
+				if raw_text.begins_with("{\"contents\":") or raw_text.begins_with("{\n  \"contents\":"):
+					var parsed_wrap = JSON.parse_string(raw_text)
+					if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
+						res["text"] = str(parsed_wrap["contents"]).strip_edges()
 			return res
 	return last
 
@@ -599,8 +638,9 @@ func _get_text_once(target_url: String) -> Dictionary:
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
 		completed.assign([result, status, headers, bytes])
 	)
-	var headers := PackedStringArray(["Accept: application/json, text/plain, */*"])
+	var headers := PackedStringArray()
 	if not OS.has_feature("web"):
+		headers.append("Accept: application/json, text/plain, */*")
 		headers.append("User-Agent: Godot-Dash/1")
 	var error := request.request(target_url, headers, HTTPClient.METHOD_GET)
 	if error != OK:
@@ -618,9 +658,9 @@ func _get_text_once(target_url: String) -> Dictionary:
 	var status: int = completed[1]
 	var bytes: PackedByteArray = completed[3]
 	if result != HTTPRequest.RESULT_SUCCESS:
-		var is_cors := OS.has_feature("web") and result == HTTPRequest.RESULT_CANT_CONNECT
+		var is_cors := OS.has_feature("web") and (result == HTTPRequest.RESULT_CANT_CONNECT or result == HTTPRequest.RESULT_CONNECTION_ERROR)
 		if is_cors:
-			return {"ok": false, "error": "Request blocked by browser CORS policy", "retryable": false}
+			return {"ok": false, "error": "Request blocked by browser CORS policy", "retryable": true}
 		return {"ok": false, "error": "Request failed (result %d)" % result, "retryable": true}
 	if status < 200 or status >= 300:
 		return {"ok": false, "error": "Server returned HTTP %d" % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
@@ -641,8 +681,9 @@ func _download_audio_once(url: String, destination: String) -> Dictionary:
 	request.request_completed.connect(func(result: int, status: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
 		completed.assign([result, status])
 	)
-	var headers := PackedStringArray(["Accept: audio/*"])
+	var headers := PackedStringArray()
 	if not OS.has_feature("web"):
+		headers.append("Accept: audio/*")
 		headers.append("User-Agent: Godot-Dash/1")
 	var error := request.request(target_url, headers)
 	if error != OK:
@@ -657,7 +698,7 @@ func _download_audio_once(url: String, destination: String) -> Dictionary:
 		return {"ok": false, "error": "Music download timed out after 45 seconds.", "retryable": true}
 	request.queue_free()
 	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
-		var is_cors := OS.has_feature("web") and int(completed[0]) == HTTPRequest.RESULT_CANT_CONNECT
+		var is_cors := OS.has_feature("web") and (int(completed[0]) == HTTPRequest.RESULT_CANT_CONNECT or int(completed[0]) == HTTPRequest.RESULT_CONNECTION_ERROR)
 		if is_cors:
 			return {"ok": false, "error": "Music download blocked by browser CORS policy.", "retryable": false}
 		return {"ok": false, "error": "Music download failed (result %d)." % int(completed[0]), "retryable": true}
@@ -769,7 +810,7 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 	var bytes: PackedByteArray = completed[3]
 	print("[RobTop] result=%d HTTP=%d bytes=%d" % [result, status, bytes.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
-		var is_cors := OS.has_feature("web") and result == HTTPRequest.RESULT_CANT_CONNECT
+		var is_cors := OS.has_feature("web") and (result == HTTPRequest.RESULT_CANT_CONNECT or result == HTTPRequest.RESULT_CONNECTION_ERROR)
 		if is_cors:
 			return {
 				"ok": false,
@@ -939,6 +980,10 @@ static func _extract_k4(text: String) -> String:
 
 	# 6. Raw base64 compressed data:
 	if clean.begins_with("H4sI") or clean.begins_with("eJ") or clean.begins_with("H4sIA"):
+		return clean
+
+	# 7. Plain uncompressed level string:
+	if clean.contains(";1,") or clean.begins_with("kS") or clean.begins_with("kA"):
 		return clean
 
 	return ""

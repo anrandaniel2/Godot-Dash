@@ -214,7 +214,7 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release delete "$RELEASE_TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
           fi
-          gh release create "$RELEASE_TAG" "$ARTIFACT_NAME" \
+          gh release create "$RELEASE_TAG" "$ZIP_NAME" "$ARTIFACT_NAME" \
             --target "$GITHUB_SHA" \
             --title "Web HTML5 build — $GITHUB_REF_NAME ${GITHUB_SHA::8}" \
             --notes-file "$NOTES_FILE" \
