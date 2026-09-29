@@ -165,6 +165,10 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var gd_res := await _download_gdhistory(level_id, summary)
 	if gd_res.ok:
 		return gd_res
+	push_warning("[RobTop] GDHistory fallback failed (%s); trying GDBrowser fallback" % str(gd_res.get("error", "")))
+	var gdb_res := await _download_gdbrowser(level_id, summary)
+	if gdb_res.ok:
+		return gdb_res
 	return response
 
 
@@ -250,10 +254,76 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	}
 
 
+func _download_gdbrowser(level_id: int, summary: Dictionary = {}) -> Dictionary:
+	var url := "https://gdbrowser.com/api/level/%d?download=1" % level_id
+	print("[RobTop] Web level download via GDBrowser: %s" % url)
+	var res := await _get_json(url)
+	if not res.ok:
+		var analyze_url := "https://gdbrowser.com/api/analyze/%d" % level_id
+		print("[RobTop] GDBrowser fallback to analyze: %s" % analyze_url)
+		res = await _get_json(analyze_url)
+	if not res.ok or not (res.data is Dictionary):
+		return _error("Level %d was not found on GDBrowser (%s)" % [level_id, res.get("error", "")])
+	var dict_data: Dictionary = res.data
+	var raw_data: String = ""
+	if dict_data.has("data"):
+		raw_data = str(dict_data.get("data", "")).strip_edges()
+	elif dict_data.get("level") is Dictionary:
+		raw_data = str(dict_data["level"].get("data", "")).strip_edges()
+
+	if raw_data.is_empty() or raw_data == "-1":
+		return _error("Level %d has no downloadable data on GDBrowser" % level_id)
+
+	var level_string := GMD.decode_level_string(raw_data)
+	if level_string.is_empty():
+		return _error("Level %d data could not be parsed" % level_id)
+
+	var level_info: Dictionary = dict_data.get("level", {}) if (dict_data.get("level") is Dictionary) else dict_data
+	var level_name: String = str(level_info.get("name", summary.get("name", "Level %d" % level_id)))
+	var report := GMDConverter.ImportReport.new()
+	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
+	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
+	print("[RobTop] GDBrowser conversion: %s" % report.summary())
+	if imported_objects.is_empty():
+		return _error("Level %d contains no objects supported by parser (%s)" % [level_id, report.summary()])
+
+	level_data.name = level_name
+	level_data.creator = str(level_info.get("author", summary.get("creator", "Unknown")))
+	level_data.description = str(level_info.get("description", summary.get("description", "")))
+	level_data.rating = -1
+	level_data["robtop_level_id"] = level_id
+	level_data["robtop_downloads"] = int(summary.get("downloads", level_info.get("downloads", 0)))
+	level_data["robtop_likes"] = int(summary.get("likes", level_info.get("likes", 0)))
+
+	var song_offset := 0.0
+	if dict_data.has("settings") and (dict_data["settings"] is Dictionary):
+		song_offset = float(dict_data["settings"].get("songOffset", 0.0))
+	level_data.song_start_time = maxf(song_offset, float(level_data.get("song_start_time", 0.0)))
+
+	var audio_warning := ""
+	var custom_song_id := int(summary.get("custom_song_id", level_info.get("customSong", 0)))
+	var official_song_id := int(summary.get("official_song_id", level_info.get("officialSong", 0)))
+	var song_link: String = str(summary.get("song_link", level_info.get("songLink", "")))
+
+	if custom_song_id > 0:
+		var song := await _download_custom_song(custom_song_id, song_link)
+		if song.ok:
+			level_data.song_path = song.file_name
+		else:
+			audio_warning = song.error
+	elif official_song_id > 0:
+		audio_warning = "This level uses built-in Geometry Dash song %d, which is not included in Godot Dash." % official_song_id
+
+	return {
+		"ok": true,
+		"level_data": level_data,
+		"report": report,
+		"audio_warning": audio_warning,
+	}
+
+
 func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var info_url := "https://history.geometrydash.eu/api/v1/level/%d/" % level_id
-	if OS.has_feature("web"):
-		info_url = "https://api.allorigins.win/raw?url=" + info_url.uri_encode()
 	print("[RobTop] Web level download via GDHistory: %s" % info_url)
 	var info_res := await _get_json(info_url)
 	if not info_res.ok:
@@ -275,8 +345,6 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		return _error("Level %d has no downloadable string in online archive" % level_id)
 
 	var download_url := "https://history.geometrydash.eu/level/%d/%d/download/" % [level_id, chosen_record_id]
-	if OS.has_feature("web"):
-		download_url = "https://api.allorigins.win/raw?url=" + download_url.uri_encode()
 	print("[RobTop] Fetching level plist: %s" % download_url)
 	var text_res := await _get_text(download_url)
 	if not text_res.ok:
@@ -436,29 +504,38 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 
 func _download_audio(url: String, destination: String) -> Dictionary:
 	var last: Dictionary = _error("Music download failed.")
-	for attempt in NETWORK_ATTEMPTS:
+	var proxies: PackedStringArray = [""]
+	if OS.has_feature("web"):
+		var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+		if not custom_proxy.is_empty():
+			proxies.append(custom_proxy)
+		for p in [
+			"https://test.cors.workers.dev/?",
+			"https://cors.netnr.workers.dev/",
+			"https://corsproxy.io/?url=",
+		]:
+			if p not in proxies:
+				proxies.append(p)
+	for attempt in proxies.size():
+		var proxy := proxies[attempt]
+		var target_url := _resolve_url(url, proxy)
 		if FileAccess.file_exists(destination):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(destination))
-		last = await _download_audio_once(url, destination)
-		if last.ok or not bool(last.get("retryable", false)):
+		last = await _download_audio_once(target_url, destination)
+		if last.ok:
 			return last
-		if attempt + 1 < NETWORK_ATTEMPTS:
-			var delay := 0.5 * pow(2.0, attempt)
-			push_warning("[RobTop] transient music failure; retry %d/%d in %.1fs" % [attempt + 2, NETWORK_ATTEMPTS, delay])
-			await get_tree().create_timer(delay).timeout
+		if attempt + 1 < proxies.size() and OS.has_feature("web"):
+			await get_tree().create_timer(0.2).timeout
 	return last
 
 
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 	if not OS.has_feature("web"):
 		return endpoint
-	if "boomlings.com" not in endpoint:
-		return endpoint
 	if proxy_prefix.is_empty():
 		return endpoint
-	# Modern CORS proxies (corsfix, killcors, cors.x2u.in, thingproxy)
-	# take the target URL as-is (e.g. https://proxy.corsfix.com/?https://www.boomlings.com/...)
-	# URI-encoding the scheme/slashes creates invalid query syntax and triggers 400 Bad Request.
+	if proxy_prefix.ends_with("?url="):
+		return proxy_prefix + endpoint.uri_encode()
 	return proxy_prefix + endpoint
 
 
@@ -475,11 +552,33 @@ func _get_json(url: String) -> Dictionary:
 
 
 func _get_text(url: String) -> Dictionary:
-	var target_url := _resolve_url(url)
+	var last := await _get_text_once(url)
+	if last.ok:
+		return last
+	if not OS.has_feature("web"):
+		return last
+	var proxies: PackedStringArray = [
+		"https://test.cors.workers.dev/?",
+		"https://cors.netnr.workers.dev/",
+		"https://corsproxy.io/?url=",
+		"https://proxy.killcors.com/?url=",
+	]
+	var custom_proxy := str(ProjectSettings.get_setting("network/cors_proxy", ""))
+	if not custom_proxy.is_empty():
+		proxies.insert(0, custom_proxy)
+	for proxy in proxies:
+		var proxied_url := _resolve_url(url, proxy)
+		var res := await _get_text_once(proxied_url)
+		if res.ok:
+			return res
+	return last
+
+
+func _get_text_once(target_url: String) -> Dictionary:
 	print("[RobTop] GET %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 30.0
+	request.timeout = 25.0
 	add_child(request)
 	var completed: Array = []
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
@@ -492,13 +591,13 @@ func _get_text(url: String) -> Dictionary:
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start GET request (error %d)" % error)
-	var deadline := Time.get_ticks_msec() + 30_000
+	var deadline := Time.get_ticks_msec() + 25_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Request timed out after 30 seconds", "retryable": true}
+		return {"ok": false, "error": "Request timed out after 25 seconds", "retryable": true}
 	request.queue_free()
 	var result: int = completed[0]
 	var status: int = completed[1]
@@ -586,12 +685,11 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		if not custom_proxy.is_empty():
 			proxies.append(custom_proxy)
 		for fallback in [
-			"https://proxy.corsfix.com/?",
-			"https://proxy.killcors.com?url=",
-			"https://cors.x2u.in/",
-			"https://thingproxy.freeboard.io/fetch/",
-			"https://api.cors.lol/?url=",
-			"https://corsproxy.org/?url=",
+			"https://test.cors.workers.dev/?",
+			"https://cors.netnr.workers.dev/",
+			"https://corsproxy.io/?url=",
+			"https://proxy.killcors.com/?url=",
+			"https://cors-anywhere.herokuapp.com/",
 			"",
 		]:
 			if fallback not in proxies:
@@ -607,7 +705,7 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		if not bool(last.get("retryable", false)) and not OS.has_feature("web"):
 			return last
 		if attempt + 1 < proxies.size():
-			var delay := 0.2 * pow(1.4, attempt)
+			var delay := 0.1 * pow(1.2, attempt)
 			push_warning("[RobTop] request failed (%s); trying fallback proxy in %.1fs" % [last.get("error", ""), delay])
 			await get_tree().create_timer(delay).timeout
 	return last
