@@ -40,6 +40,7 @@
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 #include <godot_cpp/templates/hash_map.hpp>
 
@@ -1049,7 +1050,11 @@ class NativeTriggerRuntime : public RefCounted {
 			if (!groups_text.is_empty()) groups_text += ",";
 			groups_text += group;
 		}
-		ERR_PRINT(String("[gdash_native] FADIAG fire #")
+		// print(), not ERR_PRINT(): this describes what a capture resolved, not
+		// a failure. ERR_PRINT marked every fire as "ERROR: [gdash_native]
+		// FADIAG ..." in the Web build's console (and in logcat), which made a
+		// diagnostic look like a defect.
+		UtilityFunctions::print(String("[gdash_native] FADIAG fire #")
 			+ String::num_uint64(static_cast<uint64_t>(fade_capture_count))
 			+ " groups=" + groups_text
 			+ " members=" + String::num_uint64(static_cast<uint64_t>(fade.members.size()))
@@ -1365,8 +1370,9 @@ class NativeTriggerRuntime : public RefCounted {
 		// Device forensics 2026-09-13: the user sees a teleport interaction with
 		// an unresolved target at the exact moment the process dies at Amethyst
 		// level start. Log every native teleport attempt so the next logcat
-		// capture timestamps it against the gdash-mem checkpoints.
-		ERR_PRINT(String("[gdash_native] teleport attempt: record ")
+		// capture timestamps it against the gdash-mem checkpoints. print() so a
+		// routine interaction isn't reported as an "ERROR:" in game consoles.
+		UtilityFunctions::print(String("[gdash_native] teleport attempt: record ")
 			+ String::num_uint64(static_cast<uint64_t>(index))
 			+ ", center_group='" + record.effect.center_group + "'"
 			+ ", target_groups=" + String::num_uint64(static_cast<uint64_t>(record.effect.target_groups.size()))
@@ -1640,7 +1646,8 @@ private:
 		if (color_capture_reports >= 60) return;
 		if (color_capture_count > 20 && (color_capture_count % 1000) != 0) return;
 		++color_capture_reports;
-		ERR_PRINT(String("[gdash_native] colorcap #")
+		// print(), for the same reason as FADIAG above: diagnostic, not failure.
+		UtilityFunctions::print(String("[gdash_native] colorcap #")
 			+ String::num_int64(color_capture_count)
 			+ (effect.kind == TriggerEffectKind::PULSE ? " pulse" : " color")
 			+ (effect.channel_is_level_color ? " level" : " channel")
@@ -3018,9 +3025,11 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.11.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / api 4.7");
+		return String("gdash_native 1.12.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / quiet diagnostics / api 4.7");
 	}
-	int64_t version() const { return 22; }
+	// 23: fade/teleport/colour-capture diagnostics report through print() instead
+	// of ERR_PRINT, so a normal capture is no longer an "ERROR:" in the console.
+	int64_t version() const { return 23; }
 	int64_t add(int64_t a, int64_t b) const { return a + b; }
 
 	// Geometry Dash values are allowed to be empty. String::split(..., false)

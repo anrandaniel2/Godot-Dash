@@ -79,6 +79,38 @@ scales, toggle sprites) only process while a tween is live or the player is with
 
 Steps 1–2 need Python 3 and Pillow (`pip install pillow`).
 
+## Web (HTML5) builds
+
+Browsers only hand a page a cross-origin response when the server opts in with
+`Access-Control-Allow-Origin`. None of the level hosts do: `www.boomlings.com`
+also answers `403` to the `Origin` header a browser attaches to every
+cross-origin POST, `history.geometrydash.eu` sends no CORS header, and the song
+CDNs (`geometrydashcontent.b-cdn.net`, `geometrydashfiles.b-cdn.net`) send none
+either. Online level *search* therefore keeps working (GDBrowser answers with
+CORS headers), but downloading a level or its music requires a relay that
+performs the request server-side and answers the browser with CORS headers.
+
+- **Local export:** `python3 tools/serve_web.py --dir export/Web` serves the
+  build with the Cross-Origin Isolation headers the threaded build needs *and* a
+  `/cors-proxy?url=` relay. A page served from `localhost`/`127.0.0.1` finds it
+  automatically.
+- **Hosted build (itch.io, static hosting, …):** deploy
+  `tools/web_relay_worker.js` (Cloudflare Worker) or run `tools/serve_web.py`
+  behind any always-on host, then set the relay once in `project.godot` so the
+  export ships with it:
+
+  ```ini
+  [network]
+  cors_proxy="https://gdash-relay.example.workers.dev/?url="
+  ```
+
+  The same value can be set per user in the config file
+  (`Internet/cors_proxy`, read as `Config.cors_proxy`).
+
+Without a relay the Web build skips those requests and explains the limitation
+in-game instead of failing with console CORS errors and
+`TypeError: Failed to fetch`.
+
 ## Contributing
 
 **⚠️ Make sure to use Godot 4.7. ⚠️**

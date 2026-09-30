@@ -44,7 +44,7 @@ func _ready() -> void:
 	LevelManager.ground_down = $GroundDownParallax/GroundDownOrigin
 	LevelManager.ground_up = $GroundUpParallax/GroundUpOrigin
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
-	Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN
+	Input.mouse_mode = InputUtils.confined_hidden_mouse_mode()
 	_probe_native_core()
 	var memory_report_timer := Timer.new()
 	memory_report_timer.name = "MemoryReportTimer"

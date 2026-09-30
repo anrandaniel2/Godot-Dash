@@ -99,7 +99,7 @@ func toggle_pause_menu() -> void:
 		show_tween()
 	else:
 		unpaused.emit()
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Editor.in_editor else Input.MOUSE_MODE_CONFINED_HIDDEN
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Editor.in_editor else InputUtils.confined_hidden_mouse_mode()
 		if LevelManager.player:
 			LevelManager.player.get_node("Icon").process_mode = Node.PROCESS_MODE_ALWAYS
 		settings_were_open = $Settings.target_visible
@@ -148,7 +148,7 @@ func _on_leave_pressed() -> void:
 func _on_restart_pressed() -> void:
 	get_tree().paused = false
 	unpaused.emit()
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Editor.in_editor else Input.MOUSE_MODE_CONFINED_HIDDEN
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Editor.in_editor else InputUtils.confined_hidden_mouse_mode()
 	hide()
 	var should_use_practice_snapshot: bool = not LevelManager.practice_level_snapshots.is_empty()
 	if Editor.in_editor and not should_use_practice_snapshot:

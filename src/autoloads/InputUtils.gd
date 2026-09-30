@@ -68,3 +68,15 @@ func get_axis(negative_action: StringName, positive_action: StringName) -> float
 func _get_action_data(action: StringName) -> Dictionary:
 	assert(_actions.has(action), "tried to query unregistered action %s" % action)
 	return _actions[action]
+
+
+## Mouse mode for gameplay: cursor invisible and unable to leave the window.
+## Web cannot do the "confined" half - DisplayServerWeb::_mouse_update_mode()
+## rejects both MOUSE_MODE_CONFINED and MOUSE_MODE_CONFINED_HIDDEN with
+## "DisplayServerEnums::MOUSE_MODE_CONFINED is not supported for the Web
+## platform" and leaves the previous mode in place - so Web only gets the
+## hidden half rather than an error every time gameplay starts.
+func confined_hidden_mouse_mode() -> Input.MouseMode:
+	if OS.has_feature("web"):
+		return Input.MOUSE_MODE_HIDDEN
+	return Input.MOUSE_MODE_CONFINED_HIDDEN

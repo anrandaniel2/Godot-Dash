@@ -43,6 +43,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ------------------------------------------- CORS relay Worker self-test
+      # The hosted build reaches RobTop/GDHistory/song hosts through
+      # tools/web_relay_worker.js; its request translation is covered here
+      # because the Godot export cannot exercise it.
+      - name: Check the CORS relay Worker
+        run: node tools/web_relay_worker_selftest.mjs
+
       # ------------------------------------------------- Native GDExtension (WebAssembly)
       - name: Install scons
         run: pip3 install --break-system-packages -q scons

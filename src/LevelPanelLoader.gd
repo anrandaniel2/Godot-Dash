@@ -270,6 +270,15 @@ func _refresh_online() -> void:
 		next_page_button.disabled = true
 		_show_list_message("Could not load online levels.\n%s\nCheck your connection and press Refresh." % response.error)
 		return
+	if not online_client.downloads_available():
+		# The list comes from a CORS-enabled API, so browsing works in any
+		# browser; level files do not, so say that once before the first
+		# download button is pressed instead of only after it fails.
+		Toasts.warning_once(
+			"web_level_downloads",
+			"Online levels can be browsed here, but downloading them needs a CORS relay in this browser build.",
+			8.0,
+		)
 
 	online_pages = int(response.pages)
 	page_status.tooltip_text = ""
@@ -315,7 +324,11 @@ func _download_online_level(summary: Dictionary, edit_after: bool, panel: LevelP
 	panel.edit_button.disabled = false
 	panel.version.text = old_version
 	if not response.ok:
-		_show_transient_error("Level download failed: %s" % response.error)
+		var failure: String = "Level download failed: %s" % response.error
+		var hint: String = str(response.get("hint", ""))
+		if not hint.is_empty():
+			failure += "\n\n" + hint
+		_show_transient_error(failure)
 		return
 	var file_name := "%s [GD-%d].%s" % [str(summary.name).validate_filename(), summary.id, Constants.LEVEL_FILE_EXTENSION]
 	var error := LevelOperationsHandler.write_level_and_meta(Constants.LEVEL_DIR + file_name, response.level_data)

@@ -9,6 +9,10 @@ enum Status {
 	OUT_OF_DATE,
 	NEWER_THAN_UPSTREAM,
 	FAILED,
+	## Web builds only: codeberg.org's release API sends no CORS headers, so a
+	## browser fetch is rejected before it can return a status - and a Web build
+	## cannot update itself anyway. The page hosting the build owns updates.
+	DISABLED,
 }
 
 var version: Version = Version.new(ProjectSettings.get_setting("application/config/version"))
@@ -24,6 +28,13 @@ func _ready() -> void:
 
 func check_for_updates() -> void:
 	if not Config.check_for_updates:
+		return
+	if OS.has_feature("web"):
+		# Do not fire a request the browser is guaranteed to reject: the fetch
+		# would show up as a CORS error plus "TypeError: Failed to fetch" in the
+		# page console. Report the host-managed state instead.
+		status = Status.DISABLED
+		finished.emit.call_deferred()
 		return
 	status = Status.CHECKING
 	var http: HTTPRequest = HTTPRequest.new()

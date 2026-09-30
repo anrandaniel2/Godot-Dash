@@ -25,13 +25,91 @@ const PAGE_SIZE := 10
 const TRANSIENT_HTTP_STATUSES := [408, 425, 429, 500, 502, 503, 504]
 const NETWORK_ATTEMPTS := 3
 
+# ---------------------------------------------------------------------------
+# Browser (Web) transport
+# ---------------------------------------------------------------------------
+# A browser only hands a page a cross-origin response when the server opts in
+# with `Access-Control-Allow-Origin`. RobTop's boomlings.com does not - it also
+# answers 403 to any request carrying an `Origin` header, which a browser
+# always sends on a cross-origin POST - and neither do the GDHistory archive
+# (history.geometrydash.eu) nor the song CDNs. (Checked against gdbrowser.com,
+# which does send `Access-Control-Allow-Origin: *`, as a control.) Firing those
+# requests from a Web build can therefore only produce browser CORS errors
+# followed by "TypeError: Failed to fetch" in the console.
+#
+# The Web build reaches those hosts only through a relay that performs the
+# request server-side and answers with CORS headers. Configure it with the
+# `network/cors_proxy` project setting (so an exported build ships with it) or
+# with `Config.cors_proxy` (user config). tools/serve_web.py serves such a
+# relay for local exports, and tools/web_relay_worker.js is a deployable
+# Cloudflare Worker. Without a relay the Web build skips the request and says
+# why instead of generating console errors.
+const WEB_RELAY_SETTING := "network/cors_proxy"
+const WEB_RELAY_REQUIRED := "Online downloads aren't available in this browser build (browsers block direct requests to RobTop's servers)."
+const WEB_RELAY_HINT := "The desktop and Android builds download normally. Hosting this page? Deploy tools/web_relay_worker.js and set the \"network/cors_proxy\" project setting (or Config.cors_proxy) to enable downloads here."
+# Hosts verified to answer with `Access-Control-Allow-Origin: *`, i.e. the only
+# ones a Web build may call directly. GDBrowser's JSON API is what the online
+# level list uses; everything else goes through the relay.
+const WEB_CORS_HOSTS := ["gdbrowser.com"]
+
+
+## The host part of an absolute URL, port stripped and lower-cased.
+static func _host_of(url: String) -> String:
+	var rest := url.trim_prefix("https://").trim_prefix("http://")
+	var slash := rest.find("/")
+	var authority := rest.substr(0, slash) if slash != -1 else rest
+	return authority.get_slice(":", 0).to_lower()
+
+
+## Whether this process can perform cross-origin GD requests at all.
+## Desktop/mobile builds always can; a Web build needs a configured relay.
+func downloads_available() -> bool:
+	return not OS.has_feature("web") or not web_relay().is_empty()
+
+
+## The relay prefix used for every cross-origin request on the Web build.
+## An empty result means "no relay configured", and every Web request path
+## then returns WEB_RELAY_REQUIRED instead of a browser-rejected fetch.
+func web_relay() -> String:
+	var relay := str(ProjectSettings.get_setting(WEB_RELAY_SETTING, "")).strip_edges()
+	if relay.is_empty() and Config != null:
+		relay = str(Config.cors_proxy).strip_edges()
+	if relay.is_empty() and Config != null and Config.config_file != null:
+		relay = str(Config.config_file.get_value("Internet", "cors_proxy", "")).strip_edges()
+	if relay.is_empty() and _served_from_dev_server():
+		# tools/serve_web.py exposes /cors-proxy, so a local export needs no setup.
+		relay = "/cors-proxy?url="
+	if not relay.is_empty() and not relay.contains("?"):
+		# A bare relay origin ("https://relay.example.com") is accepted as well as
+		# the documented "?url=" form: the Worker and tools/serve_web.py both read
+		# the target from the `url` query parameter.
+		relay = relay.trim_suffix("/") + "/?url="
+	return relay
+
+
+## Whether the page is being served by tools/serve_web.py, which binds 0.0.0.0
+## and answers `/cors-proxy` on every interface. Loopback names and any plain
+## http:// origin count: the hosted builds (itch.io, static hosting) are https
+## and always need an explicitly configured relay.
+func _served_from_dev_server() -> bool:
+	if not OS.has_feature("web") or JavaScriptBridge == null:
+		return false
+	var host := str(JavaScriptBridge.eval("window.location.hostname")).strip_edges()
+	if host == "localhost" or host == "127.0.0.1" or host == "[::1]" or host == "::1":
+		return true
+	return str(JavaScriptBridge.eval("window.location.protocol")).strip_edges() == "http:"
+
 
 func search(query: String, page: int = 0, category: int = 1) -> Dictionary:
 	if OS.has_feature("web"):
 		var web_res := await _search_web(query, page, category)
 		if web_res.ok:
 			return web_res
-		push_warning("[RobTop] Web search fallback to boomlings: %s" % str(web_res.get("error", "")))
+		# GDBrowser answers with CORS headers; plain boomlings does not, so only
+		# retry there when a relay can carry the POST.
+		if web_relay().is_empty():
+			return web_res
+		push_warning("[RobTop] Web search fallback through relay: %s" % str(web_res.get("error", "")))
 
 	var clean_query := query.strip_edges()
 	var fields := {
@@ -172,18 +250,21 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	if OS.has_feature("web"):
-		# On Web, direct POST to RobTop boomlings.com is blocked by browser CORS policy.
-		# Prioritize GDHistory archive (uses HTTPS GET with CORS proxy), then direct endpoint if proxy configured.
-		var gd_res := await _download_gdhistory(level_id, summary)
-		if gd_res.ok:
-			return gd_res
+		# boomlings.com rejects browser POSTs (no CORS headers, plus a 403 on
+		# the Origin header every browser attaches), so the Web build only goes
+		# through the relay. Without one, explain the limitation instead of
+		# firing a request the browser is guaranteed to reject.
+		if web_relay().is_empty():
+			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
+		# A relay can carry the POST, so ask RobTop first (current version plus
+		# song fields); the archive stays as the fallback.
 		var direct_res := await _download_direct(level_id, summary)
 		if direct_res.ok:
 			return direct_res
-		var err := str(gd_res.get("error", ""))
-		if err.is_empty():
-			err = str(direct_res.get("error", "Web level download failed"))
-		return _error(err)
+		var gd_res := await _download_gdhistory(level_id, summary)
+		if gd_res.ok:
+			return gd_res
+		return gd_res if not str(gd_res.get("error", "")).is_empty() else direct_res
 
 	var direct_res := await _download_direct(level_id, summary)
 	if direct_res.ok:
@@ -288,7 +369,7 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 
 func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var info_url := "https://history.geometrydash.eu/api/v1/level/%d/" % level_id
-	print("[RobTop] Web level download via GDHistory: %s" % info_url)
+	print("[RobTop] Level download via GDHistory: %s" % info_url)
 	var info_res := await _get_json(info_url)
 	if not info_res.ok:
 		return _error("Level %d not found in online archive (%s)" % [level_id, info_res.error])
@@ -403,6 +484,10 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 ## Resolves and caches a custom song without account credentials. RobTop's song
 ## object provides a percent-encoded HTTPS media URL in field 10.
 func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
+	if OS.has_feature("web") and web_relay().is_empty():
+		# Every song host is cross-origin and sends no CORS headers, so a
+		# browser fetch can only fail. Report it instead of trying.
+		return _error("Music downloads need a CORS relay in this browser build.")
 	var file_name := "robtop_%d.mp3" % song_id
 	var final_path := Constants.SONG_DIR + file_name
 	if FileAccess.file_exists(final_path):
@@ -414,7 +499,7 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 	if not direct_url.is_empty():
 		candidates.append(direct_url)
 
-	# 1. BunnyCDN custom songs mirror (fast, CORS enabled)
+	# 1. BunnyCDN custom songs mirror (fast; served through the relay on Web).
 	candidates.append("https://geometrydashcontent.b-cdn.net/songs/%d.mp3" % song_id)
 	if song_id >= 10000000:
 		candidates.append("https://geometrydashfiles.b-cdn.net/music/%d.mp3" % song_id)
@@ -424,9 +509,10 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 	# 2. Newgrounds direct download redirect
 	candidates.append("https://www.newgrounds.com/audio/download/%d" % song_id)
 
-	# 3. Only on non-web or when custom proxy is configured, fetch official RobTop song info via getGJSongInfo.php:
-	var custom_proxy := _get_custom_proxy()
-	if not OS.has_feature("web") or not custom_proxy.is_empty():
+	# 3. Fetch official RobTop song info via getGJSongInfo.php when the request
+	# can reach it: desktop/mobile directly, Web through a relay that can carry
+	# the POST. A browser on its own never can.
+	if not OS.has_feature("web") or not web_relay().is_empty():
 		var song_fields := {
 			"gameVersion": "21",
 			"binaryVersion": "35",
@@ -466,6 +552,10 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 func download_sfx(sfx_id: int) -> Dictionary:
 	if sfx_id <= 0:
 		return _error("Invalid SFX ID %d" % sfx_id)
+	if not downloads_available():
+		# Every SFX host is cross-origin without CORS headers; on Web this is a
+		# relay-only download like music, so don't enter the candidate loop.
+		return _error("Sound downloads need a CORS relay in this browser build.")
 
 	var file_name := "sfx_%d.ogg" % sfx_id
 	var final_path := Constants.SFX_DIR + file_name
@@ -495,40 +585,15 @@ func download_sfx(sfx_id: int) -> Dictionary:
 
 
 func _download_audio(url: String, destination: String) -> Dictionary:
-	# Try direct download first (works out-of-the-box for CORS-enabled CDNs like BunnyCDN).
-	var last := await _download_audio_once(url, destination)
-	if last.ok or not OS.has_feature("web"):
-		return last
-
-	# On Web, if direct download was blocked by browser CORS, try configured or public proxy (1-2 fallbacks max).
-	var proxies: PackedStringArray = []
-	var custom_proxy := _get_custom_proxy()
-	if not custom_proxy.is_empty():
-		proxies.append(custom_proxy)
-	proxies.append("https://api.codetabs.com/v1/proxy?quest=")
-
-	for proxy in proxies:
-		var target_url := _resolve_url(url, proxy)
-		var res := await _download_audio_once(target_url, destination)
-		if res.ok:
-			return res
-		last = res
-	return last
-
-
-static func _get_custom_proxy() -> String:
-	var p := str(ProjectSettings.get_setting("network/cors_proxy", ""))
-	if p.is_empty() and Config != null:
-		p = str(Config.cors_proxy)
-	if p.is_empty() and Config != null and Config.config_file != null:
-		p = str(Config.config_file.get_value("Internet", "cors_proxy", ""))
-	p = p.strip_edges()
-	if p.is_empty() and OS.has_feature("web"):
-		if JavaScriptBridge != null:
-			var host := str(JavaScriptBridge.eval("window.location.hostname"))
-			if host == "localhost" or host == "127.0.0.1":
-				p = "/cors-proxy?url="
-	return p
+	if OS.has_feature("web"):
+		# The song hosts (the b-cdn mirrors and Newgrounds) also send no CORS
+		# headers, so a direct browser fetch can only produce a console CORS
+		# error. Go through the relay, or refuse before making the request.
+		var relay := web_relay()
+		if relay.is_empty():
+			return _error("Audio downloads need a CORS relay in this browser build.")
+		return await _download_audio_once(_resolve_url(url, relay), destination)
+	return await _download_audio_once(url, destination)
 
 
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
@@ -548,33 +613,27 @@ func _get_json(url: String) -> Dictionary:
 
 
 func _get_text(url: String) -> Dictionary:
-	var last := await _get_text_once(url)
-	if last.ok or not OS.has_feature("web"):
-		return last
-
-	# On Web, direct cross-origin GET to GDHistory is blocked by browser CORS policy.
-	# Fall back to configured or public CORS proxies (strictly 2-3 reliable proxies).
-	var proxies: PackedStringArray = [
-		"https://api.codetabs.com/v1/proxy?quest=",
-		"https://api.allorigins.win/raw?url=",
-	]
-	var custom_proxy := _get_custom_proxy()
-	if not custom_proxy.is_empty():
-		proxies.insert(0, custom_proxy)
-
-	for proxy in proxies:
-		var proxied_url := _resolve_url(url, proxy)
-		var res := await _get_text_once(proxied_url)
-		if res.ok:
-			if res.has("text"):
-				var raw_text: String = str(res["text"]).strip_edges()
-				if raw_text.begins_with("{\"contents\":") or raw_text.begins_with("{\n  \"contents\":"):
-					var parsed_wrap = JSON.parse_string(raw_text)
-					if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
-						res["text"] = str(parsed_wrap["contents"]).strip_edges()
-			return res
-		last = res
-	return last
+	if OS.has_feature("web"):
+		# CORS-enabled front-ends (GDBrowser) are readable directly; every other
+		# host must go through the relay. history.geometrydash.eu answers with no
+		# Access-Control-Allow-Origin at all, so a direct browser GET is always
+		# rejected there - relay it, or don't try.
+		if WEB_CORS_HOSTS.has(_host_of(url)):
+			return await _get_text_once(url)
+		var relay := web_relay()
+		if relay.is_empty():
+			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
+		var res := await _get_text_once(_resolve_url(url, relay))
+		if res.ok and res.has("text"):
+			# Relays built on allorigins' "/get" style wrap the body in a JSON
+			# envelope; the raw form is the common case.
+			var raw_text: String = str(res["text"]).strip_edges()
+			if raw_text.begins_with("{\"contents\":"):
+				var parsed_wrap: Variant = JSON.parse_string(raw_text)
+				if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
+					res["text"] = str(parsed_wrap["contents"]).strip_edges()
+		return res
+	return await _get_text_once(url)
 
 
 func _get_text_once(target_url: String) -> Dictionary:
@@ -689,11 +748,14 @@ static func _platform_id() -> String:
 
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
-	var custom_proxy := _get_custom_proxy() if OS.has_feature("web") else ""
-	var res := await _post_once(url, fields, custom_proxy)
-	if not res.ok and not custom_proxy.is_empty():
-		res = await _post_once(url, fields, "")
-	return res
+	if OS.has_feature("web"):
+		# A browser POST to boomlings.com gets an Origin header it refuses and a
+		# response without CORS headers; the relay is the only way through.
+		var relay := web_relay()
+		if relay.is_empty():
+			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
+		return await _post_once(url, fields, relay)
+	return await _post_once(url, fields, "")
 
 
 func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:
@@ -927,5 +989,8 @@ static func _extract_k4_fallback(text: String) -> String:
 	return ""
 
 
-static func _error(message: String) -> Dictionary:
-	return {"ok": false, "error": message}
+static func _error(message: String, hint: String = "") -> Dictionary:
+	var result := {"ok": false, "error": message}
+	if not hint.is_empty():
+		result["hint"] = hint
+	return result

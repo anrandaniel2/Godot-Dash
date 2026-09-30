@@ -7,6 +7,11 @@ set -euo pipefail
 #   - PWA Cross-Origin Isolation headers enabled
 #   - Mobile renderer enabled if possible (project.godot: renderer/rendering_method.web="mobile")
 #
+# Online level/music downloads need a CORS relay when the build is hosted
+# somewhere other than localhost: see the "Web (HTML5) builds" section of the
+# README, tools/web_relay_worker.js (deployable Cloudflare Worker) and
+# tools/serve_web.py (local server with the same relay on /cors-proxy).
+#
 # Usage: ./tools/export_web.sh [godot_binary] [output_dir]
 
 GODOT_BIN="${1:-godot}"

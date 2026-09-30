@@ -62,7 +62,6 @@ func _ready() -> void:
 	if not SceneManager.from_title_screen():
 		# HACK: Manual animation because PhantomCamera gets in the way
 		fade_screen.fade_out()
-		_camera_tween = create_tween()
 		zoom_out_title_screen_layer()
 	if Config.transition_duration > 0.0 and is_first_load:
 		splash.show()
@@ -142,18 +141,23 @@ func _input(event: InputEvent) -> void:
 			_return_to_title_screen()
 
 
+## Both zoom helpers keep the tween in `_camera_tween` so `_input` can ignore
+## "back" while the camera is still travelling. They must therefore own the
+## tween instead of creating a second, empty one next to it: a `create_tween()`
+## with no tweeners auto-starts and prints
+## "Tween (bound to ...): started with no Tweeners".
 func zoom_in_title_screen_layer() -> void:
-	var tween: Tween = create_tween().set_parallel().set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_EXPO)
-	tween.tween_property(camera, ^"zoom", Vector2.ONE * 4.0, Config.transition_duration)
-	tween.tween_property(title_screen_layer, ^"scale", Vector2.ONE * 4.0, Config.transition_duration)
-	tween.tween_property(title_screen_layer, ^"offset", -camera.get_viewport_rect().size * sqrt(2.0), Config.transition_duration)
+	_camera_tween = create_tween().set_parallel().set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_EXPO)
+	_camera_tween.tween_property(camera, ^"zoom", Vector2.ONE * 4.0, Config.transition_duration)
+	_camera_tween.tween_property(title_screen_layer, ^"scale", Vector2.ONE * 4.0, Config.transition_duration)
+	_camera_tween.tween_property(title_screen_layer, ^"offset", -camera.get_viewport_rect().size * sqrt(2.0), Config.transition_duration)
 
 
 func zoom_out_title_screen_layer() -> void:
-	var tween: Tween = create_tween().set_parallel().set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_EXPO)
-	tween.tween_property(camera, ^"zoom", PlayerCamera.DEFAULT_ZOOM, Config.transition_duration).from(Vector2.ONE * 2.0)
-	tween.tween_property(title_screen_layer, ^"scale", Vector2.ONE, Config.transition_duration).from(Vector2.ONE * 2.0)
-	tween.tween_property(title_screen_layer, ^"offset", Vector2.ZERO, Config.transition_duration).from(-camera.get_viewport_rect().size / 2.0)
+	_camera_tween = create_tween().set_parallel().set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_EXPO)
+	_camera_tween.tween_property(camera, ^"zoom", PlayerCamera.DEFAULT_ZOOM, Config.transition_duration).from(Vector2.ONE * 2.0)
+	_camera_tween.tween_property(title_screen_layer, ^"scale", Vector2.ONE, Config.transition_duration).from(Vector2.ONE * 2.0)
+	_camera_tween.tween_property(title_screen_layer, ^"offset", Vector2.ZERO, Config.transition_duration).from(-camera.get_viewport_rect().size / 2.0)
 
 
 func _return_to_title_screen() -> void:

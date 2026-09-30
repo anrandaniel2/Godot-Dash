@@ -25,6 +25,8 @@ func refresh() -> void:
 			add_theme_color_override("font_color", Color.WHITE)
 		UpdateManager.Status.NEWER_THAN_UPSTREAM:
 			text = "v%s – Current version is more recent than latest release (v%s)." % [UpdateManager.version, UpdateManager.latest_version]
+		UpdateManager.Status.DISABLED:
+			text = "v%s – Updates are handled by the web host." % UpdateManager.version
 		UpdateManager.Status.FAILED:
 			text = "v%s – Could not check for updates." % UpdateManager.version
 			add_theme_color_override("font_color", Color.WHITE)
@@ -32,6 +34,8 @@ func refresh() -> void:
 
 
 func _on_pressed() -> void:
+	if UpdateManager.status == UpdateManager.Status.DISABLED:
+		return
 	if UpdateManager.status == UpdateManager.Status.OUT_OF_DATE:
 		OS.shell_open(UpdateManager.latest_release_url)
 		text = "Link opened!"
