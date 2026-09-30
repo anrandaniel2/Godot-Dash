@@ -327,6 +327,109 @@ int main() {
 		check_int("Second SFX ID is 10000002", extracted_sfx[1], 10000002);
 	}
 
+	// Tests for resolve_proxy_url, is_cors_error, and is_audio_stream
+	auto url_encode_simple = [](const std::string &value) -> std::string {
+		std::string result;
+		for (char c : value) {
+			if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') {
+				result += c;
+			} else {
+				char buf[4];
+				snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)c);
+				result += buf;
+			}
+		}
+		return result;
+	};
+
+	auto resolve_proxy_url_test = [&](const std::string &endpoint, const std::string &prefix) -> std::string {
+		if (prefix.empty()) return endpoint;
+		if (prefix.find("allorigins.win/raw?url=") != std::string::npos) {
+			return "https://api.allorigins.win/raw?url=" + url_encode_simple(endpoint);
+		}
+		if (prefix.find("codetabs.com/v1/proxy?quest=") != std::string::npos) {
+			return "https://api.codetabs.com/v1/proxy?quest=" + url_encode_simple(endpoint);
+		}
+		if (!prefix.empty() && (prefix.back() == '?' || prefix.back() == '=')) {
+			return prefix + url_encode_simple(endpoint);
+		}
+		if (!prefix.empty() && prefix.back() == '/') {
+			return prefix + endpoint;
+		}
+		return prefix + "/" + endpoint;
+	};
+
+	check_true("Resolve proxy: empty prefix leaves endpoint unchanged",
+			resolve_proxy_url_test("https://example.com/api", "") == "https://example.com/api");
+	check_true("Resolve proxy: allorigins raw URL encoding",
+			resolve_proxy_url_test("https://history.geometrydash.eu/level/1/", "https://api.allorigins.win/raw?url=") ==
+			"https://api.allorigins.win/raw?url=https%3A%2F%2Fhistory.geometrydash.eu%2Flevel%2F1%2F");
+	check_true("Resolve proxy: codetabs quest URL encoding",
+			resolve_proxy_url_test("https://history.geometrydash.eu/api/1/", "https://api.codetabs.com/v1/proxy?quest=") ==
+			"https://api.codetabs.com/v1/proxy?quest=https%3A%2F%2Fhistory.geometrydash.eu%2Fapi%2F1%2F");
+	check_true("Resolve proxy: trailing slash preserves raw endpoint",
+			resolve_proxy_url_test("https://example.com/file.mp3", "https://proxy.example.com/") ==
+			"https://proxy.example.com/https://example.com/file.mp3");
+
+	auto is_cors_error_test = [](int64_t result, int64_t http_status, bool is_web) -> bool {
+		if (!is_web) return false;
+		return (result == 2 || result == 4) && http_status == 0;
+	};
+
+	check_true("CORS check: result 2 status 0 on Web is CORS error", is_cors_error_test(2, 0, true));
+	check_true("CORS check: result 4 status 0 on Web is CORS error", is_cors_error_test(4, 0, true));
+	check_true("CORS check: result 4 on Desktop is not CORS error", !is_cors_error_test(4, 0, false));
+	check_true("CORS check: result 0 status 200 is not CORS error", !is_cors_error_test(0, 200, true));
+
+	auto is_audio_stream_test = [](const std::vector<uint8_t> &bytes, const std::string &ext = "") -> bool {
+		if (bytes.size() < 32) return false;
+		std::string head;
+		size_t head_len = std::min((size_t)128, bytes.size());
+		for (size_t i = 0; i < head_len; ++i) {
+			char c = (char)bytes[i];
+			if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+			head += c;
+		}
+		if (head.rfind("<!doctype", 0) == 0 || head.rfind("<html", 0) == 0 || head.rfind("<?xml", 0) == 0 ||
+				head.rfind("{", 0) == 0 || head.rfind("error", 0) == 0) {
+			return false;
+		}
+		if (ext == "ogg" || (bytes[0] == 0x4f && bytes[1] == 0x67 && bytes[2] == 0x67 && bytes[3] == 0x53)) {
+			return true;
+		}
+		if (ext == "wav" || (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46)) {
+			return true;
+		}
+		if (bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) {
+			return true;
+		}
+		if (bytes[0] == 0xff && (bytes[1] & 0xe0) == 0xe0) {
+			return true;
+		}
+		if (bytes.size() >= 16384) return true;
+		return false;
+	};
+
+	std::vector<uint8_t> ogg_buf(64, 0);
+	ogg_buf[0] = 0x4f; ogg_buf[1] = 0x67; ogg_buf[2] = 0x67; ogg_buf[3] = 0x53; // "OggS"
+	check_true("Audio check: OGG header detected", is_audio_stream_test(ogg_buf));
+
+	std::vector<uint8_t> mp3_buf(64, 0);
+	mp3_buf[0] = 0x49; mp3_buf[1] = 0x44; mp3_buf[2] = 0x33; // "ID3"
+	check_true("Audio check: MP3 ID3 header detected", is_audio_stream_test(mp3_buf));
+
+	std::vector<uint8_t> mp3_sync_buf(64, 0);
+	mp3_sync_buf[0] = 0xff; mp3_sync_buf[1] = 0xfb; // MPEG sync frame
+	check_true("Audio check: MP3 frame sync detected", is_audio_stream_test(mp3_sync_buf));
+
+	std::string html_str = "<html><head><title>404 Not Found</title></head><body>404</body></html>";
+	std::vector<uint8_t> html_buf(html_str.begin(), html_str.end());
+	html_buf.resize(64, 0);
+	check_true("Audio check: HTML error page rejected", !is_audio_stream_test(html_buf));
+
+	std::vector<uint8_t> small_buf(16, 0);
+	check_true("Audio check: Small buffer (<32 bytes) rejected", !is_audio_stream_test(small_buf));
+
 	if (failures == 0) {
 		std::printf("\nALL ONLINE PARSER STANDALONE TESTS PASSED (0 failures)\n");
 		return 0;

@@ -3011,6 +3011,9 @@ protected:
 		ClassDB::bind_method(D_METHOD("is_html_error_response", "response"), &GdashNative::is_html_error_response);
 		ClassDB::bind_method(D_METHOD("extract_level_data_string", "payload"), &GdashNative::extract_level_data_string);
 		ClassDB::bind_method(D_METHOD("extract_level_sfx_ids", "level_string"), &GdashNative::extract_level_sfx_ids);
+		ClassDB::bind_method(D_METHOD("resolve_proxy_url", "endpoint", "proxy_prefix"), &GdashNative::resolve_proxy_url, DEFVAL(""));
+		ClassDB::bind_method(D_METHOD("is_cors_error", "result", "http_status", "is_web"), &GdashNative::is_cors_error, DEFVAL(true));
+		ClassDB::bind_method(D_METHOD("is_audio_stream", "bytes", "extension"), &GdashNative::is_audio_stream, DEFVAL(""));
 	}
 
 public:
@@ -3863,6 +3866,63 @@ public:
 			}
 		}
 		return sfx_ids;
+	}
+
+	String resolve_proxy_url(const String &endpoint, const String &proxy_prefix = "") const {
+		if (proxy_prefix.is_empty()) {
+			return endpoint;
+		}
+		const String clean_prefix = proxy_prefix.strip_edges();
+		if (clean_prefix.contains("allorigins.win/raw?url=")) {
+			return String("https://api.allorigins.win/raw?url=") + endpoint.uri_encode();
+		}
+		if (clean_prefix.contains("codetabs.com/v1/proxy?quest=")) {
+			return String("https://api.codetabs.com/v1/proxy?quest=") + endpoint.uri_encode();
+		}
+		if (clean_prefix.ends_with("?url=") || clean_prefix.ends_with("?") || clean_prefix.ends_with("=")) {
+			return clean_prefix + endpoint.uri_encode();
+		}
+		if (clean_prefix.ends_with("/")) {
+			return clean_prefix + endpoint;
+		}
+		return clean_prefix + String("/") + endpoint;
+	}
+
+	bool is_cors_error(int64_t result, int64_t http_status, bool is_web = true) const {
+		if (!is_web) return false;
+		return (result == 2 || result == 4) && http_status == 0;
+	}
+
+	bool is_audio_stream(const PackedByteArray &bytes, const String &extension = "") const {
+		if (bytes.size() < 32) return false;
+		const uint8_t *ptr = bytes.ptr();
+		const int64_t head_len = std::min((int64_t)128, (int64_t)bytes.size());
+		String head;
+		for (int64_t i = 0; i < head_len; ++i) {
+			char c = static_cast<char>(ptr[i]);
+			if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+			head += String::chr(c);
+		}
+		if (head.begins_with("<!doctype") || head.begins_with("<html") || head.begins_with("<?xml") ||
+				head.begins_with("{") || head.begins_with("error")) {
+			return false;
+		}
+		if (extension == "ogg" || (ptr[0] == 0x4f && ptr[1] == 0x67 && ptr[2] == 0x67 && ptr[3] == 0x53)) {
+			return true;
+		}
+		if (extension == "wav" || (ptr[0] == 0x52 && ptr[1] == 0x49 && ptr[2] == 0x46 && ptr[3] == 0x46)) {
+			return true;
+		}
+		if (ptr[0] == 0x49 && ptr[1] == 0x44 && ptr[2] == 0x33) {
+			return true;
+		}
+		if (ptr[0] == 0xff && (ptr[1] & 0xe0) == 0xe0) {
+			return true;
+		}
+		if (bytes.size() >= 16384) {
+			return true;
+		}
+		return false;
 	}
 
 	PackedInt32Array sort_decoration_indices(const PackedInt32Array &z_orders,

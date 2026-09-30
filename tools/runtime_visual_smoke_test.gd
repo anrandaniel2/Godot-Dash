@@ -439,6 +439,14 @@ func _test_native_core() -> void:
 	assert(sfx_ids.size() == 2 and sfx_ids[0] == 10000001 and sfx_ids[1] == 10000002, "native smoke: SFX ID collection failed")
 	var direct_sfx_ids: PackedInt32Array = native.call(&"extract_level_sfx_ids", "kA2,0;1,3602,2,30,3,30,392,10000005;")
 	assert(direct_sfx_ids.size() == 1 and direct_sfx_ids[0] == 10000005, "native smoke: direct extract_level_sfx_ids failed")
+	# Test proxy URL resolution, CORS error detection, and audio stream checking in native:
+	var resolved_proxy: String = native.call(&"resolve_proxy_url", "https://example.com/test", "https://api.codetabs.com/v1/proxy?quest=")
+	assert(resolved_proxy.begins_with("https://api.codetabs.com/v1/proxy?quest=https%3A%2F%2Fexample.com"), "native smoke: resolve_proxy_url codetabs failed")
+	var is_cors: bool = native.call(&"is_cors_error", 2, 0, true)
+	assert(is_cors, "native smoke: is_cors_error failed")
+	var ogg_bytes := PackedByteArray([0x4f, 0x67, 0x67, 0x53])
+	ogg_bytes.resize(64)
+	assert(bool(native.call(&"is_audio_stream", ogg_bytes, "ogg")), "native smoke: is_audio_stream OGG failed")
 	# Empty trigger values must remain attached to their key. Dropping empties
 	# shifts the rest of the comma stream and can turn duration/group/activation
 	# fields into unrelated values.

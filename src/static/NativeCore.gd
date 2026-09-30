@@ -63,6 +63,56 @@ static func extract_level_sfx_ids(level_string: String) -> PackedInt32Array:
 	return _extract_sfx_ids_fallback(level_string)
 
 
+static func resolve_proxy_url(endpoint: String, proxy_prefix: String = "") -> String:
+	var b: Object = backend()
+	if b != null and b.has_method(&"resolve_proxy_url"):
+		return b.resolve_proxy_url(endpoint, proxy_prefix)
+	if proxy_prefix.is_empty():
+		return endpoint
+	var clean := proxy_prefix.strip_edges()
+	if clean.contains("allorigins.win/raw?url="):
+		return "https://api.allorigins.win/raw?url=" + endpoint.uri_encode()
+	if clean.contains("codetabs.com/v1/proxy?quest="):
+		return "https://api.codetabs.com/v1/proxy?quest=" + endpoint.uri_encode()
+	if clean.ends_with("?url=") or clean.ends_with("?") or clean.ends_with("="):
+		return clean + endpoint.uri_encode()
+	if clean.ends_with("/"):
+		return clean + endpoint
+	return clean + "/" + endpoint
+
+
+static func is_cors_error(result: int, http_status: int, is_web: bool = true) -> bool:
+	var b: Object = backend()
+	if b != null and b.has_method(&"is_cors_error"):
+		return bool(b.is_cors_error(result, http_status, is_web))
+	if not is_web:
+		return false
+	return (result == 2 or result == 4) and http_status == 0
+
+
+static func is_audio_stream(bytes: PackedByteArray, extension: String = "") -> bool:
+	var b: Object = backend()
+	if b != null and b.has_method(&"is_audio_stream"):
+		return bool(b.is_audio_stream(bytes, extension))
+	if bytes.size() < 32:
+		return false
+	var head := bytes.slice(0, mini(128, bytes.size())).get_string_from_ascii().strip_edges().to_lower()
+	if head.begins_with("<!doctype") or head.begins_with("<html") or head.begins_with("<?xml") or head.begins_with("{") or head.begins_with("error"):
+		return false
+	if extension == "ogg" or (bytes[0] == 0x4f and bytes[1] == 0x67 and bytes[2] == 0x67 and bytes[3] == 0x53):
+		return true
+	if extension == "wav" or (bytes[0] == 0x52 and bytes[1] == 0x49 and bytes[2] == 0x46 and bytes[3] == 0x46):
+		return true
+	if bytes[0] == 0x49 and bytes[1] == 0x44 and bytes[2] == 0x33:
+		return true
+	if bytes[0] == 0xff and (bytes[1] & 0xe0) == 0xe0:
+		return true
+	if bytes.size() >= 16384:
+		return true
+	return false
+
+
+
 static func _extract_sfx_ids_fallback(level_string: String) -> PackedInt32Array:
 	var sfx_ids := PackedInt32Array()
 	var data := level_string.strip_edges()

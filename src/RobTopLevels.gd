@@ -171,20 +171,27 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## Downloads and converts one public GD level. The returned `level_data` is the
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	# 1. Try canonical RobTop endpoint first (direct on desktop/Android or through configured CORS proxy on Web).
+	if OS.has_feature("web"):
+		# On Web, direct POST to RobTop boomlings.com is blocked by browser CORS policy.
+		# Prioritize GDHistory archive (uses HTTPS GET with CORS proxy), then direct endpoint if proxy configured.
+		var gd_res := await _download_gdhistory(level_id, summary)
+		if gd_res.ok:
+			return gd_res
+		var direct_res := await _download_direct(level_id, summary)
+		if direct_res.ok:
+			return direct_res
+		var err := str(gd_res.get("error", ""))
+		if err.is_empty():
+			err = str(direct_res.get("error", "Web level download failed"))
+		return _error(err)
+
 	var direct_res := await _download_direct(level_id, summary)
 	if direct_res.ok:
 		return direct_res
-
-	# 2. GDHistory archive fallback.
 	var gd_res := await _download_gdhistory(level_id, summary)
 	if gd_res.ok:
 		return gd_res
-
-	var failure_reason: String = str(direct_res.get("error", ""))
-	if failure_reason.is_empty():
-		failure_reason = str(gd_res.get("error", "Level unavailable"))
-	return _error(failure_reason)
+	return direct_res
 
 
 func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
@@ -488,13 +495,25 @@ func download_sfx(sfx_id: int) -> Dictionary:
 
 
 func _download_audio(url: String, destination: String) -> Dictionary:
+	# Try direct download first (works out-of-the-box for CORS-enabled CDNs like BunnyCDN).
+	var last := await _download_audio_once(url, destination)
+	if last.ok or not OS.has_feature("web"):
+		return last
+
+	# On Web, if direct download was blocked by browser CORS, try configured or public proxy (1-2 fallbacks max).
+	var proxies: PackedStringArray = []
 	var custom_proxy := _get_custom_proxy()
-	if OS.has_feature("web") and not custom_proxy.is_empty():
-		var target_url := _resolve_url(url, custom_proxy)
+	if not custom_proxy.is_empty():
+		proxies.append(custom_proxy)
+	proxies.append("https://api.codetabs.com/v1/proxy?quest=")
+
+	for proxy in proxies:
+		var target_url := _resolve_url(url, proxy)
 		var res := await _download_audio_once(target_url, destination)
 		if res.ok:
 			return res
-	return await _download_audio_once(url, destination)
+		last = res
+	return last
 
 
 static func _get_custom_proxy() -> String:
@@ -513,11 +532,7 @@ static func _get_custom_proxy() -> String:
 
 
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
-	if not OS.has_feature("web"):
-		return endpoint
-	if proxy_prefix.is_empty():
-		return endpoint
-	return proxy_prefix + endpoint
+	return NativeCore.resolve_proxy_url(endpoint, proxy_prefix)
 
 
 func _get_json(url: String) -> Dictionary:
@@ -533,13 +548,33 @@ func _get_json(url: String) -> Dictionary:
 
 
 func _get_text(url: String) -> Dictionary:
+	var last := await _get_text_once(url)
+	if last.ok or not OS.has_feature("web"):
+		return last
+
+	# On Web, direct cross-origin GET to GDHistory is blocked by browser CORS policy.
+	# Fall back to configured or public CORS proxies (strictly 2-3 reliable proxies).
+	var proxies: PackedStringArray = [
+		"https://api.codetabs.com/v1/proxy?quest=",
+		"https://api.allorigins.win/raw?url=",
+	]
 	var custom_proxy := _get_custom_proxy()
-	if OS.has_feature("web") and not custom_proxy.is_empty():
-		var proxied_url := _resolve_url(url, custom_proxy)
+	if not custom_proxy.is_empty():
+		proxies.insert(0, custom_proxy)
+
+	for proxy in proxies:
+		var proxied_url := _resolve_url(url, proxy)
 		var res := await _get_text_once(proxied_url)
 		if res.ok:
+			if res.has("text"):
+				var raw_text: String = str(res["text"]).strip_edges()
+				if raw_text.begins_with("{\"contents\":") or raw_text.begins_with("{\n  \"contents\":"):
+					var parsed_wrap = JSON.parse_string(raw_text)
+					if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
+						res["text"] = str(parsed_wrap["contents"]).strip_edges()
 			return res
-	return await _get_text_once(url)
+		last = res
+	return last
 
 
 func _get_text_once(target_url: String) -> Dictionary:
@@ -573,7 +608,7 @@ func _get_text_once(target_url: String) -> Dictionary:
 	var status: int = completed[1]
 	var bytes: PackedByteArray = completed[3]
 	if result != HTTPRequest.RESULT_SUCCESS:
-		var is_cors := OS.has_feature("web") and (result == HTTPRequest.RESULT_CANT_CONNECT or result == HTTPRequest.RESULT_CONNECTION_ERROR)
+		var is_cors := NativeCore.is_cors_error(result, status, OS.has_feature("web"))
 		if is_cors:
 			return {"ok": false, "error": "Request blocked by browser CORS policy", "retryable": true}
 		return {"ok": false, "error": "Request failed (result %d)" % result, "retryable": true}
@@ -586,7 +621,7 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 	print("[RobTop] GET audio from %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 20.0
+	request.timeout = 30.0
 	request.max_redirects = 5
 	request.body_size_limit = MAX_SONG_BYTES
 	add_child(request)
@@ -602,19 +637,19 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start the audio download (error %d)." % error)
-	var deadline := Time.get_ticks_msec() + 20_000
+	var deadline := Time.get_ticks_msec() + 30_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Audio download timed out after 20 seconds.", "retryable": true}
+		return {"ok": false, "error": "Audio download timed out after 30 seconds.", "retryable": true}
 	request.queue_free()
 	var result := int(completed[0])
 	var status := int(completed[1])
 	var body: PackedByteArray = completed[2]
 	if result != HTTPRequest.RESULT_SUCCESS:
-		var is_cors := OS.has_feature("web") and (result == HTTPRequest.RESULT_CANT_CONNECT or result == HTTPRequest.RESULT_CONNECTION_ERROR)
+		var is_cors := NativeCore.is_cors_error(result, status, OS.has_feature("web"))
 		if is_cors:
 			return {"ok": false, "error": "Audio download blocked by browser CORS policy.", "retryable": false}
 		return {"ok": false, "error": "Audio download failed (result %d)." % result, "retryable": true}
@@ -622,7 +657,7 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 		return {"ok": false, "error": "Audio host returned HTTP %d." % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
 	if body.size() < 1000 or body.size() > MAX_SONG_BYTES:
 		return _error("Audio download returned an empty or oversized audio file (%d bytes)." % body.size())
-	if not _looks_like_audio(body):
+	if not NativeCore.is_audio_stream(body):
 		return _error("Audio download returned invalid audio data.")
 
 	DirAccess.make_dir_recursive_absolute(destination.get_base_dir())
@@ -636,22 +671,7 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 
 
 static func _looks_like_audio(bytes: PackedByteArray, extension: String = "") -> bool:
-	if bytes.size() < 32:
-		return false
-	var head := bytes.slice(0, mini(128, bytes.size())).get_string_from_ascii().strip_edges().to_lower()
-	if head.begins_with("<!doctype") or head.begins_with("<html") or head.begins_with("<?xml") or head.begins_with("{") or head.begins_with("error"):
-		return false
-	if extension == "ogg" or (bytes[0] == 0x4f and bytes[1] == 0x67 and bytes[2] == 0x67 and bytes[3] == 0x53):
-		return true
-	if extension == "wav" or (bytes[0] == 0x52 and bytes[1] == 0x49 and bytes[2] == 0x46 and bytes[3] == 0x46):
-		return true
-	if bytes[0] == 0x49 and bytes[1] == 0x44 and bytes[2] == 0x33:
-		return true
-	if bytes[0] == 0xff and (bytes[1] & 0xe0) == 0xe0:
-		return true
-	if bytes.size() >= 16384:
-		return true
-	return false
+	return NativeCore.is_audio_stream(bytes, extension)
 
 
 static func _binary_version() -> String:
