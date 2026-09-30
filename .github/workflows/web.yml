@@ -154,11 +154,20 @@ jobs:
       - name: Import project resources
         run: |
           set -euo pipefail
-          "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log
+          rc=0
+          "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log || rc=$?
           if grep -qE "SCRIPT ERROR|Parse Error|Failed to load script" /tmp/import.log; then
-            echo "::error::GDScript failed to parse; see the lines above."
+            # The log is thousands of lines long, so mirror the interesting
+            # ones into annotations where they are easy to read.
+            PATTERN='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
+            grep -nE "$PATTERN" /tmp/import.log | head -40 > /tmp/import_errors.txt
+            while IFS= read -r line; do
+              echo "::error::${line//'%'/'%25'}"
+            done < /tmp/import_errors.txt
+            echo "GDScript failed to parse; see the annotations above."
             exit 1
           fi
+          exit "$rc"
 
       - name: Export Web (multi-threaded, mobile renderer if possible)
         run: |
