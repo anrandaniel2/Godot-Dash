@@ -148,10 +148,17 @@ jobs:
           ls -1 "$TPZ_DIR" | head -n 20
 
       # -------------------------------------------------------- Project Build
+      # The import pass parses every GDScript file in the project, so its log is
+      # the cheapest place to fail a build whose scripts no longer compile -
+      # a parse error otherwise only shows up when the exported game runs.
       - name: Import project resources
         run: |
           set -euo pipefail
-          "$GODOT_BIN" --headless --editor --quit
+          "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log
+          if grep -qE "SCRIPT ERROR|Parse Error|Failed to load script" /tmp/import.log; then
+            echo "::error::GDScript failed to parse; see the lines above."
+            exit 1
+          fi
 
       - name: Export Web (multi-threaded, mobile renderer if possible)
         run: |
