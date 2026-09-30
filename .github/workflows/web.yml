@@ -148,23 +148,36 @@ jobs:
           ls -1 "$TPZ_DIR" | head -n 20
 
       # -------------------------------------------------------- Project Build
-      # The import pass parses every GDScript file in the project, so its log is
-      # the cheapest place to fail a build whose scripts no longer compile -
-      # a parse error otherwise only shows up when the exported game runs.
+      # Importing parses and compiles every GDScript in the project, so it is
+      # the cheapest place to catch a script that no longer compiles - such a
+      # parse error would otherwise only surface when the exported game runs.
+      #
+      # The first pass starts from an empty .godot cache: it writes the import
+      # database and the global class cache while it is already parsing
+      # scripts, so scripts referring to a class_name declared in a sibling
+      # file can transiently fail there ("Could not find type"). The second
+      # pass runs with the cache in place and is the one whose log is checked.
       - name: Import project resources
         run: |
           set -euo pipefail
+          PATTERN='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
+
+          echo "First pass (warms the .godot cache; errors here are checked after the second pass)"
+          "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import_first.log || true
+          echo "First pass messages:"
+          grep -cE "$PATTERN" /tmp/import_first.log || true
+
+          echo "Second pass (checked)"
           rc=0
           "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log || rc=$?
           if grep -qE "SCRIPT ERROR|Parse Error|Failed to load script" /tmp/import.log; then
             # The log is thousands of lines long, so mirror the interesting
             # ones into annotations where they are easy to read.
-            PATTERN='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
             grep -nE "$PATTERN" /tmp/import.log | head -40 > /tmp/import_errors.txt
             while IFS= read -r line; do
               echo "::error::${line//'%'/'%25'}"
             done < /tmp/import_errors.txt
-            echo "GDScript failed to parse; see the annotations above."
+            echo "GDScript failed to import; see the annotations above."
             exit 1
           fi
           exit "$rc"
