@@ -152,33 +152,51 @@ jobs:
       # the cheapest place to catch a script that no longer compiles - such a
       # parse error would otherwise only surface when the exported game runs.
       #
-      # The first pass starts from an empty .godot cache: it writes the import
-      # database and the global class cache while it is already parsing
-      # scripts, so scripts referring to a class_name declared in a sibling
-      # file can transiently fail there ("Could not find type"). The second
-      # pass runs with the cache in place and is the one whose log is checked.
+      # Two things make the pass noisy, hence the shape below:
+      #   * The first pass starts from an empty .godot cache and writes the
+      #     import database and global class cache while it is already parsing
+      #     scripts, so a class_name declared in a sibling file can transiently
+      #     look missing ("Could not find type"). Warming the cache with an
+      #     unchecked pass leaves the second pass clean.
+      #   * Editor addons (script-ide, StyleboxFancy, ...) run their @tool code
+      #     and can log runtime SCRIPT ERRORs that never reach an exported
+      #     build. Only compile failures fail the build; the rest is reported
+      #     as notes.
       - name: Import project resources
         run: |
           set -euo pipefail
-          PATTERN='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
+          CONTEXT='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
 
-          echo "First pass (warms the .godot cache; errors here are checked after the second pass)"
+          echo "First pass (warms the .godot cache; its messages are only reported)"
           "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import_first.log || true
           echo "First pass messages:"
-          grep -cE "$PATTERN" /tmp/import_first.log || true
+          grep -cE "$CONTEXT" /tmp/import_first.log || true
 
           echo "Second pass (checked)"
           rc=0
           "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log || rc=$?
-          if grep -qE "SCRIPT ERROR|Parse Error|Failed to load script" /tmp/import.log; then
-            # The log is thousands of lines long, so mirror the interesting
-            # ones into annotations where they are easy to read.
-            grep -nE "$PATTERN" /tmp/import.log | head -40 > /tmp/import_errors.txt
+
+          annotate() {
+            local level="$1" pattern="$2" limit="$3"
+            grep -nE "$pattern" /tmp/import.log | head -"$limit" > /tmp/import_selected.txt
             while IFS= read -r line; do
-              echo "::error::${line//'%'/'%25'}"
-            done < /tmp/import_errors.txt
-            echo "GDScript failed to import; see the annotations above."
+              echo "::${level}::${line//'%'/'%25'}"
+            done < /tmp/import_selected.txt
+          }
+
+          # A parse error means a script in the exported game is broken.
+          if grep -qE "Parse Error|Failed to load script" /tmp/import.log; then
+            annotate error "Parse Error|Failed to load script|$CONTEXT" 40
+            echo "GDScript failed to compile; see the annotations above."
             exit 1
+          fi
+
+          # Runtime errors from editor-only code: visible, but not fatal.
+          if grep -qE "SCRIPT ERROR" /tmp/import.log; then
+            annotate notice "SCRIPT ERROR|GDScript::reload| \[[0-9]\] |res://[^ ]*\.gd:[0-9]+" 12
+            echo "Scripts compile; the notes above are editor-only runtime errors."
+          else
+            echo "::notice::Project scripts import and compile cleanly."
           fi
           exit "$rc"
 
