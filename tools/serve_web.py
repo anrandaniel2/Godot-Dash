@@ -86,10 +86,10 @@ class CrossOriginIsolationHandler(SimpleHTTPRequestHandler):
 
         try:
             req = urllib.request.Request(target_url, data=body, headers=headers, method=method)
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 resp_data = resp.read()
                 self.send_response(resp.status)
-                resp_content_type = resp.headers.get("Content-Type", "text/plain")
+                resp_content_type = resp.headers.get("Content-Type", "application/octet-stream")
                 self.send_header("Content-Type", resp_content_type)
                 self.send_header("Content-Length", str(len(resp_data)))
                 self.end_headers()

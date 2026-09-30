@@ -477,74 +477,57 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 		if cached != null and cached.get_length() > 0:
 			return {"ok": true, "file_name": file_name}
 
-	var media_url := direct_url
-	var extension := "mp3"
-	if media_url.is_empty():
-		if OS.has_feature("web"):
-			media_url = "https://geometrydashcontent.b-cdn.net/songs/%d.mp3" % song_id
-		else:
-			var song_fields := {
-				"secret": COMMON_SECRET,
-				"gameVersion": GAME_VERSION,
-				"binaryVersion": _binary_version(),
-				"songID": str(song_id),
-			}
-			var info := await _post(SONG_INFO_URL, song_fields)
-			if not info.ok and bool(info.get("retryable", false)):
-				push_warning("[RobTop] canonical song-info route unavailable; trying fallback host")
-				info = await _post(SONG_INFO_FALLBACK_URL, song_fields)
-			if not info.ok:
-				media_url = "https://geometrydashcontent.b-cdn.net/songs/%d.mp3" % song_id
-			elif info.text == "-1" or info.text == "-2":
-				return _error("Music %d is unavailable or not permitted by its host." % song_id)
-			else:
-				var song_values := _pairs(info.text, "~|~")
-				media_url = song_values.get("10", "").uri_decode()
-				if media_url.begins_with("http://"):
-					media_url = "https://" + media_url.trim_prefix("http://")
+	var candidates: PackedStringArray = []
+	if not direct_url.is_empty():
+		candidates.append(direct_url)
 
-	if media_url.begins_with("http://"):
-		media_url = "https://" + media_url.trim_prefix("http://")
-	if not media_url.begins_with("https://"):
-		return _error("Music %d has no secure download URL." % song_id)
-	var url_path := media_url.get_slice("?", 0)
-	var detected_ext := url_path.get_extension().to_lower()
-	if detected_ext in ["mp3", "ogg", "wav"]:
-		extension = detected_ext
-		file_name = "robtop_%d.%s" % [song_id, extension]
-		final_path = Constants.SONG_DIR + file_name
-		if FileAccess.file_exists(final_path):
-			var cached := FileAccess.open(final_path, FileAccess.READ)
-			if cached != null and cached.get_length() > 0:
-				return {"ok": true, "file_name": file_name}
+	# 1. Fetch official RobTop song info via getGJSongInfo.php
+	var song_fields := {
+		"gameVersion": "21",
+		"binaryVersion": "35",
+		"gdw": "0",
+		"accountID": "0",
+		"gjp": "",
+		"uuid": "0",
+		"songID": str(song_id),
+		"secret": COMMON_SECRET,
+	}
+	var info := await _post(SONG_INFO_URL, song_fields)
+	if not info.ok and bool(info.get("retryable", false)):
+		info = await _post(SONG_INFO_FALLBACK_URL, song_fields)
+	if info.ok and info.text != "-1" and info.text != "-2":
+		var song_values := _pairs(info.text, "~|~")
+		var robtop_url: String = song_values.get("10", "").uri_decode()
+		if not robtop_url.is_empty() and not candidates.has(robtop_url):
+			candidates.append(robtop_url)
 
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(Constants.SONG_DIR))
-	var temporary_path := final_path + ".download"
-	if FileAccess.file_exists(temporary_path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
-	var downloaded := await _download_audio(media_url, temporary_path)
-	if not downloaded.ok:
-		if FileAccess.file_exists(temporary_path):
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
-		return downloaded
-	var downloaded_file := FileAccess.open(temporary_path, FileAccess.READ)
-	var downloaded_size := downloaded_file.get_length() if downloaded_file != null else 0
-	if downloaded_size <= 0 or downloaded_size > MAX_SONG_BYTES:
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
-		return _error("Music %d returned an empty or oversized audio file." % song_id)
-	var bytes := downloaded_file.get_buffer(downloaded_size)
-	if not _looks_like_audio(bytes, extension):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
-		return _error("Music %d returned an invalid or oversized audio file." % song_id)
-	var rename_error := DirAccess.rename_absolute(
-			ProjectSettings.globalize_path(temporary_path),
-			ProjectSettings.globalize_path(final_path),
-	)
-	if rename_error != OK:
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(temporary_path))
-		return _error("Music %d could not be saved (error %d)." % [song_id, rename_error])
-	print("[RobTop] cached song %d: %s (%d bytes)" % [song_id, file_name, bytes.size()])
-	return {"ok": true, "file_name": file_name}
+	# 2. GDBrowser song info endpoint if available:
+	if candidates.is_empty():
+		var gdb_song := await _get_json("https://gdbrowser.com/api/song/%d" % song_id)
+		if gdb_song.ok and (gdb_song.data is Dictionary):
+			var link: String = str(gdb_song.data.get("link", gdb_song.data.get("url", "")))
+			if not link.is_empty() and not candidates.has(link):
+				candidates.append(link)
+
+	# 3. Newgrounds direct download redirect:
+	var ng_url := "https://www.newgrounds.com/audio/download/%d" % song_id
+	if not candidates.has(ng_url):
+		candidates.append(ng_url)
+
+	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
+
+	for cand in candidates:
+		var media_url := cand.strip_edges()
+		if media_url.begins_with("http://"):
+			media_url = "https://" + media_url.trim_prefix("http://")
+		if not media_url.begins_with("https://") and not media_url.begins_with("http://"):
+			continue
+		var downloaded := await _download_audio(media_url, final_path)
+		if downloaded.ok:
+			print("[RobTop] cached song %d: %s" % [song_id, file_name])
+			return {"ok": true, "file_name": file_name}
+
+	return _error("Music %d could not be downloaded." % song_id)
 
 
 func _download_audio(url: String, destination: String) -> Dictionary:
@@ -554,13 +537,12 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 		var custom_proxy := _get_custom_proxy()
 		if not custom_proxy.is_empty():
 			proxies.insert(0, custom_proxy)
+		else:
+			proxies.insert(0, "/cors-proxy?url=")
 		proxies.append("https://api.codetabs.com/v1/proxy?quest=")
-		proxies.append("https://api.allorigins.win/raw?url=")
 	for attempt in proxies.size():
 		var proxy := proxies[attempt]
 		var target_url := _resolve_url(url, proxy)
-		if FileAccess.file_exists(destination):
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(destination))
 		last = await _download_audio_once(target_url, destination)
 		if last.ok:
 			return last
@@ -655,56 +637,76 @@ func _get_text_once(target_url: String) -> Dictionary:
 	return {"ok": true, "text": bytes.get_string_from_utf8().strip_edges()}
 
 
-func _download_audio_once(url: String, destination: String) -> Dictionary:
-	var target_url := _resolve_url(url)
+func _download_audio_once(target_url: String, destination: String) -> Dictionary:
 	print("[RobTop] GET custom song from %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 45.0
+	request.timeout = 60.0
 	request.max_redirects = 5
-	request.download_file = destination
 	request.body_size_limit = MAX_SONG_BYTES
 	add_child(request)
 	var completed: Array = []
-	request.request_completed.connect(func(result: int, status: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
-		completed.assign([result, status])
+	request.request_completed.connect(func(result: int, status: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+		completed.assign([result, status, body])
 	)
 	var headers := PackedStringArray()
 	if not OS.has_feature("web"):
-		headers.append("Accept: audio/*")
+		headers.append("Accept: audio/*, */*")
 		headers.append("User-Agent: Godot-Dash/1")
 	var error := request.request(target_url, headers)
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start the music download (error %d)." % error)
-	var deadline := Time.get_ticks_msec() + 45_000
+	var deadline := Time.get_ticks_msec() + 60_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Music download timed out after 45 seconds.", "retryable": true}
+		return {"ok": false, "error": "Music download timed out after 60 seconds.", "retryable": true}
 	request.queue_free()
-	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS:
-		var is_cors := OS.has_feature("web") and (int(completed[0]) == HTTPRequest.RESULT_CANT_CONNECT or int(completed[0]) == HTTPRequest.RESULT_CONNECTION_ERROR)
+	var result := int(completed[0])
+	var status := int(completed[1])
+	var body: PackedByteArray = completed[2]
+	if result != HTTPRequest.RESULT_SUCCESS:
+		var is_cors := OS.has_feature("web") and (result == HTTPRequest.RESULT_CANT_CONNECT or result == HTTPRequest.RESULT_CONNECTION_ERROR)
 		if is_cors:
 			return {"ok": false, "error": "Music download blocked by browser CORS policy.", "retryable": false}
-		return {"ok": false, "error": "Music download failed (result %d)." % int(completed[0]), "retryable": true}
-	var status := int(completed[1])
+		return {"ok": false, "error": "Music download failed (result %d)." % result, "retryable": true}
 	if status < 200 or status >= 300:
 		return {"ok": false, "error": "Music host returned HTTP %d." % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
+	if body.size() < 1000 or body.size() > MAX_SONG_BYTES:
+		return _error("Music download returned an empty or oversized audio file (%d bytes)." % body.size())
+	if not _looks_like_audio(body):
+		return _error("Music download returned invalid audio data.")
+
+	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
+	var file := FileAccess.open(destination, FileAccess.WRITE)
+	if file == null:
+		return _error("Could not save music to %s (error %d)." % [destination, FileAccess.get_open_error()])
+	file.store_buffer(body)
+	file.close()
+	print("[RobTop] Saved song to %s (%d bytes)" % [destination, body.size()])
 	return {"ok": true}
 
 
-static func _looks_like_audio(bytes: PackedByteArray, extension: String) -> bool:
-	if bytes.size() < 4:
+static func _looks_like_audio(bytes: PackedByteArray, extension: String = "") -> bool:
+	if bytes.size() < 32:
 		return false
-	if extension == "ogg":
-		return bytes.slice(0, 4).get_string_from_ascii() == "OggS"
-	if extension == "wav":
-		return bytes.slice(0, 4).get_string_from_ascii() == "RIFF"
-	# MP3 may start with ID3 metadata or directly with an MPEG frame sync.
-	return bytes.slice(0, 3).get_string_from_ascii() == "ID3" or (bytes[0] == 0xff and (bytes[1] & 0xe0) == 0xe0)
+	var head := bytes.slice(0, mini(128, bytes.size())).get_string_from_ascii().strip_edges().to_lower()
+	if head.begins_with("<!doctype") or head.begins_with("<html") or head.begins_with("<?xml") or head.begins_with("{") or head.begins_with("error"):
+		return false
+	if extension == "ogg" or (bytes[0] == 0x4f and bytes[1] == 0x67 and bytes[2] == 0x67 and bytes[3] == 0x53):
+		return true
+	if extension == "wav" or (bytes[0] == 0x52 and bytes[1] == 0x49 and bytes[2] == 0x46 and bytes[3] == 0x46):
+		return true
+	if bytes[0] == 0x49 and bytes[1] == 0x44 and bytes[2] == 0x33:
+		return true
+	if bytes[0] == 0xff and (bytes[1] & 0xe0) == 0xe0:
+		return true
+	if bytes.size() >= 16384:
+		return true
+	return false
 
 
 static func _binary_version() -> String:

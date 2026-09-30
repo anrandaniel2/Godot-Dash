@@ -3,11 +3,18 @@ extends CanvasLayer
 
 func _ready() -> void:
 	LevelManager.touchscreen_controls = self
-	visible = Config.is_touch_screen
+	visible = true
+	$Pause.show()
+	$LeftRight.hide()
+	$Down.hide()
+	if LevelManager.pause_menu:
+		LevelManager.pause_menu.paused.connect(func(): $Pause.hide())
+		LevelManager.pause_menu.unpaused.connect(func(): $Pause.show())
 
 
 func _pause() -> void:
-	LevelManager.pause_menu.toggle_pause_menu()
+	if LevelManager.pause_menu:
+		LevelManager.pause_menu.toggle_pause_menu()
 
 
 func enable_platformer(wave: bool = false) -> void:
