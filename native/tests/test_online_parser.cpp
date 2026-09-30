@@ -282,6 +282,51 @@ int main() {
 	check_true("Extract k4 from raw base64 gzip", extract_k4_test("H4sICCM47lsAA...") == "H4sICCM47lsAA...");
 	check_true("Extract k4 from HTML error returns empty", extract_k4_test("<!DOCTYPE html><html>error</html>") == "");
 
+	// 8. Verify SFX ID extraction logic from level string
+	auto extract_sfx_ids_test = [](const std::string &data) -> std::vector<int32_t> {
+		std::vector<int32_t> sfx_ids;
+		size_t chunk_start = 0;
+		bool first_chunk = true;
+		while (chunk_start < data.length()) {
+			size_t chunk_end = data.find(';', chunk_start);
+			if (chunk_end == std::string::npos) chunk_end = data.length();
+			std::string chunk = data.substr(chunk_start, chunk_end - chunk_start);
+			chunk_start = chunk_end + 1;
+			if (chunk.empty()) continue;
+			if (first_chunk) {
+				first_chunk = false;
+				if (chunk.rfind("kS", 0) == 0 || chunk.rfind("kA", 0) == 0) continue;
+			}
+			size_t idx = 0;
+			while ((idx = chunk.find("392,", idx)) != std::string::npos) {
+				if (idx == 0 || chunk[idx - 1] == ',') {
+					size_t val_start = idx + 4;
+					size_t val_end = chunk.find(',', val_start);
+					if (val_end == std::string::npos) val_end = chunk.length();
+					std::string val_str = chunk.substr(val_start, val_end - val_start);
+					try {
+						int32_t id = std::stoi(val_str);
+						if (id > 0 && std::find(sfx_ids.begin(), sfx_ids.end(), id) == sfx_ids.end()) {
+							sfx_ids.push_back(id);
+						}
+					} catch (...) {}
+					idx = val_end;
+				} else {
+					idx += 4;
+				}
+			}
+		}
+		return sfx_ids;
+	};
+
+	std::string test_sfx_level = "kS38,1_0_2_0_3_0;1,3602,2,100,3,100,392,10000001,406,0.8;1,1,2,200,3,100;1,3602,2,300,3,100,392,10000002;1,3602,2,400,3,100,392,10000001;";
+	std::vector<int32_t> extracted_sfx = extract_sfx_ids_test(test_sfx_level);
+	check_int("Extracted 2 unique SFX IDs", extracted_sfx.size(), 2);
+	if (extracted_sfx.size() == 2) {
+		check_int("First SFX ID is 10000001", extracted_sfx[0], 10000001);
+		check_int("Second SFX ID is 10000002", extracted_sfx[1], 10000002);
+	}
+
 	if (failures == 0) {
 		std::printf("\nALL ONLINE PARSER STANDALONE TESTS PASSED (0 failures)\n");
 		return 0;

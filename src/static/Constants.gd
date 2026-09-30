@@ -38,6 +38,7 @@ const CELLS_TO_PX := Vector2(CELL_SIZE, -CELL_SIZE)
 
 const LEVEL_DIR: String = "user://created_levels/levels/"
 const SONG_DIR: String = "user://created_levels/songs/"
+const SFX_DIR: String = "user://created_levels/sfx/"
 const FONT_DIR: String = "user://created_levels/fonts/"
 const ICON_DIR: String = "res://assets/textures/player/"
 const CUSTOM_ICON_DIR: String = "user://textures/player/"

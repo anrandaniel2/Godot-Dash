@@ -112,6 +112,7 @@ enum class TriggerEffectKind : int32_t {
 	SHADER_LENS_CIRCLE, // 2913 Lens Circle
 	SHADER_INVERT_COLOR,// 2921 Invert Color
 	UI,                 // 3613 UI Trigger
+	SFX,                // 3602 SFX Trigger
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -288,6 +289,10 @@ struct TriggerEffect {
 	int32_t yref_pos = 0;        // 3613: key 386 (UIRef enum)
 	bool xref_relative = false;  // 3613: key 387
 	bool yref_relative = false;  // 3613: key 388
+	int32_t sfx_id = 0;          // 3602: key 392 (SFX ID)
+	double sfx_volume = 1.0;     // 3602: key 406 (Volume)
+	double sfx_pitch = 1.0;      // 3602: key 407 (Pitch)
+	bool sfx_loop = false;       // 3602: key 404 (Loop)
 };
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
@@ -546,6 +551,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2913: effect.kind = TriggerEffectKind::SHADER_LENS_CIRCLE; break;
 		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
 		case 3613: effect.kind = TriggerEffectKind::UI; break;
+		case 3602: effect.kind = TriggerEffectKind::SFX; break;
 		default: return effect; // inert
 	}
 	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
@@ -670,6 +676,12 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.yref_pos = static_cast<int32_t>(prop_int(properties, "386", 0));
 			effect.xref_relative = prop_bool(properties, "387", false);
 			effect.yref_relative = prop_bool(properties, "388", false);
+			break;
+		case TriggerEffectKind::SFX:
+			effect.sfx_id = static_cast<int32_t>(prop_int(properties, "392", 0));
+			effect.sfx_volume = Math::clamp(prop_float(properties, "406", 1.0), 0.0, 2.0);
+			effect.sfx_pitch = Math::clamp(prop_float(properties, "407", 1.0), 0.01, 5.0);
+			effect.sfx_loop = prop_bool(properties, "404", false);
 			break;
 		default:
 			break;
@@ -1291,6 +1303,19 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::TELEPORT:
 				apply_teleport(index, record, player);
 				break;
+			case TriggerEffectKind::SFX: {
+				if (effect.sfx_id > 0) {
+					MainLoop *main_loop = Engine::get_singleton()->get_main_loop();
+					SceneTree *tree = Object::cast_to<SceneTree>(main_loop);
+					if (tree && tree->get_root()) {
+						Node *sfx_mgr = tree->get_root()->find_child("SFXManager", true, false);
+						if (sfx_mgr) {
+							sfx_mgr->call("play_sfx_id", effect.sfx_id, effect.sfx_volume, effect.sfx_pitch);
+						}
+					}
+				}
+				break;
+			}
 			case TriggerEffectKind::MOVE:
 			case TriggerEffectKind::ROTATE:
 			case TriggerEffectKind::SCALE:
@@ -2985,6 +3010,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("extract_object_geometry", "object"), &GdashNative::extract_object_geometry);
 		ClassDB::bind_method(D_METHOD("is_html_error_response", "response"), &GdashNative::is_html_error_response);
 		ClassDB::bind_method(D_METHOD("extract_level_data_string", "payload"), &GdashNative::extract_level_data_string);
+		ClassDB::bind_method(D_METHOD("extract_level_sfx_ids", "level_string"), &GdashNative::extract_level_sfx_ids);
 	}
 
 public:
@@ -3377,6 +3403,7 @@ public:
 		Dictionary parsed;
 		Array objects;
 		PackedByteArray object_validity;
+		PackedInt32Array sfx_ids;
 		int64_t odd_pair_chunks = 0;
 		int64_t duplicate_keys = 0;
 		int64_t empty_keys = 0;
@@ -3510,6 +3537,19 @@ public:
 
 			objects.append(properties);
 			object_validity.append(0);
+			if (properties.has("392")) {
+				const String sfx_str = String(properties["392"]).strip_edges();
+				if (sfx_str.is_valid_int()) {
+					const int32_t sid = static_cast<int32_t>(sfx_str.to_int());
+					if (sid > 0) {
+						bool exists = false;
+						for (int64_t s = 0; s < sfx_ids.size(); ++s) {
+							if (sfx_ids[s] == sid) { exists = true; break; }
+						}
+						if (!exists) sfx_ids.append(sid);
+					}
+				}
+			}
 			if (chunk_odd != 0 || !properties.has("1") || !properties.has("2") || !properties.has("3")) {
 				++malformed_objects;
 				return;
@@ -3600,6 +3640,7 @@ public:
 		parsed["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
 		parsed["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
 		parsed["channel_styles"] = parse_channel_styles(String(header.get("kS38", String())));
+		parsed["sfx_ids"] = sfx_ids;
 		return parsed;
 	}
 
@@ -3775,6 +3816,53 @@ public:
 		}
 
 		return text;
+	}
+
+	PackedInt32Array extract_level_sfx_ids(const String &level_string) const {
+		PackedInt32Array sfx_ids;
+		String data = decode_level_string(level_string);
+		if (data.is_empty()) return sfx_ids;
+
+		int64_t chunk_start = 0;
+		const int64_t len = data.length();
+		bool first_chunk = true;
+
+		while (chunk_start < len) {
+			int64_t chunk_end = data.find(";", chunk_start);
+			if (chunk_end == -1) chunk_end = len;
+			const String chunk = data.substr(chunk_start, chunk_end - chunk_start).strip_edges();
+			chunk_start = chunk_end + 1;
+			if (chunk.is_empty()) continue;
+
+			if (first_chunk) {
+				first_chunk = false;
+				if (chunk.begins_with("kS") || chunk.begins_with("kA")) continue;
+			}
+
+			int64_t idx = 0;
+			while ((idx = chunk.find("392,", idx)) != -1) {
+				if (idx == 0 || chunk[idx - 1] == ',') {
+					int64_t val_start = idx + 4;
+					int64_t val_end = chunk.find(",", val_start);
+					if (val_end == -1) val_end = chunk.length();
+					const String val_str = chunk.substr(val_start, val_end - val_start).strip_edges();
+					if (val_str.is_valid_int()) {
+						int32_t id = static_cast<int32_t>(val_str.to_int());
+						if (id > 0) {
+							bool exists = false;
+							for (int64_t s = 0; s < sfx_ids.size(); ++s) {
+								if (sfx_ids[s] == id) { exists = true; break; }
+							}
+							if (!exists) sfx_ids.append(id);
+						}
+					}
+					idx = val_end;
+				} else {
+					idx += 4;
+				}
+			}
+		}
+		return sfx_ids;
 	}
 
 	PackedInt32Array sort_decoration_indices(const PackedInt32Array &z_orders,

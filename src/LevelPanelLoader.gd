@@ -182,6 +182,7 @@ func _set_browse_mode(use_online: bool) -> void:
 	if online_mode:
 		online_search.clear()
 		search_timer.stop()
+		online_category.selected = 2 # Default to Most Popular (Most Downloaded)
 	online_page = 0
 	sort_by.visible = not online_mode
 	order.visible = not online_mode
@@ -221,6 +222,8 @@ func _online_search_changed(_text: String) -> void:
 
 func _restart_online_search() -> void:
 	online_page = 0
+	if online_search.text.strip_edges().is_empty():
+		online_category.selected = 2 # Default to Most Popular (Most Downloaded)
 	online_category.visible = online_search.text.strip_edges().is_empty()
 	_refresh_online()
 

@@ -171,29 +171,20 @@ func _search_web(query: String, page: int, category: int) -> Dictionary:
 ## Downloads and converts one public GD level. The returned `level_data` is the
 ## same dictionary used by LevelBuildJob and local saves.
 func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	if OS.has_feature("web"):
-		# On Web, try GDBrowser first (native CORS support like GDRWeb), then GDHistory archive, then direct RobTop.
-		var gdb_res := await _download_gdbrowser(level_id, summary)
-		if gdb_res.ok:
-			return gdb_res
-		var gd_res := await _download_gdhistory(level_id, summary)
-		if gd_res.ok:
-			return gd_res
-		var direct_res := await _download_direct(level_id, summary)
-		if direct_res.ok:
-			return direct_res
-		return _error("Could not download level %d: %s" % [level_id, gdb_res.get("error", "unavailable")])
+	# 1. Try canonical RobTop endpoint first (direct on desktop/Android or through configured CORS proxy on Web).
+	var direct_res := await _download_direct(level_id, summary)
+	if direct_res.ok:
+		return direct_res
 
-	var response := await _download_direct(level_id, summary)
-	if response.ok:
-		return response
-	var gdb_res := await _download_gdbrowser(level_id, summary)
-	if gdb_res.ok:
-		return gdb_res
+	# 2. GDHistory archive fallback.
 	var gd_res := await _download_gdhistory(level_id, summary)
 	if gd_res.ok:
 		return gd_res
-	return response
+
+	var failure_reason: String = str(direct_res.get("error", ""))
+	if failure_reason.is_empty():
+		failure_reason = str(gd_res.get("error", "Level unavailable"))
+	return _error(failure_reason)
 
 
 func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
@@ -285,72 +276,7 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	}
 
 
-func _download_gdbrowser(level_id: int, summary: Dictionary = {}) -> Dictionary:
-	var url := "https://gdbrowser.com/api/level/%d?download=1" % level_id
-	print("[RobTop] Web level download via GDBrowser: %s" % url)
-	var res := await _get_json(url)
-	if not res.ok:
-		var analyze_url := "https://gdbrowser.com/api/analyze/%d" % level_id
-		print("[RobTop] GDBrowser fallback to analyze: %s" % analyze_url)
-		res = await _get_json(analyze_url)
-	if not res.ok or not (res.data is Dictionary):
-		return _error("Level %d was not found on GDBrowser (%s)" % [level_id, res.get("error", "")])
-	var dict_data: Dictionary = res.data
-	var raw_data: String = ""
-	if dict_data.has("data"):
-		raw_data = str(dict_data.get("data", "")).strip_edges()
-	elif dict_data.get("level") is Dictionary:
-		raw_data = str(dict_data["level"].get("data", "")).strip_edges()
 
-	if raw_data.is_empty() or raw_data == "-1":
-		return _error("Level %d has no downloadable data on GDBrowser" % level_id)
-
-	var level_string := GMD.decode_level_string(raw_data)
-	if level_string.is_empty():
-		return _error("Level %d data could not be parsed" % level_id)
-
-	var level_info: Dictionary = dict_data.get("level", {}) if (dict_data.get("level") is Dictionary) else dict_data
-	var level_name: String = str(level_info.get("name", summary.get("name", "Level %d" % level_id)))
-	var report := GMDConverter.ImportReport.new()
-	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
-	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
-	print("[RobTop] GDBrowser conversion: %s" % report.summary())
-	if imported_objects.is_empty():
-		return _error("Level %d contains no objects supported by parser (%s)" % [level_id, report.summary()])
-
-	level_data.name = level_name
-	level_data.creator = str(level_info.get("author", summary.get("creator", "Unknown")))
-	level_data.description = str(level_info.get("description", summary.get("description", "")))
-	level_data.rating = -1
-	level_data["robtop_level_id"] = level_id
-	level_data["robtop_downloads"] = int(summary.get("downloads", level_info.get("downloads", 0)))
-	level_data["robtop_likes"] = int(summary.get("likes", level_info.get("likes", 0)))
-
-	var song_offset := 0.0
-	if dict_data.has("settings") and (dict_data["settings"] is Dictionary):
-		song_offset = float(dict_data["settings"].get("songOffset", 0.0))
-	level_data.song_start_time = maxf(song_offset, float(level_data.get("song_start_time", 0.0)))
-
-	var audio_warning := ""
-	var custom_song_id := int(summary.get("custom_song_id", level_info.get("customSong", 0)))
-	var official_song_id := int(summary.get("official_song_id", level_info.get("officialSong", 0)))
-	var song_link: String = str(summary.get("song_link", level_info.get("songLink", "")))
-
-	if custom_song_id > 0:
-		var song := await _download_custom_song(custom_song_id, song_link)
-		if song.ok:
-			level_data.song_path = song.file_name
-		else:
-			audio_warning = song.error
-	elif official_song_id > 0:
-		audio_warning = "This level uses built-in Geometry Dash song %d, which is not included in Godot Dash." % official_song_id
-
-	return {
-		"ok": true,
-		"level_data": level_data,
-		"report": report,
-		"audio_warning": audio_warning,
-	}
 
 
 func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
@@ -481,38 +407,37 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 	if not direct_url.is_empty():
 		candidates.append(direct_url)
 
-	# 1. Fetch official RobTop song info via getGJSongInfo.php
-	var song_fields := {
-		"gameVersion": "21",
-		"binaryVersion": "35",
-		"gdw": "0",
-		"accountID": "0",
-		"gjp": "",
-		"uuid": "0",
-		"songID": str(song_id),
-		"secret": COMMON_SECRET,
-	}
-	var info := await _post(SONG_INFO_URL, song_fields)
-	if not info.ok and bool(info.get("retryable", false)):
-		info = await _post(SONG_INFO_FALLBACK_URL, song_fields)
-	if info.ok and info.text != "-1" and info.text != "-2":
-		var song_values := _pairs(info.text, "~|~")
-		var robtop_url: String = song_values.get("10", "").uri_decode()
-		if not robtop_url.is_empty() and not candidates.has(robtop_url):
-			candidates.append(robtop_url)
+	# 1. BunnyCDN custom songs mirror (fast, CORS enabled)
+	candidates.append("https://geometrydashcontent.b-cdn.net/songs/%d.mp3" % song_id)
+	if song_id >= 10000000:
+		candidates.append("https://geometrydashfiles.b-cdn.net/music/%d.mp3" % song_id)
+		candidates.append("https://geometrydashfiles.b-cdn.net/music/%d.ogg" % song_id)
+		candidates.append("https://cvolton.eu/music/%d.ogg" % song_id)
 
-	# 2. GDBrowser song info endpoint if available:
-	if candidates.is_empty():
-		var gdb_song := await _get_json("https://gdbrowser.com/api/song/%d" % song_id)
-		if gdb_song.ok and (gdb_song.data is Dictionary):
-			var link: String = str(gdb_song.data.get("link", gdb_song.data.get("url", "")))
-			if not link.is_empty() and not candidates.has(link):
-				candidates.append(link)
+	# 2. Newgrounds direct download redirect
+	candidates.append("https://www.newgrounds.com/audio/download/%d" % song_id)
 
-	# 3. Newgrounds direct download redirect:
-	var ng_url := "https://www.newgrounds.com/audio/download/%d" % song_id
-	if not candidates.has(ng_url):
-		candidates.append(ng_url)
+	# 3. Only on non-web or when custom proxy is configured, fetch official RobTop song info via getGJSongInfo.php:
+	var custom_proxy := _get_custom_proxy()
+	if not OS.has_feature("web") or not custom_proxy.is_empty():
+		var song_fields := {
+			"gameVersion": "21",
+			"binaryVersion": "35",
+			"gdw": "0",
+			"accountID": "0",
+			"gjp": "",
+			"uuid": "0",
+			"songID": str(song_id),
+			"secret": COMMON_SECRET,
+		}
+		var info := await _post(SONG_INFO_URL, song_fields)
+		if not info.ok and bool(info.get("retryable", false)):
+			info = await _post(SONG_INFO_FALLBACK_URL, song_fields)
+		if info.ok and info.text != "-1" and info.text != "-2":
+			var song_values := _pairs(info.text, "~|~")
+			var robtop_url: String = song_values.get("10", "").uri_decode()
+			if not robtop_url.is_empty() and not candidates.has(robtop_url):
+				candidates.insert(0, robtop_url)
 
 	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
 
@@ -530,23 +455,46 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 	return _error("Music %d could not be downloaded." % song_id)
 
 
+## Downloads and caches a Geometry Dash 2.2 SFX by ID.
+func download_sfx(sfx_id: int) -> Dictionary:
+	if sfx_id <= 0:
+		return _error("Invalid SFX ID %d" % sfx_id)
+
+	var file_name := "sfx_%d.ogg" % sfx_id
+	var final_path := Constants.SFX_DIR + file_name
+	if FileAccess.file_exists(final_path):
+		var cached := FileAccess.open(final_path, FileAccess.READ)
+		if cached != null and cached.get_length() > 0:
+			return {"ok": true, "file_name": file_name, "path": final_path}
+
+	var candidates: PackedStringArray = [
+		"https://geometrydashfiles.b-cdn.net/sfx/s%d.ogg" % sfx_id,
+		"https://cvolton.eu/sfx/s%d.ogg" % sfx_id,
+	]
+	if sfx_id >= 10000000:
+		candidates.append("https://geometrydashfiles.b-cdn.net/music/%d.ogg" % sfx_id)
+		candidates.append("https://geometrydashfiles.b-cdn.net/music/%d.mp3" % sfx_id)
+		candidates.append("https://cvolton.eu/music/%d.ogg" % sfx_id)
+
+	DirAccess.make_dir_recursive_absolute(Constants.SFX_DIR)
+
+	for cand in candidates:
+		var downloaded := await _download_audio(cand, final_path)
+		if downloaded.ok:
+			print("[RobTop] cached SFX %d: %s" % [sfx_id, file_name])
+			return {"ok": true, "file_name": file_name, "path": final_path}
+
+	return _error("SFX %d could not be downloaded." % sfx_id)
+
+
 func _download_audio(url: String, destination: String) -> Dictionary:
-	var last: Dictionary = _error("Music download failed.")
-	var proxies: PackedStringArray = [""]
-	if OS.has_feature("web"):
-		var custom_proxy := _get_custom_proxy()
-		if not custom_proxy.is_empty():
-			proxies.insert(0, custom_proxy)
-		else:
-			proxies.insert(0, "/cors-proxy?url=")
-		proxies.append("https://api.codetabs.com/v1/proxy?quest=")
-	for attempt in proxies.size():
-		var proxy := proxies[attempt]
-		var target_url := _resolve_url(url, proxy)
-		last = await _download_audio_once(target_url, destination)
-		if last.ok:
-			return last
-	return last
+	var custom_proxy := _get_custom_proxy()
+	if OS.has_feature("web") and not custom_proxy.is_empty():
+		var target_url := _resolve_url(url, custom_proxy)
+		var res := await _download_audio_once(target_url, destination)
+		if res.ok:
+			return res
+	return await _download_audio_once(url, destination)
 
 
 static func _get_custom_proxy() -> String:
@@ -555,7 +503,13 @@ static func _get_custom_proxy() -> String:
 		p = str(Config.cors_proxy)
 	if p.is_empty() and Config != null and Config.config_file != null:
 		p = str(Config.config_file.get_value("Internet", "cors_proxy", ""))
-	return p.strip_edges()
+	p = p.strip_edges()
+	if p.is_empty() and OS.has_feature("web"):
+		if JavaScriptBridge != null:
+			var host := str(JavaScriptBridge.eval("window.location.hostname"))
+			if host == "localhost" or host == "127.0.0.1":
+				p = "/cors-proxy?url="
+	return p
 
 
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
@@ -579,29 +533,20 @@ func _get_json(url: String) -> Dictionary:
 
 
 func _get_text(url: String) -> Dictionary:
-	var last := await _get_text_once(url)
-	if last.ok or not OS.has_feature("web"):
-		return last
-	var proxies: PackedStringArray = [
-		"https://api.codetabs.com/v1/proxy?quest=",
-		"https://api.allorigins.win/raw?url=",
-	]
 	var custom_proxy := _get_custom_proxy()
-	if not custom_proxy.is_empty():
-		proxies.insert(0, custom_proxy)
-	for proxy in proxies:
-		var proxied_url := _resolve_url(url, proxy)
+	if OS.has_feature("web") and not custom_proxy.is_empty():
+		var proxied_url := _resolve_url(url, custom_proxy)
 		var res := await _get_text_once(proxied_url)
 		if res.ok:
 			return res
-	return last
+	return await _get_text_once(url)
 
 
 func _get_text_once(target_url: String) -> Dictionary:
 	print("[RobTop] GET %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 45.0
+	request.timeout = 15.0
 	request.body_size_limit = -1
 	add_child(request)
 	var completed: Array = []
@@ -616,13 +561,13 @@ func _get_text_once(target_url: String) -> Dictionary:
 	if error != OK:
 		request.queue_free()
 		return _error("Could not start GET request (error %d)" % error)
-	var deadline := Time.get_ticks_msec() + 45_000
+	var deadline := Time.get_ticks_msec() + 15_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Request timed out after 45 seconds", "retryable": true}
+		return {"ok": false, "error": "Request timed out after 15 seconds", "retryable": true}
 	request.queue_free()
 	var result: int = completed[0]
 	var status: int = completed[1]
@@ -638,10 +583,10 @@ func _get_text_once(target_url: String) -> Dictionary:
 
 
 func _download_audio_once(target_url: String, destination: String) -> Dictionary:
-	print("[RobTop] GET custom song from %s" % target_url)
+	print("[RobTop] GET audio from %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 60.0
+	request.timeout = 20.0
 	request.max_redirects = 5
 	request.body_size_limit = MAX_SONG_BYTES
 	add_child(request)
@@ -656,14 +601,14 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 	var error := request.request(target_url, headers)
 	if error != OK:
 		request.queue_free()
-		return _error("Could not start the music download (error %d)." % error)
-	var deadline := Time.get_ticks_msec() + 60_000
+		return _error("Could not start the audio download (error %d)." % error)
+	var deadline := Time.get_ticks_msec() + 20_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		return {"ok": false, "error": "Music download timed out after 60 seconds.", "retryable": true}
+		return {"ok": false, "error": "Audio download timed out after 20 seconds.", "retryable": true}
 	request.queue_free()
 	var result := int(completed[0])
 	var status := int(completed[1])
@@ -671,22 +616,22 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 	if result != HTTPRequest.RESULT_SUCCESS:
 		var is_cors := OS.has_feature("web") and (result == HTTPRequest.RESULT_CANT_CONNECT or result == HTTPRequest.RESULT_CONNECTION_ERROR)
 		if is_cors:
-			return {"ok": false, "error": "Music download blocked by browser CORS policy.", "retryable": false}
-		return {"ok": false, "error": "Music download failed (result %d)." % result, "retryable": true}
+			return {"ok": false, "error": "Audio download blocked by browser CORS policy.", "retryable": false}
+		return {"ok": false, "error": "Audio download failed (result %d)." % result, "retryable": true}
 	if status < 200 or status >= 300:
-		return {"ok": false, "error": "Music host returned HTTP %d." % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
+		return {"ok": false, "error": "Audio host returned HTTP %d." % status, "status": status, "retryable": status in TRANSIENT_HTTP_STATUSES}
 	if body.size() < 1000 or body.size() > MAX_SONG_BYTES:
-		return _error("Music download returned an empty or oversized audio file (%d bytes)." % body.size())
+		return _error("Audio download returned an empty or oversized audio file (%d bytes)." % body.size())
 	if not _looks_like_audio(body):
-		return _error("Music download returned invalid audio data.")
+		return _error("Audio download returned invalid audio data.")
 
-	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
+	DirAccess.make_dir_recursive_absolute(destination.get_base_dir())
 	var file := FileAccess.open(destination, FileAccess.WRITE)
 	if file == null:
-		return _error("Could not save music to %s (error %d)." % [destination, FileAccess.get_open_error()])
+		return _error("Could not save audio to %s (error %d)." % [destination, FileAccess.get_open_error()])
 	file.store_buffer(body)
 	file.close()
-	print("[RobTop] Saved song to %s (%d bytes)" % [destination, body.size()])
+	print("[RobTop] Saved audio to %s (%d bytes)" % [destination, body.size()])
 	return {"ok": true}
 
 
@@ -725,7 +670,10 @@ static func _platform_id() -> String:
 
 func _post(url: String, fields: Dictionary) -> Dictionary:
 	var custom_proxy := _get_custom_proxy() if OS.has_feature("web") else ""
-	return await _post_once(url, fields, custom_proxy)
+	var res := await _post_once(url, fields, custom_proxy)
+	if not res.ok and not custom_proxy.is_empty():
+		res = await _post_once(url, fields, "")
+	return res
 
 
 func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:
@@ -733,7 +681,7 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 	print("[RobTop] POST %s" % target_url)
 	var request := HTTPRequest.new()
 	request.use_threads = not OS.has_feature("web")
-	request.timeout = 30.0
+	request.timeout = 15.0
 	add_child(request)
 	var completed: Array = []
 	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
@@ -758,14 +706,14 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 		push_warning("[RobTop] request could not start: error %d" % error)
 		return _error("Could not start the RobTop request (error %d)" % error)
 
-	var deadline := Time.get_ticks_msec() + 30_000
+	var deadline := Time.get_ticks_msec() + 15_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
 		request.queue_free()
-		push_warning("[RobTop] timed out after 25 seconds: %s" % url)
-		return {"ok": false, "error": "RobTop did not respond within 25 seconds", "retryable": true}
+		push_warning("[RobTop] timed out after 15 seconds: %s" % url)
+		return {"ok": false, "error": "RobTop did not respond within 15 seconds", "retryable": true}
 
 	request.queue_free()
 	var result: int = completed[0]

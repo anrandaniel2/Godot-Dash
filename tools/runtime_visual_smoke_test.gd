@@ -430,6 +430,15 @@ func _test_native_core() -> void:
 	assert(parsed_online.get("malformed_objects", 0) == 0, "native smoke: valid objects marked malformed")
 	assert(parsed_online.get("min_x", 0.0) == 30.0 and parsed_online.get("max_x", 0.0) == 60.0, "native smoke: online parser bounds failed")
 	assert(parsed_online.get("objects", [])[1].get("1") == "8", "native smoke: online parser lost source order")
+	# Test SFX extraction and SFX trigger parsing in native:
+	var sfx_online: Dictionary = native.call(
+			&"parse_online_level",
+			"kA2,0;1,3602,2,30,3,30,392,10000001,406,0.8;1,1,2,60,3,30;1,3602,2,90,3,30,392,10000002;",
+	)
+	var sfx_ids: PackedInt32Array = sfx_online.get("sfx_ids", PackedInt32Array())
+	assert(sfx_ids.size() == 2 and sfx_ids[0] == 10000001 and sfx_ids[1] == 10000002, "native smoke: SFX ID collection failed")
+	var direct_sfx_ids: PackedInt32Array = native.call(&"extract_level_sfx_ids", "kA2,0;1,3602,2,30,3,30,392,10000005;")
+	assert(direct_sfx_ids.size() == 1 and direct_sfx_ids[0] == 10000005, "native smoke: direct extract_level_sfx_ids failed")
 	# Empty trigger values must remain attached to their key. Dropping empties
 	# shifts the rest of the comma stream and can turn duration/group/activation
 	# fields into unrelated values.
@@ -756,6 +765,9 @@ func _test_native_core() -> void:
 	effect_runtime.call(&"set_group_members", &"g_21", [ui_guide])
 	effect_runtime.call(&"register_packed_trigger", 98.0, 0.0, 0, 11, PackedStringArray(), 3613,
 		{"1": "3613", "51": "20", "71": "21", "385": "3", "386": "0", "387": "0", "388": "0"})
+	# 3602 SFX Trigger
+	effect_runtime.call(&"register_packed_trigger", 99.0, 0.0, 0, 12, PackedStringArray(), 3602,
+		{"1": "3602", "392": "10000001", "406": "0.8", "407": "1.2"})
 	# 1612 Hide Player has no fade at all.
 	effect_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"})
 	effect_runtime.call(&"finalize")

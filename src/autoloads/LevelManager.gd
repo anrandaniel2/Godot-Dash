@@ -34,6 +34,6 @@ var touchscreen_controls: TouchScreenControls
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color.BLACK)
-	for directory: String in [Constants.LEVEL_DIR, Constants.SONG_DIR, Constants.FONT_DIR]:
+	for directory: String in [Constants.LEVEL_DIR, Constants.SONG_DIR, Constants.SFX_DIR, Constants.FONT_DIR]:
 		if not DirAccess.dir_exists_absolute(directory):
 			DirAccess.make_dir_recursive_absolute(directory)
