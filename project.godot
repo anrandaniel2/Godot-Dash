@@ -445,6 +445,10 @@ renderer/rendering_method.mobile="mobile"
 renderer/rendering_method.web="mobile"
 rendering_device/fallback_to_gl_compatibility=true
 textures/canvas_textures/default_texture_filter=2
+; Android export requires this so the exporter can emit ETC2 when a texture
+; is imported as VRAM-compressed. The imported textures stay lossless on
+; purpose: this art is pixel and UI, and ETC2 plus mipmaps is about 40 MB
+; against about 7 MB of PNGs, so forcing it would grow the APK.
 textures/vram_compression/import_etc2_astc=true
 viewport/hdr_2d=true
 anti_aliasing/quality/msaa_2d=0

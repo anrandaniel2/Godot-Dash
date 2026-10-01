@@ -585,7 +585,7 @@ corner_detail = 3
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_xcyaj"]
 
 [sub_resource type="FontVariation" id="FontVariation_10srq"]
-variation_face_index = 14
+variation_face_index = 2
 
 [sub_resource type="StyleBox" id="StyleBox_cjwly"]
 resource_local_to_scene = false

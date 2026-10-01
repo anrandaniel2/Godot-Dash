@@ -12,7 +12,7 @@
 [ext_resource type="Script" uid="uid://cc6dieqa88a8y" path="res://src/UpdateChecker.gd" id="7_kxhaa"]
 
 [sub_resource type="FontVariation" id="FontVariation_0d6if"]
-variation_face_index = 10
+variation_face_index = 1
 
 [sub_resource type="LabelSettings" id="LabelSettings_ibsmc"]
 font = SubResource("FontVariation_0d6if")

@@ -10,6 +10,7 @@ reloadable = false
 ; platform binaries live in adjacent platform folders, and paths are relative.
 linux.x86_64.single.debug = "./linux/libgdash_native.linux.template_debug.x86_64.so"
 android.arm64.single.debug = "./android/libgdash_native.android.template_debug.arm64.so"
+android.arm64.single.release = "./android/libgdash_native.android.template_release.arm64.so"
 
 web.wasm32 = "./web/libgdash_native.web.template_release.wasm32.wasm"
 web.wasm32.threads = "./web/libgdash_native.web.template_release.wasm32.wasm"

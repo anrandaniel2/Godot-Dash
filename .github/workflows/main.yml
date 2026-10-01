@@ -1,7 +1,11 @@
 name: Build Android APK
 
-# Builds an installable debug .apk automatically so device testing is a
-# download-and-install instead of opening the project on a device (~20 min).
+# Builds an installable release .apk automatically so device testing is a
+# download-and-install instead of opening the project on a device.
+# The APK is a speed-optimized release export (not a debug template) of a
+# slim engine: XR and other unused modules are compiled out, Swappy frame
+# pacing stays linked, and optimize=size is not used. The rolling tag stays
+# "android-debug" so the existing download URL does not move.
 #
 #   - Every push to main / arena branches (and every manual dispatch) exports
 #     an APK and uploads it as a workflow artifact. Grab it from the Actions
@@ -25,7 +29,7 @@ name: Build Android APK
 # no godot-cpp 4.6/4.7 tag exists). The resulting .so is bundled into the APK
 # two ways: Godot's exporter normally copies it into the gradle project via
 # native/bin/gdash_native.gdextension (checkpointed below), and independently the
-# .so is dropped straight into the gradle debug jniLibs so the APK contains it
+# .so is dropped straight into the gradle release jniLibs so the APK contains it
 # even if the exporter path fails.
 
 on:
@@ -56,9 +60,9 @@ env:
 jobs:
   android-debug:
     runs-on: ubuntu-latest
-    # Hard stop for wedged steps (a hung probe once sat on the runner for
-    # most of an hour); the full build normally finishes in well under 15.
-    timeout-minutes: 30
+    # The slim engine template is cached. A cache miss compiles Godot and can
+    # take well over an hour; a hit stays in the old range.
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
@@ -147,7 +151,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: native/scons-cache
-          key: native-scons-${{ env.GODOT_CPP_REF }}-api47-profile-v1-lto
+          key: native-scons-${{ env.GODOT_CPP_REF }}-api47-profile-v2-release
 
       # godot-cpp is cloned fresh each run (small, shallow) rather than cached:
       # caching it alongside the multi-GB NDK made cache restore unreliable.
@@ -247,6 +251,37 @@ jobs:
           echo "NDK_DIR=$NDK_DIR" >> "$GITHUB_ENV"
           echo "Using NDK: $NDK_DIR"
 
+      - name: Cache slim Android export template
+        id: slim-template
+        uses: actions/cache@v4
+        with:
+          path: android-template-cache
+          key: slim-android-${{ env.GODOT_VERSION }}-ndk29-swappy-${{ hashFiles('tools/godot_android_custom.py', 'tools/build_slim_android_template.sh') }}
+
+      - name: Checkout Godot 4.7.2 (slim template build)
+        if: steps.slim-template.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: 4.7.2-stable
+          path: godot-src
+          fetch-depth: 1
+
+      - name: Build slim Android export template
+        if: steps.slim-template.outputs.cache-hit != 'true'
+        run: bash tools/build_slim_android_template.sh
+
+      - name: Install slim template over official Android templates
+        run: |
+          set -euo pipefail
+          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+          test -f android-template-cache/android_release.apk
+          test -f android-template-cache/android_source.zip
+          cp android-template-cache/android_release.apk "$TPZ_DIR/android_release.apk"
+          cp android-template-cache/android_source.zip "$TPZ_DIR/android_source.zip"
+          ls -lh "$TPZ_DIR"/android_release.apk "$TPZ_DIR"/android_source.zip
+          echo "slim template installed (XR and unused modules omitted, Swappy kept, optimize=speed)"
+
       - name: Build gdash_native (Android arm64, Godot 4.7 API)
         env:
           # Space-separated hex PCs from an on-device tombstone (libgdash_native.so
@@ -278,13 +313,15 @@ jobs:
           # debug_symbols=yes adds only debug sections: the code layout is
           # identical to the shipped build, which lets addr2line resolve the
           # on-device crash offsets. The APK copy is stripped below.
-          if ! scons platform=android target=template_debug arch=arm64 \
+          # template_release matches the exported APK. debug_symbols=yes adds only
+          # debug sections so addr2line still works; the APK copy is stripped below.
+          if ! scons platform=android target=template_release arch=arm64 \
                api_version=4.7 ndk_version="$NDK_VERSION" debug_symbols=yes -j2 > /tmp/scons_android.log 2>&1; then
             emit_scons_error /tmp/scons_android.log
             exit 1
           fi
           tail -n 3 /tmp/scons_android.log
-          SO=bin/android/libgdash_native.android.template_debug.arm64.so
+          SO=bin/android/libgdash_native.android.template_release.arm64.so
           test -f "$SO" || { echo "::error::android gdash_native .so missing after scons"; ls -R bin; exit 1; }
           cp "$SO" /tmp/libgdash_native_android_unstripped.so
           chmod u+w "$SO" /tmp/libgdash_native_android_unstripped.so
@@ -405,17 +442,15 @@ jobs:
               open(path, "w", encoding="utf-8").write(text)
           PYEOF
 
-      # The gradle template declares debug.jniLibs.srcDirs = ['libs/debug', ...]
-      # (sourceSets in the app module's build.gradle). The template is a
+      # Release exports package libs/release, not libs/debug. The template is a
       # single-module project whose build.gradle sits at android/build/ (flat)
-      # or at android/build/app/ (nested); a .so placed at libs/debug/arm64-v8a/
-      # under that module is packaged by gradle as lib/arm64-v8a/ in the APK -
-      # no Godot exporter cooperation needed. This fallback bundling path is
-      # redundant with the exporter's own copy (checkpointed after export).
-      - name: Drop libgdash_native.android.template_debug.arm64.so into gradle debug jniLibs
+      # or at android/build/app/ (nested); a .so placed at libs/release/arm64-v8a/
+      # under that module is packaged by gradle as lib/arm64-v8a/ in the APK.
+      # This fallback is redundant with the exporter's own copy.
+      - name: Drop libgdash_native.android.template_release.arm64.so into gradle release jniLibs
         run: |
           set -euo pipefail
-          SO="$PWD/native/bin/android/libgdash_native.android.template_debug.arm64.so"
+          SO="$PWD/native/bin/android/libgdash_native.android.template_release.arm64.so"
           test -f "$SO" || { echo "built .so missing at $SO"; exit 1; }
           if [ -f android/build/app/build.gradle ]; then
             MODULE="android/build/app"
@@ -426,7 +461,7 @@ jobs:
             find android/build -maxdepth 3 -name "build.gradle" | head
             exit 1
           fi
-          TARGET="$MODULE/libs/debug/arm64-v8a"
+          TARGET="$MODULE/libs/release/arm64-v8a"
           mkdir -p "$TARGET"
           cp "$SO" "$TARGET/$(basename "$SO")"
           echo "dropped $(basename "$SO") into $TARGET"
@@ -828,6 +863,9 @@ jobs:
               "export/android/debug_keystore": keystore,
               "export/android/debug_keystore_user": "androiddebugkey",
               "export/android/debug_keystore_pass": "android",
+              "export/android/release_keystore": keystore,
+              "export/android/release_keystore_user": "androiddebugkey",
+              "export/android/release_keystore_pass": "android",
           }
           lines = open(path, encoding="utf-8").read().splitlines()
           seen = {ln.split("=", 1)[0].strip() for ln in lines if "=" in ln}
@@ -841,21 +879,26 @@ jobs:
           PYEOF
           cat "$SET"
 
-      - name: Export Android debug APK (Gradle build)
+      - name: Export Android release APK (Gradle build)
         run: |
+          # Same CI debug keystore for both so a sideload can replace the
+          # previous APK. The engine target is still template_release.
           export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
           export GODOT_ANDROID_KEYSTORE_DEBUG_USER="androiddebugkey"
           export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="android"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/.android/debug.keystore"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="androiddebugkey"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="android"
           mkdir -p "$(dirname "$APK_PATH")"
-          "$GODOT_BIN" --headless --path . --export-debug "Android" "$APK_PATH" > godot_export.log 2>&1
+          "$GODOT_BIN" --headless --path . --export-release "Android" "$APK_PATH" > godot_export.log 2>&1
           status=$?
           tail -n 80 godot_export.log
           if [ $status -ne 0 ]; then
             exit $status
           fi
-          grep -Fq 'android.arm64.single.debug = "./android/libgdash_native.android.template_debug.arm64.so"' \
+          grep -Fq 'android.arm64.single.release = "./android/libgdash_native.android.template_release.arm64.so"' \
             native/bin/gdash_native.gdextension || {
-            echo "ERROR: native descriptor no longer matches the official godot-cpp Android layout"
+            echo "ERROR: native descriptor is missing the Android release library"
             exit 1
           }
           ls -lh "$APK_PATH"
@@ -864,14 +907,14 @@ jobs:
       # to <gradle_build>/libs/<debug|release>/<abi>/. If this file is missing,
       # the exporter skipped the GDExtension (file not exported/typed/loaded),
       # independently of the jniLibs fallback above.
-      - name: "Check exporter copied libgdash_native.android.template_debug.arm64.so into gradle libs"
+      - name: "Check exporter copied libgdash_native.android.template_release.arm64.so into gradle libs"
         run: |
-          echo "--- libgdash_native.android.template_debug.arm64.so under android/build (exporter target) ---"
-          find android/build -name "libgdash_native.android.template_debug.arm64.so" 2>/dev/null || true
-          if [ -f android/build/libs/debug/arm64-v8a/libgdash_native.android.template_debug.arm64.so ]; then
-            echo "EXPORTED: exporter copy present at android/build/libs/debug/arm64-v8a/"
+          echo "--- libgdash_native.android.template_release.arm64.so under android/build (exporter target) ---"
+          find android/build -name "libgdash_native.android.template_release.arm64.so" 2>/dev/null || true
+          if [ -f android/build/libs/release/arm64-v8a/libgdash_native.android.template_release.arm64.so ]; then
+            echo "EXPORTED: exporter copy present at android/build/libs/release/arm64-v8a/"
           else
-            echo "ERROR: no .so at android/build/libs/debug/arm64-v8a/; the manual jniLibs copy can put bytes in the APK but cannot create Godot's runtime GDExtension resource mapping"
+            echo "ERROR: no .so at android/build/libs/release/arm64-v8a/; the manual jniLibs copy can put bytes in the APK but cannot create Godot's runtime GDExtension resource mapping"
             exit 1
           fi
           echo "--- export log GDExtension/gdash lines ---"
@@ -898,11 +941,16 @@ jobs:
             exit 1
           fi
 
-          unzip -t "$APK_PATH" "lib/arm64-v8a/libgdash_native.android.template_debug.arm64.so" >/dev/null || {
-            echo "ERROR: libgdash_native.android.template_debug.arm64.so is not inside the arm64-v8a APK"
+          unzip -t "$APK_PATH" "lib/arm64-v8a/libgdash_native.android.template_release.arm64.so" >/dev/null || {
+            echo "ERROR: libgdash_native.android.template_release.arm64.so is not inside the arm64-v8a APK"
             exit 1
           }
-          echo "verified: arm64-v8a only, libgdash_native.android.template_debug.arm64.so present"
+          echo "verified: arm64-v8a only, libgdash_native.android.template_release.arm64.so present"
+          echo "### APK size" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "$APK_PATH" >> "$GITHUB_STEP_SUMMARY"
+          unzip -l "$APK_PATH" | awk '$1+0 > 1000000 {print}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       # -------------------------------------------------------------- Outputs
       - name: Upload APK artifact
@@ -936,9 +984,11 @@ jobs:
           cp "$APK_PATH" "$APK_NAME"
           NOTES_FILE="$(mktemp)"
           {
-            echo "Automatic debug build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
+            echo "Automatic release build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
             echo ""
-            echo "Sideload this APK for device testing (debug-signed, largeHeap enabled)."
+            echo "Sideload this APK for device testing. It is a speed-optimized release export (unused engine modules, including XR, compiled out; Swappy kept) signed with the CI debug keystore so it can replace the previous install. largeHeap stays enabled."
+            echo ""
+            echo "APK size: $(stat -c%s "$APK_PATH") bytes."
             echo ""
             echo "Commit-specific download URL (avoids stale APK caches):"
             echo "\`https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_NAME}\`"
