@@ -66,7 +66,7 @@ general/default_playback_type.web=0
 
 [network]
 
-cors_proxy=""
+cors_proxy="https://gddash.anrandaniel2.workers.dev/?url="
 
 [autoload]
 

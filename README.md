@@ -94,18 +94,22 @@ performs the request server-side and answers the browser with CORS headers.
   build with the Cross-Origin Isolation headers the threaded build needs *and* a
   `/cors-proxy?url=` relay. A page served from `localhost`/`127.0.0.1` finds it
   automatically.
-- **Hosted build (itch.io, static hosting, …):** deploy
-  `tools/web_relay_worker.js` (Cloudflare Worker) or run `tools/serve_web.py`
-  behind any always-on host, then set the relay once in `project.godot` so the
-  export ships with it:
+- **Hosted build (itch.io, static hosting, …):** the export ships with the
+  deployed relay in `project.godot`:
 
   ```ini
   [network]
-  cors_proxy="https://gdash-relay.example.workers.dev/?url="
+  cors_proxy="https://gddash.anrandaniel2.workers.dev/?url="
   ```
 
-  The same value can be set per user in the config file
-  (`Internet/cors_proxy`, read as `Config.cors_proxy`).
+  Opening that workers.dev address by itself answers `Missing target URL`. That
+  is the relay waiting for a target, not a broken deploy. The game appends the
+  percent-encoded level URL. A direct check is
+  `https://gddash.anrandaniel2.workers.dev/?url=https://history.geometrydash.eu/api/v1/level/128/`.
+
+  To point a build at a different relay, change that setting (or the per-user
+  `Internet/cors_proxy` value, read as `Config.cors_proxy`) and re-export.
+  `tools/web_relay_worker.js` is the Worker source.
 
 Without a relay the Web build skips those requests and explains the limitation
 in-game instead of failing with console CORS errors and
