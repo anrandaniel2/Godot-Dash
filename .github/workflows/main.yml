@@ -2,9 +2,10 @@ name: Build Android APK
 
 # Builds an installable release .apk automatically so device testing is a
 # download-and-install instead of opening the project on a device.
-# The APK is a speed-optimized release export (not a debug template) of a
-# slim engine: XR and other unused modules are compiled out, Swappy frame
-# pacing stays linked, and optimize=size is not used. The rolling tag stays
+# The engine target is template_release (faster than the old debug template).
+# Native libraries are compressed inside the APK so the download is not an
+# uncompressed copy of libgodot; Android extracts them once at install.
+# Frame pacing and the game loop are unchanged. The rolling tag stays
 # "android-debug" so the existing download URL does not move.
 #
 #   - Every push to main / arena branches (and every manual dispatch) exports
@@ -60,9 +61,7 @@ env:
 jobs:
   android-debug:
     runs-on: ubuntu-latest
-    # The slim engine template is cached. A cache miss compiles Godot and can
-    # take well over an hour; a hit stays in the old range.
-    timeout-minutes: 180
+    timeout-minutes: 45
     permissions:
       contents: write
     steps:
@@ -250,50 +249,6 @@ jobs:
           [ -d "$NDK_DIR" ] || { echo "NDK still missing at $NDK_DIR"; ls "$ANDROID_HOME/ndk"; exit 1; }
           echo "NDK_DIR=$NDK_DIR" >> "$GITHUB_ENV"
           echo "Using NDK: $NDK_DIR"
-
-      - name: Cache slim Android export template
-        id: slim-template
-        uses: actions/cache@v4
-        with:
-          path: android-template-cache
-          key: slim-android-${{ env.GODOT_VERSION }}-ndk29-swappy-${{ hashFiles('tools/godot_android_custom.py', 'tools/build_slim_android_template.sh') }}
-
-      - name: Checkout Godot 4.7.2 (slim template build)
-        if: steps.slim-template.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: godotengine/godot
-          ref: 4.7.2-stable
-          path: godot-src
-          fetch-depth: 1
-
-      - name: Build slim Android export template
-        if: steps.slim-template.outputs.cache-hit != 'true'
-        run: |
-          set +e
-          bash tools/build_slim_android_template.sh > /tmp/slim_template.log 2>&1
-          status=$?
-          tail -n 60 /tmp/slim_template.log
-          if [ "$status" -ne 0 ]; then
-            while IFS= read -r chunk; do
-              echo "::error::${chunk}"
-            done < <(tail -n 40 /tmp/slim_template.log | cut -c1-160 | awk '
-              { gsub(/%/, "%25"); gsub(/\r/, "%0D"); buf = buf $0 "%0A"
-                if (++n >= 4) { print buf; buf = ""; n = 0; if (++c >= 8) exit } }
-              END { if (n > 0 && c < 8) print buf }')
-            exit "$status"
-          fi
-
-      - name: Install slim template over official Android templates
-        run: |
-          set -euo pipefail
-          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
-          test -f android-template-cache/android_release.apk
-          test -f android-template-cache/android_source.zip
-          cp android-template-cache/android_release.apk "$TPZ_DIR/android_release.apk"
-          cp android-template-cache/android_source.zip "$TPZ_DIR/android_source.zip"
-          ls -lh "$TPZ_DIR"/android_release.apk "$TPZ_DIR"/android_source.zip
-          echo "slim template installed (XR and unused modules omitted, Swappy kept, optimize=speed)"
 
       - name: Build gdash_native (Android arm64, Godot 4.7 API)
         env:
@@ -959,10 +914,26 @@ jobs:
             exit 1
           }
           echo "verified: arm64-v8a only, libgdash_native.android.template_release.arm64.so present"
+          APK_BYTES=$(stat -c%s "$APK_PATH")
+          echo "APK bytes: $APK_BYTES"
+          echo "native lib compression:"
+          unzip -v "$APK_PATH" | awk '/lib\/arm64-v8a\// {print}'
+          # The previous 118 MB APK stored libgodot uncompressed. Compression
+          # is what changes the file the user downloads; a regression back
+          # over 95 MB means the .so files are stored again.
+          if [ "$APK_BYTES" -ge 95000000 ]; then
+            echo "::error::APK is $APK_BYTES bytes (limit 95 MB). Native libraries are probably stored uncompressed."
+            exit 1
+          fi
+          STORED=$(unzip -v "$APK_PATH" | awk '/lib\/arm64-v8a\/.*\.so/ && $2 ~ /Stored/ {c++} END {print c+0}')
+          if [ "$STORED" -ne 0 ]; then
+            echo "::error::arm64 native libraries are stored uncompressed; gradle_build/compress_native_libraries should be true"
+            exit 1
+          fi
           echo "### APK size" >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           ls -lh "$APK_PATH" >> "$GITHUB_STEP_SUMMARY"
-          unzip -l "$APK_PATH" | awk '$1+0 > 1000000 {print}' >> "$GITHUB_STEP_SUMMARY"
+          unzip -v "$APK_PATH" | awk '$1+0 > 1000000 {print}' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       # -------------------------------------------------------------- Outputs
@@ -999,7 +970,7 @@ jobs:
           {
             echo "Automatic release build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
             echo ""
-            echo "Sideload this APK for device testing. It is a speed-optimized release export (unused engine modules, including XR, compiled out; Swappy kept) signed with the CI debug keystore so it can replace the previous install. largeHeap stays enabled."
+            echo "Sideload this APK for device testing. It is a release export (faster than the old debug build) signed with the CI debug keystore so it can replace the previous install. Native libraries are compressed in the APK and extracted once at install; frame rate is unchanged. largeHeap stays enabled."
             echo ""
             echo "APK size: $(stat -c%s "$APK_PATH") bytes."
             echo ""
