@@ -43,10 +43,10 @@ test -d "$ANDROID_HOME/ndk/$GODOT_NDK_VERSION"
 
 export PATH="$HOME/.local/bin:$PATH"
 cp "$ROOT/tools/godot_android_custom.py" "$GODOT_SRC/custom.py"
-python3 "$GODOT_SRC/misc/scripts/install_swappy_android.py"
-test -f "$GODOT_SRC/thirdparty/swappy-frame-pacing/arm64-v8a/libswappy_static.a"
-
+# The Swappy installer extracts relative to the current directory.
 cd "$GODOT_SRC"
+python3 misc/scripts/install_swappy_android.py
+test -f thirdparty/swappy-frame-pacing/arm64-v8a/libswappy_static.a
 # No generate_android_binaries: that Gradle task rebuilds every ABI. The
 # official template already has the Java project; only the arm64 .so changes.
 if ! scons platform=android target=template_release arch=arm64 \

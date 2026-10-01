@@ -269,7 +269,20 @@ jobs:
 
       - name: Build slim Android export template
         if: steps.slim-template.outputs.cache-hit != 'true'
-        run: bash tools/build_slim_android_template.sh
+        run: |
+          set +e
+          bash tools/build_slim_android_template.sh > /tmp/slim_template.log 2>&1
+          status=$?
+          tail -n 60 /tmp/slim_template.log
+          if [ "$status" -ne 0 ]; then
+            while IFS= read -r chunk; do
+              echo "::error::${chunk}"
+            done < <(tail -n 40 /tmp/slim_template.log | cut -c1-160 | awk '
+              { gsub(/%/, "%25"); gsub(/\r/, "%0D"); buf = buf $0 "%0A"
+                if (++n >= 4) { print buf; buf = ""; n = 0; if (++c >= 8) exit } }
+              END { if (n > 0 && c < 8) print buf }')
+            exit "$status"
+          fi
 
       - name: Install slim template over official Android templates
         run: |
