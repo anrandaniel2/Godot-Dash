@@ -89,32 +89,51 @@ mkdir -p "$TEMPLATE_OUT"
 # APK. Leave android_release.apk official so its zipalign/signature stays valid.
 cp "$TPZ_DIR/android_release.apk" "$TEMPLATE_OUT/android_release.apk"
 python3 - "$SO" "$TPZ_DIR/android_source.zip" "$ROOT/$TEMPLATE_OUT/android_source.zip" <<'PY'
-import sys, zipfile
+import io, sys, zipfile
 from pathlib import Path
 
 blob = Path(sys.argv[1]).read_bytes()
 src = Path(sys.argv[2])
 dest = Path(sys.argv[3])
-tmp = dest.with_suffix(dest.suffix + ".tmp")
-replaced = 0
-with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
-    for info in zin.infolist():
-        data = zin.read(info.filename)
-        name = info.filename.replace("\\", "/")
-        if name.endswith("arm64-v8a/libgodot_android.so"):
-            data = blob
-            replaced += 1
-            info.file_size = len(data)
-            info.CRC = zipfile.crc32(data) & 0xFFFFFFFF
-        zout.writestr(info, data)
+
+def is_arm64_godot(name: str) -> bool:
+    name = name.replace("\\", "/")
+    return name.endswith("libgodot_android.so") and "arm64-v8a" in name
+
+def patch_zip(data: bytes) -> tuple[bytes, int]:
+    replaced = 0
+    src_buf = io.BytesIO(data)
+    out_buf = io.BytesIO()
+    with zipfile.ZipFile(src_buf, "r") as zin, zipfile.ZipFile(out_buf, "w") as zout:
+        for info in zin.infolist():
+            payload = zin.read(info.filename)
+            name = info.filename.replace("\\", "/")
+            if is_arm64_godot(name):
+                payload = blob
+                replaced += 1
+            elif name.endswith(".aar") or name.endswith(".zip"):
+                try:
+                    nested, n = patch_zip(payload)
+                except zipfile.BadZipFile:
+                    nested, n = payload, 0
+                if n:
+                    payload = nested
+                    replaced += n
+            info.file_size = len(payload)
+            info.CRC = zipfile.crc32(payload) & 0xFFFFFFFF
+            zout.writestr(info, payload)
+    return out_buf.getvalue(), replaced
+
+patched, replaced = patch_zip(src.read_bytes())
 if replaced == 0:
-    tmp.unlink(missing_ok=True)
-    names = []
     with zipfile.ZipFile(src) as zin:
-        names = [i.filename for i in zin.infolist() if i.filename.endswith(".so")]
-    raise SystemExit("no arm64-v8a/libgodot_android.so in android_source.zip; .so entries:\n" + "\n".join(names[:40]))
-tmp.replace(dest)
-print(f"replaced {replaced} libgodot_android.so in android_source.zip")
+        names = [i.filename for i in zin.infolist()]
+    raise SystemExit(
+        "android_source.zip has no arm64 libgodot_android.so (loose or inside an aar).\n"
+        + "\n".join(names[:60])
+    )
+dest.write_bytes(patched)
+print(f"replaced {replaced} libgodot_android.so inside android_source.zip")
 PY
 ls -lh "$TEMPLATE_OUT"
 echo "slim Android template ready"
