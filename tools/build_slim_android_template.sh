@@ -25,7 +25,16 @@ fi
 if [ -d /usr/share/dotnet ]; then
   sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/share/swift || true
 fi
+# The final libgodot link exceeds the runner's RAM. Swap does not change the
+# binary; it only lets the link finish.
+if ! swapon --show | grep -q .; then
+  sudo fallocate -l 12G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+fi
 df -h /
+free -h
 
 export ANDROID_HOME="${ANDROID_HOME:?ANDROID_HOME is required}"
 SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
