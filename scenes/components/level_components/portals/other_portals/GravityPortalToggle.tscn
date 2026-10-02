@@ -8,7 +8,6 @@
 [ext_resource type="Texture2D" uid="uid://cjosrmsrdlhvy" path="res://assets/textures/portals/other_portals/gravity_portal_toggle/GravityPortalToggleIndicatorBG.png" id="5_ojbq5"]
 [ext_resource type="Texture2D" uid="uid://h208qkiac4cr" path="res://assets/textures/portals/other_portals/gravity_portal_toggle/GravityPortalToggleIndicatorIcon.png" id="6_skm3c"]
 [ext_resource type="PackedScene" uid="uid://d23j4fpbpdrv4" path="res://scenes/particle_emitter_presets/PortalParticles.tscn" id="7_da0ut"]
-[ext_resource type="Script" uid="uid://dfqmc7gmqqhe3" path="res://src/interactables/public_components/SingleUsageComponent.gd" id="8_61yf8"]
 [ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="9_vwkm0"]
 [ext_resource type="Script" uid="uid://n8ym1w4r5ke" path="res://src/interactables/private_components/PulseWhite.gd" id="10_5buh7"]
 [ext_resource type="Script" uid="uid://df636dbhnu65v" path="res://src/interactables/public_components/GravityFlipChangerComponent.gd" id="11_1s3np"]
@@ -19,6 +18,7 @@ size = Vector2(128, 384)
 
 [node name="GravityPortalToggle" type="Area2D" unique_id=148634740]
 collision_layer = 8
+collision_mask = 1
 script = ExtResource("1_85xuf")
 metadata/_edit_group_ = true
 
@@ -56,9 +56,6 @@ texture = ExtResource("6_skm3c")
 
 [node name="ParticleEmitter" parent="." unique_id=1839842342 instance=ExtResource("7_da0ut")]
 modulate = Color(0, 0.721569, 0, 1)
-
-[node name="SingleUsageComponent" type="Node" parent="." unique_id=366311293]
-script = ExtResource("8_61yf8")
 
 [node name="PulseCircle" type="Node2D" parent="." unique_id=1320272045]
 script = ExtResource("9_vwkm0")

@@ -58,6 +58,8 @@
 #include <utility>
 #include <vector>
 
+#include "gravity_portal.h"
+
 namespace godot {
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,7 @@ enum class TriggerEffectKind : int32_t {
 	SHADER_INVERT_COLOR,// 2921 Invert Color
 	UI,                 // 3613 UI Trigger
 	SFX,                // 3602 SFX Trigger
+	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -294,6 +297,7 @@ struct TriggerEffect {
 	double sfx_volume = 1.0;     // 3602: key 406 (Volume)
 	double sfx_pitch = 1.0;      // 3602: key 407 (Pitch)
 	bool sfx_loop = false;       // 3602: key 404 (Loop)
+	int32_t gravity_mode = GRAVITY_PORTAL_DOWN; // 10/11/2926, or "gravity_mode"
 };
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
@@ -553,6 +557,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
 		case 3613: effect.kind = TriggerEffectKind::UI; break;
 		case 3602: effect.kind = TriggerEffectKind::SFX; break;
+		case 10:  // yellow gravity portal (upside down)
+		case 11:  // blue gravity portal (normal)
+		case 2926: // green gravity portal (toggle)
+			effect.kind = TriggerEffectKind::GRAVITY_PORTAL; break;
 		default: return effect; // inert
 	}
 	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
@@ -684,10 +692,56 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.sfx_pitch = Math::clamp(prop_float(properties, "407", 1.0), 0.01, 5.0);
 			effect.sfx_loop = prop_bool(properties, "404", false);
 			break;
+		case TriggerEffectKind::GRAVITY_PORTAL:
+			effect.gravity_mode = static_cast<int32_t>(gravity_portal_mode_from_id(
+				static_cast<int>(gd_id), static_cast<int>(prop_int(properties, "gravity_mode", -1))));
+			break;
 		default:
 			break;
 	}
 	return effect;
+}
+
+// Applies a gravity portal to a live player. Shared by the overlap scan and
+// GravityFlipChangerComponent so orbs, pads and editor playtests use the same
+// flip, velocity reverse and floor-leave as imported portals.
+static bool apply_gravity_portal_player(Object *player, int mode) {
+	if (!player || mode < GRAVITY_PORTAL_DOWN || mode > GRAVITY_PORTAL_TOGGLE) {
+		return false;
+	}
+	if (static_cast<bool>(player->get("dead"))) {
+		return false;
+	}
+	const Variant flip_value = player->get("gravity_flip");
+	if (flip_value.get_type() == Variant::NIL) {
+		return false;
+	}
+	const double rotation = player->get("gameplay_rotation");
+	const Vector2 velocity = player->get("velocity");
+	const Vector2 local = velocity.rotated(static_cast<real_t>(-rotation));
+	const GravityPortalResult result = compute_gravity_portal(
+		static_cast<double>(flip_value), static_cast<double>(local.y), mode);
+	if (!result.changed) {
+		return false;
+	}
+	Vector2 launched = local;
+	launched.y = static_cast<real_t>(result.local_velocity_y);
+	player->set("velocity", launched.rotated(static_cast<real_t>(rotation)));
+	player->set("gravity_flip", static_cast<int64_t>(result.gravity_flip));
+	const Vector2 up = Vector2(0.0f, -1.0f).rotated(static_cast<real_t>(rotation))
+		* static_cast<real_t>(result.gravity_flip);
+	player->set("up_direction", up);
+	// The next physics step still reports the old floor. Pending tells the
+	// velocity kernel to treat that contact as airborne so the reversed launch
+	// is not cancelled, and grace keeps the old floor from counting as a ceiling.
+	player->set("gravity_portal_pending", true);
+	const int64_t grace = player->get("gravity_portal_grace");
+	player->set("gravity_portal_grace", grace < 4 ? static_cast<int64_t>(4) : grace);
+	Node2D *node = Object::cast_to<Node2D>(player);
+	if (node) {
+		node->set_global_position(node->get_global_position() - up * 8.0f);
+	}
+	return true;
 }
 
 // Packed trigger scheduler. One instance replaces thousands of Area2D broad-
@@ -792,6 +846,10 @@ class NativeTriggerRuntime : public RefCounted {
 	// Which touch records each player currently overlaps, so multi-activate
 	// variants re-fire on a fresh touch instead of every physics frame.
 	std::map<uint64_t, std::set<size_t>> touch_inside_players;
+	// Gravity portals (10/11/2926) are not X-line triggers. They fire when the
+	// player enters the portal rect, and again every time they re-enter it.
+	std::vector<size_t> gravity_portal_order;
+	std::map<uint64_t, std::set<size_t>> gravity_inside_players;
 	// Players advanced this physics frame; touch checks need stationary and
 	// vertically-moving players too, which x-crossing skips.
 	std::vector<ObjectID> frame_players;
@@ -843,6 +901,12 @@ class NativeTriggerRuntime : public RefCounted {
 			if (records[a].x != records[b].x) return records[a].x < records[b].x;
 			return records[a].source_order < records[b].source_order;
 		});
+		gravity_portal_order.clear();
+		for (size_t index : x_order) {
+			if (records[index].effect.kind == TriggerEffectKind::GRAVITY_PORTAL) {
+				gravity_portal_order.push_back(index);
+			}
+		}
 		index_dirty = false;
 	}
 
@@ -907,11 +971,18 @@ class NativeTriggerRuntime : public RefCounted {
 			ensure_index();
 		}
 		if (!index_table_valid(touch_order, "touch_order")) rebuild_touch_order();
+		if (!index_table_valid(gravity_portal_order, "gravity_portal_order")) {
+			index_dirty = true;
+			ensure_index();
+		}
 	}
 
 	void activate(size_t index, Object *player, bool forced = false) {
 		if (index >= records.size()) return;
 		if (records[index].effect.kind == TriggerEffectKind::UI) return; // on-load only
+		// Portals use the rect-enter scan. An X crossing would flip a player
+		// who jumped over the portal, and would toggle twice with that scan.
+		if (records[index].effect.kind == TriggerEffectKind::GRAVITY_PORTAL) return;
 		const uint64_t epoch = structure_epoch;
 		const int32_t flags = records[index].flags;
 		if (records[index].activated && !(flags & MULTI_ACTIVATE)) return;
@@ -2140,7 +2211,8 @@ public:
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
 		fade_capture_count = 0; fade_capture_reports = 0;
-		touch_inside_players.clear(); frame_players.clear(); previous_positions.clear();
+		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
+		frame_players.clear(); previous_positions.clear();
 		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID(); shader_layer_id = ObjectID();
 		ui_layer_id = ObjectID(); ui_root_id = ObjectID();
 		reset_shaders();
@@ -2476,6 +2548,7 @@ public:
 			if (records[index].flags & TOUCH_ONLY) touch_order.push_back(index);
 		}
 		touch_order.shrink_to_fit();
+		gravity_portal_order.shrink_to_fit();
 		apply_ui_triggers();
 	}
 	void advance(Object *player, double previous_x, double current_x) {
@@ -2564,6 +2637,12 @@ public:
 				if (structure_epoch != epoch) return;
 				activate(*it, player);
 			}
+			if (structure_epoch == epoch) {
+				apply_passed_gravity_portals(player, x);
+				// The spawn sweep does not call advance(), so the enter check
+				// would otherwise miss a portal the player is already standing in.
+				frame_players.push_back(ObjectID(player->get_instance_id()));
+			}
 			return;
 		}
 
@@ -2600,6 +2679,110 @@ public:
 		events.push_back(std::move(event));
 		std::push_heap(events.begin(), events.end(), event_later);
 	}
+	// Portal hitbox is 128x384 in the scene. Expand it by the player half-size
+	// so the center test matches the Area2D overlap, including rotated portals.
+	static constexpr double GRAVITY_PORTAL_HALF_X = 64.0;
+	static constexpr double GRAVITY_PORTAL_HALF_Y = 192.0;
+	static constexpr double GRAVITY_PLAYER_HALF = 70.0;
+
+	bool gravity_portal_local(size_t index, Node2D *player, Vector2 &local_out, Vector2 &half_out) const {
+		if (index >= records.size() || !player) {
+			return false;
+		}
+		Node2D *portal = Object::cast_to<Node2D>(ObjectDB::get_instance(records[index].object));
+		if (!portal) {
+			return false;
+		}
+		const Transform2D inverse = portal->get_global_transform().affine_inverse();
+		local_out = inverse.xform(player->get_global_position());
+		const Vector2 scale = portal->get_global_scale().abs();
+		const double scale_x = std::max(0.25, static_cast<double>(scale.x));
+		const double scale_y = std::max(0.25, static_cast<double>(scale.y));
+		half_out.x = static_cast<real_t>(GRAVITY_PORTAL_HALF_X * scale_x + GRAVITY_PLAYER_HALF);
+		half_out.y = static_cast<real_t>(GRAVITY_PORTAL_HALF_Y * scale_y + GRAVITY_PLAYER_HALF);
+		return true;
+	}
+
+	void apply_passed_gravity_portals(Object *player, double x) {
+		Node2D *player_node = Object::cast_to<Node2D>(player);
+		if (!player_node) {
+			return;
+		}
+		ensure_index();
+		repair_index_tables();
+		const uint64_t player_id = static_cast<uint64_t>(player->get_instance_id());
+		std::set<size_t> &inside = gravity_inside_players[player_id];
+		std::set<uint64_t> applied_objects;
+		for (size_t index : gravity_portal_order) {
+			if (index >= records.size() || records[index].x > x + 1.0) {
+				break;
+			}
+			const uint64_t object_id = static_cast<uint64_t>(records[index].object);
+			if (object_id != 0 && !applied_objects.insert(object_id).second) {
+				continue;
+			}
+			Vector2 local;
+			Vector2 half;
+			if (!gravity_portal_local(index, player_node, local, half)) {
+				continue;
+			}
+			if (std::abs(static_cast<double>(local.y)) > static_cast<double>(half.y)) {
+				continue;
+			}
+			apply_gravity_portal_player(player, records[index].effect.gravity_mode);
+			if (std::abs(static_cast<double>(local.x)) <= static_cast<double>(half.x)) {
+				inside.insert(index);
+			}
+		}
+	}
+
+	void check_gravity_portals() {
+		if (gravity_portal_order.empty() || frame_players.empty()) {
+			return;
+		}
+		ensure_index();
+		repair_index_tables();
+		const uint64_t epoch = structure_epoch;
+		for (ObjectID player_object : frame_players) {
+			if (structure_epoch != epoch) {
+				return;
+			}
+			Object *player = ObjectDB::get_instance(player_object);
+			Node2D *player_node = Object::cast_to<Node2D>(player);
+			if (!player_node) {
+				continue;
+			}
+			const uint64_t player_id = static_cast<uint64_t>(player_object);
+			std::set<size_t> &inside = gravity_inside_players[player_id];
+			std::set<size_t> now_inside;
+			std::set<uint64_t> applied_objects;
+			for (size_t index : gravity_portal_order) {
+				if (structure_epoch != epoch) {
+					return;
+				}
+				if (index >= records.size()) {
+					continue;
+				}
+				Vector2 local;
+				Vector2 half;
+				if (!gravity_portal_local(index, player_node, local, half)) {
+					continue;
+				}
+				const bool contained = std::abs(static_cast<double>(local.x)) <= static_cast<double>(half.x)
+					&& std::abs(static_cast<double>(local.y)) <= static_cast<double>(half.y);
+				if (!contained) {
+					continue;
+				}
+				now_inside.insert(index);
+				const uint64_t object_id = static_cast<uint64_t>(records[index].object);
+				if (inside.count(index) == 0 && (object_id == 0 || applied_objects.insert(object_id).second)) {
+					apply_gravity_portal_player(player, records[index].effect.gravity_mode);
+				}
+			}
+			inside.swap(now_inside);
+		}
+	}
+
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
 		int64_t dispatched = 0;
@@ -2621,6 +2804,7 @@ public:
 			++dispatched;
 		}
 		check_touch_overlaps();
+		check_gravity_portals();
 		frame_players.clear();
 		for (size_t i = 0; i < fades.size(); ) {
 			const uint64_t fade_epoch = structure_epoch;
@@ -2698,6 +2882,7 @@ public:
 			refresh_member_alpha(entry.key);
 		}
 		touch_inside_players.clear();
+		gravity_inside_players.clear();
 		frame_players.clear();
 		previous_positions.clear();
 		reset_shaders();
@@ -2714,7 +2899,7 @@ public:
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
 		clock = state.get("clock", 0.0); events.clear(); fades.clear();
-		frame_players.clear(); previous_positions.clear();
+		frame_players.clear(); previous_positions.clear(); gravity_inside_players.clear();
 	}
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t active_fade_count() const { return static_cast<int64_t>(fades.size()); }
@@ -3012,6 +3197,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("reenable_collision_shapes", "container"), &GdashNative::reenable_collision_shapes);
 		ClassDB::bind_method(D_METHOD("compute_player_velocity", "params"), &GdashNative::compute_player_velocity);
 		ClassDB::bind_method(D_METHOD("compute_player_velocity_packed", "params"), &GdashNative::compute_player_velocity_packed);
+		ClassDB::bind_method(D_METHOD("apply_gravity_portal", "player", "mode"), &GdashNative::apply_gravity_portal);
 		ClassDB::bind_method(D_METHOD("classify_collision", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision);
 		ClassDB::bind_method(D_METHOD("classify_collision_flags", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision_flags);
 		ClassDB::bind_method(D_METHOD("extract_object_geometry", "object"), &GdashNative::extract_object_geometry);
@@ -3025,7 +3211,7 @@ protected:
 
 public:
 	String build_string() const {
-		return String("gdash_native 1.12.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / quiet diagnostics / api 4.7");
+		return String("gdash_native 1.12.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / gravity portals / quiet diagnostics / api 4.7");
 	}
 	// 23: fade/teleport/colour-capture diagnostics report through print() instead
 	// of ERR_PRINT, so a normal capture is no longer an "ERROR:" in the console.
@@ -4046,9 +4232,17 @@ public:
 			bool deferred_velocity_redirect,
 			double coyote_time,
 			int64_t spider_dash_frames,
-			int64_t slope_exit_velocity_frames) {
+			int64_t slope_exit_velocity_frames,
+			bool gravity_portal_pending = false) {
 		PlayerPhysicsOutput out;
 		Vector2 local_velocity = previous_velocity.rotated(static_cast<real_t>(-gameplay_rotation));
+		// A gravity portal just reversed local Y and nudged us off the old floor.
+		// move_and_slide has not run yet, so is_on_floor is still the old contact
+		// and would cancel the launch and skip gravity for this step.
+		if (gravity_portal_pending) {
+			is_on_floor = false;
+			is_on_ceiling = false;
+		}
 
 		if (spider_dash_frames > 0) {
 			spider_dash_frames--;
@@ -4206,6 +4400,7 @@ public:
 		const double coyote_time = params.get("coyote_time", 0.0);
 		const int64_t spider_dash_frames = params.get("spider_dash_frames", 0);
 		const int64_t slope_exit_velocity_frames = params.get("slope_exit_velocity_frames", 0);
+		const bool gravity_portal_pending = params.get("gravity_portal_pending", false);
 
 		PlayerPhysicsOutput out = run_player_physics_kernel(
 			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
@@ -4214,7 +4409,7 @@ public:
 			gravity_multiplier, gameplay_rotation, is_on_floor, is_on_ceiling,
 			is_platformer, colliding_pad, has_dash_control, orb_queue_empty,
 			robot_timer_time_left, deferred_velocity_redirect, coyote_time,
-			spider_dash_frames, slope_exit_velocity_frames);
+			spider_dash_frames, slope_exit_velocity_frames, gravity_portal_pending);
 
 		Dictionary result;
 		result["local_velocity"] = out.local_velocity;
@@ -4259,6 +4454,9 @@ public:
 		const double coyote_time = params[27];
 		const int64_t spider_dash_frames = static_cast<int64_t>(params[28]);
 		const int64_t slope_exit_velocity_frames = static_cast<int64_t>(params[29]);
+		// Optional so existing 30-float callers keep working. Param 30 is set
+		// only for the step that leaves the floor after a gravity portal.
+		const bool gravity_portal_pending = params.size() > 30 && params[30] != 0.0;
 
 		PlayerPhysicsOutput out = run_player_physics_kernel(
 			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
@@ -4267,7 +4465,7 @@ public:
 			gravity_multiplier, gameplay_rotation, is_on_floor, is_on_ceiling,
 			is_platformer, colliding_pad, has_dash_control, orb_queue_empty,
 			robot_timer_time_left, deferred_velocity_redirect, coyote_time,
-			spider_dash_frames, slope_exit_velocity_frames);
+			spider_dash_frames, slope_exit_velocity_frames, gravity_portal_pending);
 
 		PackedFloat64Array result;
 		result.resize(11);
@@ -4283,6 +4481,10 @@ public:
 		result.set(9, static_cast<double>(out.slope_exit_velocity_frames));
 		result.set(10, static_cast<double>(out.instant_jump_mode));
 		return result;
+	}
+
+	bool apply_gravity_portal(Object *player, int64_t mode) const {
+		return apply_gravity_portal_player(player, static_cast<int>(mode));
 	}
 
 	int64_t classify_collision_flags(double collision_angle, double floor_max_angle) const {

@@ -101,6 +101,11 @@ var jump_hold_disabled: bool
 var speed_multiplier: float = 1.0
 var gravity_flip: int = 1
 var gravity_multiplier: float = 1.0
+# Set by the C++ gravity portal for one physics step. The floor contact from
+# the previous step would otherwise cancel the reversed launch.
+var gravity_portal_pending: bool = false
+# Frames after a portal where the old floor must not count as a lethal ceiling.
+var gravity_portal_grace: int = 0
 var horizontal_direction: int = 1
 var speed: Vector2:
 	get():
@@ -223,7 +228,7 @@ var _physics_params: PackedFloat64Array = PackedFloat64Array()
 
 
 func _ready() -> void:
-	_physics_params.resize(30)
+	_physics_params.resize(31)
 	refresh_textures()
 	set_meta(Constants.HSV_WATCHER_META, $"HSVWatcher")
 	platform_on_leave = PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_UPWARD_VELOCITY if not LevelManager.platformer else PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_VELOCITY
@@ -267,7 +272,12 @@ func _physics_process(delta: float) -> void:
 		_ground_snap_cast.shape = default_collider
 		_solid_overlap_check_collider.shape = default_collider
 	_ground_collider.rotation = gameplay_rotation
-	last_collision = move_and_collide(speed.y * Vector2.DOWN * delta, true)
+	# Probe along gravity, not world down. After a portal, world down is the
+	# ceiling; probing it into the floor the cube just left is a lethal hit.
+	var gravity_down := -up_direction
+	if gravity_down.is_zero_approx():
+		gravity_down = Vector2.DOWN
+	last_collision = move_and_collide(speed.y * gravity_down * delta, true)
 	_handle_collision(last_collision, true)
 
 	for i in range(2):
@@ -276,15 +286,17 @@ func _physics_process(delta: float) -> void:
 			break
 		var prev_shape: Shape2D = _ground_collider.shape
 		_handle_collision(last_collision, i != 0)
-		# Collide down with solids so the wave can crash into them
+		# Collide along gravity so the wave can crash into the surface it falls toward
 		if internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0:
-			last_collision = move_and_collide(speed.y * Vector2.DOWN * delta, true)
+			last_collision = move_and_collide(speed.y * gravity_down * delta, true)
 			_handle_collision(last_collision, true)
 		if _ground_collider.shape == prev_shape:
 			break
 
 	# Apply movement
 	move_and_slide()
+	if gravity_portal_grace > 0:
+		gravity_portal_grace -= 1
 
 	# Sprite updates
 	_update_sprites_rotation(delta, jump_state)
@@ -421,6 +433,8 @@ func reset() -> void:
 	speed_multiplier = 1.0
 	gravity_flip = 1
 	gravity_multiplier = 1.0
+	gravity_portal_pending = false
+	gravity_portal_grace = 0
 	horizontal_direction = 1
 	dash_control = null
 	speed_0_portal_control = null
@@ -577,7 +591,7 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 	var is_lower_corner: bool = _ground_cast.is_colliding() and not _invalid_corner_cast.is_colliding()
 	var should_snap: bool = is_lower_corner and is_wall and not is_slope and internal_gamemode != Gamemode.WAVE
 
-	var is_lethal_ceiling_hit: bool = is_ceiling and allow_ceiling_hit_count == 0 and internal_gamemode not in [Gamemode.SHIP, Gamemode.UFO, Gamemode.SWING]
+	var is_lethal_ceiling_hit: bool = is_ceiling and allow_ceiling_hit_count == 0 and gravity_portal_grace <= 0 and internal_gamemode not in [Gamemode.SHIP, Gamemode.UFO, Gamemode.SWING]
 	if (
 			not should_snap
 			and not LevelManager.platformer
@@ -765,6 +779,8 @@ func _compute_velocity(
 		was_sliding_on_slope: bool,
 ) -> Vector2:
 	_is_flying_gamemode = (internal_gamemode == Gamemode.SHIP or internal_gamemode == Gamemode.SWING or internal_gamemode == Gamemode.WAVE)
+	var portal_leave := gravity_portal_pending
+	gravity_portal_pending = false
 
 	_ground_collider.rotation = gameplay_rotation
 	_solid_overlap_check.rotation = gameplay_rotation
@@ -811,6 +827,9 @@ func _compute_velocity(
 		_physics_params[27] = coyote_time
 		_physics_params[28] = float(_spider_dash_frames)
 		_physics_params[29] = float(_slope_exit_velocity_frames)
+		if _physics_params.size() < 31:
+			_physics_params.resize(31)
+		_physics_params[30] = 1.0 if portal_leave else 0.0
 
 		var res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", _physics_params)
 		var local_velocity: Vector2
@@ -839,6 +858,7 @@ func _compute_velocity(
 				"deferred_velocity_redirect": _deferred_velocity_redirect,
 				"coyote_time": coyote_time, "spider_dash_frames": _spider_dash_frames,
 				"slope_exit_velocity_frames": _slope_exit_velocity_frames,
+				"gravity_portal_pending": portal_leave,
 			})
 			local_velocity = legacy_res["local_velocity"]
 			slope_velocity = legacy_res["slope_velocity"]
@@ -940,7 +960,7 @@ func _compute_velocity(
 		elif internal_gamemode == Gamemode.SPIDER:
 			local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1 * SPIDER_GRAVITY_MULTIPLIER
 			local_velocity.y = clamp(local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
-		elif not is_on_floor():
+		elif not is_on_floor() or portal_leave:
 			if internal_gamemode == Gamemode.UFO:
 				local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER
 			else:
@@ -957,7 +977,7 @@ func _compute_velocity(
 					and jump_state == 1
 			)
 	)
-	var isnt_jumping: bool = is_on_floor() and jump_state <= 0 and not _deferred_velocity_redirect
+	var isnt_jumping: bool = is_on_floor() and not portal_leave and jump_state <= 0 and not _deferred_velocity_redirect
 
 	if not colliding_pad and flying_gamemode_slope_boost or isnt_jumping:
 		local_velocity.y = slope_velocity.y
@@ -1189,7 +1209,7 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 		_corner_snapping.scale.x = corrected_direction
 		_corner_snapping.scale.y = gravity_flip
 
-	_icon_cube.scale.y = 1.0
+	_icon_cube.scale.y = gravity_flip
 	_icon_ship.scale.y = gravity_flip
 	_icon_ship_particles.emitting = _icon_ship.visible and jump_state > 0
 	_icon_ship_particles.interp_to_end = 0.0 if _icon_ship.visible else 1.0
@@ -1199,7 +1219,7 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 	_icon_jetpack.scale.y = gravity_flip
 	_icon_jetpack_particles.emitting = _icon_jetpack.visible and jump_state > 0
 	_icon_jetpack_particles.interp_to_end = 0.0 if _icon_jetpack.visible else 1.0
-	_icon_ball.scale.y = 1.0
+	_icon_ball.scale.y = gravity_flip
 	_icon_spider.scale.y = gravity_flip
 	_icon_robot.scale.y = gravity_flip
 	#endregion
