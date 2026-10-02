@@ -12,6 +12,13 @@ func _ready() -> void:
 		queue_free()
 		return
 	super()
+	# The decorative cube's trail rebuilds a Line2D every frame. On web that
+	# mesh rebuild shows up as menu hitching, and the cube still reads without it.
+	if OS.has_feature("web"):
+		%Trail.visible = false
+		%Trail.set_process(false)
+		%WaveTrail.visible = false
+		%WaveTrail.set_process(false)
 	_viewport = get_viewport()
 	robot_animation_tree.active = true
 	_robot_state_machine.start(&"walk")
