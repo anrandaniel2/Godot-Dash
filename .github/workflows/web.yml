@@ -8,10 +8,10 @@ name: Build Web HTML5
 #   - Every successful export also updates the rolling "web-html5" prerelease
 #     with the newest ZIP:
 #       https://github.com/anrandaniel2/Godot-Dash/releases/download/web-html5/godot-dash-web-html5.zip
-#   - Multi-threading is enabled (variant/thread_support=true). Host the zip
-#     with Cross-Origin Isolation headers, or itch.io's SharedArrayBuffer option.
-#   - Web uses the Compatibility renderer at the 1920x1080 design resolution.
-#     The Mobile renderer cannot run in a browser and was only a slow fallback.
+#   - Multi-threading is enabled (variant/thread_support=true) with PWA
+#     Cross-Origin Isolation headers for SharedArrayBuffer support.
+#   - The game draws at the browser's resolution. Do not force a fixed
+#     1920x1080 viewport scale.
 
 on:
   workflow_dispatch:
@@ -260,8 +260,7 @@ jobs:
             echo ""
             echo "Download and unzip to host on any web server or static hosting service."
             echo "- Multi-threading: Enabled (SharedArrayBuffer)"
-            echo "- Renderer: Compatibility (WebGL 2.0), design-resolution viewport"
-            echo "- Cross-Origin Isolation: required for threads. Use itch.io SharedArrayBuffer support, or serve with COOP/COEP headers."
+            echo "- Renderer: draws at the browser resolution (no fixed viewport scale)"
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$NOTES_FILE"

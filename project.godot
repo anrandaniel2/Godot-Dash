@@ -94,12 +94,7 @@ window/size/viewport_height=1080
 window/size/mode=3
 window/size/mode.web=0
 window/stretch/mode="canvas_items"
-; Web renders at the 1920x1080 design size and scales the canvas. canvas_items
-; on the browser window was drawing every sprite at the monitor's full
-; resolution, which is what made the HTML build feel laggy. Android stays sharp.
-window/stretch/mode.web="viewport"
 window/stretch/aspect="expand"
-window/dpi/allow_hidpi.web=false
 window/vsync/vsync_mode=1
 display_server/driver.linuxbsd="wayland"
 
@@ -432,9 +427,6 @@ updater/show_new_release_info_on_editor_launch_in_output=false
 
 common/physics_ticks_per_second=120
 common/max_physics_steps_per_frame=12
-; A slow web frame must not run 12 physics steps and fall further behind.
-; 4 steps still keeps 120 Hz simulation down to about 30 fps. Android is unchanged.
-common/max_physics_steps_per_frame.web=4
 common/physics_interpolation=true
 
 [rendering]
@@ -450,9 +442,7 @@ common/physics_interpolation=true
 driver/threads/thread_model=0
 renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="mobile"
-; WebGL cannot run the Mobile/Vulkan renderer. Requesting it made every web
-; frame fall back to Compatibility with an HDR canvas the fallback cannot use.
-renderer/rendering_method.web="gl_compatibility"
+renderer/rendering_method.web="mobile"
 rendering_device/fallback_to_gl_compatibility=true
 textures/canvas_textures/default_texture_filter=2
 ; Android export requires this so the exporter can emit ETC2 when a texture
@@ -461,7 +451,6 @@ textures/canvas_textures/default_texture_filter=2
 ; against about 7 MB of PNGs, so forcing it would grow the APK.
 textures/vram_compression/import_etc2_astc=true
 viewport/hdr_2d=true
-viewport/hdr_2d.web=false
 anti_aliasing/quality/msaa_2d=0
 anti_aliasing/screen_space_roughness_limiter/enabled=false
 

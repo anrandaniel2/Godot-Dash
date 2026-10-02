@@ -2637,12 +2637,6 @@ public:
 				if (structure_epoch != epoch) return;
 				activate(*it, player);
 			}
-			if (structure_epoch == epoch) {
-				apply_passed_gravity_portals(player, x);
-				// The spawn sweep does not call advance(), so the enter check
-				// would otherwise miss a portal the player is already standing in.
-				frame_players.push_back(ObjectID(player->get_instance_id()));
-			}
 			return;
 		}
 
@@ -2804,7 +2798,6 @@ public:
 			++dispatched;
 		}
 		check_touch_overlaps();
-		check_gravity_portals();
 		frame_players.clear();
 		for (size_t i = 0; i < fades.size(); ) {
 			const uint64_t fade_epoch = structure_epoch;
