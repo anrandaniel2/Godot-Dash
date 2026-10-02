@@ -5,7 +5,7 @@ set -euo pipefail
 # Options configured in export_presets.cfg:
 #   - Multi-threading enabled (variant/thread_support=true)
 #   - PWA Cross-Origin Isolation headers enabled
-#   - Mobile renderer enabled if possible (project.godot: renderer/rendering_method.web="mobile")
+#   - Compatibility renderer on web (project.godot: renderer/rendering_method.web="gl_compatibility")
 #
 # Online level/music downloads need a CORS relay when the build is hosted
 # somewhere other than localhost: see the "Web (HTML5) builds" section of the

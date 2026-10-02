@@ -30,6 +30,8 @@ enum PlayerScale {
 #region Constants
 const GRAVITY: float = 10600
 const SPEED := Vector2(1250.0, 2395.0)
+# Softer than the blue gravity pad's 0.706 bounce. Enough to leave the floor.
+const GRAVITY_PORTAL_LAUNCH := 0.42
 const SPEED_MINI := Vector2(1250.0, 1600.0)
 const SPEED_BIG := Vector2(1250.0, 3000.0)
 const TERMINAL_VELOCITY := Vector2(0.0, 3000.0)
@@ -106,6 +108,9 @@ var gravity_multiplier: float = 1.0
 var gravity_portal_pending: bool = false
 # Frames after a portal where the old floor must not count as a lethal ceiling.
 var gravity_portal_grace: int = 0
+# Sign of the gravity a portal just set. Applied next physics step, the same
+# moment a gravity pad's jump boost is applied, so the old floor cannot eat it.
+var gravity_portal_launch_sign: int = 0
 var horizontal_direction: int = 1
 var speed: Vector2:
 	get():
@@ -435,6 +440,7 @@ func reset() -> void:
 	gravity_multiplier = 1.0
 	gravity_portal_pending = false
 	gravity_portal_grace = 0
+	gravity_portal_launch_sign = 0
 	horizontal_direction = 1
 	dash_control = null
 	speed_0_portal_control = null
@@ -871,6 +877,7 @@ func _compute_velocity(
 		if colliding_pad:
 			local_velocity = _handle_velocity_interactable(local_velocity, colliding_pad, direction)
 			_trail.add_points = true
+		local_velocity = _apply_gravity_portal_launch(local_velocity, jump_state)
 		if instant_mode == Gamemode.SPIDER:
 			_update_spider_cast_rotation()
 			var dash_data: PackedFloat64Array = _get_spider_dash_data()
@@ -990,6 +997,7 @@ func _compute_velocity(
 	if colliding_pad:
 		local_velocity = _handle_velocity_interactable(local_velocity, colliding_pad, direction)
 		_trail.add_points = true
+	local_velocity = _apply_gravity_portal_launch(local_velocity, jump_state)
 	#endregion
 
 	#region Handle jump.
@@ -1091,6 +1099,29 @@ func _compute_velocity(
 		colliding_pad = null
 
 	return local_velocity.rotated(gameplay_rotation)
+
+
+func queue_gravity_portal(target_flip: int) -> void:
+	gravity_portal_launch_sign = target_flip
+	gravity_portal_grace = maxi(gravity_portal_grace, 6)
+	up_direction = Vector2.UP.rotated(gameplay_rotation) * target_flip
+
+
+# Blue gravity pad: jump_boost -0.706 replaces vertical speed with a bounce
+# into the new fall. A portal is that same leave-the-floor, a bit softer, and
+# an airborne cube keeps its speed (reversed) instead of taking the pad bounce.
+func _apply_gravity_portal_launch(local_velocity: Vector2, jump_state: int) -> Vector2:
+	if gravity_portal_launch_sign == 0:
+		return local_velocity
+	var fall_sign := gravity_portal_launch_sign
+	gravity_portal_launch_sign = 0
+	if jump_state > 0:
+		return local_velocity
+	if absf(local_velocity.y) < 80.0:
+		local_velocity.y = fall_sign * speed.y * GRAVITY_PORTAL_LAUNCH
+	else:
+		local_velocity.y = clampf(-local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
+	return local_velocity
 
 
 func _handle_velocity_interactable(local_velocity: Vector2, interactable: Interactable, direction: int) -> Vector2:

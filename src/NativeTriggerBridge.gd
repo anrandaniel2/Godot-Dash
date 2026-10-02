@@ -42,8 +42,8 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	)
 	for trigger: TriggerInteractable in records:
 		var gd_id := int(trigger.get_meta(&"gd_object_id", 0))
-		# Gravity portals are rect-enter effects, registered below. An X-crossing
-		# record would either skip them or toggle a green portal twice.
+		# Gravity portals use the same Area2D path as the gravity pad. Registering
+		# them here turns monitoring off, so the cube never enters the portal.
 		if gd_id == 10 or gd_id == 11 or gd_id == 2926:
 			continue
 		_configure_runtime_targets(trigger)
@@ -69,46 +69,12 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 			var hitbox := trigger.get_node_or_null(^"TriggerHitboxComponent") as TriggerHitboxComponent
 			if hitbox != null and hitbox._hitbox != null:
 				hitbox._hitbox.set_deferred(&"disabled", true)
-	_register_gravity_portals(level)
 	_register_packed_triggers(level_data)
 	# Build and compact the X/group indexes during level loading rather than on
 	# the first gameplay physics frame, eliminating a visible first-jump hitch.
 	_runtime.call(&"finalize")
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
 	return true
-
-
-func _register_gravity_portals(level: Level) -> void:
-	# Orbs, pads and the rotate trigger share GravityFlipChangerComponent and
-	# must keep their Area2D interact path. Only the three portal scenes are
-	# crossing portals. The component call is skipped once this meta is set, so
-	# a green portal does not toggle twice.
-	for node: Node in get_tree().get_nodes_in_group(&"_gd_gravity_portal"):
-		var changer := node as GravityFlipChangerComponent
-		if changer == null or changer.parent == null or not level.is_ancestor_of(changer):
-			continue
-		var portal := changer.parent
-		portal.set_meta(&"_gd_native_gravity_portal", true)
-		portal.monitoring = false
-		portal.monitorable = false
-		portal.set_deferred(&"monitoring", false)
-		portal.set_deferred(&"monitorable", false)
-		var gd_id := int(portal.get_meta(&"gd_object_id", _gravity_portal_id(changer.flip_state)))
-		_runtime.call(
-			&"register_trigger", portal, portal.global_position.x, portal.global_position.y,
-			4, int(portal.get_meta(&"gd_source_order", 0)), PackedStringArray(),
-			gd_id, {"gravity_mode": int(changer.flip_state)},
-		)
-
-
-func _gravity_portal_id(flip_state: GravityFlipChangerComponent.FlipState) -> int:
-	match flip_state:
-		GravityFlipChangerComponent.FlipState.UP:
-			return 10
-		GravityFlipChangerComponent.FlipState.FLIP:
-			return 2926
-		_:
-			return 11
 
 
 func _register_packed_triggers(level_data: Dictionary) -> void:
