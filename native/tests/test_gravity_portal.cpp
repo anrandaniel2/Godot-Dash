@@ -24,8 +24,8 @@ static void expect_close(const char *name, double actual, double expected) {
 }
 
 int main() {
-	expect_true("blue id is down", gravity_portal_mode_from_id(11, -1) == GRAVITY_PORTAL_DOWN);
-	expect_true("yellow id is up", gravity_portal_mode_from_id(10, -1) == GRAVITY_PORTAL_UP);
+	expect_true("blue id is down", gravity_portal_mode_from_id(10, -1) == GRAVITY_PORTAL_DOWN);
+	expect_true("yellow id is up", gravity_portal_mode_from_id(11, -1) == GRAVITY_PORTAL_UP);
 	expect_true("green id is toggle", gravity_portal_mode_from_id(2926, -1) == GRAVITY_PORTAL_TOGGLE);
 	expect_true("explicit mode wins", gravity_portal_mode_from_id(11, GRAVITY_PORTAL_TOGGLE) == GRAVITY_PORTAL_TOGGLE);
 

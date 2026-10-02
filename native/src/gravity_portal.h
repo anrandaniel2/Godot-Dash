@@ -3,8 +3,8 @@
 #include <cmath>
 
 // Modes match GravityFlipChangerComponent.FlipState.
-// DOWN is the blue portal (object 11), UP the yellow portal (object 10),
-// TOGGLE the green portal (object 2926).
+// DOWN is the blue portal (object 10, atlas portal_01), UP the yellow portal
+// (object 11, atlas portal_02), TOGGLE the green portal (object 2926).
 enum GravityPortalMode : int {
 	GRAVITY_PORTAL_DOWN = 0,
 	GRAVITY_PORTAL_UP = 1,
@@ -21,7 +21,7 @@ inline int gravity_portal_mode_from_id(int gd_id, int explicit_mode) {
 	if (explicit_mode >= GRAVITY_PORTAL_DOWN && explicit_mode <= GRAVITY_PORTAL_TOGGLE) {
 		return explicit_mode;
 	}
-	if (gd_id == 10) {
+	if (gd_id == 11) {
 		return GRAVITY_PORTAL_UP;
 	}
 	if (gd_id == 2926) {

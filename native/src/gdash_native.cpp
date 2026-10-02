@@ -557,8 +557,8 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
 		case 3613: effect.kind = TriggerEffectKind::UI; break;
 		case 3602: effect.kind = TriggerEffectKind::SFX; break;
-		case 10:  // yellow gravity portal (upside down)
-		case 11:  // blue gravity portal (normal)
+		case 10:  // blue gravity portal (normal)
+		case 11:  // yellow gravity portal (upside down)
 		case 2926: // green gravity portal (toggle)
 			effect.kind = TriggerEffectKind::GRAVITY_PORTAL; break;
 		default: return effect; // inert

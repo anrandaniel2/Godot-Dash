@@ -118,8 +118,10 @@ const MAP: Dictionary[int, Dictionary] = {
 	#endregion
 
 	#region Other portals
-	10: { "scene": OTHER_PORTALS + "GravityPortalFlipped.tscn", "name": "GravityPortalFlipped" },
-	11: { "scene": OTHER_PORTALS + "GravityPortalNormal.tscn", "name": "GravityPortalNormal" },
+	# GJ_GameSheet portal_01 (id 10) is the blue normal-gravity portal.
+	# portal_02 (id 11) is the yellow upside-down portal. Do not swap these.
+	10: { "scene": OTHER_PORTALS + "GravityPortalNormal.tscn", "name": "GravityPortalNormal" },
+	11: { "scene": OTHER_PORTALS + "GravityPortalFlipped.tscn", "name": "GravityPortalFlipped" },
 	2926: { "scene": OTHER_PORTALS + "GravityPortalToggle.tscn", "name": "GravityPortalToggle" },
 	99: { "scene": OTHER_PORTALS + "ScalePortalNormal.tscn", "name": "ScalePortalNormal" },
 	101: { "scene": OTHER_PORTALS + "ScalePortalSmall.tscn", "name": "ScalePortalSmall" },
