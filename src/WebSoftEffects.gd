@@ -192,7 +192,8 @@ func _sync_camera() -> void:
 	# frames the same world the window is showing, including a Camera2D that
 	# lives under a Control. A second Camera2D would replace this transform.
 	var fit := Vector2(_plate.size) / window
-	_plate.canvas_transform = Transform2D(fit.x, 0.0, 0.0, fit.y, 0.0, 0.0) * get_viewport().canvas_transform
+	var scale_xform := Transform2D(Vector2(fit.x, 0.0), Vector2(0.0, fit.y), Vector2.ZERO)
+	_plate.canvas_transform = scale_xform * get_viewport().canvas_transform
 
 
 func _rebuild_copies() -> void:
