@@ -56,9 +56,7 @@ enum ParticlePreprocessing {
 	set(value):
 		bloom = value
 		if is_inside_tree():
-			var world := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
-			if world != null and world.environment != null:
-				world.environment.glow_enabled = value
+			_apply_bloom_to_world(value)
 @export var menu_blur: bool = true
 @export var blur_strength: float = 3
 @export var ui_color: Color = Color("#808080")
@@ -223,16 +221,15 @@ func _init():
 	render_scale = config_file.get_value("Graphics", "render_scale", render_scale)
 	anti_aliasing = config_file.get_value("Graphics", "anti_aliasing", anti_aliasing)
 	texture_filtering = config_file.get_value("Graphics", "texture_filtering", texture_filtering)
-	# Glow is several fullscreen passes. The web export is WebGL Compatibility,
-	# which cannot do that cheaply, and it runs in every level. The picture
-	# stays the same size. A saved "on" from the old default is turned off once;
-	# the Graphics setting can turn it back on.
-	if OS.has_feature("web") and not config_file.get_value("Graphics", "web_bloom_chosen", false):
-		bloom = false
-		config_file.set_value("Graphics", "bloom", false)
-		config_file.set_value("Graphics", "web_bloom_chosen", true)
+	# The previous web build turned bloom off once because Compatibility glow is
+	# several fullscreen passes. Soft glow is a different effect, so that
+	# one-time switch must not keep the Graphics toggle off.
+	if OS.has_feature("web") and not bool(config_file.get_value("Graphics", "web_soft_glow", false)):
+		bloom = true
+		config_file.set_value("Graphics", "bloom", true)
+		config_file.set_value("Graphics", "web_soft_glow", true)
 		config_file.save("user://config.cfg")
-	bloom = config_file.get_value("Graphics", "bloom", bloom if not OS.has_feature("web") else false)
+	bloom = config_file.get_value("Graphics", "bloom", bloom)
 	menu_blur = config_file.get_value("Graphics", "menu_blur", menu_blur)
 	if OS.has_feature("web"):
 		var blur_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
@@ -323,10 +320,22 @@ func _init():
 	icon_hue_shift_speed = config_file.get_value("Icons", "icon_hue_shift_speed", icon_hue_shift_speed)
 
 
+func _apply_bloom_to_world(value: bool) -> void:
+	var world := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
+	if world != null and world.environment != null:
+		# On web the toggle drives WebSoftEffects. Compatibility glow stays off
+		# so the Graphics setting cannot turn the multi-pass hitch back on.
+		world.environment.glow_enabled = value and not OS.has_feature("web")
+
+
 func _ready() -> void:
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
 			get_tree().root.set_size(saved_window_size)
+	if OS.has_feature("web"):
+		var effects := preload("res://src/WebSoftEffects.gd").new()
+		effects.name = "WebSoftEffects"
+		add_child(effects)
 
 
 func _notification(what):
