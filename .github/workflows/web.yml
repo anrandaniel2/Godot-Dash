@@ -12,6 +12,14 @@ name: Build Web HTML5
 #     Cross-Origin Isolation headers for SharedArrayBuffer support.
 #   - The game draws at the browser's resolution. Do not force a fixed
 #     1920x1080 viewport scale.
+#   - Rendering is WebGPU, not WebGL. Official Godot 4.7 web templates only
+#     ship the Compatibility renderer, so this job exports with hogdot
+#     cg-v4.7.2-r19 (Godot 4.7.2 + dwalter's GodotWebGPU driver). That pin
+#     matches this project's 4.7.2 / Mobile renderer and ships threaded dlink
+#     templates. The original dwalter fork is 4.6.2 and is not used.
+#     The engine is not rebuilt here; CI downloads hogdot's prebuilt editor
+#     and templates. gdash_native is rebuilt with the same Emscripten as
+#     those templates (6.0.8), or the side module will not load.
 
 on:
   workflow_dispatch:
@@ -26,17 +34,18 @@ concurrency:
 env:
   GODOT_VERSION: "4.7.2"
   GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
-  EM_VERSION: 3.1.64
-  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
-  GODOT_TPZ_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
-  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  # Must match the emsdk pin in hogdot cg-v4.7.2-r19. Official 4.7.2 uses 3.1.64;
+  # a side module built with that will not load into the WebGPU template.
+  EM_VERSION: 6.0.8
+  HOGDOT_TAG: cg-v4.7.2-r19
+  HOGDOT_RELEASE: https://github.com/hogdanish/hogdot/releases/download/cg-v4.7.2-r19
   WEB_DIR: export/Web
   ZIP_NAME: godot-dash-web-html5.zip
 
 jobs:
   web-export:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: write
     steps:
@@ -107,45 +116,63 @@ jobs:
           test -f bin/web/libgdash_native.web.template_release.wasm32.wasm || { echo "::error::Release wasm missing"; exit 1; }
           test -f bin/web/libgdash_native.web.template_debug.wasm32.wasm || { echo "::error::Debug wasm missing"; exit 1; }
 
-      # ---------------------------------------------------------------- Godot
-      - name: Cache Godot binary
+      # ------------------------------------------------------- hogdot WebGPU editor
+      # Prebuilt editor + threaded dlink templates. Do not compile the engine
+      # in this job, and do not substitute the official WebGL templates.
+      - name: Cache hogdot editor and templates
         uses: actions/cache@v4
-        id: cache-godot
+        id: cache-hogdot
         with:
-          path: godot-bin
-          key: godot-${{ env.GODOT_VERSION }}
+          path: hogdot-dist
+          key: hogdot-${{ env.HOGDOT_TAG }}-webgpu-threads-dlink
 
-      - name: Download Godot binary
-        if: steps.cache-godot.outputs.cache-hit != 'true'
-        run: |
-          wget -q "$GODOT_BIN_URL" -O godot.zip
-          mkdir -p godot-bin
-          unzip -q -o godot.zip -d godot-bin
-          rm -f godot.zip
-          chmod +x "$GODOT_BIN"
-
-      - name: Cache export templates
-        uses: actions/cache@v4
-        id: cache-templates
-        with:
-          path: godot-export-templates.tpz
-          key: godot-templates-${{ env.GODOT_VERSION }}
-
-      - name: Download export templates
-        if: steps.cache-templates.outputs.cache-hit != 'true'
-        run: wget -q "$GODOT_TPZ_URL" -O godot-export-templates.tpz
-
-      - name: Install export templates
+      - name: Download hogdot editor and WebGPU templates
+        if: steps.cache-hogdot.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
-          mkdir -p "$TPZ_DIR"
-          unzip -q -o godot-export-templates.tpz -d "$TPZ_DIR"
-          if [ -d "$TPZ_DIR/templates" ]; then
-            mv -f "$TPZ_DIR"/templates/* "$TPZ_DIR"/
-            rmdir "$TPZ_DIR/templates"
+          mkdir -p hogdot-dist
+          curl -fL --retry 3 -o hogdot-dist/editor-linux-x86_64.tar.gz \
+            "$HOGDOT_RELEASE/editor-linux-x86_64.tar.gz"
+          curl -fL --retry 3 -o hogdot-dist/web-template_release.threads.dlink.wasm32.zip \
+            "$HOGDOT_RELEASE/web-template_release.threads.dlink.wasm32.zip"
+          curl -fL --retry 3 -o hogdot-dist/web-template_debug.threads.dlink.wasm32.zip \
+            "$HOGDOT_RELEASE/web-template_debug.threads.dlink.wasm32.zip"
+          # Hashes published on the cg-v4.7.2-r19 release.
+          cat > hogdot-dist/checksums.sha256 << 'EOF'
+          ff3f50cbfe4cfc2306367f30eb3b5af8d0fa48aefe1cc7dd5286191dea2cd3fc  editor-linux-x86_64.tar.gz
+          d276125a4fd3c483fa93bbd6a41528e6b9a218beb95fb7aff16bc6bf588117d0  web-template_release.threads.dlink.wasm32.zip
+          8ea6c81b3832463f3b895b7fa2c315e85e7b29eb99b0c81c15ca5aef  web-template_debug.threads.dlink.wasm32.zip
+          EOF
+          # The heredoc above is indented; strip that before checking.
+          sed -i 's/^[[:space:]]*//' hogdot-dist/checksums.sha256
+          (cd hogdot-dist && sha256sum -c checksums.sha256)
+
+      - name: Install hogdot editor and point the Web preset at it
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers libxkbcommon0 libfontconfig1 libasound2t64 libx11-6 libxcursor1 libxinerama1 libxrandr2 libxi6 libgl1 libpulse0 >/dev/null
+          rm -rf hogdot-editor
+          mkdir -p hogdot-editor hogdot-templates
+          tar -xzf hogdot-dist/editor-linux-x86_64.tar.gz -C hogdot-editor
+          EDITOR="$(find "$(pwd)/hogdot-editor" -type f -name 'godot.linuxbsd.editor.x86_64' -print -quit)"
+          CLI="$(find "$(pwd)/hogdot-editor" -type f -name 'tint_convert_cli' -print -quit)"
+          test -n "$EDITOR"
+          test -n "$CLI"
+          # The shader baker shells out to tint_convert_cli beside the editor binary.
+          if [ "$(dirname "$EDITOR")" != "$(dirname "$CLI")" ]; then
+            cp "$CLI" "$(dirname "$EDITOR")/tint_convert_cli"
+            CLI="$(dirname "$EDITOR")/tint_convert_cli"
           fi
-          ls -1 "$TPZ_DIR" | head -n 20
+          chmod +x "$EDITOR" "$CLI"
+          cp hogdot-dist/web-template_release.threads.dlink.wasm32.zip hogdot-templates/web_dlink_release.zip
+          cp hogdot-dist/web-template_debug.threads.dlink.wasm32.zip hogdot-templates/web_dlink_debug.zip
+          python3 tools/pin_webgpu_templates.py \
+            hogdot-templates/web_dlink_debug.zip \
+            hogdot-templates/web_dlink_release.zip
+          echo "HOGDOT_BIN=$EDITOR" >> "$GITHUB_ENV"
+          "$EDITOR" --version
+          "$CLI" --pipeline-id || true
 
       # -------------------------------------------------------- Project Build
       # Importing parses and compiles every GDScript in the project, so it is
@@ -168,13 +195,13 @@ jobs:
           CONTEXT='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
 
           echo "First pass (warms the .godot cache; its messages are only reported)"
-          "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import_first.log || true
+          "$HOGDOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import_first.log || true
           echo "First pass messages:"
           grep -cE "$CONTEXT" /tmp/import_first.log || true
 
           echo "Second pass (checked)"
           rc=0
-          "$GODOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log || rc=$?
+          "$HOGDOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log || rc=$?
 
           annotate() {
             local level="$1" pattern="$2" limit="$3"
@@ -200,12 +227,23 @@ jobs:
           fi
           exit "$rc"
 
-      - name: Export Web (multi-threaded, mobile renderer if possible)
+      - name: Export Web (WebGPU, multi-threaded Mobile)
         run: |
           set -euo pipefail
+          # Import can rewrite export_presets.cfg. Point at the templates again.
+          python3 tools/pin_webgpu_templates.py \
+            hogdot-templates/web_dlink_debug.zip \
+            hogdot-templates/web_dlink_release.zip
           mkdir -p "$WEB_DIR"
-          "$GODOT_BIN" --headless --export-release "Web" "$WEB_DIR/index.html" || \
-          "$GODOT_BIN" --headless --export-debug "Web" "$WEB_DIR/index.html"
+          # lavapipe was installed with the editor so Mobile core shaders can bake to WGSL.
+          export_release() {
+            "$HOGDOT_BIN" --headless --rendering-method mobile --export-release "Web" "$WEB_DIR/index.html"
+          }
+          if ! export_release; then
+            echo "Mobile-renderer export failed; retrying with the editor's default renderer."
+            "$HOGDOT_BIN" --headless --export-release "Web" "$WEB_DIR/index.html" || \
+            "$HOGDOT_BIN" --headless --export-debug "Web" "$WEB_DIR/index.html"
+          fi
           echo "Web export folder contents:"
           ls -la "$WEB_DIR"
 
@@ -216,7 +254,13 @@ jobs:
           test -f "$WEB_DIR/index.js"
           test -f "$WEB_DIR/index.pck"
           test -f "$WEB_DIR/index.wasm"
-          echo "Verified core Web files exist."
+          test -f "$WEB_DIR/index.side.wasm"
+          test -f "$WEB_DIR/libgdash_native.web.template_release.wasm32.wasm"
+          if ! grep -q 'webgpu' "$WEB_DIR/index.html"; then
+            echo "::error::Export did not select the WebGPU driver. Refusing to publish a WebGL build."
+            exit 1
+          fi
+          echo "Verified WebGPU export files exist."
           if ls "$WEB_DIR"/*worker* 1> /dev/null 2>&1; then
             echo "Multi-threaded worker / service worker files:"
             ls -la "$WEB_DIR"/*worker*
@@ -260,7 +304,7 @@ jobs:
             echo ""
             echo "Download and unzip to host on any web server or static hosting service."
             echo "- Multi-threading: Enabled (SharedArrayBuffer)"
-            echo "- Renderer: draws at the browser resolution (no fixed viewport scale)"
+            echo "- Renderer: WebGPU Mobile via hogdot ${HOGDOT_TAG} (dwalter GodotWebGPU), browser resolution"
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$NOTES_FILE"
