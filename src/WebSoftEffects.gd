@@ -6,10 +6,12 @@ extends Node
 ## small viewport. Panels sample that texture once. They never ask for
 ## hint_screen_texture, so the menu does not copy the browser framebuffer.
 ##
-## Level glow is one additive pass over a bloom mask built from a small copy
-## of the already-rendered frame. Compatibility's multi-pass glow stays off.
-## While the game is paused, that small copy is left frozen so the pause panel
-## blurs the level instead of blurring itself.
+## Level glow is a low-resolution render of the same 2D world, masked down to
+## bright pixels and added on top. It does not sample the root framebuffer.
+## Sampling that texture from a child viewport is a torn previous frame, and
+## adding it back on top is the trail. Compatibility's multi-pass glow stays
+## off. While the game is paused, the low-resolution view is left frozen so
+## the pause panel blurs the level instead of blurring itself.
 
 const _BLUR_SHADER := preload("res://resources/shaders/WebBlurSource.gdshader")
 const _EXTRACT_SHADER := preload("res://resources/shaders/WebGlowExtract.gdshader")
@@ -21,24 +23,27 @@ const _MAX_ACTOR_SPRITES := 12
 var _plate: SubViewport
 var _plate_fill: ColorRect
 var _plate_root: Node2D
-var _frame: SubViewport
-var _frame_rect: TextureRect
+var _world: SubViewport
 var _blur: SubViewport
 var _blur_rect: TextureRect
 var _extract: SubViewport
 var _extract_rect: TextureRect
 var _glow_layer: CanvasLayer
-var _glow_rect: ColorRect
+var _glow_rect: TextureRect
 
 var _copies: Array[Dictionary] = []
 var _scene: Node
 var _window_size := Vector2.ZERO
 var _strength := -1.0
 var _source_is_frame := false
+var _capture_world := false
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# After interpolation, immediately before viewports draw, so the glow view
+	# frames the same camera position as the frame it is added onto.
+	RenderingServer.frame_pre_draw.connect(_before_draw)
 	_plate = _make_viewport()
 	_plate_fill = ColorRect.new()
 	_plate_fill.name = "Fill"
@@ -53,12 +58,11 @@ func _ready() -> void:
 	_plate_root.name = "Backdrop"
 	_plate.add_child(_plate_root)
 
-	_frame = _make_viewport()
-	_frame_rect = _make_stretch_rect()
-	_frame.add_child(_frame_rect)
-	# Assigned only while this viewport is rendering. Leaving it unassigned on
-	# the menu means the menu never samples the root framebuffer.
-	_frame.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	# Renders the live 2D world itself. No child samples the root texture.
+	_world = _make_viewport()
+	_world.name = "WorldView"
+	_world.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	_world.world_2d = get_viewport().world_2d
 
 	_blur = _make_viewport()
 	_blur_rect = _make_stretch_rect()
@@ -78,19 +82,25 @@ func _ready() -> void:
 	_glow_layer = CanvasLayer.new()
 	_glow_layer.name = "WebGlowLayer"
 	_glow_layer.layer = _GLOW_LAYER
-	_glow_rect = ColorRect.new()
+	_glow_rect = TextureRect.new()
 	_glow_rect.name = "WebGlowRect"
 	_glow_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_glow_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_glow_rect.color = Color.WHITE
+	_glow_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_glow_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_glow_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	# Layer 2 is excluded from the world view, so this rect cannot be drawn
+	# back into the texture it displays.
+	_glow_rect.visibility_layer = 2
 	var glow_mat := ShaderMaterial.new()
 	glow_mat.shader = _OVERLAY_SHADER
 	_glow_rect.material = glow_mat
+	_glow_rect.texture = _extract.get_texture()
 	_glow_rect.visible = false
 	_glow_layer.add_child(_glow_rect)
 	add_child(_glow_layer)
 	_glow_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	(_glow_rect.material as ShaderMaterial).set_shader_parameter("glow_tex", _extract.get_texture())
+	_world.canvas_cull_mask = 1
 
 	var panel_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
 	if panel_mat:
@@ -104,22 +114,19 @@ func _process(_delta: float) -> void:
 	_resize(false)
 	if in_level:
 		_set_update(_plate, false)
-		# Freeze on pause so the panel blurs the level from the previous frame,
-		# not the pause menu that is about to be drawn on top of it.
-		var capture := not paused and (Config.bloom or Config.menu_blur)
-		_set_update(_frame, capture)
-		if capture and _frame_rect.texture == null:
-			_frame_rect.texture = get_viewport().get_texture()
-		_use_source(_frame.get_texture(), true)
+		# Freeze on pause so the panel blurs the level, not the pause menu.
+		# The pause menu is a CanvasLayer, so it is not in this world view.
+		_capture_world = not paused and (Config.bloom or Config.menu_blur)
+		_set_update(_world, _capture_world)
+		_use_source(_world.get_texture(), true)
 		var glow := Config.bloom and not paused
 		_set_update(_extract, glow)
-		if glow and _extract_rect.texture == null:
-			_extract_rect.texture = _frame.get_texture()
+		if glow and _extract_rect.texture != _world.get_texture():
+			_extract_rect.texture = _world.get_texture()
 		_glow_rect.visible = glow
 	else:
-		# Drop the root texture so the menu cannot sample the framebuffer.
-		_set_update(_frame, false)
-		_frame_rect.texture = null
+		_capture_world = false
+		_set_update(_world, false)
 		_set_update(_extract, false)
 		_glow_rect.visible = false
 		_set_update(_plate, Config.menu_blur)
@@ -147,14 +154,13 @@ func _resize(force: bool) -> void:
 		clampi(int(window.x) / divisor, 96, 480),
 		clampi(int(window.y) / divisor, 54, 270)
 	)
-	for viewport in [_plate, _frame, _blur, _extract]:
+	for viewport in [_plate, _world, _blur, _extract]:
 		viewport.size = size
 	_plate_fill.size = Vector2(size)
 	_plate_fill.position = Vector2.ZERO
-	for rect in [_frame_rect, _blur_rect, _extract_rect]:
+	for rect in [_blur_rect, _extract_rect]:
 		rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		rect.size = Vector2(size)
-	_frame_rect.texture = null
 	_extract_rect.texture = null
 
 
@@ -182,6 +188,27 @@ func _sync_plate() -> void:
 		if source.name == "Background":
 			fill = source.modulate
 	_plate_fill.color = fill
+
+
+func _before_draw() -> void:
+	if _capture_world:
+		_sync_world_view()
+
+
+func _sync_world_view() -> void:
+	var root := get_viewport()
+	if root == null:
+		return
+	if _world.world_2d != root.world_2d:
+		_world.world_2d = root.world_2d
+	var window := _window_size
+	if window.x < 2.0 or _world.size.x < 2:
+		return
+	# Same framing as the window, scaled into the small view. This is a render
+	# of the world, not a sample of the root framebuffer, so it cannot trail.
+	var fit := Vector2(_world.size) / window
+	var scale_xform := Transform2D(Vector2(fit.x, 0.0), Vector2(0.0, fit.y), Vector2.ZERO)
+	_world.canvas_transform = scale_xform * root.canvas_transform
 
 
 func _sync_camera() -> void:
