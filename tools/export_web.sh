@@ -6,7 +6,8 @@ set -euo pipefail
 #   - Multi-threading enabled (variant/thread_support=true)
 #   - PWA Cross-Origin Isolation headers enabled
 #   - Draws at the browser resolution (window/stretch/mode=canvas_items, no .web override)
-#   - WebGPU via the hogdot 4.7.2 editor and its threaded dlink templates.
+#   - WebGPU via the hogdot 4.7.2 editor and an unstripped threaded dlink
+#     template. The published hogdot web zips omit Line2D, physics, and MP3.
 #     Official Godot will export WebGL and is not the shipping web build.
 #
 # Online level/music downloads need a CORS relay when the build is hosted

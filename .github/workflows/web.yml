@@ -17,9 +17,10 @@ name: Build Web HTML5
 #     cg-v4.7.2-r19 (Godot 4.7.2 + dwalter's GodotWebGPU driver). That pin
 #     matches this project's 4.7.2 / Mobile renderer and ships threaded dlink
 #     templates. The original dwalter fork is 4.6.2 and is not used.
-#     The engine is not rebuilt here; CI downloads hogdot's prebuilt editor
-#     and templates. gdash_native is rebuilt with the same Emscripten as
-#     those templates (6.0.8), or the side module will not load.
+#     The published hogdot web zips are built with CommonGrounds' strip
+#     profile (no Line2D, physics shapes, MP3, or zip). This job keeps that
+#     commit's editor, and builds an unstripped threaded dlink template from
+#     the same commit. The engine is not rebuilt for size.
 
 on:
   workflow_dispatch:
@@ -38,6 +39,7 @@ env:
   # a side module built with that will not load into the WebGPU template.
   EM_VERSION: 6.0.8
   HOGDOT_TAG: cg-v4.7.2-r19
+  HOGDOT_COMMIT: 8927aa079d1d93ae1d5fc138c0148f648eee8fa3
   HOGDOT_RELEASE: https://github.com/hogdanish/hogdot/releases/download/cg-v4.7.2-r19
   WEB_DIR: export/Web
   ZIP_NAME: godot-dash-web-html5.zip
@@ -45,7 +47,7 @@ env:
 jobs:
   web-export:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 240
     permissions:
       contents: write
     steps:
@@ -117,43 +119,74 @@ jobs:
           test -f bin/web/libgdash_native.web.template_debug.wasm32.wasm || { echo "::error::Debug wasm missing"; exit 1; }
 
       # ------------------------------------------------------- hogdot WebGPU editor
-      # Prebuilt editor + threaded dlink templates. Do not compile the engine
-      # in this job, and do not substitute the official WebGL templates.
-      - name: Cache hogdot editor and templates
+      # The editor bakes shaders. The published web zips are not used: their
+      # build profile removes classes this game needs.
+      - name: Cache hogdot editor
         uses: actions/cache@v4
         id: cache-hogdot
         with:
           path: hogdot-dist
-          key: hogdot-${{ env.HOGDOT_TAG }}-webgpu-threads-dlink
+          key: hogdot-${{ env.HOGDOT_TAG }}-editor-only
 
-      - name: Download hogdot editor and WebGPU templates
+      - name: Download hogdot editor
         if: steps.cache-hogdot.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p hogdot-dist
           curl -fL --retry 3 -o hogdot-dist/editor-linux-x86_64.tar.gz \
             "$HOGDOT_RELEASE/editor-linux-x86_64.tar.gz"
-          curl -fL --retry 3 -o hogdot-dist/web-template_release.threads.dlink.wasm32.zip \
-            "$HOGDOT_RELEASE/web-template_release.threads.dlink.wasm32.zip"
-          curl -fL --retry 3 -o hogdot-dist/web-template_debug.threads.dlink.wasm32.zip \
-            "$HOGDOT_RELEASE/web-template_debug.threads.dlink.wasm32.zip"
-          # Hashes published on the cg-v4.7.2-r19 release.
-          cat > hogdot-dist/checksums.sha256 << 'EOF'
-          ff3f50cbfe4cfc2306367f30eb3b5af8d0fa48aefe1cc7dd5286191dea2cd3fc  editor-linux-x86_64.tar.gz
-          d276125a4fd3c483fa93bbd6a41528e6b9a218beb95fb7aff16bc6bf588117d0  web-template_release.threads.dlink.wasm32.zip
-          8ea6c81b3832463f3b895b7fa2c315e85e7b29eb99b0c81c15ca5aef  web-template_debug.threads.dlink.wasm32.zip
-          EOF
-          # The heredoc above is indented; strip that before checking.
-          sed -i 's/^[[:space:]]*//' hogdot-dist/checksums.sha256
+          echo "ff3f50cbfe4cfc2306367f30eb3b5af8d0fa48aefe1cc7dd5286191dea2cd3fc  editor-linux-x86_64.tar.gz" > hogdot-dist/checksums.sha256
           (cd hogdot-dist && sha256sum -c checksums.sha256)
+
+      - name: Cache unstripped WebGPU template
+        uses: actions/cache@v4
+        id: cache-webgpu-template
+        with:
+          path: hogdot-templates/web_dlink_release.zip
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-threads-dlink-release
+
+      - name: Build unstripped WebGPU template
+        if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          emcc -v
+          # The link needs room. Drop runner ballast the C++ build never opens.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools pkg-config unzip >/dev/null
+          df -h /
+          rm -rf hogdot-src
+          git clone --filter=blob:none --no-checkout https://github.com/hogdanish/hogdot.git hogdot-src
+          git -C hogdot-src fetch --depth 1 origin "$HOGDOT_COMMIT"
+          git -C hogdot-src checkout FETCH_HEAD
+          cd hogdot-src
+          # No build_profile. The published profile disables Line2D, physics
+          # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
+          scons platform=web target=template_release arch=wasm32 \
+            webgpu=yes vulkan=no opengl3=no \
+            production=yes optimize=speed threads=yes dlink_enabled=yes \
+            initial_memory=256 -j"$(nproc)"
+          test -f bin/godot.web.template_release.wasm32.dlink.zip
+          unzip -l bin/godot.web.template_release.wasm32.dlink.zip
+          # ClassDB strings live in the engine module. dlink puts that in the
+          # side wasm; check both so a filename change does not waste the build.
+          if ! { unzip -p bin/godot.web.template_release.wasm32.dlink.zip godot.side.wasm || true; unzip -p bin/godot.web.template_release.wasm32.dlink.zip godot.wasm || true; } | grep -a -q 'Line2D'; then
+            echo "::error::Unstripped template is still missing Line2D"
+            exit 1
+          fi
+          mkdir -p ../hogdot-templates
+          cp bin/godot.web.template_release.wasm32.dlink.zip ../hogdot-templates/web_dlink_release.zip
+          ls -lh ../hogdot-templates/web_dlink_release.zip
 
       - name: Install hogdot editor and point the Web preset at it
         run: |
           set -euo pipefail
+          test -f hogdot-templates/web_dlink_release.zip
           sudo apt-get update -qq
           sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers libxkbcommon0 libfontconfig1 libasound2t64 libx11-6 libxcursor1 libxinerama1 libxrandr2 libxi6 libgl1 libpulse0 >/dev/null
           rm -rf hogdot-editor
-          mkdir -p hogdot-editor hogdot-templates
+          mkdir -p hogdot-editor
           tar -xzf hogdot-dist/editor-linux-x86_64.tar.gz -C hogdot-editor
           EDITOR="$(find "$(pwd)/hogdot-editor" -type f -name 'godot.linuxbsd.editor.x86_64' -print -quit)"
           CLI="$(find "$(pwd)/hogdot-editor" -type f -name 'tint_convert_cli' -print -quit)"
@@ -165,8 +198,9 @@ jobs:
             CLI="$(dirname "$EDITOR")/tint_convert_cli"
           fi
           chmod +x "$EDITOR" "$CLI"
-          cp hogdot-dist/web-template_release.threads.dlink.wasm32.zip hogdot-templates/web_dlink_release.zip
-          cp hogdot-dist/web-template_debug.threads.dlink.wasm32.zip hogdot-templates/web_dlink_debug.zip
+          # Release export is the shipping build. Point debug at the same zip so
+          # a missing debug template cannot fail the preset check.
+          cp hogdot-templates/web_dlink_release.zip hogdot-templates/web_dlink_debug.zip
           python3 tools/pin_webgpu_templates.py \
             hogdot-templates/web_dlink_debug.zip \
             hogdot-templates/web_dlink_release.zip
@@ -239,11 +273,7 @@ jobs:
           export_release() {
             "$HOGDOT_BIN" --headless --rendering-method mobile --export-release "Web" "$WEB_DIR/index.html"
           }
-          if ! export_release; then
-            echo "Mobile-renderer export failed; retrying with the editor's default renderer."
-            "$HOGDOT_BIN" --headless --export-release "Web" "$WEB_DIR/index.html" || \
-            "$HOGDOT_BIN" --headless --export-debug "Web" "$WEB_DIR/index.html"
-          fi
+          export_release
           echo "Web export folder contents:"
           ls -la "$WEB_DIR"
 
@@ -258,6 +288,18 @@ jobs:
           test -f "$WEB_DIR/libgdash_native.web.template_release.wasm32.wasm"
           if ! grep -q 'webgpu' "$WEB_DIR/index.html"; then
             echo "::error::Export did not select the WebGPU driver. Refusing to publish a WebGL build."
+            exit 1
+          fi
+          if ! grep -a -q 'Line2D' "$WEB_DIR/index.side.wasm"; then
+            echo "::error::WebGPU template is missing Line2D. The stripped hogdot profile was exported."
+            exit 1
+          fi
+          if ! grep -a -q 'CircleShape2D' "$WEB_DIR/index.side.wasm"; then
+            echo "::error::WebGPU template is missing CircleShape2D."
+            exit 1
+          fi
+          if ! grep -a -q 'AudioStreamMP3' "$WEB_DIR/index.side.wasm"; then
+            echo "::error::WebGPU template is missing AudioStreamMP3."
             exit 1
           fi
           echo "Verified WebGPU export files exist."
@@ -304,7 +346,7 @@ jobs:
             echo ""
             echo "Download and unzip to host on any web server or static hosting service."
             echo "- Multi-threading: Enabled (SharedArrayBuffer)"
-            echo "- Renderer: WebGPU Mobile via hogdot ${HOGDOT_TAG} (dwalter GodotWebGPU), browser resolution"
+            echo "- Renderer: WebGPU Mobile via an unstripped hogdot ${HOGDOT_COMMIT} template (threads, GDExtension), browser resolution"
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$NOTES_FILE"

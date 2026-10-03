@@ -84,7 +84,9 @@ Steps 1–2 need Python 3 and Pillow (`pip install pillow`).
 The hosted build runs on WebGPU, not WebGL. Official Godot 4.7 web templates
 only have the Compatibility renderer, so the export uses [hogdot](https://github.com/hogdanish/hogdot)
 `cg-v4.7.2-r19`: a Godot 4.7.2 port of [dwalter's GodotWebGPU](https://github.com/dwalter/godotwebgpu)
-driver, Mobile renderer, threads on. It needs a WebGPU browser (Chrome 113+,
+driver, Mobile renderer, threads on. The published hogdot web zips strip
+`Line2D`, physics shapes, MP3, and zip for another game, so CI builds an
+unstripped template from that same commit. It needs a WebGPU browser (Chrome 113+,
 Edge, Firefox with WebGPU, Safari 18+) served over HTTPS, plus the same
 Cross-Origin Isolation headers the threaded build already required. It still
 draws at the browser's resolution.
