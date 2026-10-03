@@ -1,0 +1,258 @@
+class_name MapCamera2D
+extends Camera2D
+## A node that adds mouse, keyboard and gesture zooming, panning and dragging to [Camera2D].
+
+## Signal emitted when the zoom changes.
+signal zoom_changed
+
+## Zoom speed: multiplies [member Camera2D.zoom] each mouse wheel scroll (set to 1 to disable zooming).
+@export_range(0.1, 10) var zoom_factor: float = 1.25
+## Minimum [member Camera2D.zoom].
+@export_range(0.01, 100) var zoom_min: float = 0.1
+## Maximum [member Camera2D.zoom].
+@export_range(0.01, 100) var zoom_max: float = 10.0
+## If [code]true[/code], mouse zooming is done relative to the cursor (instead of to the center of the screen).
+@export var zoom_relative: bool = true
+## If [code]true[/code], zooming can also be done with the plus and minus keys.
+@export var zoom_keyboard: bool = true
+## Pan speed: adds to [member Camera2D.offset] while the cursor is near the viewport's edges (set to 0 to disable panning).
+@export_range(0, 10000) var pan_speed: float = 250.0
+## Maximum number of pixels away from the viewport's edges for the cursor to be considered near.
+@export_range(0, 1000) var pan_margin: float = 25.0
+## If [code]true[/code], panning can also be done with the arrow keys (and space bar for centering).
+@export var pan_keyboard := true
+
+## If [code]true[/code], the map can be dragged while holding the middle mouse button.
+@export var drag: bool = true
+
+## If [code]true[/code], the mouse will warp to the opposite edge when going close to an edge, like in the Godot editor.
+@export var enable_wrap: bool = true
+
+## If [code]true[/code], the map can be dragged even when GUI is hovered.
+@export var passthrough_gui: bool = false
+
+@export var editor_scene: EditorScene
+@export var editor_viewport: Control
+@export var edit_handler: EditHandler
+var _tween_offset: Tween
+var _tween_zoom: Tween
+var _pan_direction: Vector2:
+	set = _set_pan_direction
+var _pan_direction_mouse: Vector2 = Vector2.ZERO
+var _dragging: bool = false
+var wrap_offset = null
+
+@onready var _target_zoom: Vector2 = zoom
+
+
+func _ready():
+	_pan_direction = Vector2.ZERO
+	get_viewport().size_changed.connect(clamp_offset)
+
+
+func _process(delta: float):
+	clamp_offset(_pan_direction * pan_speed * delta / zoom)
+
+
+func _physics_process(delta: float):
+	clamp_offset(_pan_direction * pan_speed * delta / zoom)
+
+
+func _input(event: InputEvent):
+	if event is InputEventMagnifyGesture:
+		_change_zoom(1 + ((zoom_factor if zoom_factor > 1 else 1 / zoom_factor) - 1) * (event.factor - 1) * 2.5)
+	elif event is InputEventPanGesture:
+		_change_zoom(1 + (1 / zoom_factor - 1) * event.delta.y / 7.5)
+	elif event is InputEventScreenDrag:
+		if ((not edit_handler.any_gizmo_is_open() and not passthrough_gui) or passthrough_gui) and Editor.swipe == false and Config.is_touch_screen:
+			_dragging = true
+			enable_wrap = false
+	elif event is InputEventScreenTouch:
+		if event.pressed: # Might be useful later
+			editor_scene.placed_objects_collider.global_position = event.position
+		else:
+			_dragging = false
+	elif event is InputEventMouseButton:
+		if event.pressed:
+			match event.button_index:
+				MOUSE_BUTTON_WHEEL_UP:
+					if (get_viewport().gui_get_hovered_control() == editor_viewport and not passthrough_gui) or passthrough_gui:
+						_change_zoom(zoom_factor)
+				MOUSE_BUTTON_WHEEL_DOWN:
+					if (get_viewport().gui_get_hovered_control() == editor_viewport and not passthrough_gui) or passthrough_gui:
+						_change_zoom(1 / zoom_factor)
+				MOUSE_BUTTON_MIDDLE:
+					if drag and ((get_viewport().gui_get_hovered_control() == editor_viewport and not passthrough_gui) or passthrough_gui):
+						_dragging = true
+						enable_wrap = true
+						# Input.set_default_cursor_shape(Input.CURSOR_DRAG) # delete to disable drag cursor
+						editor_viewport.mouse_default_cursor_shape = Control.CURSOR_DRAG
+		elif event.button_index == MOUSE_BUTTON_MIDDLE:
+			_dragging = false
+
+			# Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+			editor_viewport.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	elif event is InputEventMouseMotion:
+		_pan_direction -= _pan_direction_mouse
+		_pan_direction_mouse = Vector2()
+
+		if _dragging:
+			if _tween_offset != null:
+				_tween_offset.kill()
+
+			if enable_wrap:
+				_wrap(event.relative, editor_viewport)
+			else:
+				clamp_offset(-event.relative / zoom)
+
+		elif pan_margin > 0:
+			var camera_size = get_viewport_rect().size
+
+			if event.position.x < pan_margin:
+				_pan_direction_mouse.x -= 1
+
+			if event.position.x >= camera_size.x - pan_margin:
+				_pan_direction_mouse.x += 1
+
+			if event.position.y < pan_margin:
+				_pan_direction_mouse.y -= 1
+
+			if event.position.y >= camera_size.y - pan_margin:
+				_pan_direction_mouse.y += 1
+
+		_pan_direction += _pan_direction_mouse
+	elif event is InputEventKey:
+		if zoom_keyboard and event.pressed and not edit_handler.any_gizmo_is_open() \
+		and (get_viewport().gui_get_hovered_control() == editor_viewport and not passthrough_gui) or passthrough_gui:
+			match event.keycode:
+				KEY_MINUS:
+					_change_zoom(zoom_factor if zoom_factor < 1 else 1 / zoom_factor, false)
+				KEY_EQUAL:
+					_change_zoom(zoom_factor if zoom_factor > 1 else 1 / zoom_factor, false)
+
+		if pan_keyboard && !event.echo and (get_viewport().gui_get_hovered_control() == editor_viewport and not passthrough_gui) or passthrough_gui:
+			match event.keycode:
+				KEY_LEFT:
+					_pan_direction -= Vector2(1 if event.pressed else -1, 0)
+				KEY_RIGHT:
+					_pan_direction += Vector2(1 if event.pressed else -1, 0)
+				KEY_UP:
+					_pan_direction -= Vector2(0, 1 if event.pressed else -1)
+				KEY_DOWN:
+					_pan_direction += Vector2(0, 1 if event.pressed else -1)
+
+
+func _set_pan_direction(value: Vector2):
+	_pan_direction = value
+
+	if _pan_direction == Vector2.ZERO:
+		set_process(false)
+		set_physics_process(false)
+	elif pan_speed > 0:
+		set_process(process_callback == CAMERA2D_PROCESS_IDLE)
+		set_physics_process(process_callback == CAMERA2D_PROCESS_PHYSICS)
+
+		if _tween_offset != null:
+			_tween_offset.kill()
+
+
+func _wrap(relative: Vector2, viewport: Control, margins: float = 1) -> void:
+	var mouse_position := get_viewport().get_mouse_position() + relative
+	var rect := viewport.get_rect()
+	var new_position := mouse_position
+	new_position.x = wrapf(mouse_position.x, viewport.global_position.x + rect.position.x + margins, viewport.global_position.x + rect.position.x + rect.size.x - margins)
+	new_position.y = wrapf(mouse_position.y, viewport.global_position.y + rect.position.y + margins, viewport.global_position.y + rect.position.y + rect.size.y - margins)
+	if (mouse_position.x - new_position.x > rect.position.x + rect.size.x / 2) or (mouse_position.y - new_position.y > rect.position.y + rect.size.y / 2) \
+	or (mouse_position.x - new_position.x < 0) or (mouse_position.y - new_position.y < 0):
+		get_viewport().warp_mouse(new_position)
+		if DisplayServer.get_name() == "X11":
+			if !wrap_offset:
+				wrap_offset = new_position - mouse_position
+			else:
+				clamp_offset(-relative / zoom + wrap_offset / zoom)
+				wrap_offset = null
+		else:
+			clamp_offset(-relative / zoom)
+	else:
+		clamp_offset(-relative / zoom)
+		wrap_offset = null
+
+
+## After changing the node's global position, set [code]offset = offset[/code] then call this to stay within limits.
+func clamp_offset(relative: Vector2 = Vector2.ZERO):
+	var camera_size = get_viewport_rect().size / zoom
+	var camera_rect = Rect2(get_screen_center_position() + relative - camera_size / 2, camera_size)
+
+	if camera_rect.position.x < limit_left:
+		relative.x += limit_left - camera_rect.position.x
+		camera_rect.end.x += limit_left - camera_rect.position.x
+
+	if camera_rect.end.x > limit_right:
+		relative.x -= camera_rect.end.x - limit_right
+
+	if camera_rect.end.y > limit_bottom:
+		relative.y -= camera_rect.end.y - limit_bottom
+		camera_rect.position.y -= camera_rect.end.y - limit_bottom
+
+	if camera_rect.position.y < limit_top:
+		relative.y += limit_top - camera_rect.position.y
+
+	if relative != Vector2.ZERO:
+		offset += relative
+
+
+func _change_zoom(factor: float, with_cursor: bool = true):
+	if factor < 1:
+		if _target_zoom.x < zoom_min || is_equal_approx(_target_zoom.x, zoom_min):
+			return
+
+		if _target_zoom.y < zoom_min || is_equal_approx(_target_zoom.y, zoom_min):
+			return
+	elif factor > 1:
+		if _target_zoom.x > zoom_max || is_equal_approx(_target_zoom.x, zoom_max):
+			return
+
+		if _target_zoom.y > zoom_max || is_equal_approx(_target_zoom.y, zoom_max):
+			return
+	else:
+		return
+
+	_target_zoom *= factor
+
+	var clamped_zoom = _target_zoom
+
+	clamped_zoom *= [1, zoom_min / _target_zoom.x, zoom_min / _target_zoom.y].max()
+	clamped_zoom *= [1, zoom_max / _target_zoom.x, zoom_max / _target_zoom.y].min()
+
+	if position_smoothing_enabled && position_smoothing_speed > 0:
+		if zoom_relative && with_cursor && _pan_direction == Vector2.ZERO:
+			var relative_position = get_global_mouse_position() - global_position - offset
+			var relative = relative_position - relative_position * zoom / clamped_zoom
+
+			if _tween_offset != null:
+				_tween_offset.kill()
+
+			_tween_offset = create_tween().set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT).set_process_mode(process_callback as Tween.TweenProcessMode)
+			_tween_offset.tween_property(self, 'offset', offset + relative, 2.5 / position_smoothing_speed)
+
+		if _tween_zoom != null:
+			_tween_zoom.kill()
+
+		_tween_zoom = create_tween().set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT).set_process_mode(process_callback as Tween.TweenProcessMode)
+		_tween_zoom.tween_method(func(value): _set_zoom_level(Vector2.ONE / value), Vector2.ONE / zoom, Vector2.ONE / clamped_zoom, 2.5 / position_smoothing_speed)
+	else:
+		if zoom_relative && with_cursor:
+			var relative_position = get_global_mouse_position() - global_position - offset
+			var relative = relative_position - relative_position * zoom / clamped_zoom
+
+			zoom = clamped_zoom
+
+			clamp_offset(relative)
+		else:
+			_set_zoom_level(clamped_zoom)
+	zoom_changed.emit()
+
+
+func _set_zoom_level(value: Vector2):
+	zoom = value
+	clamp_offset()

@@ -1,0 +1,24 @@
+[configuration]
+
+entry_symbol = "gdash_native_library_init"
+compatibility_minimum = "4.1"
+reloadable = false
+
+[libraries]
+
+; Match the official godot-cpp project layout: the descriptor lives in bin/,
+; platform binaries live in adjacent platform folders, and paths are relative.
+linux.x86_64.single.debug = "./linux/libgdash_native.linux.template_debug.x86_64.so"
+android.arm64.single.debug = "./android/libgdash_native.android.template_debug.arm64.so"
+android.arm64.single.release = "./android/libgdash_native.android.template_release.arm64.so"
+
+web.wasm32 = "./web/libgdash_native.web.template_release.wasm32.wasm"
+web.wasm32.threads = "./web/libgdash_native.web.template_release.wasm32.wasm"
+web.wasm32.debug = "./web/libgdash_native.web.template_debug.wasm32.wasm"
+web.wasm32.debug.threads = "./web/libgdash_native.web.template_debug.wasm32.wasm"
+web.wasm32.release = "./web/libgdash_native.web.template_release.wasm32.wasm"
+web.wasm32.release.threads = "./web/libgdash_native.web.template_release.wasm32.wasm"
+web.debug.wasm32 = "./web/libgdash_native.web.template_debug.wasm32.wasm"
+web.debug.threads.wasm32 = "./web/libgdash_native.web.template_debug.wasm32.wasm"
+web.release.wasm32 = "./web/libgdash_native.web.template_release.wasm32.wasm"
+web.release.threads.wasm32 = "./web/libgdash_native.web.template_release.wasm32.wasm"

@@ -1,0 +1,362 @@
+name: Build Web HTML5
+
+# Builds a standalone HTML5 Web package automatically.
+#
+#   - Every push to main / arena branches (and manual dispatch) exports
+#     the HTML5 package and uploads it as a workflow artifact.
+#     Grab it from Actions run -> Artifacts -> godot-dash-web-html5.
+#   - Every successful export also updates the rolling "web-html5" prerelease
+#     with the newest ZIP:
+#       https://github.com/anrandaniel2/Godot-Dash/releases/download/web-html5/godot-dash-web-html5.zip
+#   - Multi-threading is enabled (variant/thread_support=true) with PWA
+#     Cross-Origin Isolation headers for SharedArrayBuffer support.
+#   - The game draws at the browser's resolution. Do not force a fixed
+#     1920x1080 viewport scale.
+#   - Rendering is WebGPU, not WebGL. Official Godot 4.7 web templates only
+#     ship the Compatibility renderer, so this job exports with hogdot
+#     cg-v4.7.2-r19 (Godot 4.7.2 + dwalter's GodotWebGPU driver). That pin
+#     matches this project's 4.7.2 / Mobile renderer and ships threaded dlink
+#     templates. The original dwalter fork is 4.6.2 and is not used.
+#     The published hogdot web zips are built with CommonGrounds' strip
+#     profile (no Line2D, physics shapes, MP3, or zip). This job keeps that
+#     commit's editor, and builds an unstripped threaded dlink template from
+#     the same commit. The engine is not rebuilt for size.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, "arena/**"]
+    tags: ["release*"]
+
+concurrency:
+  group: web-html-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  # Must match the emsdk pin in hogdot cg-v4.7.2-r19. Official 4.7.2 uses 3.1.64;
+  # a side module built with that will not load into the WebGPU template.
+  EM_VERSION: 6.0.8
+  HOGDOT_TAG: cg-v4.7.2-r19
+  HOGDOT_COMMIT: 8927aa079d1d93ae1d5fc138c0148f648eee8fa3
+  HOGDOT_RELEASE: https://github.com/hogdanish/hogdot/releases/download/cg-v4.7.2-r19
+  WEB_DIR: export/Web
+  ZIP_NAME: godot-dash-web-html5.zip
+
+jobs:
+  web-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ------------------------------------------- CORS relay Worker self-test
+      # The hosted build reaches RobTop/GDHistory/song hosts through
+      # tools/web_relay_worker.js; its request translation is covered here
+      # because the Godot export cannot exercise it.
+      - name: Check the CORS relay Worker
+        run: node tools/web_relay_worker_selftest.mjs
+
+      # ------------------------------------------------- Native GDExtension (WebAssembly)
+      - name: Install scons
+        run: pip3 install --break-system-packages -q scons
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EM_VERSION }}
+
+      - name: Verify Emscripten
+        run: emcc -v
+
+      - name: Cache scons build cache
+        uses: actions/cache@v4
+        with:
+          path: native/scons-cache
+          key: native-scons-web-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Build gdash_native for Web (WASM multi-threaded)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          mkdir -p bin/web
+
+          emit_scons_error() {
+            echo "scons FAILED; tail of $1:"
+            tail -n 50 "$1"
+          }
+
+          echo "Compiling template_release (threads=yes)..."
+          if ! scons platform=web target=template_release arch=wasm32 threads=yes api_version=4.7 debug_symbols=no -j2 > /tmp/scons_web_release.log 2>&1; then
+            emit_scons_error /tmp/scons_web_release.log
+            exit 1
+          fi
+          tail -n 5 /tmp/scons_web_release.log
+
+          echo "Compiling template_debug (threads=yes)..."
+          if ! scons platform=web target=template_debug arch=wasm32 threads=yes api_version=4.7 debug_symbols=yes -j2 > /tmp/scons_web_debug.log 2>&1; then
+            emit_scons_error /tmp/scons_web_debug.log
+            exit 1
+          fi
+          tail -n 5 /tmp/scons_web_debug.log
+
+          ls -lh bin/web/
+          test -f bin/web/libgdash_native.web.template_release.wasm32.wasm || { echo "::error::Release wasm missing"; exit 1; }
+          test -f bin/web/libgdash_native.web.template_debug.wasm32.wasm || { echo "::error::Debug wasm missing"; exit 1; }
+
+      # ------------------------------------------------------- hogdot WebGPU editor
+      # The editor bakes shaders. The published web zips are not used: their
+      # build profile removes classes this game needs.
+      - name: Cache hogdot editor
+        uses: actions/cache@v4
+        id: cache-hogdot
+        with:
+          path: hogdot-dist
+          key: hogdot-${{ env.HOGDOT_TAG }}-editor-only
+
+      - name: Download hogdot editor
+        if: steps.cache-hogdot.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p hogdot-dist
+          curl -fL --retry 3 -o hogdot-dist/editor-linux-x86_64.tar.gz \
+            "$HOGDOT_RELEASE/editor-linux-x86_64.tar.gz"
+          echo "ff3f50cbfe4cfc2306367f30eb3b5af8d0fa48aefe1cc7dd5286191dea2cd3fc  editor-linux-x86_64.tar.gz" > hogdot-dist/checksums.sha256
+          (cd hogdot-dist && sha256sum -c checksums.sha256)
+
+      - name: Cache unstripped WebGPU template
+        uses: actions/cache@v4
+        id: cache-webgpu-template
+        with:
+          path: hogdot-templates/web_dlink_release.zip
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-threads-dlink-release
+
+      - name: Build unstripped WebGPU template
+        if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          emcc -v
+          # The link needs room. Drop runner ballast the C++ build never opens.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools pkg-config unzip >/dev/null
+          df -h /
+          rm -rf hogdot-src
+          git clone --filter=blob:none --no-checkout https://github.com/hogdanish/hogdot.git hogdot-src
+          git -C hogdot-src fetch --depth 1 origin "$HOGDOT_COMMIT"
+          git -C hogdot-src checkout FETCH_HEAD
+          cd hogdot-src
+          # No build_profile. The published profile disables Line2D, physics
+          # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
+          scons platform=web target=template_release arch=wasm32 \
+            webgpu=yes vulkan=no opengl3=no \
+            production=yes optimize=speed threads=yes dlink_enabled=yes \
+            initial_memory=256 -j"$(nproc)"
+          test -f bin/godot.web.template_release.wasm32.dlink.zip
+          unzip -l bin/godot.web.template_release.wasm32.dlink.zip
+          # ClassDB strings live in the engine module. dlink puts that in the
+          # side wasm; check both so a filename change does not waste the build.
+          if ! { unzip -p bin/godot.web.template_release.wasm32.dlink.zip godot.side.wasm || true; unzip -p bin/godot.web.template_release.wasm32.dlink.zip godot.wasm || true; } | grep -a -q 'Line2D'; then
+            echo "::error::Unstripped template is still missing Line2D"
+            exit 1
+          fi
+          mkdir -p ../hogdot-templates
+          cp bin/godot.web.template_release.wasm32.dlink.zip ../hogdot-templates/web_dlink_release.zip
+          ls -lh ../hogdot-templates/web_dlink_release.zip
+
+      - name: Install hogdot editor and point the Web preset at it
+        run: |
+          set -euo pipefail
+          test -f hogdot-templates/web_dlink_release.zip
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers libxkbcommon0 libfontconfig1 libasound2t64 libx11-6 libxcursor1 libxinerama1 libxrandr2 libxi6 libgl1 libpulse0 >/dev/null
+          rm -rf hogdot-editor
+          mkdir -p hogdot-editor
+          tar -xzf hogdot-dist/editor-linux-x86_64.tar.gz -C hogdot-editor
+          EDITOR="$(find "$(pwd)/hogdot-editor" -type f -name 'godot.linuxbsd.editor.x86_64' -print -quit)"
+          CLI="$(find "$(pwd)/hogdot-editor" -type f -name 'tint_convert_cli' -print -quit)"
+          test -n "$EDITOR"
+          test -n "$CLI"
+          # The shader baker shells out to tint_convert_cli beside the editor binary.
+          if [ "$(dirname "$EDITOR")" != "$(dirname "$CLI")" ]; then
+            cp "$CLI" "$(dirname "$EDITOR")/tint_convert_cli"
+            CLI="$(dirname "$EDITOR")/tint_convert_cli"
+          fi
+          chmod +x "$EDITOR" "$CLI"
+          # Release export is the shipping build. Point debug at the same zip so
+          # a missing debug template cannot fail the preset check.
+          cp hogdot-templates/web_dlink_release.zip hogdot-templates/web_dlink_debug.zip
+          python3 tools/pin_webgpu_templates.py \
+            hogdot-templates/web_dlink_debug.zip \
+            hogdot-templates/web_dlink_release.zip
+          echo "HOGDOT_BIN=$EDITOR" >> "$GITHUB_ENV"
+          "$EDITOR" --version
+          "$CLI" --pipeline-id || true
+
+      # -------------------------------------------------------- Project Build
+      # Importing parses and compiles every GDScript in the project, so it is
+      # the cheapest place to catch a script that no longer compiles - such a
+      # parse error would otherwise only surface when the exported game runs.
+      #
+      # Two things make the pass noisy, hence the shape below:
+      #   * The first pass starts from an empty .godot cache and writes the
+      #     import database and global class cache while it is already parsing
+      #     scripts, so a class_name declared in a sibling file can transiently
+      #     look missing ("Could not find type"). Warming the cache with an
+      #     unchecked pass leaves the second pass clean.
+      #   * Editor addons (script-ide, StyleboxFancy, ...) run their @tool code
+      #     and can log runtime SCRIPT ERRORs that never reach an exported
+      #     build. Only compile failures fail the build; the rest is reported
+      #     as notes.
+      - name: Import project resources
+        run: |
+          set -euo pipefail
+          CONTEXT='SCRIPT ERROR|Parse Error|Failed to load script|GDScript::reload|res://[^ ]*\.gd:[0-9]+'
+
+          echo "First pass (warms the .godot cache; its messages are only reported)"
+          "$HOGDOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import_first.log || true
+          echo "First pass messages:"
+          grep -cE "$CONTEXT" /tmp/import_first.log || true
+
+          echo "Second pass (checked)"
+          rc=0
+          "$HOGDOT_BIN" --headless --editor --quit 2>&1 | tee /tmp/import.log || rc=$?
+
+          annotate() {
+            local level="$1" pattern="$2" limit="$3"
+            grep -nE "$pattern" /tmp/import.log | head -"$limit" > /tmp/import_selected.txt
+            while IFS= read -r line; do
+              echo "::${level}::${line//'%'/'%25'}"
+            done < /tmp/import_selected.txt
+          }
+
+          # A parse error means a script in the exported game is broken.
+          if grep -qE "Parse Error|Failed to load script" /tmp/import.log; then
+            annotate error "Parse Error|Failed to load script|$CONTEXT" 40
+            echo "GDScript failed to compile; see the annotations above."
+            exit 1
+          fi
+
+          # Runtime errors from editor-only code: visible, but not fatal.
+          if grep -qE "SCRIPT ERROR" /tmp/import.log; then
+            annotate notice "SCRIPT ERROR|GDScript::reload| \[[0-9]\] |res://[^ ]*\.gd:[0-9]+" 12
+            echo "Scripts compile; the notes above are editor-only runtime errors."
+          else
+            echo "::notice::Project scripts import and compile cleanly."
+          fi
+          exit "$rc"
+
+      - name: Export Web (WebGPU, multi-threaded Mobile)
+        run: |
+          set -euo pipefail
+          # Import can rewrite export_presets.cfg. Point at the templates again.
+          python3 tools/pin_webgpu_templates.py \
+            hogdot-templates/web_dlink_debug.zip \
+            hogdot-templates/web_dlink_release.zip
+          mkdir -p "$WEB_DIR"
+          # lavapipe was installed with the editor so Mobile core shaders can bake to WGSL.
+          export_release() {
+            "$HOGDOT_BIN" --headless --rendering-method mobile --export-release "Web" "$WEB_DIR/index.html"
+          }
+          export_release
+          echo "Web export folder contents:"
+          ls -la "$WEB_DIR"
+
+      - name: Verify Web Export Artifacts
+        run: |
+          set -euo pipefail
+          test -f "$WEB_DIR/index.html"
+          test -f "$WEB_DIR/index.js"
+          test -f "$WEB_DIR/index.pck"
+          test -f "$WEB_DIR/index.wasm"
+          test -f "$WEB_DIR/index.side.wasm"
+          test -f "$WEB_DIR/libgdash_native.web.template_release.wasm32.wasm"
+          if ! grep -q 'webgpu' "$WEB_DIR/index.html"; then
+            echo "::error::Export did not select the WebGPU driver. Refusing to publish a WebGL build."
+            exit 1
+          fi
+          if ! grep -a -q 'Line2D' "$WEB_DIR/index.side.wasm"; then
+            echo "::error::WebGPU template is missing Line2D. The stripped hogdot profile was exported."
+            exit 1
+          fi
+          if ! grep -a -q 'CircleShape2D' "$WEB_DIR/index.side.wasm"; then
+            echo "::error::WebGPU template is missing CircleShape2D."
+            exit 1
+          fi
+          if ! grep -a -q 'AudioStreamMP3' "$WEB_DIR/index.side.wasm"; then
+            echo "::error::WebGPU template is missing AudioStreamMP3."
+            exit 1
+          fi
+          echo "Verified WebGPU export files exist."
+          if ls "$WEB_DIR"/*worker* 1> /dev/null 2>&1; then
+            echo "Multi-threaded worker / service worker files:"
+            ls -la "$WEB_DIR"/*worker*
+          fi
+
+      - name: Package Web HTML5 zip
+        run: |
+          set -euo pipefail
+          cd "$WEB_DIR"
+          zip -r "../../$ZIP_NAME" ./*
+          cd ../..
+          ls -lh "$ZIP_NAME"
+
+      # -------------------------------------------------------------- Outputs
+      - name: Upload Web HTML5 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-dash-web-html5-${{ github.sha }}
+          path: ${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Attach Web zip to release (release* tags only)
+        if: startsWith(github.ref, 'refs/tags/release')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+          generate_release_notes: true
+
+      # ------------------------------------------------ Rolling debug release
+      - name: Publish rolling web-html5 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="web-html5"
+          ARTIFACT_NAME="godot-dash-web-html5-${GITHUB_SHA::8}.zip"
+          cp "$ZIP_NAME" "$ARTIFACT_NAME"
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "Automatic Web (HTML5) multi-threaded build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
+            echo ""
+            echo "Download and unzip to host on any web server or static hosting service."
+            echo "- Multi-threading: Enabled (SharedArrayBuffer)"
+            echo "- Renderer: WebGPU Mobile via an unstripped hogdot ${HOGDOT_COMMIT} template (threads, GDExtension), browser resolution"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$NOTES_FILE"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
+          fi
+          gh release create "$RELEASE_TAG" "$ZIP_NAME" "$ARTIFACT_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Web HTML5 build — $GITHUB_REF_NAME ${GITHUB_SHA::8}" \
+            --notes-file "$NOTES_FILE" \
+            --prerelease
+          rm -f "$NOTES_FILE" "$ARTIFACT_NAME"
+          echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"

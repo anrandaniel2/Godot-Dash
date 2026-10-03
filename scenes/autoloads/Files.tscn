@@ -1,0 +1,45 @@
+[gd_scene format=3 uid="uid://brosws87g5swa"]
+
+[ext_resource type="Script" uid="uid://dvn1rtcbt812u" path="res://src/autoloads/Files.gd" id="1_7mfnx"]
+
+[node name="Files" type="Node" unique_id=1001912759 node_paths=PackedStringArray("load_dialog", "import_and_load_dialog", "corrupted_level_dialog")]
+script = ExtResource("1_7mfnx")
+load_dialog = NodePath("Load")
+import_and_load_dialog = NodePath("ImportAndLoad")
+corrupted_level_dialog = NodePath("CorruptedLevelAcceptDialog")
+
+[node name="Load" type="FileDialog" parent="." unique_id=516942451]
+auto_translate_mode = 1
+title = "Load"
+initial_position = 2
+size = Vector2i(1088, 720)
+ok_button_text = "Open"
+mode_overrides_title = false
+file_mode = 0
+access = 1
+filters = PackedStringArray("*.tscn")
+use_native_dialog = true
+
+[node name="ImportAndLoad" type="FileDialog" parent="." unique_id=1247210565]
+auto_translate_mode = 1
+title = "Import and load"
+initial_position = 2
+size = Vector2i(1088, 720)
+ok_button_text = "Open"
+mode_overrides_title = false
+file_mode = 0
+access = 2
+filters = PackedStringArray("*.gmd, *.gmd2, *.lvl ; Geometry Dash level")
+use_native_dialog = true
+option_count = 1
+option_0/name = "Keep original level file"
+option_0/default = 1
+
+[node name="CorruptedLevelAcceptDialog" type="AcceptDialog" parent="." unique_id=1829515512]
+oversampling_override = 1.0
+title = "Warning!"
+initial_position = 2
+size = Vector2i(586, 120)
+dialog_text = "This Geometry Dash level file is invalid and can't be imported.
+Error:
+"

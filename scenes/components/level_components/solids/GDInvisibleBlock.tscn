@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://ls9xlh0pp4cb6"]
+
+[ext_resource type="Script" uid="uid://co07p647ncgri" path="res://src/SolidObject.gd" id="1_inv"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="2_inv"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_inv"]
+size = Vector2(130, 130)
+
+[node name="GDInvisibleBlock" type="RigidBody2D"]
+collision_layer = 2
+freeze = true
+freeze_mode = 1
+script = ExtResource("1_inv")
+metadata/physics = true
+
+[node name="Hitbox" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_inv")
+debug_color = Color(0, 0.071, 0.702, 0.25)
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("2_inv")]
+type = 0

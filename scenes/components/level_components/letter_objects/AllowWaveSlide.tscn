@@ -1,0 +1,45 @@
+[gd_scene format=3 uid="uid://csy3endgg7ko2"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_b5lhx"]
+[ext_resource type="Script" uid="uid://sv2oa8nvx3ob" path="res://addons/nine_patch_sprite_2d/nine_patch_sprite_2d.gd" id="2_xdsve"]
+[ext_resource type="Texture2D" uid="uid://puq2amlox0qe" path="res://assets/textures/triggers/AllowWaveSlide.svg" id="3_b5lhx"]
+[ext_resource type="Script" uid="uid://2642oxsxg03r" path="res://src/interactables/public_components/AllowWaveSlideComponent.gd" id="4_b5lhx"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="5_fvapx"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="6_0gigw"]
+[ext_resource type="Script" uid="uid://cjdpf2wcxjfb1" path="res://src/NinePatchSprite2DAbsoluteSize.gd" id="7_e40vt"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_b5lhx"]
+size = Vector2(153.6, 153.6)
+
+[node name="AllowWaveSlide" type="Area2D" unique_id=852599894]
+script = ExtResource("1_b5lhx")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=845025744]
+shape = SubResource("RectangleShape2D_b5lhx")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprite" type="Node2D" parent="." unique_id=1457348057]
+scale = Vector2(0.25, 0.25)
+script = ExtResource("2_xdsve")
+texture = ExtResource("3_b5lhx")
+size = Vector2(512, 512)
+patch_margin_left = 36.0
+patch_margin_top = 36.0
+patch_margin_right = 36.0
+patch_margin_bottom = 36.0
+metadata/_custom_type_script = "uid://sv2oa8nvx3ob"
+
+[node name="AllowWaveSlideComponent" type="Node" parent="." unique_id=599287630]
+script = ExtResource("4_b5lhx")
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="." unique_id=1854502931]
+script = ExtResource("5_fvapx")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="EditorSelectionCollider" parent="." unique_id=168085216 instance=ExtResource("6_0gigw")]
+type = 9
+
+[node name="NinePatchSprite2DAbsoluteSize" type="Node" parent="." unique_id=1868189683 node_paths=PackedStringArray("nine_patch_sprite")]
+script = ExtResource("7_e40vt")
+nine_patch_sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://cjdpf2wcxjfb1"

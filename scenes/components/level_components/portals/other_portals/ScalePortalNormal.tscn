@@ -1,0 +1,53 @@
+[gd_scene format=3 uid="uid://bhjfnlli5vshw"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_if0q6"]
+[ext_resource type="Texture2D" uid="uid://b2epvogeak18n" path="res://assets/textures/portals/other_portals/scale_portal_small/ScalePortalSmallBack.png" id="2_88axh"]
+[ext_resource type="PackedScene" uid="uid://d23j4fpbpdrv4" path="res://scenes/particle_emitter_presets/PortalParticles.tscn" id="2_o2xvl"]
+[ext_resource type="Material" uid="uid://t4wcwy036o4d" path="res://resources/PulseWhiteMaterial.tres" id="3_if0q6"]
+[ext_resource type="Texture2D" uid="uid://ddjeyix04leys" path="res://assets/textures/portals/other_portals/scale_portal_small/ScalePortalSmallFront.png" id="3_wvek7"]
+[ext_resource type="Script" uid="uid://d4icbghdufton" path="res://src/LayeredSprite.gd" id="4_888ud"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="7_cr5uw"]
+[ext_resource type="Script" uid="uid://n8ym1w4r5ke" path="res://src/interactables/private_components/PulseWhite.gd" id="8_uq0n2"]
+[ext_resource type="Script" uid="uid://wg4jv4tqb5nq" path="res://src/interactables/public_components/PlayerScaleChangerComponent.gd" id="9_ryy04"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
+size = Vector2(128, 384)
+
+[node name="ScalePortalNormal" type="Area2D" unique_id=630849753]
+collision_layer = 8
+script = ExtResource("1_if0q6")
+metadata/_edit_group_ = true
+
+[node name="ParticleEmitter" parent="." unique_id=408203954 instance=ExtResource("2_o2xvl")]
+modulate = Color(0, 1, 0, 1)
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=534276703]
+shape = SubResource("RectangleShape2D_cghk8")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprites" type="Node2D" parent="." unique_id=828751156]
+material = ExtResource("3_if0q6")
+script = ExtResource("4_888ud")
+
+[node name="PortalBack" type="Sprite2D" parent="Sprites" unique_id=699397513]
+z_index = -1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("2_88axh")
+
+[node name="PortalFront" type="Sprite2D" parent="Sprites" unique_id=2068171758]
+z_index = 1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("3_wvek7")
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=206296420]
+script = ExtResource("7_cr5uw")
+
+[node name="PulseWhite" type="Node" parent="." unique_id=201128870 node_paths=PackedStringArray("pulse_target")]
+script = ExtResource("8_uq0n2")
+pulse_target = NodePath("../Sprites")
+
+[node name="PlayerScaleChangerComponent" type="Node" parent="." unique_id=20820086]
+script = ExtResource("9_ryy04")
+player_scale = 1

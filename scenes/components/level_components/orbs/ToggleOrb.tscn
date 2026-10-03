@@ -1,0 +1,74 @@
+[gd_scene format=3 uid="uid://43t0kgu3lhyt"]
+
+[ext_resource type="Script" uid="uid://bxvjbgjx18gup" path="res://src/interactables/public_components/ToggleComponent.gd" id="1_dcl03"]
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_klrau"]
+[ext_resource type="Texture2D" uid="uid://c2ngjixel2d42" path="res://assets/textures/orbs/ToggleOrbOutline.svg" id="2_4qwcb"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="2_803s0"]
+[ext_resource type="Texture2D" uid="uid://cddn6sfd4abug" path="res://assets/textures/orbs/ToggleOrbFill.svg" id="3_2jqxi"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="3_8a4sg"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="8_8h2d8"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="8_e5eow"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="9_hfjph"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="11_4mcye"]
+[ext_resource type="Script" uid="uid://b0qdkfpjncyhk" path="res://src/interactables/private_components/VariableFillColor.gd" id="11_fi63b"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="12_j5u27"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[node name="ToggleOrb" type="Area2D" unique_id=475719726]
+collision_layer = 8
+script = ExtResource("1_klrau")
+
+[node name="ParticleEmitter" parent="." unique_id=1568831714 instance=ExtResource("2_803s0")]
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=103642874]
+script = ExtResource("3_8a4sg")
+
+[node name="Base" type="Sprite2D" parent="." unique_id=1925339276]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("2_4qwcb")
+
+[node name="MusicScale" type="Node" parent="Base" unique_id=81776232]
+script = ExtResource("3_8a4sg")
+
+[node name="Fill" type="Sprite2D" parent="." unique_id=1137103059]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("3_2jqxi")
+
+[node name="MusicScale" type="Node" parent="Fill" unique_id=36450178]
+script = ExtResource("3_8a4sg")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1051960417]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=764849785]
+script = ExtResource("8_8h2d8")
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=125014924]
+script = ExtResource("9_hfjph")
+
+[node name="PulseScaleBase" type="Node" parent="." unique_id=539133578 node_paths=PackedStringArray("sprite")]
+script = ExtResource("8_e5eow")
+sprite = NodePath("../Base")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="PulseScaleFill" type="Node" parent="." unique_id=208682366 node_paths=PackedStringArray("sprite")]
+script = ExtResource("8_e5eow")
+sprite = NodePath("../Fill")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=535142037]
+script = ExtResource("12_j5u27")
+
+[node name="ToggleComponent" type="Node" parent="." unique_id=1965696259]
+script = ExtResource("1_dcl03")
+
+[node name="Detail" type="Node2D" parent="." unique_id=731043802]
+script = ExtResource("11_fi63b")
+metadata/_custom_type_script = "uid://b0qdkfpjncyhk"
+
+[node name="EditorSelectionCollider" parent="." unique_id=388189170 instance=ExtResource("11_4mcye")]
+type = 8

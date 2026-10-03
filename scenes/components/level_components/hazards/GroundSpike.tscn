@@ -1,0 +1,22 @@
+[gd_scene format=3 uid="uid://igg2spglq8i1"]
+
+[ext_resource type="Texture2D" uid="uid://bf8jb2o4drjtd" path="res://assets/textures/hazards/ground_spike/GroundSpikeDefault.svg" id="1_qc78j"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="2_idjkk"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_hu62t"]
+size = Vector2(120, 20)
+
+[node name="GroundSpike" type="Area2D" unique_id=133416821]
+collision_layer = 4
+
+[node name="GroundSpike01" type="Sprite2D" parent="." unique_id=10164433]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("1_qc78j")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1391863814]
+position = Vector2(0, 50)
+shape = SubResource("RectangleShape2D_hu62t")
+debug_color = Color(0.960784, 0, 0, 0)
+
+[node name="EditorSelectionCollider" parent="." unique_id=645252628 instance=ExtResource("2_idjkk")]
+type = 5

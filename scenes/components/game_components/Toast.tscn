@@ -1,0 +1,59 @@
+[gd_scene format=3 uid="uid://ctc3ynyextvpj"]
+
+[ext_resource type="Script" uid="uid://da1d1gb14fxub" path="res://src/editor/Toast.gd" id="2_vg06y"]
+[ext_resource type="Material" uid="uid://dmfwkx1hhpd5x" path="res://resources/SimpleBlurMaterial.tres" id="3_td1kt"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_2esq0"]
+bg_color = Color(0.1, 0.1, 0.1, 0.7058824)
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+corner_detail = 5
+
+[node name="Toast" type="VBoxContainer" unique_id=401157883 node_paths=PackedStringArray("timer_bar")]
+offset_right = 164.0
+offset_bottom = 50.0
+mouse_filter = 2
+theme_override_constants/separation = 10
+script = ExtResource("2_vg06y")
+timer_bar = NodePath("Button/Mask/ColorRect")
+
+[node name="Timer" type="Timer" parent="." unique_id=1076623529]
+one_shot = true
+ignore_time_scale = true
+
+[node name="Button" type="Button" parent="." unique_id=275512418]
+process_mode = 3
+material = ExtResource("3_td1kt")
+layout_mode = 2
+size_flags_horizontal = 4
+theme_type_variation = &"Toast"
+text = "Default Toast text"
+
+[node name="Mask" type="Panel" parent="Button" unique_id=961291956]
+clip_children = 2
+custom_minimum_size = Vector2(0, 3)
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_2esq0")
+
+[node name="ColorRect" type="ColorRect" parent="Button/Mask" unique_id=1928316105]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+offset_transform_enabled = true
+offset_transform_pivot_ratio = Vector2(0, 0.5)
+
+[node name="Control" type="Control" parent="." unique_id=1037652224]
+layout_mode = 2
+
+[connection signal="mouse_entered" from="Button" to="." method="_on_mouse_entered"]
+[connection signal="mouse_exited" from="Button" to="." method="_on_mouse_exited"]
+[connection signal="pressed" from="Button" to="." method="dismiss"]

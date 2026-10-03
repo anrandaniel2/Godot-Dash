@@ -1,0 +1,64 @@
+[gd_scene format=3 uid="uid://dn1mnmpt5m6ir"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_6cw5m"]
+[ext_resource type="Texture2D" uid="uid://2fg5ga0mw6c2" path="res://assets/textures/triggers/CameraZoom.svg" id="2_hjlwe"]
+[ext_resource type="Script" uid="uid://dnxmq664kbq3f" path="res://src/interactables/private_components/TriggerSprite.gd" id="3_c6jdg"]
+[ext_resource type="Script" uid="uid://cxkxnt03yhtar" path="res://src/interactables/public_components/CameraZoomChangerComponent.gd" id="3_yokww"]
+[ext_resource type="Script" uid="uid://tfriwfc7uruu" path="res://src/interactables/public_components/EasingComponent.gd" id="6_rjlak"]
+[ext_resource type="Script" uid="uid://cilw18c36fh6" path="res://src/interactables/public_components/TriggerHitboxComponent.gd" id="7_6q6wa"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="8_hjlwe"]
+[ext_resource type="Script" uid="uid://cd3jqi4il3x2p" path="res://src/interactables/public_components/TextureRotationPinComponent.gd" id="8_q08ni"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="9_6cw5m"]
+[ext_resource type="Script" uid="uid://m5i4ldkc8kfv" path="res://src/interactables/private_components/HitboxDisplay.gd" id="9_dsu4p"]
+
+[sub_resource type="SegmentShape2D" id="SegmentShape2D_4ydte"]
+a = Vector2(0, -8192)
+b = Vector2(0, 8192)
+
+[node name="CameraZoomTrigger" type="Area2D" unique_id=1710082167]
+script = ExtResource("1_6cw5m")
+metadata/_custom_type_script = "uid://rt6vy5mae3if"
+
+[node name="Sprite" type="Sprite2D" parent="." unique_id=1146928395]
+scale = Vector2(0.2, 0.2)
+texture = ExtResource("2_hjlwe")
+script = ExtResource("3_c6jdg")
+metadata/_custom_type_script = "uid://dnxmq664kbq3f"
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1420680115]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("SegmentShape2D_4ydte")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="HitboxDisplay" type="Node2D" parent="." unique_id=1542020980 node_paths=PackedStringArray("hitbox")]
+z_index = -20
+script = ExtResource("9_dsu4p")
+hitbox = NodePath("../Hitbox")
+color_config_key = "trigger_hitbox_color"
+fill_alpha_config_key = "trigger_hitbox_fill_alpha"
+metadata/_custom_type_script = "uid://m5i4ldkc8kfv"
+
+[node name="CameraZoomChangerComponent" type="Node" parent="." unique_id=1163910671]
+script = ExtResource("3_yokww")
+
+[node name="EasingComponent" type="Node" parent="." unique_id=307653641]
+script = ExtResource("6_rjlak")
+metadata/_custom_type_script = "uid://tfriwfc7uruu"
+
+[node name="TriggerHitboxComponent" type="Node" parent="." unique_id=1037273833 node_paths=PackedStringArray("_hitbox")]
+script = ExtResource("7_6q6wa")
+_hitbox = NodePath("../Hitbox")
+metadata/_custom_type_script = "uid://cilw18c36fh6"
+
+[node name="TextureRotationPinComponent" type="Node" parent="." unique_id=2011166876 node_paths=PackedStringArray("pinned")]
+script = ExtResource("8_q08ni")
+pinned = NodePath("../Sprite")
+sprite_scale = Vector2(0.2, 0.2)
+metadata/_custom_type_script = "uid://cd3jqi4il3x2p"
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="." unique_id=1196354732]
+script = ExtResource("8_hjlwe")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="EditorSelectionCollider" parent="." unique_id=1599013463 instance=ExtResource("9_6cw5m")]
+type = 8

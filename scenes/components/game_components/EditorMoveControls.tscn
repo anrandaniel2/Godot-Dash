@@ -1,0 +1,79 @@
+[gd_scene format=3 uid="uid://c1lfp5vqcpgiw"]
+
+[ext_resource type="Script" uid="uid://bw6kprkso6l1i" path="res://src/editor/EditorMoveControls.gd" id="1_yr1dp"]
+[ext_resource type="Texture2D" uid="uid://72ylie72lec3" path="res://assets/textures/guis/editor/edit_panel/MoveObjectFullStep.svg" id="2_1yjs2"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_xo6ai"]
+
+[node name="MoveControls" type="VBoxContainer" unique_id=629570566]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+script = ExtResource("1_yr1dp")
+button_size = 64.0
+
+[node name="UpContainer" type="HBoxContainer" parent="." unique_id=595532685]
+layout_mode = 2
+alignment = 1
+
+[node name="Up" type="Button" parent="UpContainer" unique_id=44042593]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 0
+theme_type_variation = &"SquircleButton"
+icon = ExtResource("2_1yjs2")
+expand_icon = true
+
+[node name="LeftRightContainer" type="HBoxContainer" parent="." unique_id=144070333]
+layout_mode = 2
+alignment = 1
+
+[node name="Left" type="Button" parent="LeftRightContainer" unique_id=1473572919]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 0
+theme_type_variation = &"SquircleButton"
+icon = ExtResource("2_1yjs2")
+expand_icon = true
+
+[node name="CenterPadding" type="Control" parent="LeftRightContainer" unique_id=1609849538]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+
+[node name="Right" type="Button" parent="LeftRightContainer" unique_id=322412975]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 0
+theme_type_variation = &"SquircleButton"
+icon = ExtResource("2_1yjs2")
+expand_icon = true
+
+[node name="DownContainer" type="HBoxContainer" parent="." unique_id=2136282800]
+layout_mode = 2
+alignment = 1
+
+[node name="Down" type="Button" parent="DownContainer" unique_id=959145647]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 0
+theme_type_variation = &"SquircleButton"
+icon = ExtResource("2_1yjs2")
+expand_icon = true
+
+[node name="Label" type="Label" parent="." unique_id=486171805]
+layout_mode = 2
+label_settings = SubResource("LabelSettings_xo6ai")
+horizontal_alignment = 1
+vertical_alignment = 1

@@ -1,0 +1,36 @@
+# Godot 4+ specific ignores
+.godot/
+
+# VSCode project folder (eww brother ewwwww)
+.vscode/
+
+scenes/levels/imported
+
+assets/sounds/music/level_music/*
+
+assets/textures/triggers_imported
+
+*.kate-swp
+
+target/
+
+@icons\ picker.html
+
+export/
+
+export_presets.cfg
+__pycache__/
+
+# Android Gradle build template installed by the editor / CI (Project >
+# Install Android Build Template). Regenerated from the Godot export
+# templates on every CI export; never commit it.
+/android/
+
+# godot-cpp checkout + built extension binaries (compiled fresh in CI)
+native/godot-cpp/
+native/bin/
+native/.sconsign.dblite
+native/.scons-*
+
+# SCons object files dropped next to native sources
+*.os

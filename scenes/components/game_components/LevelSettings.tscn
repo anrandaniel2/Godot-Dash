@@ -1,0 +1,296 @@
+[gd_scene format=3 uid="uid://ylswfd45fw38"]
+
+[ext_resource type="Script" uid="uid://bhqj6dqkejl2k" path="res://src/editor/LevelSettings.gd" id="1_ikfu3"]
+[ext_resource type="Script" uid="uid://dd8enor6efbjp" path="res://src/gui/properties/components/PropertyValueThemeDefaultFont.gd" id="7_2dtee"]
+[ext_resource type="Texture2D" uid="uid://buqrmvu2n56ri" path="res://assets/textures/icons/godot/Play.svg" id="7_jvsdk"]
+[ext_resource type="Script" uid="uid://u6bg45iwy21r" path="res://src/resources/TextSettings.gd" id="9_bo0r5"]
+[ext_resource type="Script" uid="uid://dd75trm1kaaiu" path="res://src/gui/properties/types/FloatProperty.gd" id="9_jvsdk"]
+[ext_resource type="Script" uid="uid://ckqgnvpbftev7" path="res://src/gui/properties/components/PropertySaveLoad.gd" id="10_2dtee"]
+[ext_resource type="Script" uid="uid://b77ajx8cop15a" path="res://src/gui/properties/types/MultilineStringProperty.gd" id="10_am3gx"]
+[ext_resource type="Script" uid="uid://3na5h1vigpxe" path="res://src/gui/properties/types/FileProperty.gd" id="11_am3gx"]
+[ext_resource type="Script" uid="uid://bwcwfobfohbsd" path="res://src/gui/properties/types/ColorProperty.gd" id="11_jvsdk"]
+[ext_resource type="Script" uid="uid://bss8ppxnt7gio" path="res://src/gui/properties/types/BoolProperty.gd" id="12_am3gx"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_e6gxs"]
+font_size = 24
+script = ExtResource("9_bo0r5")
+metadata/_custom_type_script = "uid://u6bg45iwy21r"
+
+[node name="VBoxContainer" type="VBoxContainer" unique_id=324532145 node_paths=PackedStringArray("song_path", "song_start_offset", "preview_button", "font_preview")]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_ikfu3")
+song_path = NodePath("Assets/VBoxContainer/Song/VBoxContainer/Path")
+song_start_offset = NodePath("Assets/VBoxContainer/Song/VBoxContainer/Start Offset")
+preview_button = NodePath("Assets/VBoxContainer/Song/VBoxContainer/Preview")
+font_preview = NodePath("Assets/VBoxContainer/PanelContainer/MarginContainer/FontPreview")
+
+[node name="Assets" type="FoldableContainer" parent="." unique_id=1235149664]
+layout_mode = 2
+mouse_filter = 1
+title = "Assets"
+title_alignment = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Assets" unique_id=478697826]
+layout_mode = 2
+
+[node name="Song" type="FoldableContainer" parent="Assets/VBoxContainer" unique_id=462471360]
+layout_mode = 2
+mouse_filter = 1
+title = "Song"
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Assets/VBoxContainer/Song" unique_id=241849637]
+layout_mode = 2
+
+[node name="Path" type="BoxContainer" parent="Assets/VBoxContainer/Song/VBoxContainer" unique_id=561288785]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_am3gx")
+filetype_filters = PackedStringArray("*.mp3", "*.wav", "*.ogg")
+load_root = "user://created_levels/songs/"
+import_to = "user://created_levels/songs/"
+metadata/_custom_type_script = "uid://3na5h1vigpxe"
+
+[node name="PropertySaveLoad" type="Node" parent="Assets/VBoxContainer/Song/VBoxContainer/Path" unique_id=1583453944]
+script = ExtResource("10_2dtee")
+config_property = &"song_path"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Start Offset" type="BoxContainer" parent="Assets/VBoxContainer/Song/VBoxContainer" unique_id=1054219443]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_jvsdk")
+allow_greater = true
+suffix = "s"
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="PropertySaveLoad" type="Node" parent="Assets/VBoxContainer/Song/VBoxContainer/Start Offset" unique_id=261025969]
+script = ExtResource("10_2dtee")
+config_property = &"song_start_time"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Preview" type="Button" parent="Assets/VBoxContainer/Song/VBoxContainer" unique_id=280807009]
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+text = "Preview"
+icon = ExtResource("7_jvsdk")
+alignment = 0
+expand_icon = true
+
+[node name="Default Font" type="BoxContainer" parent="Assets/VBoxContainer" unique_id=423738507]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_am3gx")
+filetype_filters = PackedStringArray("*.ttf", "*.ttc", "*.otf")
+load_root = "user://created_levels/fonts/"
+import_to = "user://created_levels/fonts/"
+metadata/_custom_type_script = "uid://3na5h1vigpxe"
+metadata/field_name = &"_font_path"
+
+[node name="PropertySaveLoad" type="Node" parent="Assets/VBoxContainer/Default Font" unique_id=122440009]
+script = ExtResource("10_2dtee")
+config_property = &"default_font"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="PropertyValueThemeDefaultFont" type="Node" parent="Assets/VBoxContainer/Default Font" unique_id=714639320]
+script = ExtResource("7_2dtee")
+metadata/_custom_type_script = "uid://dd8enor6efbjp"
+
+[node name="PanelContainer" type="PanelContainer" parent="Assets/VBoxContainer" unique_id=1226964936]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="Assets/VBoxContainer/PanelContainer" unique_id=1208079163]
+layout_mode = 2
+
+[node name="FontPreview" type="Label" parent="Assets/VBoxContainer/PanelContainer/MarginContainer" unique_id=967719313]
+layout_mode = 2
+text = "The quick brown fox jumps over the lazy dog. 1234567890"
+label_settings = SubResource("LabelSettings_e6gxs")
+autowrap_mode = 3
+
+[node name="Default Look" type="FoldableContainer" parent="." unique_id=1237378348]
+layout_mode = 2
+title = "Default Look"
+title_alignment = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Default Look" unique_id=1320244172]
+layout_mode = 2
+
+[node name="Background" type="BoxContainer" parent="Default Look/VBoxContainer" unique_id=2142067944]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_jvsdk")
+default = Color(0.21176471, 0.4392157, 1, 1)
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="PropertySaveLoad" type="Node" parent="Default Look/VBoxContainer/Background" unique_id=1326647879]
+script = ExtResource("10_2dtee")
+config_property = &"default_background_color"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Ground" type="BoxContainer" parent="Default Look/VBoxContainer" unique_id=1541205660]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_jvsdk")
+default = Color(0.105882354, 0.29411766, 0.76862746, 1)
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="PropertySaveLoad" type="Node" parent="Default Look/VBoxContainer/Ground" unique_id=469741541]
+script = ExtResource("10_2dtee")
+config_property = &"default_ground_color"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Line" type="BoxContainer" parent="Default Look/VBoxContainer" unique_id=2131976856]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_jvsdk")
+default = Color(1, 1, 1, 1)
+metadata/_custom_type_script = "uid://bwcwfobfohbsd"
+
+[node name="PropertySaveLoad" type="Node" parent="Default Look/VBoxContainer/Line" unique_id=1558276889]
+script = ExtResource("10_2dtee")
+config_property = &"default_line_color"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Enter Effects" type="FoldableContainer" parent="." unique_id=50365572]
+layout_mode = 2
+title = "Enter Effects"
+title_alignment = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Enter Effects" unique_id=473673324]
+layout_mode = 2
+
+[node name="Transition Width" type="BoxContainer" parent="Enter Effects/VBoxContainer" unique_id=966873362]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_jvsdk")
+default = 15.0
+step = 1.0
+suffix = "%"
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="PropertySaveLoad" type="Node" parent="Enter Effects/VBoxContainer/Transition Width" unique_id=1487442652]
+script = ExtResource("10_2dtee")
+config_property = &"transition_width"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Fade Power" type="BoxContainer" parent="Enter Effects/VBoxContainer" unique_id=711798132]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_jvsdk")
+default = 1.0
+max_value = 1.0
+step = 0.01
+allow_lesser = true
+allow_greater = true
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="PropertySaveLoad" type="Node" parent="Enter Effects/VBoxContainer/Fade Power" unique_id=876609485]
+script = ExtResource("10_2dtee")
+config_property = &"fade_power"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Move Power" type="BoxContainer" parent="Enter Effects/VBoxContainer" unique_id=1784659648]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_jvsdk")
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+allow_lesser = true
+allow_greater = true
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="PropertySaveLoad" type="Node" parent="Enter Effects/VBoxContainer/Move Power" unique_id=1477254430]
+script = ExtResource("10_2dtee")
+config_property = &"move_power"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Scale Power" type="BoxContainer" parent="Enter Effects/VBoxContainer" unique_id=1875955354]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_jvsdk")
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+allow_lesser = true
+allow_greater = true
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+
+[node name="PropertySaveLoad" type="Node" parent="Enter Effects/VBoxContainer/Scale Power" unique_id=1302201434]
+script = ExtResource("10_2dtee")
+config_property = &"scale_power"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Details" type="FoldableContainer" parent="." unique_id=1928758384]
+layout_mode = 2
+mouse_filter = 1
+title = "Details"
+title_alignment = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Details" unique_id=1931953724]
+layout_mode = 2
+
+[node name="Description" type="BoxContainer" parent="Details/VBoxContainer" unique_id=1834304238]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("10_am3gx")
+placeholder = "Description"
+metadata/_custom_type_script = "uid://b77ajx8cop15a"
+
+[node name="PropertySaveLoad" type="Node" parent="Details/VBoxContainer/Description" unique_id=267945812]
+script = ExtResource("10_2dtee")
+config_property = &"description"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Rating" type="BoxContainer" parent="Details/VBoxContainer" unique_id=727926185]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("9_jvsdk")
+min_value = -1.0
+max_value = 10.0
+step = 1.0
+rounded = true
+draw_slider = true
+metadata/_custom_type_script = "uid://dd75trm1kaaiu"
+metadata/field_name = &"_font_path"
+
+[node name="PropertySaveLoad" type="Node" parent="Details/VBoxContainer/Rating" unique_id=254086717]
+script = ExtResource("10_2dtee")
+config_property = &"rating"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[node name="Flashing Lights" type="BoxContainer" parent="Details/VBoxContainer" unique_id=317055802]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("12_am3gx")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+
+[node name="PropertySaveLoad" type="Node" parent="Details/VBoxContainer/Flashing Lights" unique_id=1258454732]
+script = ExtResource("10_2dtee")
+config_property = &"flashing_lights"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
+[connection signal="hidden" from="." to="." method="_on_hidden"]
+[connection signal="pressed" from="Assets/VBoxContainer/Song/VBoxContainer/Preview" to="." method="_on_preview_pressed"]
+[connection signal="value_changed" from="Assets/VBoxContainer/Default Font" to="." method="_on_default_font_value_changed"]

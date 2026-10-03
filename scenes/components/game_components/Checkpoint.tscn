@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://bovs3ulknaub8"]
+
+[ext_resource type="Texture2D" uid="uid://byhliui13khoi" path="res://assets/textures/checkpoints/Checkpoint.svg" id="1_8vl7g"]
+[ext_resource type="Material" uid="uid://djc5r0qac4mro" path="res://resources/Checkpoint.tres" id="1_eihxb"]
+
+[node name="Checkpoint" type="Sprite2D" unique_id=176800394]
+material = ExtResource("1_eihxb")
+texture = ExtResource("1_8vl7g")

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<mime-info xmlns='http://www.freedesktop.org/standards/shared-mime-info'>
+  <mime-type type="application/x-godot-dash-level">
+    <comment>Geometry Dash level (GDShare)</comment>
+    <glob pattern="*.gmd"/>
+    <glob pattern="*.gmd2"/>
+  </mime-type>
+</mime-info>

@@ -1,0 +1,66 @@
+[gd_scene format=3 uid="uid://jdhlbkky38ej"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_6jx6u"]
+[ext_resource type="PackedScene" uid="uid://dl5c5hukbve28" path="res://scenes/particle_emitter_presets/SpeedPortalParticles.tscn" id="2_v7vet"]
+[ext_resource type="Script" uid="uid://dqxlkk6473fv0" path="res://src/interactables/private_components/RemoveMaterial.gd" id="3_j8qvu"]
+[ext_resource type="Texture2D" uid="uid://bm4o6qn8mdapu" path="res://assets/textures/portals/speed_portals/SpeedPortal0x.svg" id="4_gln18"]
+[ext_resource type="Material" uid="uid://t4wcwy036o4d" path="res://resources/PulseWhiteMaterial.tres" id="4_j8qvu"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="5_ttkjn"]
+[ext_resource type="Script" uid="uid://n8ym1w4r5ke" path="res://src/interactables/private_components/PulseWhite.gd" id="6_xon7y"]
+[ext_resource type="Script" uid="uid://2x4qudx4pood" path="res://src/interactables/public_components/SpeedChangerComponent.gd" id="7_vr53l"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="8_gexpq"]
+
+[sub_resource type="Curve" id="Curve_f0tdc"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.7, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_0y2x4"]
+curve = SubResource("Curve_f0tdc")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_28a5j"]
+particle_flag_disable_z = true
+emission_shape = 3
+emission_box_extents = Vector3(96, 128, 1)
+gravity = Vector3(0, 0, 0)
+scale_min = 0.5
+scale_max = 0.5
+scale_curve = SubResource("CurveTexture_0y2x4")
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_vx3nn"]
+size = Vector2(140, 174)
+
+[node name="SpeedPortal0x" type="Area2D" unique_id=521850817]
+z_index = -5
+collision_layer = 8
+script = ExtResource("1_6jx6u")
+
+[node name="ParticleEmitter" parent="." unique_id=1691842602 instance=ExtResource("2_v7vet")]
+modulate = Color(0.101961, 0.101961, 0.101961, 1)
+material = null
+process_material = SubResource("ParticleProcessMaterial_28a5j")
+
+[node name="RemoveMaterial" type="Node" parent="ParticleEmitter" unique_id=1430429200]
+script = ExtResource("3_j8qvu")
+
+[node name="Sprite" type="Sprite2D" parent="." unique_id=1597802304]
+material = ExtResource("4_j8qvu")
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("4_gln18")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1405337811]
+shape = SubResource("RectangleShape2D_vx3nn")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=2000282819]
+script = ExtResource("5_ttkjn")
+no_blending = true
+
+[node name="PulseWhite" type="Node" parent="." unique_id=179766720 node_paths=PackedStringArray("pulse_target")]
+script = ExtResource("6_xon7y")
+pulse_target = NodePath("../Sprite")
+
+[node name="SpeedChangerComponent" type="Node" parent="." unique_id=852523528]
+script = ExtResource("7_vr53l")
+
+[node name="EditorSelectionCollider" parent="." unique_id=1355452362 instance=ExtResource("8_gexpq")]
+type = 8

@@ -1,0 +1,991 @@
+name: Build Android APK
+
+# Builds an installable release .apk automatically so device testing is a
+# download-and-install instead of opening the project on a device.
+# The engine target is template_release (faster than the old debug template).
+# Native libraries are compressed inside the APK so the download is not an
+# uncompressed copy of libgodot; Android extracts them once at install.
+# Frame pacing and the game loop are unchanged. The rolling tag stays
+# "android-debug" so the existing download URL does not move.
+#
+#   - Every push to main / arena branches (and every manual dispatch) exports
+#     an APK and uploads it as a workflow artifact. Grab it from the Actions
+#     run page -> Artifacts -> godot-dash-android-debug.
+#   - Every successful export also refreshes the rolling "android-debug"
+#     prerelease with the newest APK, so the latest build is always one
+#     download away (constant URL, no Actions login needed):
+#       https://github.com/anrandaniel2/Godot-Dash/releases/download/android-debug/godot-dash-android-debug.apk
+#   - A push of a `release*` tag additionally creates the stable release for
+#     that tag, as before.
+#
+# The export uses the Godot 4.x Android Gradle build (export preset "Android"
+# has gradle_build/use_gradle_build=true), which lets the manifest be edited:
+# the workflow installs the stock Android build template from the export
+# templates and adds android:largeHeap="true" to its AndroidManifest.xml, so
+# the app asks Android for the large heap on devices that allow it (the heap
+# itself is still bounded by the device).
+#
+# Before exporting, the native GDExtension (native/) is compiled with the
+# Android NDK against a pinned godot-cpp master commit (the Godot 4.7 API;
+# no godot-cpp 4.6/4.7 tag exists). The resulting .so is bundled into the APK
+# two ways: Godot's exporter normally copies it into the gradle project via
+# native/bin/gdash_native.gdextension (checkpointed below), and independently the
+# .so is dropped straight into the gradle release jniLibs so the APK contains it
+# even if the exporter path fails.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, "arena/**"]
+    tags: ["release*"]
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+  # Godot standard (non-.NET) build & export templates for the version above.
+  # Must match project.godot's config/features ("4.7") minor line exactly.
+  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_TPZ_URL: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  APK_PATH: export/Android/godot-dash.apk
+  # Native extension: godot-cpp master (v10) pinned to a commit, building the
+  # Godot 4.7 API (no godot-cpp 4.6/4.7 tag exists yet - master is the
+  # maintained path per godot-cpp's README). NDK version must match the folder
+  # name sdkmanager installs under $ANDROID_HOME/ndk/.
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  NDK_VERSION: 28.1.13356709
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Gradle build requirement)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ---------------------------------------------------------------- Godot
+      - name: Cache Godot binary
+        uses: actions/cache@v4
+        id: cache-godot
+        with:
+          path: godot-bin
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot binary
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$GODOT_BIN_URL" -O godot.zip
+          mkdir -p godot-bin
+          unzip -q -o godot.zip -d godot-bin
+          rm -f godot.zip
+          chmod +x "$GODOT_BIN"
+
+      - name: Cache export templates
+        uses: actions/cache@v4
+        id: cache-templates
+        with:
+          path: godot-export-templates.tpz
+          key: godot-templates-${{ env.GODOT_VERSION }}
+
+      - name: Download export templates
+        if: steps.cache-templates.outputs.cache-hit != 'true'
+        run: wget -q "$GODOT_TPZ_URL" -O godot-export-templates.tpz
+
+      - name: Install export templates
+        run: |
+          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+          mkdir -p "$TPZ_DIR"
+          unzip -q -o godot-export-templates.tpz -d "$TPZ_DIR"
+          # The archive nests everything under templates/; Godot wants the
+          # files directly in the version folder.
+          if [ -d "$TPZ_DIR/templates" ]; then
+            mv -f "$TPZ_DIR"/templates/* "$TPZ_DIR"/
+            rmdir "$TPZ_DIR/templates"
+          fi
+          ls -1 "$TPZ_DIR" | head
+
+      # ------------------------------------------------------- Android tooling
+      - name: Verify Android SDK components
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
+          SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+              "platform-tools" "build-tools;35.0.1" "platforms;android-35" >/dev/null || true
+          else
+            echo "sdkmanager not found at $SDKMANAGER; relying on preinstalled SDK."
+          fi
+          "$ANDROID_HOME/build-tools"/*/apksigner --version | head -1 || true
+
+      - name: Generate debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      # ------------------------------------------------- Native GDExtension
+      # Builds native/src/gdash_native.cpp into the .so bundled into the APK by
+      # native/bin/gdash_native.gdextension. The extension only registers a boot
+      # probe class today (Config.use_native_core); game systems port to C++
+      # behind that flag incrementally.
+      - name: Install scons
+        run: pip3 install --break-system-packages -q scons
+
+      - name: Cache scons build cache
+        uses: actions/cache@v4
+        with:
+          path: native/scons-cache
+          key: native-scons-${{ env.GODOT_CPP_REF }}-api47-profile-v2-release
+
+      # godot-cpp is cloned fresh each run (small, shallow) rather than cached:
+      # caching it alongside the multi-GB NDK made cache restore unreliable.
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Build gdash_native (Linux x86_64 test host, Godot 4.7 API)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+
+          # Raw job logs are not always downloadable; re-emit the tail of a
+          # failed scons log as workflow error annotations (10 max per step).
+          emit_scons_error() {
+            echo "scons FAILED; tail of $1:"
+            tail -n 50 "$1"
+            while IFS= read -r chunk; do
+              echo "::error::${chunk}"
+            done < <(tail -n 50 "$1" | cut -c1-160 | awk '
+              { gsub(/%/, "%25"); gsub(/\r/, "%0D"); buf = buf $0 "%0A"
+                if (++n >= 5) { print buf; buf = ""; n = 0; if (++c >= 10) exit } }
+              END { if (n > 0 && c < 10) print buf }')
+          }
+
+          cd native
+          # The CI test-host library keeps debug symbols (and skips LTO) so a
+          # native crash in the smoke/boot tests symbolizes with addr2line.
+          # It never ships: the APK carries the android arm64 library, whose
+          # own build resolves lto=auto to none anyway.
+          if ! scons platform=linux target=template_debug arch=x86_64 api_version=4.7 debug_symbols=yes lto=none -j2 > /tmp/scons_linux.log 2>&1; then
+            emit_scons_error /tmp/scons_linux.log
+            exit 1
+          fi
+          tail -n 3 /tmp/scons_linux.log
+          SO=bin/linux/libgdash_native.linux.template_debug.x86_64.so
+          test -f "$SO" || { echo "::error::linux gdash_native .so missing after scons"; ls -R bin; exit 1; }
+          ls -lh "$SO"
+          # Ground truth that the build profile was honored: the trimmed
+          # binding set generates ~29 class files, an untrimmed godot-cpp
+          # generates 1000+. Compiler output size varies by toolchain, this
+          # does not.
+          GEN_COUNT=$(ls godot-cpp/gen/src/classes/*.cpp 2>/dev/null | wc -l)
+          if [ "$GEN_COUNT" -ge 60 ]; then
+            echo "::error::godot-cpp generated $GEN_COUNT class bindings (expected ~29) - build profile ignored?"
+            exit 1
+          fi
+          test -f godot-cpp/gen/src/classes/fast_noise_lite.cpp || {
+            echo "::error::fast_noise_lite.cpp binding missing (generated set incomplete)"
+            exit 1
+          }
+          test -f godot-cpp/gen/src/classes/camera2d.cpp || {
+            echo "::error::camera2d.cpp binding missing (generated set incomplete)"
+            exit 1
+          }
+          # Loose tripwire against symbol/stdlib bloat only. Measure stripped
+          # bytes so the tripwire stays comparable even though the test-host
+          # library above keeps its debug symbols.
+          cp "$SO" /tmp/libgdash_native_stripped.so
+          strip /tmp/libgdash_native_stripped.so
+          SO_SIZE=$(stat -c%s /tmp/libgdash_native_stripped.so)
+          if [ "$SO_SIZE" -ge 3000000 ]; then
+            echo "::error::linux gdash_native .so is $SO_SIZE bytes stripped (tripwire: < 3000000)"
+            exit 1
+          fi
+          # Preserve the host library while cleaning shared intermediates before
+          # the ARM build. Restore it for the visual smoke test afterward.
+          cp "$SO" /tmp/libgdash_native.linux.so
+          if ! scons -c platform=linux target=template_debug arch=x86_64 api_version=4.7 > /tmp/scons_linux_clean.log 2>&1; then
+            emit_scons_error /tmp/scons_linux_clean.log
+            exit 1
+          fi
+          mkdir -p bin/linux
+          cp /tmp/libgdash_native.linux.so "$SO"
+          ls -lh bin/linux/
+
+      - name: Locate or install Android NDK
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
+          # Use an already-installed NDK if present (runners ship one), else
+          # install the pinned version. Any modern NDK compiles godot-cpp.
+          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1 || true)
+          if [ -z "$NDK_DIR" ]; then
+            SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+            if [ ! -x "$SDKMANAGER" ]; then
+              echo "no NDK installed and sdkmanager not found at $SDKMANAGER"; exit 1
+            fi
+            yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;${{ env.NDK_VERSION }}" >/dev/null
+            NDK_DIR="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
+          fi
+          [ -d "$NDK_DIR" ] || { echo "NDK still missing at $NDK_DIR"; ls "$ANDROID_HOME/ndk"; exit 1; }
+          echo "NDK_DIR=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "Using NDK: $NDK_DIR"
+
+      - name: Build gdash_native (Android arm64, Godot 4.7 API)
+        env:
+          # Space-separated hex PCs from an on-device tombstone (libgdash_native.so
+          # arm64). Set the GDASH_CRASH_OFFSETS repository variable to symbolize
+          # them against this build; offsets only map correctly while the native
+          # source is unchanged since the crashing APK.
+          GDASH_CRASH_OFFSETS: ${{ vars.GDASH_CRASH_OFFSETS }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          # Surface the failing command (line number) as an annotation: raw
+          # job logs are not retrievable from the sandbox.
+          trap 'status=$?; echo "::error title=Android build step::command at bash line $LINENO failed (exit $status)"' ERR
+
+          emit_scons_error() {
+            echo "scons FAILED; tail of $1:"
+            tail -n 50 "$1"
+            while IFS= read -r chunk; do
+              echo "::error::${chunk}"
+            done < <(tail -n 50 "$1" | cut -c1-160 | awk '
+              { gsub(/%/, "%25"); gsub(/\r/, "%0D"); buf = buf $0 "%0A"
+                if (++n >= 5) { print buf; buf = ""; n = 0; if (++c >= 10) exit } }
+              END { if (n > 0 && c < 10) print buf }')
+          }
+
+          NDK_VERSION="$(basename "$NDK_DIR")"
+          cd native
+          # debug_symbols=yes adds only debug sections: the code layout is
+          # identical to the shipped build, which lets addr2line resolve the
+          # on-device crash offsets. The APK copy is stripped below.
+          # template_release matches the exported APK. debug_symbols=yes adds only
+          # debug sections so addr2line still works; the APK copy is stripped below.
+          if ! scons platform=android target=template_release arch=arm64 \
+               api_version=4.7 ndk_version="$NDK_VERSION" debug_symbols=yes -j2 > /tmp/scons_android.log 2>&1; then
+            emit_scons_error /tmp/scons_android.log
+            exit 1
+          fi
+          tail -n 3 /tmp/scons_android.log
+          SO=bin/android/libgdash_native.android.template_release.arm64.so
+          test -f "$SO" || { echo "::error::android gdash_native .so missing after scons"; ls -R bin; exit 1; }
+          cp "$SO" /tmp/libgdash_native_android_unstripped.so
+          chmod u+w "$SO" /tmp/libgdash_native_android_unstripped.so
+          # scons cache-retrieved artifacts can be read-only, and the NDK's
+          # lld output occasionally trips binutils strip; fall back to the
+          # NDK's own llvm-strip and annotate with diagnostics if both fail.
+          if ! strip "$SO" 2>/tmp/strip_error.log; then
+            STRIP_DETAILS="binutils strip: $(head -c 300 /tmp/strip_error.log)"
+            LLVM_STRIP=$(ls "$NDK_DIR"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -1 || true)
+            if [ -n "$LLVM_STRIP" ] && "$LLVM_STRIP" "$SO" 2>>/tmp/strip_error.log; then
+              echo "binutils strip failed, NDK llvm-strip succeeded"
+            else
+              echo "::error title=Android strip failed::${STRIP_DETAILS} | llvm-strip: $(ls "$NDK_DIR"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -1) | $(ls -l "$SO")"
+              exit 1
+            fi
+          fi
+          ls -lh "$SO" /tmp/libgdash_native_android_unstripped.so
+          # Symbolize on-device crash PCs against this exact build when the
+          # GDASH_CRASH_OFFSETS repository variable is set (see env above).
+          # The debug_symbols=yes build has identical code layout to the
+          # shipped (stripped) library, so addr2line resolves the PCs as long
+          # as the native source is unchanged since the crashing APK.
+          if [ -n "${GDASH_CRASH_OFFSETS// /}" ]; then
+            SYMBOLIZED=$(for off in $GDASH_CRASH_OFFSETS; do
+              echo "pc $off:"
+              addr2line -Cfipe /tmp/libgdash_native_android_unstripped.so "$off" || true
+            done)
+            echo "$SYMBOLIZED"
+            # NOTE: sed can't do this — GNU sed processes line-by-line so the
+            # pattern space never contains \n, and a raw newline inside the
+            # ::warning:: truncates the annotation at the first line.
+            SYMBOLIZED_ESCAPED=$(printf '%s' "$SYMBOLIZED" | awk '{ gsub(/%/, "%25"); gsub(/\r/, "%0D"); printf "%s%%0A", $0 }')
+            echo "::warning title=Device crash symbolized::${SYMBOLIZED_ESCAPED}"
+          fi
+          # Same profile ground truth as the linux step (gen files were
+          # regenerated after the linux clean; ~29 classes expected).
+          GEN_COUNT=$(ls godot-cpp/gen/src/classes/*.cpp 2>/dev/null | wc -l)
+          if [ "$GEN_COUNT" -ge 60 ]; then
+            echo "::error::godot-cpp generated $GEN_COUNT class bindings (expected ~29) - build profile ignored?"
+            exit 1
+          fi
+          test -f godot-cpp/gen/src/classes/fast_noise_lite.cpp || {
+            echo "::error::fast_noise_lite.cpp binding missing (generated set incomplete)"
+            exit 1
+          }
+          # Loose tripwire against symbol/stdlib bloat only (android builds
+          # without LTO via clang from the NDK).
+          SO_SIZE=$(stat -c%s "$SO")
+          if [ "$SO_SIZE" -ge 4000000 ]; then
+            echo "::error::android gdash_native .so is $SO_SIZE bytes (tripwire: < 4000000)"
+            exit 1
+          fi
+          ls -lh bin/android/
+
+      # ------------------------------------------------- Android build template
+      - name: Install Android build template (res://android/build)
+        run: |
+          TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+          if [ ! -f "$TPZ_DIR/android_source.zip" ]; then
+            echo "android_source.zip missing from export templates:"; ls -1 "$TPZ_DIR"; exit 1
+          fi
+          rm -rf android android_tmp
+          mkdir -p android_tmp
+          unzip -q -o "$TPZ_DIR/android_source.zip" -d android_tmp
+          # Zip layout varies (files at root vs under a build/ folder); find the
+          # Gradle project root either way.
+          if [ -f android_tmp/build.gradle ] || [ -d android_tmp/app ]; then
+            SRC=android_tmp
+          elif [ -d android_tmp/build ]; then
+            SRC=android_tmp/build
+          elif [ -d android_tmp/android/build ]; then
+            SRC=android_tmp/android/build
+          else
+            echo "Unexpected android_source.zip layout:"; find android_tmp -maxdepth 3 | head -20; exit 1
+          fi
+          mkdir -p android/build android/plugins
+          cp -a "$SRC"/. android/build/
+          # Markers Godot uses to recognise the installed template.
+          echo "${{ env.GODOT_VERSION }}.stable" > android/.build_version
+          echo "${{ env.GODOT_VERSION }}.stable" > android/build/.build_version
+          touch android/build/.gdignore android/plugins/.gdignore
+          chmod +x android/build/gradlew
+          test -f android/build/build.gradle && echo "template installed: $(ls android/build | head -5)"
+
+      - name: Patch app manifest (largeHeap, game category)
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, re, sys
+          manifests = sorted(glob.glob("android/build/**/AndroidManifest.xml", recursive=True))
+          if not manifests:
+              sys.exit("no AndroidManifest.xml found under android/build")
+          for path in manifests:
+              text = open(path, encoding="utf-8").read()
+              if "android:largeHeap" not in text:
+                  new = re.sub(
+                      r"(<application\b[^>]*?)(/?>)",
+                      lambda m: m.group(1) + ' android:largeHeap="true"' + m.group(2),
+                      text, count=1, flags=re.S,
+                  )
+                  if new == text:
+                      sys.exit("found no <application> tag to patch in %s" % path)
+                  text = new
+                  print('android:largeHeap="true" added to', path)
+              else:
+                  print("largeHeap already set:", path)
+              # Declare the game category: Samsung/Android game management
+              # (SemGameManager/Game Booster, lmkd policy) ignores the app
+              # otherwise - device log showed isGamePackage ret=false.
+              if "android:appCategory" not in text:
+                  new = re.sub(
+                      r"(<application\b[^>]*?)(/?>)",
+                      lambda m: m.group(1) + ' android:appCategory="game"' + m.group(2),
+                      text, count=1, flags=re.S,
+                  )
+                  if new != text:
+                      text = new
+                      print('android:appCategory="game" added to', path)
+              open(path, "w", encoding="utf-8").write(text)
+          PYEOF
+
+      # Release exports package libs/release, not libs/debug. The template is a
+      # single-module project whose build.gradle sits at android/build/ (flat)
+      # or at android/build/app/ (nested); a .so placed at libs/release/arm64-v8a/
+      # under that module is packaged by gradle as lib/arm64-v8a/ in the APK.
+      # This fallback is redundant with the exporter's own copy.
+      - name: Drop libgdash_native.android.template_release.arm64.so into gradle release jniLibs
+        run: |
+          set -euo pipefail
+          SO="$PWD/native/bin/android/libgdash_native.android.template_release.arm64.so"
+          test -f "$SO" || { echo "built .so missing at $SO"; exit 1; }
+          if [ -f android/build/app/build.gradle ]; then
+            MODULE="android/build/app"
+          elif [ -f android/build/build.gradle ]; then
+            MODULE="android/build"
+          else
+            echo "cannot locate gradle module build.gradle under android/build:"
+            find android/build -maxdepth 3 -name "build.gradle" | head
+            exit 1
+          fi
+          TARGET="$MODULE/libs/release/arm64-v8a"
+          mkdir -p "$TARGET"
+          cp "$SO" "$TARGET/$(basename "$SO")"
+          echo "dropped $(basename "$SO") into $TARGET"
+          ls -R "$MODULE/libs" | head -20
+
+      # ------------------------------------------------------- Godot project
+      - name: Import project resources
+        run: |
+          chmod +x "$GODOT_BIN"
+          "$GODOT_BIN" --headless --path . --import > godot_import.log 2>&1
+          status=$?
+          tail -n 30 godot_import.log
+          # Script parse errors during import do not fail the import step,
+          # and they name the root failing script before any dependent
+          # cascade appears - always surface them.
+          grep -n "SCRIPT ERROR\|Parse Error\|ERROR:" godot_import.log | head -40 || true
+          exit $status
+
+      # Scripts referenced only as global classes fail through the analyzer's
+      # external-parser cache: dependents print "Could not resolve class X,
+      # because of a parser error" while the actual error in X is never shown.
+      # Force-load every project script so each failing script's own
+      # file:line error lands in this step's log and annotations.
+      - name: GDScript load probe (surface root script errors)
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          # Scene-run shape (same as the smoke test, autoloads up) because a
+          # --script SceneTree probe hung in CI. Hard timeout as a backstop;
+          # success is judged from the log below, because the engine's
+          # shutdown can hang after the probe itself completed cleanly.
+          timeout 240s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/gdscript_probe.tscn \
+            > probe.log 2>&1
+          status=$?
+          set -e
+          cat probe.log
+          if ! grep -q "^PROBE_SUMMARY" probe.log; then
+            # Never finished: real hang or crash before the summary line.
+            tail_details=$(tail -n 40 probe.log || true)
+            tail_details=${tail_details//'%'/'%25'}
+            tail_details=${tail_details//$'\r'/'%0D'}
+            tail_details=${tail_details//$'\n'/'%0A'}
+            echo "::error title=Probe hung or crashed (tail)::${tail_details}"
+            exit 1
+          fi
+          if grep -q "^PROBE FAIL" probe.log; then
+            # The root errors print immediately before each PROBE FAIL line
+            # (a script's own parse/analyze errors print during its load()).
+            context=$(grep -B30 "^PROBE FAIL" probe.log | head -n 55 || true)
+            context=${context//'%'/'%25'}
+            context=${context//$'\r'/'%0D'}
+            context=${context//$'\n'/'%0A'}
+            echo "::error title=Probe root errors (before each FAIL)::${context}"
+            exit 1
+          fi
+          echo "Probe completed clean (engine exit $status; timeout was the backstop)"
+
+      # Replays are stored in the GDR interchange format (MessagePack): a
+      # codec bug would silently eat saved runs or break compatibility with
+      # the GD replay ecosystem. The self-test round-trips real data and
+      # compares against golden bytes produced by an independent
+      # implementation of the format.
+      - name: GDR replay codec self-test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/gdr_selftest.tscn \
+            > gdr_selftest.log 2>&1
+          status=$?
+          set -e
+          cat gdr_selftest.log
+          if grep -nE "Assertion failed|SCRIPT ERROR" gdr_selftest.log; then
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" gdr_selftest.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=GDR self-test script error::${details}"
+            exit 1
+          fi
+          # Success is judged from the summary line, not the engine exit
+          # status: this scene-run engine hangs during shutdown after the
+          # checks have completed cleanly (the load probe and the smoke test
+          # are gated the same way for the same reason), so the timeout is
+          # only a backstop.
+          if ! grep -q "GDR_SELFTEST_SUMMARY.* failed=0$" gdr_selftest.log; then
+            details=$(tail -n 40 gdr_selftest.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=GDR self-test failure (tail 40)::${details}"
+            exit 1
+          fi
+          echo "GDR self-test passed (engine exit $status; timeout was the backstop)"
+
+      # The Amethyst white-beams investigation found a device run where colour
+      # triggers fired 348k times without recolouring a single channel. This
+      # synthetic run exercises the native colour chain end to end (packed 899
+      # records -> advance() crossing -> fade -> ColorChannelData recolour) so
+      # a parse or lookup regression fails here instead of shipping as white
+      # beams. Gated on the summary line like the GDR self-test: the engine
+      # teardown hang is tolerated, the timeout is the backstop.
+      - name: Native colour-trigger chain self-test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/native_color_selftest.tscn \
+            > native_color_selftest.log 2>&1
+          status=$?
+          set -e
+          cat native_color_selftest.log
+          if grep -nE "Assertion failed|SCRIPT ERROR" native_color_selftest.log; then
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" native_color_selftest.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Native colour self-test script error::${details}"
+            exit 1
+          fi
+          if ! grep -q "NATIVE_COLOR_SELFTEST_SUMMARY.* failed=0$" native_color_selftest.log; then
+            details=$(tail -n 40 native_color_selftest.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Native colour self-test failure (tail 40)::${details}"
+            exit 1
+          fi
+          echo "Native colour self-test passed (engine exit $status; timeout was the backstop)"
+
+      # A successful import only proves scripts parse. Exercise both GD artwork
+      # render paths and inspect real viewport pixels so an optimization cannot
+      # ship an APK in which levels load but every object is invisible.
+      - name: Render generated and batched GD artwork smoke test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 90s env GDASH_REQUIRE_NATIVE=1 xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/runtime_visual_smoke_test.tscn \
+            > visual_smoke.log 2>&1
+          status=$?
+          set -e
+          cat visual_smoke.log
+          # A failed GDScript assert only aborts the running function: the
+          # scene keeps processing, still prints its VISUAL_SMOKE marker and
+          # exits 0, so the marker alone never gated the test's asserts (a
+          # broken native blending flip hid behind this for weeks). Any
+          # assertion or script error text must fail the step.
+          if grep -nE "Assertion failed|SCRIPT ERROR" visual_smoke.log; then
+            echo "### Visual smoke assertion failure" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" visual_smoke.log | head -60 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" visual_smoke.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Visual smoke assertion failure::${details}"
+            exit 1
+          fi
+          # The engine's teardown can segfault after the test itself passed
+          # every check (a shutdown-only crash, tracked for a follow-up fix).
+          # Like the probe step, success is judged from the log: the pixel
+          # line below only prints after every assertion and the viewport
+          # capture succeeded, and the test's own failure paths quit(1) or
+          # time out, which still fail here.
+          if { [ "$status" -ne 0 ] && [ "$status" -ne 139 ]; } || ! grep -q "VISUAL_SMOKE size=" visual_smoke.log; then
+            echo "### Visual smoke failure" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            cat visual_smoke.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # Surface the log through check annotations as well; Actions
+            # retains only the first ten annotations from a step and its raw
+            # log blobs are not always retrievable from the sandbox. The
+            # head goes first, in ~40-line chunks: the ROOT script error
+            # appears near the top of the log (startup compilation), while
+            # the old tail-only annotation kept showing nothing but the
+            # cascade of dependents it caused.
+            total_lines=$(wc -l < visual_smoke.log)
+            chunk_lines=40
+            start=1
+            emitted=0
+            while [ "$start" -le "$total_lines" ] && [ "$emitted" -lt 7 ]; do
+              end=$((start + chunk_lines - 1))
+              chunk=$(sed -n "${start},${end}p" visual_smoke.log)
+              chunk=${chunk//'%'/'%25'}
+              chunk=${chunk//$'\r'/'%0D'}
+              chunk=${chunk//$'\n'/'%0A'}
+              echo "::error title=visual_smoke.log lines ${start}-${end}::${chunk}"
+              start=$((end + 1))
+              emitted=$((emitted + 1))
+            done
+            details=$(tail -n 80 visual_smoke.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Visual smoke (tail 80)::${details}"
+            exit 1
+          fi
+          if [ "$status" -eq 139 ]; then
+            # The test passed every check and the engine crashed during
+            # teardown. Keep it visible and capture the crash site for the
+            # follow-up fix instead of blocking the build on it. The capture
+            # is best-effort: the runner images ship with empty apt lists, so
+            # "apt-get install gdb" without an update first exits 100 and
+            # (under set -e) would fail this step - the exact thing the
+            # capture must never do. Every branch below is non-fatal.
+            echo "::warning title=Visual smoke teardown segfault::all checks passed (exit $status); capturing a backtrace"
+            if ! command -v gdb >/dev/null 2>&1; then
+              sudo apt-get update -qq >/dev/null 2>&1 || true
+              sudo apt-get install -y -qq gdb >/dev/null 2>&1 || true
+            fi
+            if command -v gdb >/dev/null 2>&1; then
+              set +e
+              timeout 120s xvfb-run -a gdb -batch -quiet \
+                -ex run -ex "bt 40" \
+                --args "$GODOT_BIN" --path . \
+                --rendering-method gl_compatibility \
+                --audio-driver Dummy \
+                res://tools/runtime_visual_smoke_test.tscn \
+                > smoke_gdb.log 2>&1
+              set -e
+              bt=$(grep -A45 "Program received signal" smoke_gdb.log | head -50 || true)
+              if [ -n "$bt" ]; then
+                bt=${bt//'%'/'%25'}
+                bt=${bt//$'\r'/'%0D'}
+                bt=${bt//$'\n'/'%0A'}
+                echo "::warning title=Teardown segfault backtrace::${bt}"
+                echo "### Visual smoke teardown segfault (test passed)" >> "$GITHUB_STEP_SUMMARY"
+                echo '```text' >> "$GITHUB_STEP_SUMMARY"
+                grep -A45 "Program received signal" smoke_gdb.log | head -50 >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "::warning title=Visual smoke teardown segfault::gdb rerun produced no 'Program received signal' (crash did not reproduce under gdb)"
+              fi
+            else
+              echo "::warning title=Visual smoke teardown segfault::gdb not installable on this runner; backtrace not captured"
+            fi
+          fi
+          # Both gates above passed: the test itself is green regardless of
+          # the engine's exit-time behaviour.
+          exit 0
+
+      # Diagnostic repro for the on-device level-start crash. Never blocks the
+      # APK: a crash here is reported through annotations (with symbolized
+      # native frames) and the build keeps going.
+      - name: Boot Amethyst through the native runtime (device crash repro)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 420s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/amethyst_boot_test.tscn \
+            > amethyst_boot.log 2>&1
+          status=$?
+          set -e
+          if grep -q "handle_crash" amethyst_boot.log; then
+            # Symbolize the gdash_native frames of Godot's crash dump against
+            # the debug-symbol test-host library built in the linux step.
+            {
+              echo ""
+              echo "=== symbolized native frames (debug_symbols build) ==="
+              for off in $(grep -oE "libgdash_native[^ )]*\.so\+0x[0-9a-f]+" amethyst_boot.log | sed 's/.*+//' | sort -u); do
+                addr2line -Cfipe native/bin/linux/libgdash_native.linux.template_debug.x86_64.so "$off" || true
+              done
+            } >> amethyst_boot.log
+          fi
+          cat amethyst_boot.log
+          # Scan-health gate: these ERR_PRINTs mean a native trigger scan is
+          # misbehaving (bad index math, corrupt order table, mid-scan
+          # mutation). The 2026-09-15 touch-scan comparator bug shipped
+          # silently because nothing grepped for them. Never silent again:
+          # error-level annotation even though this step never blocks the APK.
+          if grep -qE "\[gdash_native\] (out-of-range index|corrupt index table|records resized mid-scan)" amethyst_boot.log; then
+            echo "### Native scan errors during Amethyst boot" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "\[gdash_native\] (out-of-range index|corrupt index table|records resized mid-scan)" amethyst_boot.log | head -n 20 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            details=$(grep -E "\[gdash_native\] (out-of-range index|corrupt index table|records resized mid-scan)" amethyst_boot.log | head -n 20)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Native scan errors::${details}"
+            exit 1
+          fi
+          if [ $status -ne 0 ] || { ! grep -q "AMETHYST_BOOT_OK" amethyst_boot.log && ! grep -q "AMETHYST_BOOT_SKIPPED" amethyst_boot.log; }; then
+            echo "### Amethyst boot failure (status $status)" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 100 amethyst_boot.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            details=$(tail -n 100 amethyst_boot.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Amethyst boot::${details}"
+            exit 1
+          fi
+
+      # Level-data report for the missing-glow investigation: where glow
+      # objects and colour-copy channels sit in Amethyst. Downloaded through
+      # the same chain as the boot test; diagnostic only, never blocks the APK.
+      - name: Amethyst glow analysis (level data)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 tools/analyze_amethyst_glow.py > amethyst_glow.log 2>&1 || true
+          cat amethyst_glow.log
+          echo "### Amethyst glow analysis" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          cat amethyst_glow.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # The job log blob is unreachable from some sandboxes; the report is
+          # committed to the branch instead so it is always retrievable via git.
+          if [ -s amethyst_glow.log ]; then
+            mkdir -p reports
+            {
+              echo "# Amethyst glow analysis (level data)"
+              echo
+              echo '```text'
+              cat amethyst_glow.log
+              echo '```'
+            } > reports/amethyst_glow.md
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add reports/amethyst_glow.md
+            git commit -q -m "Amethyst glow analysis report [skip ci]" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}" || true
+          fi
+
+      # If the import-time scan never registered native/bin/gdash_native.gdextension,
+      # the exporter has nothing to attach the .so to (and the exported app's
+      # runtime loader would not know the extension either). This check turns
+      # that into an explicit pass/fail instead of a silent omission.
+      - name: "Check extension_list.cfg lists gdash_native"
+        run: |
+          echo "--- .godot/extension_list.cfg ---"
+          cat .godot/extension_list.cfg 2>/dev/null || echo "(no extension_list.cfg)"
+          echo "--- import log GDExtension/gdash lines ---"
+          grep -in "gdextension\|gdash" godot_import.log || echo "(no matches)"
+          if grep -q "gdash_native" .godot/extension_list.cfg 2>/dev/null; then
+            echo "REGISTERED: gdash_native is in extension_list.cfg"
+          else
+            echo "NOT REGISTERED: gdash_native missing from extension_list.cfg"
+            exit 1
+          fi
+
+      - name: Point Godot at the Android SDK/JDK
+        run: |
+          SET=$(ls "$HOME/.config/godot"/editor_settings-*.tres 2>/dev/null | head -1)
+          if [ -z "$SET" ]; then
+            # Bootstrap once so Godot writes its editor settings file, then find it.
+            "$GODOT_BIN" --headless --editor --quit --path . >/dev/null 2>&1 || true
+            SET=$(ls "$HOME/.config/godot"/editor_settings-*.tres 2>/dev/null | head -1)
+          fi
+          if [ -z "$SET" ]; then
+            mkdir -p "$HOME/.config/godot"
+            SET="$HOME/.config/godot/editor_settings-4.tres"
+            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\n' > "$SET"
+          fi
+          JAVA_HOME_DETECTED="${JAVA_HOME:-$(dirname "$(dirname "$(command -v java)")")}"
+          echo "editor settings: $SET"
+          python3 - "$SET" "$ANDROID_HOME" "$JAVA_HOME_DETECTED" "$HOME/.android/debug.keystore" <<'PYEOF'
+          import sys
+          path, sdk, jdk, keystore = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          values = {
+              "export/android/android_sdk_path": sdk,
+              "export/android/java_sdk_path": jdk,
+              "export/android/debug_keystore": keystore,
+              "export/android/debug_keystore_user": "androiddebugkey",
+              "export/android/debug_keystore_pass": "android",
+              "export/android/release_keystore": keystore,
+              "export/android/release_keystore_user": "androiddebugkey",
+              "export/android/release_keystore_pass": "android",
+          }
+          lines = open(path, encoding="utf-8").read().splitlines()
+          seen = {ln.split("=", 1)[0].strip() for ln in lines if "=" in ln}
+          with open(path, "w", encoding="utf-8") as fh:
+              for key, val in values.items():
+                  if key in seen:
+                      continue
+                  lines.insert(len(lines), '%s = "%s"' % (key, val))
+              fh.write("\n".join(lines) + "\n")
+          print("configured Android SDK/JDK/keystore in", path)
+          PYEOF
+          cat "$SET"
+
+      - name: Export Android release APK (Gradle build)
+        run: |
+          # Same CI debug keystore for both so a sideload can replace the
+          # previous APK. The engine target is still template_release.
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_USER="androiddebugkey"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="android"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/.android/debug.keystore"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="androiddebugkey"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="android"
+          mkdir -p "$(dirname "$APK_PATH")"
+          "$GODOT_BIN" --headless --path . --export-release "Android" "$APK_PATH" > godot_export.log 2>&1
+          status=$?
+          tail -n 80 godot_export.log
+          if [ $status -ne 0 ]; then
+            exit $status
+          fi
+          grep -Fq 'android.arm64.single.release = "./android/libgdash_native.android.template_release.arm64.so"' \
+            native/bin/gdash_native.gdextension || {
+            echo "ERROR: native descriptor is missing the Android release library"
+            exit 1
+          }
+          ls -lh "$APK_PATH"
+
+      # Godot's own bundling path: copy_gradle_so writes the extension library
+      # to <gradle_build>/libs/<debug|release>/<abi>/. If this file is missing,
+      # the exporter skipped the GDExtension (file not exported/typed/loaded),
+      # independently of the jniLibs fallback above.
+      - name: "Check exporter copied libgdash_native.android.template_release.arm64.so into gradle libs"
+        run: |
+          echo "--- libgdash_native.android.template_release.arm64.so under android/build (exporter target) ---"
+          find android/build -name "libgdash_native.android.template_release.arm64.so" 2>/dev/null || true
+          if [ -f android/build/libs/release/arm64-v8a/libgdash_native.android.template_release.arm64.so ]; then
+            echo "EXPORTED: exporter copy present at android/build/libs/release/arm64-v8a/"
+          else
+            echo "ERROR: no .so at android/build/libs/release/arm64-v8a/; the manual jniLibs copy can put bytes in the APK but cannot create Godot's runtime GDExtension resource mapping"
+            exit 1
+          fi
+          echo "--- export log GDExtension/gdash lines ---"
+          grep -in "gdextension\|gdash\|no .* library\|Copying .so" godot_export.log || echo "(no matches)"
+
+      - name: Verify APK is arm64-v8a only and contains gdash_native
+        run: |
+          set -euo pipefail
+          echo "native libs inside APK:"
+          unzip -l "$APK_PATH" | grep -E "lib/" || true
+
+          # Keep the APK single-ABI. export_presets.cfg enables only
+          # architectures/arm64-v8a, but assert the final archive as well so a
+          # future Godot/Gradle template cannot silently add 32-bit or x86
+          # engine libraries and inflate the download.
+          mapfile -t ABIS < <(
+            unzip -Z1 "$APK_PATH" \
+              | sed -n 's#^lib/\([^/]*\)/.*#\1#p' \
+              | sort -u
+          )
+          printf 'packaged ABI: %s\n' "${ABIS[@]:-(none)}"
+          if [ "${#ABIS[@]}" -ne 1 ] || [ "${ABIS[0]}" != "arm64-v8a" ]; then
+            echo "ERROR: APK must contain exactly one ABI: arm64-v8a"
+            exit 1
+          fi
+
+          unzip -t "$APK_PATH" "lib/arm64-v8a/libgdash_native.android.template_release.arm64.so" >/dev/null || {
+            echo "ERROR: libgdash_native.android.template_release.arm64.so is not inside the arm64-v8a APK"
+            exit 1
+          }
+          echo "verified: arm64-v8a only, libgdash_native.android.template_release.arm64.so present"
+          APK_BYTES=$(stat -c%s "$APK_PATH")
+          echo "APK bytes: $APK_BYTES"
+          echo "native lib compression:"
+          unzip -v "$APK_PATH" | awk '/lib\/arm64-v8a\// {print}'
+          # The previous 118 MB APK stored libgodot uncompressed. Compression
+          # is what changes the file the user downloads; a regression back
+          # over 95 MB means the .so files are stored again.
+          if [ "$APK_BYTES" -ge 95000000 ]; then
+            echo "::error::APK is $APK_BYTES bytes (limit 95 MB). Native libraries are probably stored uncompressed."
+            exit 1
+          fi
+          STORED=$(unzip -v "$APK_PATH" | awk '/lib\/arm64-v8a\/.*\.so/ && $2 ~ /Stored/ {c++} END {print c+0}')
+          if [ "$STORED" -ne 0 ]; then
+            echo "::error::arm64 native libraries are stored uncompressed; gradle_build/compress_native_libraries should be true"
+            exit 1
+          fi
+          echo "### APK size" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "$APK_PATH" >> "$GITHUB_STEP_SUMMARY"
+          unzip -v "$APK_PATH" | awk '$1+0 > 1000000 {print}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # -------------------------------------------------------------- Outputs
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-dash-android-debug-${{ github.sha }}
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+
+      - name: Attach APK to release (release* tags only)
+        if: startsWith(github.ref, 'refs/tags/release')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK_PATH }}
+          generate_release_notes: true
+
+      # ------------------------------------------------ Rolling debug release
+      - name: Publish rolling android-debug release
+        # Every successful export refreshes the same prerelease (tag + release
+        # are recreated so the tag always points at this build and the
+        # download URL stays constant). The release* tag path above is a
+        # separate, stable release and is untouched.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="android-debug"
+          # A unique asset name prevents browsers/CDNs from serving an older
+          # rolling APK after the release tag is recreated.
+          APK_NAME="godot-dash-android-debug-${GITHUB_SHA::8}.apk"
+          cp "$APK_PATH" "$APK_NAME"
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "Automatic release build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
+            echo ""
+            echo "Sideload this APK for device testing. It is a release export (faster than the old debug build) signed with the CI debug keystore so it can replace the previous install. Native libraries are compressed in the APK and extracted once at install; frame rate is unchanged. largeHeap stays enabled."
+            echo ""
+            echo "APK size: $(stat -c%s "$APK_PATH") bytes."
+            echo ""
+            echo "Commit-specific download URL (avoids stale APK caches):"
+            echo "\`https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_NAME}\`"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$NOTES_FILE"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag >/dev/null 2>&1 || true
+          fi
+          gh release create "$RELEASE_TAG" "$APK_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Android debug APK — $GITHUB_REF_NAME ${GITHUB_SHA::8}" \
+            --notes-file "$NOTES_FILE" \
+            --prerelease
+          rm -f "$NOTES_FILE" "$APK_NAME"
+          echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"

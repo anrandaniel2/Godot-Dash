@@ -1,0 +1,68 @@
+[gd_scene format=3 uid="uid://33mc0xa2wc8i"]
+
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_i23mg"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="2_knuwr"]
+[ext_resource type="Texture2D" uid="uid://8d3ira7ek1oc" path="res://assets/textures/orbs/SpiderOrb.svg" id="3_mfdso"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="3_phfll"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="4_6nllf"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="4_dxgrr"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="5_juhc3"]
+[ext_resource type="Script" uid="uid://bc0koikb5w121" path="res://src/interactables/public_components/SpiderDashComponent.gd" id="6_cpvky"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="7_1nufh"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="8_7bxjl"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="9_1nwew"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[node name="SpiderOrb" type="Area2D" unique_id=1746374702]
+collision_layer = 8
+script = ExtResource("1_i23mg")
+
+[node name="ParticleEmitter" parent="." unique_id=513963022 instance=ExtResource("2_knuwr")]
+modulate = Color(0.607843, 0.176471, 0.905882, 1)
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=1874468710]
+script = ExtResource("3_phfll")
+
+[node name="DashOrbPreview" type="Line2D" parent="." unique_id=1431081197]
+points = PackedVector2Array(0, -64, 0, -1152)
+width = 4.0
+default_color = Color(0.8980392, 0.33333334, 1, 1)
+end_cap_mode = 2
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="DashOrbPreview" unique_id=969756888]
+script = ExtResource("4_6nllf")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="Sprite" type="Sprite2D" parent="." unique_id=554710165]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("3_mfdso")
+
+[node name="MusicScale" type="Node" parent="Sprite" unique_id=287320056]
+script = ExtResource("3_phfll")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=103753765]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=277444675]
+script = ExtResource("4_dxgrr")
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=1398901236]
+script = ExtResource("5_juhc3")
+
+[node name="PulseScale" type="Node" parent="." unique_id=1215857872 node_paths=PackedStringArray("sprite")]
+script = ExtResource("8_7bxjl")
+sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="SpiderDashComponent" type="Node" parent="." unique_id=661361330]
+script = ExtResource("6_cpvky")
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=870633218]
+script = ExtResource("7_1nufh")
+
+[node name="EditorSelectionCollider" parent="." unique_id=402740760 instance=ExtResource("9_1nwew")]
+type = 8

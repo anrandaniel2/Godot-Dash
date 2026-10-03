@@ -1,0 +1,76 @@
+[gd_scene format=3 uid="uid://bxutnqoa41uso"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_dneit"]
+[ext_resource type="Texture2D" uid="uid://dr4kiuj8mqba3" path="res://assets/textures/portals/gamemode_portals/robot_portal/RobotPortalBack.png" id="2_o3b6s"]
+[ext_resource type="Material" uid="uid://t4wcwy036o4d" path="res://resources/PulseWhiteMaterial.tres" id="3_dneit"]
+[ext_resource type="Texture2D" uid="uid://bcdstukpupgb5" path="res://assets/textures/portals/gamemode_portals/robot_portal/RobotPortalFront.png" id="3_lpi4s"]
+[ext_resource type="Texture2D" uid="uid://cpapf6mc3g8cc" path="res://assets/textures/portals/gamemode_portals/robot_portal/RobotPortalIndicatorBG.png" id="4_jvm78"]
+[ext_resource type="Script" uid="uid://d4icbghdufton" path="res://src/LayeredSprite.gd" id="4_mcpef"]
+[ext_resource type="Texture2D" uid="uid://bxfupyv0j3hpi" path="res://assets/textures/portals/gamemode_portals/robot_portal/RobotPortalIndicatorIcon.png" id="5_wquqr"]
+[ext_resource type="PackedScene" uid="uid://d23j4fpbpdrv4" path="res://scenes/particle_emitter_presets/PortalParticles.tscn" id="6_he45p"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="8_x1q1h"]
+[ext_resource type="Script" uid="uid://ch7r67xegri61" path="res://src/interactables/public_components/GamemodeChangerComponent.gd" id="9_rtwxu"]
+[ext_resource type="Script" uid="uid://n8ym1w4r5ke" path="res://src/interactables/private_components/PulseWhite.gd" id="11_jb6b4"]
+[ext_resource type="Script" uid="uid://dh8clxh0ec2bd" path="res://src/interactables/public_components/GroundMoverComponent.gd" id="12_kxch4"]
+[ext_resource type="Script" uid="uid://cd3jqi4il3x2p" path="res://src/interactables/public_components/TextureRotationPinComponent.gd" id="13_c3ums"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
+size = Vector2(128, 384)
+
+[node name="RobotPortal" type="Area2D" unique_id=1938189375]
+collision_layer = 8
+script = ExtResource("1_dneit")
+metadata/_edit_group_ = true
+
+[node name="ParticleEmitter" parent="." unique_id=2078371901 instance=ExtResource("6_he45p")]
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=890024186]
+shape = SubResource("RectangleShape2D_cghk8")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprites" type="Node2D" parent="." unique_id=581868705]
+material = ExtResource("3_dneit")
+script = ExtResource("4_mcpef")
+
+[node name="PortalBack" type="Sprite2D" parent="Sprites" unique_id=556584428]
+z_index = -1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("2_o3b6s")
+
+[node name="PortalFront" type="Sprite2D" parent="Sprites" unique_id=1654798642]
+z_index = 1
+use_parent_material = true
+scale = Vector2(1.1, 1.1)
+texture = ExtResource("3_lpi4s")
+
+[node name="PortalIndicatorBg" type="Sprite2D" parent="Sprites" unique_id=865667284]
+z_index = 1
+use_parent_material = true
+position = Vector2(48, 0)
+texture = ExtResource("4_jvm78")
+
+[node name="IndicatorIcon" type="Sprite2D" parent="Sprites" unique_id=1655505029]
+z_index = 1
+use_parent_material = true
+position = Vector2(44, 0)
+texture = ExtResource("5_wquqr")
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=1642881712]
+script = ExtResource("8_x1q1h")
+
+[node name="GamemodeChangerComponent" type="Node" parent="." unique_id=374240220]
+script = ExtResource("9_rtwxu")
+_gamemode = 5
+
+[node name="PulseWhite" type="Node" parent="." unique_id=950623867 node_paths=PackedStringArray("pulse_target")]
+script = ExtResource("11_jb6b4")
+pulse_target = NodePath("../Sprites")
+metadata/_custom_type_script = "uid://n8ym1w4r5ke"
+
+[node name="GroundMoverComponent" type="Node" parent="." unique_id=1185657941]
+script = ExtResource("12_kxch4")
+
+[node name="TextureRotationPin" type="Node" parent="." unique_id=738803206 node_paths=PackedStringArray("pinned")]
+script = ExtResource("13_c3ums")
+pinned = NodePath("../Sprites/IndicatorIcon")

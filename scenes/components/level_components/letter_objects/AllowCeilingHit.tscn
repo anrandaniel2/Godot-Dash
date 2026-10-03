@@ -1,0 +1,46 @@
+[gd_scene format=3 uid="uid://dv58wkmaa8a8j"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_0fegu"]
+[ext_resource type="Script" uid="uid://sv2oa8nvx3ob" path="res://addons/nine_patch_sprite_2d/nine_patch_sprite_2d.gd" id="2_f3s5q"]
+[ext_resource type="Texture2D" uid="uid://bryaobm17acnu" path="res://assets/textures/triggers/AllowCeilingHit.svg" id="3_0fegu"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="4_85l4o"]
+[ext_resource type="Script" uid="uid://baiq5ve1kkxb7" path="res://src/interactables/public_components/AllowCeilingHitComponent.gd" id="4_f3s5q"]
+[ext_resource type="Script" uid="uid://cjdpf2wcxjfb1" path="res://src/NinePatchSprite2DAbsoluteSize.gd" id="5_43du4"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="6_cfkdj"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_f3s5q"]
+size = Vector2(153.6, 153.6)
+
+[node name="AllowCeilingHit" type="Area2D" unique_id=1381040158]
+script = ExtResource("1_0fegu")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=925477113]
+shape = SubResource("RectangleShape2D_f3s5q")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprite" type="Node2D" parent="." unique_id=2138579141]
+scale = Vector2(0.25, 0.25)
+script = ExtResource("2_f3s5q")
+texture = ExtResource("3_0fegu")
+size = Vector2(512, 512)
+patch_margin_left = 36.0
+patch_margin_top = 36.0
+patch_margin_right = 36.0
+patch_margin_bottom = 36.0
+metadata/_custom_type_script = "uid://sv2oa8nvx3ob"
+
+[node name="AllowCeilingHitComponent" type="Node" parent="." unique_id=1371932159]
+script = ExtResource("4_f3s5q")
+metadata/_custom_type_script = "uid://baiq5ve1kkxb7"
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="." unique_id=1625505204]
+script = ExtResource("4_85l4o")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="EditorSelectionCollider" parent="." unique_id=492872355 instance=ExtResource("6_cfkdj")]
+type = 9
+
+[node name="NinePatchSprite2DAbsoluteSize" type="Node" parent="." unique_id=491368610 node_paths=PackedStringArray("nine_patch_sprite")]
+script = ExtResource("5_43du4")
+nine_patch_sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://cjdpf2wcxjfb1"

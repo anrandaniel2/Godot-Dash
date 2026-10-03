@@ -1,0 +1,15 @@
+[gd_scene format=3 uid="uid://cnru264bpjwxo"]
+
+[ext_resource type="Script" uid="uid://n8jt8c5qd8b8" path="res://src/editor/EditorSelectionCollider.gd" id="1_f8tha"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jsb18"]
+size = Vector2(128, 128)
+
+[node name="EditorSelectionCollider" type="Area2D" unique_id=81707223]
+collision_layer = 256
+collision_mask = 128
+script = ExtResource("1_f8tha")
+
+[node name="EditorSelectionHitbox" type="CollisionShape2D" parent="." unique_id=2103033435]
+shape = SubResource("RectangleShape2D_jsb18")
+debug_color = Color(0, 0.6, 0.7, 0)

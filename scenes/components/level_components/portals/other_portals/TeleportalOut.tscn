@@ -1,0 +1,33 @@
+[gd_scene format=3 uid="uid://ckrakyci0r2eg"]
+
+[ext_resource type="Script" uid="uid://d4icbghdufton" path="res://src/LayeredSprite.gd" id="2_0chxq"]
+[ext_resource type="PackedScene" uid="uid://d23j4fpbpdrv4" path="res://scenes/particle_emitter_presets/PortalParticles.tscn" id="3_4gkp4"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="5_0chxq"]
+[ext_resource type="Texture2D" uid="uid://co0lkhp85o332" path="res://assets/textures/portals/other_portals/teleportal_out/TeleportalOutBack.png" id="5_wyoah"]
+[ext_resource type="Texture2D" uid="uid://cjen3j6at6ei" path="res://assets/textures/portals/other_portals/teleportal_out/TeleportalOutFront.png" id="6_p5kb6"]
+
+[node name="TeleportalOut" type="Node2D" unique_id=1961688401]
+
+[node name="ParticleEmitter" parent="." unique_id=953476137 instance=ExtResource("3_4gkp4")]
+modulate = Color(1, 0.74902, 0, 1)
+rotation = -3.14159
+scale = Vector2(1, -1)
+
+[node name="Sprites" type="Node2D" parent="." unique_id=579825277]
+script = ExtResource("2_0chxq")
+
+[node name="TeleportalOutBack" type="Sprite2D" parent="Sprites" unique_id=1687518377]
+z_index = -1
+use_parent_material = true
+texture = ExtResource("5_wyoah")
+flip_h = true
+
+[node name="TeleportalOutFront" type="Sprite2D" parent="Sprites" unique_id=434309449]
+z_index = 1
+use_parent_material = true
+texture = ExtResource("6_p5kb6")
+flip_h = true
+
+[node name="EditorSelectionCollider" parent="." unique_id=416729878 instance=ExtResource("5_0chxq")]
+scale = Vector2(1, 3)
+type = 8

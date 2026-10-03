@@ -1,0 +1,83 @@
+[gd_scene format=3 uid="uid://bbcetmg5ilsc1"]
+
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_h1cfv"]
+[ext_resource type="Texture2D" uid="uid://bifer0ndxb2i0" path="res://assets/textures/orbs/TeleportationOrbOutline.svg" id="2_dyh4w"]
+[ext_resource type="PackedScene" uid="uid://l2ofoyvoxbr2" path="res://scenes/components/game_components/TargetLink.tscn" id="2_f50c8"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="3_8pjrs"]
+[ext_resource type="Texture2D" uid="uid://8pxeolk4r1gm" path="res://assets/textures/orbs/TeleportationOrbFill.svg" id="3_xuxpc"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="4_qsfvp"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="6_g47p7"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="7_l85uw"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="9_38eih"]
+[ext_resource type="Script" uid="uid://i73oidoqs007" path="res://src/interactables/public_components/TeleportComponent.gd" id="9_dm5qn"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="9_ktqww"]
+[ext_resource type="Script" uid="uid://b1h4lmrngdiim" path="res://src/interactables/public_components/TargetObjectComponent.gd" id="9_rbnha"]
+[ext_resource type="Script" uid="uid://b0qdkfpjncyhk" path="res://src/interactables/private_components/VariableFillColor.gd" id="10_yqox7"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="13_6b5wy"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[node name="TeleportOrb" type="Area2D" unique_id=1717799205]
+collision_layer = 8
+script = ExtResource("1_h1cfv")
+metadata/_edit_group_ = true
+
+[node name="TargetLink" parent="." unique_id=1210825297 instance=ExtResource("2_f50c8")]
+
+[node name="ParticleEmitter" parent="." unique_id=468554824 instance=ExtResource("3_8pjrs")]
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=1090034794]
+script = ExtResource("4_qsfvp")
+
+[node name="Base" type="Sprite2D" parent="." unique_id=292040091]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("2_dyh4w")
+
+[node name="MusicScale" type="Node" parent="Base" unique_id=691403490]
+script = ExtResource("4_qsfvp")
+
+[node name="Fill" type="Sprite2D" parent="." unique_id=177072667]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("3_xuxpc")
+
+[node name="MusicScale" type="Node" parent="Fill" unique_id=1735637637]
+script = ExtResource("4_qsfvp")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=936707369]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=1835002822]
+script = ExtResource("6_g47p7")
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=1328445703]
+script = ExtResource("7_l85uw")
+
+[node name="PulseScaleBase" type="Node" parent="." unique_id=1848149279 node_paths=PackedStringArray("sprite")]
+script = ExtResource("9_38eih")
+sprite = NodePath("../Base")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="PulseScaleFill" type="Node" parent="." unique_id=115604273 node_paths=PackedStringArray("sprite")]
+script = ExtResource("9_38eih")
+sprite = NodePath("../Fill")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="TargetObjectComponent" type="Node" parent="." unique_id=1492019242]
+script = ExtResource("9_rbnha")
+metadata/_custom_type_script = "uid://b1h4lmrngdiim"
+
+[node name="TeleportComponent" type="Node" parent="." unique_id=227343715]
+script = ExtResource("9_dm5qn")
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=317427340]
+script = ExtResource("9_ktqww")
+
+[node name="Detail" type="Node2D" parent="." unique_id=917850366]
+script = ExtResource("10_yqox7")
+metadata/_custom_type_script = "uid://b0qdkfpjncyhk"
+
+[node name="EditorSelectionCollider" parent="." unique_id=2055149069 instance=ExtResource("13_6b5wy")]
+type = 8

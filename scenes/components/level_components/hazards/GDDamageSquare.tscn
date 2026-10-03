@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://dq4sorjhtnbj3"]
+
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="1_dmg"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_dmg"]
+size = Vector2(130, 130)
+
+[node name="GDDamageSquare" type="Area2D"]
+collision_layer = 4
+
+[node name="Hitbox" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_dmg")
+debug_color = Color(0.960784, 0, 0, 0)
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("1_dmg")]
+type = 1

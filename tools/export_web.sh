@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Exports the Godot project for the Web (HTML5) platform.
+# Options configured in export_presets.cfg:
+#   - Multi-threading enabled (variant/thread_support=true)
+#   - PWA Cross-Origin Isolation headers enabled
+#   - Draws at the browser resolution (window/stretch/mode=canvas_items, no .web override)
+#   - WebGPU via the hogdot 4.7.2 editor and an unstripped threaded dlink
+#     template. The published hogdot web zips omit Line2D, physics, and MP3.
+#     Official Godot will export WebGL and is not the shipping web build.
+#
+# Online level/music downloads need a CORS relay when the build is hosted
+# somewhere other than localhost: see the "Web (HTML5) builds" section of the
+# README, tools/web_relay_worker.js (deployable Cloudflare Worker) and
+# tools/serve_web.py (local server with the same relay on /cors-proxy).
+#
+# Usage: ./tools/export_web.sh [godot_binary] [output_dir]
+
+GODOT_BIN="${1:-godot}"
+OUTPUT_DIR="${2:-export/Web}"
+OUTPUT_HTML="${OUTPUT_DIR}/index.html"
+
+mkdir -p "$OUTPUT_DIR"
+
+echo "=== Exporting Godot Dash Web HTML5 Build ==="
+echo "Godot binary : $GODOT_BIN"
+echo "Output HTML  : $OUTPUT_HTML"
+
+"$GODOT_BIN" --headless --export-release "Web" "$OUTPUT_HTML" || \
+"$GODOT_BIN" --headless --export-debug "Web" "$OUTPUT_HTML"
+
+echo "=== Export complete ==="
+ls -lh "$OUTPUT_DIR"

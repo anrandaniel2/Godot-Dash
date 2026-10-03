@@ -1,0 +1,45 @@
+[gd_scene format=3 uid="uid://fo7vbjwc7r60"]
+
+[ext_resource type="Script" uid="uid://rt6vy5mae3if" path="res://src/interactables/TriggerInteractable.gd" id="1_faige"]
+[ext_resource type="Texture2D" uid="uid://kvlnc2ofgvcs" path="res://assets/textures/triggers/StopHeldJump.svg" id="2_faige"]
+[ext_resource type="Script" uid="uid://sv2oa8nvx3ob" path="res://addons/nine_patch_sprite_2d/nine_patch_sprite_2d.gd" id="2_nbiyw"]
+[ext_resource type="Script" uid="uid://dkj26fjk1w4gq" path="res://src/interactables/public_components/StopHeldJumpComponent.gd" id="4_7pcgp"]
+[ext_resource type="Script" uid="uid://b27xonb0bpa1d" path="res://src/attributes/HiddenOutsideEditorAttribute.gd" id="4_8kgnb"]
+[ext_resource type="Script" uid="uid://cjdpf2wcxjfb1" path="res://src/NinePatchSprite2DAbsoluteSize.gd" id="5_8kgnb"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="7_1acla"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1acla"]
+size = Vector2(153.6, 153.6)
+
+[node name="StopJump" type="Area2D" unique_id=242223151]
+script = ExtResource("1_faige")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=158565791]
+shape = SubResource("RectangleShape2D_1acla")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="Sprite" type="Node2D" parent="." unique_id=1738198465]
+scale = Vector2(0.25, 0.25)
+script = ExtResource("2_nbiyw")
+texture = ExtResource("2_faige")
+size = Vector2(512, 512)
+patch_margin_left = 36.0
+patch_margin_top = 36.0
+patch_margin_right = 36.0
+patch_margin_bottom = 36.0
+metadata/_custom_type_script = "uid://sv2oa8nvx3ob"
+
+[node name="StopHeldJumpComponent" type="Node" parent="." unique_id=1870238006]
+script = ExtResource("4_7pcgp")
+
+[node name="HiddenOutsideEditorAttribute" type="Node" parent="." unique_id=631558955]
+script = ExtResource("4_8kgnb")
+metadata/_custom_type_script = "uid://b27xonb0bpa1d"
+
+[node name="NinePatchSprite2DAbsoluteSize" type="Node" parent="." unique_id=1566862542 node_paths=PackedStringArray("nine_patch_sprite")]
+script = ExtResource("5_8kgnb")
+nine_patch_sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://cjdpf2wcxjfb1"
+
+[node name="EditorSelectionCollider" parent="." unique_id=1243186001 instance=ExtResource("7_1acla")]
+type = 9

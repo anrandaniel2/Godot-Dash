@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://b4vh26wn3qq40"]
+
+[ext_resource type="Script" uid="uid://dxxcbi05qwalg" path="res://src/editor/editor_panels/InteractableEditor.gd" id="1_vj0e3"]
+
+[node name="InteractableEditor" type="VBoxContainer" unique_id=35415047 node_paths=PackedStringArray("components_root", "separator", "markers_root", "object_name")]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_vj0e3")
+components_root = NodePath("Components")
+separator = NodePath("HSeparator")
+markers_root = NodePath("Markers")
+object_name = NodePath("Name")
+
+[node name="Name" type="LineEdit" parent="." unique_id=935476263]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+mouse_filter = 1
+theme_type_variation = &"PaddedLineEdit"
+placeholder_text = "Name"
+alignment = 1
+
+[node name="Components" type="VBoxContainer" parent="." unique_id=1571472401]
+layout_mode = 2
+
+[node name="HSeparator" type="HSeparator" parent="." unique_id=362664134]
+layout_mode = 2
+
+[node name="Markers" type="VBoxContainer" parent="." unique_id=1006832504]
+layout_mode = 2

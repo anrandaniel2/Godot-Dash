@@ -1,0 +1,22 @@
+[gd_scene format=3 uid="uid://calhypvupvj4m"]
+
+[ext_resource type="Texture2D" uid="uid://djlnfy6mugjwc" path="res://assets/textures/hazards/spike/normal/RegularSpikeNormal.svg" id="1_yfgdv"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="2_l6f50"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_hu62t"]
+size = Vector2(20, 31)
+
+[node name="Spike" type="Area2D" unique_id=206659028]
+collision_layer = 4
+
+[node name="RegularSpike01" type="Sprite2D" parent="." unique_id=2047067139]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("1_yfgdv")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1588948432]
+position = Vector2(0, 27.5)
+shape = SubResource("RectangleShape2D_hu62t")
+debug_color = Color(0.960784, 0, 0, 0)
+
+[node name="EditorSelectionCollider" parent="." unique_id=398439975 instance=ExtResource("2_l6f50")]
+type = 1

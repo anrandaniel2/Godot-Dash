@@ -1,0 +1,5470 @@
+// Native hot-path kernels for Godot Dash's large-level pipeline.
+//
+// Godot-facing orchestration intentionally remains callable from GDScript so
+// editor builds without this optional GDExtension keep working. Android uses
+// these C++ kernels for compressed GMD payloads, the per-object GD property
+// parser, decoration ordering/bucketing, and spatial range calculations.
+
+#include <godot_cpp/classes/camera2d.hpp>
+#include <godot_cpp/classes/canvas_item.hpp>
+#include <godot_cpp/classes/canvas_item_material.hpp>
+#include <godot_cpp/classes/canvas_layer.hpp>
+#include <godot_cpp/classes/collision_shape2d.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/fast_noise_lite.hpp>
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/shape2d.hpp>
+#include <godot_cpp/classes/marshalls.hpp>
+#include <godot_cpp/classes/node.hpp>
+#include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
+#include <godot_cpp/classes/script.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/classes/time.hpp>
+#include <godot_cpp/classes/viewport.hpp>
+#include <godot_cpp/classes/window.hpp>
+#include <godot_cpp/classes/worker_thread_pool.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/defs.hpp>
+#include <godot_cpp/core/error_macros.hpp>
+#include <godot_cpp/core/object.hpp>
+#include <godot_cpp/core/math.hpp>
+#include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_color_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_int64_array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
+
+#include <godot_cpp/templates/hash_map.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <initializer_list>
+#include <iterator>
+#include <map>
+#include <numeric>
+#include <set>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "gravity_portal.h"
+
+namespace godot {
+
+// ---------------------------------------------------------------------------
+// Native trigger effects.
+//
+// Every Geometry Dash trigger family this engine understands runs entirely in
+// C++ once its record is registered: properties are parsed into a compact
+// effect struct at load time, eased effects live in a small fade table ticked
+// with the physics clock, and changes are applied through direct engine calls
+// (transforms, modulate, process mode, ColorChannelData, camera, time scale).
+// No GDScript and no per-trigger scene nodes execute for packed records, which
+// is what keeps 5000-trigger effect levels playable. Records whose family has
+// no native behaviour still emit the Interactable signal so scene-backed
+// families (camera static, edge, end level) keep their components.
+// ---------------------------------------------------------------------------
+
+// Geometry Dash's editor grid is 30 units per cell; Godot Dash renders cells
+// 128 pixels wide with +Y pointing down, hence the negated Y conversion.
+static constexpr double GD_CELL_SIZE = 30.0;
+static constexpr double ENGINE_CELL_SIZE = 128.0;
+static constexpr double CELLS_TO_PX_X = ENGINE_CELL_SIZE / GD_CELL_SIZE;
+static constexpr double CELLS_TO_PX_Y = -ENGINE_CELL_SIZE / GD_CELL_SIZE;
+// PlayerCamera.DEFAULT_ZOOM; GD camera zoom percentages are relative to it.
+static constexpr double PLAYER_CAMERA_DEFAULT_ZOOM = 0.8;
+// A touch trigger's hitbox spans one GD cell, as does the player's icon
+// hitbox: their centres overlap while both axes are within one cell.
+static constexpr double TOUCH_HALF_EXTENT = ENGINE_CELL_SIZE;
+// NOTE: no godot-cpp String/StringName may be constructed in a static
+// initializer - the extension interface is only bound after the library is
+// loaded - so every constant below is spelled out at its use site.
+
+enum class TriggerEffectKind : int32_t {
+	NONE = 0,      // registered, spawnable, but no behaviour (matches the inert generic families)
+	MOVE,          // 901 Move
+	ROTATE,        // 1346 Rotate
+	SCALE,         // 2067 Scale
+	ALPHA,         // 1007 Alpha
+	TOGGLE,        // 1049 Toggle
+	COLOR,         // 899 Color
+	PULSE,         // 1006 Pulse (colour channel targets)
+	SPAWN,         // 1268 Spawn
+	STOP,          // 1616 Stop (cancel pending spawns for a group)
+	HIDE,          // 1612 Hide Player
+	SHOW,          // 1613 Show Player
+	TIMEWARP,      // 1935 Timewarp
+	CAMERA_ZOOM,   // 1913 Zoom Camera
+	CAMERA_OFFSET, // 1916 Offset Camera
+	CAMERA_ROTATE, // 2015 Rotate Camera
+	SHAKE,         // 1520 Shake
+	TELEPORT,      // 3022 Teleport
+	SHADER_GRAYSCALE,   // 2919 Grayscale
+	SHADER_SEPIA,       // 2920 Sepia
+	SHADER_LENS_CIRCLE, // 2913 Lens Circle
+	SHADER_INVERT_COLOR,// 2921 Invert Color
+	UI,                 // 3613 UI Trigger
+	SFX,                // 3602 SFX Trigger
+	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
+};
+
+// Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
+enum class UIRef : int32_t {
+	DEFAULT = 0,
+	AUTO_X = 1,
+	CENTER_X = 2,
+	LEFT = 3,
+	RIGHT = 4,
+	AUTO_Y = 5,
+	CENTER_Y = 6,
+	BOTTOM = 7,
+	TOP = 8,
+};
+
+// GD easing index to curve, mirroring GMDConverter._easing_from_property:
+// 0 linear; 1-3 quad; 4-6 elastic; 7-9 bounce; 10-12 expo; 13-15 sine;
+// 16-18 back - each family as in-out / in / out. Unknown indices are linear.
+static double ease_bounce_out(double t) {
+	const double c1 = 7.5625;
+	const double c2 = 2.75;
+	if (t < 1.0 / c2) return c1 * t * t;
+	if (t < 2.0 / c2) {
+		const double x = t - 1.5 / c2;
+		return c1 * x * x + 0.75;
+	}
+	if (t < 2.5 / c2) {
+		const double x = t - 2.25 / c2;
+		return c1 * x * x + 0.9375;
+	}
+	const double x = t - 2.625 / c2;
+	return c1 * x * x + 0.984375;
+}
+static double ease_weight(int gd_easing, double t) {
+	if (gd_easing <= 0 || gd_easing > 18) return Math::clamp(t, 0.0, 1.0);
+	t = Math::clamp(t, 0.0, 1.0);
+	const int family = (gd_easing - 1) / 3; // 0 quad .. 5 back
+	const int mode = (gd_easing - 1) % 3;   // 0 in-out, 1 in, 2 out
+	const bool in_out = mode == 0;
+	const bool ease_in = mode != 2;
+	switch (family) {
+		case 0: { // quad
+			if (in_out) return t < 0.5 ? 2.0 * t * t : 1.0 - Math::pow(-2.0 * t + 2.0, 2.0) / 2.0;
+			return ease_in ? t * t : 1.0 - Math::pow(1.0 - t, 2.0);
+		}
+		case 1: { // elastic
+			const double c4 = (2.0 * Math::PI) / 3.0;
+			if (t == 0.0 || t == 1.0) return t;
+			if (in_out) {
+				return t < 0.5
+					? -Math::pow(2.0, 20.0 * t - 10.0) * Math::sin((20.0 * t - 11.125) * c4) / 2.0
+					: Math::pow(2.0, -20.0 * t + 10.0) * Math::sin((20.0 * t - 11.125) * c4) / 2.0 + 1.0;
+			}
+			return ease_in
+				? -Math::pow(2.0, 10.0 * t - 10.0) * Math::sin((10.0 * t - 10.75) * c4)
+				: Math::pow(2.0, -10.0 * t) * Math::sin((10.0 * t - 0.75) * c4) + 1.0;
+		}
+		case 2: { // bounce
+			if (in_out) {
+				return t < 0.5
+					? (1.0 - ease_bounce_out(1.0 - 2.0 * t)) / 2.0
+					: (1.0 + ease_bounce_out(2.0 * t - 1.0)) / 2.0;
+			}
+			return ease_in ? 1.0 - ease_bounce_out(1.0 - t) : ease_bounce_out(t);
+		}
+		case 3: { // expo
+			if (t == 0.0) return 0.0;
+			if (t == 1.0) return 1.0;
+			if (in_out) {
+				return t < 0.5
+					? Math::pow(2.0, 20.0 * t - 10.0) / 2.0
+					: (2.0 - Math::pow(2.0, -20.0 * t + 10.0)) / 2.0;
+			}
+			return ease_in ? Math::pow(2.0, 10.0 * t - 10.0) : 1.0 - Math::pow(2.0, -10.0 * t);
+		}
+		case 4: { // sine
+			if (in_out) return -Math::cos(t * Math::PI) * 0.5 + 0.5;
+			return ease_in ? 1.0 - Math::cos(t * Math::PI / 2.0) : Math::sin(t * Math::PI / 2.0);
+		}
+		default: { // back
+			double c1 = 1.70158;
+			const double c3 = c1 + 1.0;
+			if (in_out) {
+				c1 *= 1.525;
+				return t < 0.5
+					? (Math::pow(2.0 * t, 2.0) * ((c1 + 1.0) * 2.0 * t - c1)) / 2.0
+					: (Math::pow(2.0 * t - 2.0, 2.0) * ((c1 + 1.0) * (2.0 * t - 2.0) + c1) + 2.0) / 2.0;
+			}
+			return ease_in
+				? c3 * t * t * t - c1 * t * t
+				: 1.0 + c3 * Math::pow(t - 1.0, 3.0) + c1 * Math::pow(t - 1.0, 2.0);
+		}
+	}
+}
+
+// Property readers. GD serialises every value as a string, including empty
+// ones that must round-trip untouched (see the converter's lossless pairs).
+static double prop_float(const Dictionary &properties, const char *key, double fallback) {
+	const Variant value = properties.get(key, Variant());
+	switch (value.get_type()) {
+		case Variant::NIL:
+			return fallback;
+		case Variant::STRING:
+			return String(value).to_float();
+		default:
+			return static_cast<double>(value);
+	}
+}
+static int64_t prop_int(const Dictionary &properties, const char *key, int64_t fallback) {
+	const Variant value = properties.get(key, Variant());
+	switch (value.get_type()) {
+		case Variant::NIL:
+			return fallback;
+		case Variant::STRING: {
+			const String text = String(value).strip_edges();
+			return text.is_valid_int() ? text.to_int() : fallback;
+		}
+		default:
+			return static_cast<int64_t>(value);
+	}
+}
+
+static bool prop_bool(const Dictionary &properties, const char *key, bool fallback = false) {
+	const Variant value = properties.get(key, Variant());
+	switch (value.get_type()) {
+		case Variant::NIL: return fallback;
+		case Variant::BOOL: return static_cast<bool>(value);
+		case Variant::STRING: {
+			const String text = String(value).strip_edges();
+			return text == "1" || text.to_lower() == "true";
+		}
+		default: return static_cast<int64_t>(value) != 0;
+	}
+}
+
+// A trigger's effect, parsed once at registration. Field meanings follow the
+// converter's component arms so native execution is behaviour-identical.
+struct TriggerEffect {
+	TriggerEffectKind kind = TriggerEffectKind::NONE;
+	double duration = 0.0;       // key 10
+	int32_t easing = 0;          // key 30
+	bool pulse_envelope = false; // any of keys 45/46/47 present (pulse style)
+	double fade_in = 0.0;        // key 45
+	double hold = 0.0;           // key 46
+	double fade_out = 0.0;       // key 47
+	std::vector<String> target_groups; // key 51, "g_N" names (dot/comma lists)
+	String center_group;               // key 71, "g_N" (rotate/scale/teleport centre)
+	Vector2 move_px;             // 901: keys 28/29 in pixels
+	double degrees = 0.0;        // 1346: keys 68 + 69*360
+	bool allow_self_rotation = true; // 1346: key 70 != "1"
+	Vector2 scale_factor = Vector2(1.0, 1.0); // 2067: keys 150/151 (multiplied)
+	double alpha = 1.0;          // 1007: key 35
+	bool toggle_on = false;      // 1049: key 56 == "1"
+	int32_t target_channel = -1; // 899: key 23; 1006: key 51 when 52 != "1"
+	bool channel_is_level_color = false; // target is the level's own bg/ground/line
+	Color color = Color(1.0f, 1.0f, 1.0f);
+	bool has_color = false;      // 899/1006: any of keys 7/8/9 present
+	int32_t copy_channel = 0;    // key 50
+	bool copy_opacity = false;   // key 60
+	double copy_hue = 0.0, copy_saturation = 0.0, copy_value = 0.0; // key 49 HSV string
+	bool copy_saturation_additive = true, copy_value_additive = true;
+	int32_t player_color = 0;    // 0 none, 1 key 15, 2 key 16
+	double opacity = 1.0;        // 899: key 35
+	bool has_blending = false;   // 899: key 17 present at all (tri-state)
+	bool blending = false;       // 899: key 17, the Blending checkbox
+	double shake_strength = 5.0; // 1520: key 75
+	double time_scale = 1.0;     // 1935: key 120
+	double camera_zoom = 1.0;    // 1913: key 371 (GD zoom percentage)
+	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
+	double camera_rotation_degrees = 0.0; // 2015: key 68
+	double shader_value = 1.0;   // 2913/2919/2920/2921: key 35
+	bool shader_use_lum = false; // 2919: key 138
+	int32_t xref_pos = 0;        // 3613: key 385 (UIRef enum)
+	int32_t yref_pos = 0;        // 3613: key 386 (UIRef enum)
+	bool xref_relative = false;  // 3613: key 387
+	bool yref_relative = false;  // 3613: key 388
+	int32_t sfx_id = 0;          // 3602: key 392 (SFX ID)
+	double sfx_volume = 1.0;     // 3602: key 406 (Volume)
+	double sfx_pitch = 1.0;      // 3602: key 407 (Pitch)
+	bool sfx_loop = false;       // 3602: key 404 (Loop)
+	int32_t gravity_mode = GRAVITY_PORTAL_DOWN; // 10/11/2926, or "gravity_mode"
+};
+
+static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
+	std::vector<String> groups;
+	const String raw = String(properties.get(key, String())).strip_edges().replace(",", ".");
+	if (raw.is_empty()) return groups;
+	const PackedStringArray parts = raw.split(".", false);
+	for (int64_t i = 0; i < parts.size(); ++i) {
+		const String part = String(parts[i]).strip_edges();
+		if (!part.is_valid_int() || part.to_int() <= 0) continue;
+		const String name = String("g_") + part;
+		bool duplicate = false;
+		for (const String &existing : groups) {
+			if (existing == name) {
+				duplicate = true;
+				break;
+			}
+		}
+		if (!duplicate) groups.push_back(name);
+	}
+	return groups;
+}
+
+// Parses a "h a s a v a sat_additive a val_additive" copied-colour HSV string
+// (hue normalised from degrees), matching GMDConverter._hsv_values.
+static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) {
+	const String raw = String(properties.get("49", String()));
+	if (raw.is_empty()) return false;
+	const PackedStringArray parts = raw.split("a", false);
+	if (parts.size() < 3) return false;
+	effect.copy_hue = String(parts[0]).to_float() / 360.0;
+	effect.copy_saturation = String(parts[1]).to_float();
+	effect.copy_value = String(parts[2]).to_float();
+	effect.copy_saturation_additive = parts.size() > 3 && String(parts[3]) == "1";
+	effect.copy_value_additive = parts.size() > 4 && String(parts[4]) == "1";
+	return true;
+}
+
+// Computes anchored UI local coordinates for GD 2.2 UI Trigger (ID 3613).
+// Reference screen is 3:2 (aspect 1.5). At aspect >= 1.5, XRef is active; at aspect < 1.5, YRef is active.
+static Vector2 compute_ui_anchor(
+	const Vector2 &offset_from_target,
+	int32_t xref_pos,
+	int32_t yref_pos,
+	bool xref_relative,
+	bool yref_relative,
+	const Vector2 &viewport_size,
+	double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
+{
+	const double aspect = (viewport_size.y > 0.0) ? (viewport_size.x / viewport_size.y) : (16.0 / 9.0);
+	constexpr double ref_aspect = 1.5; // 3:2 GD reference aspect ratio
+
+	const double safe_zoom = (zoom > 0.0) ? zoom : PLAYER_CAMERA_DEFAULT_ZOOM;
+	double W_ref = 0.0, H_ref = 0.0, W_active = 0.0, H_active = 0.0, delta_x = 0.0, delta_y = 0.0;
+
+	if (aspect >= ref_aspect) {
+		// Wider than 3:2: vertical dimension is fixed to reference height
+		H_ref = viewport_size.y / safe_zoom;
+		W_ref = H_ref * ref_aspect;
+		H_active = H_ref;
+		W_active = H_ref * aspect;
+		delta_x = (W_active - W_ref) * 0.5;
+		delta_y = 0.0;
+	} else {
+		// Taller than 3:2: horizontal dimension is fixed to reference width
+		W_ref = viewport_size.x / safe_zoom;
+		H_ref = W_ref / ref_aspect;
+		W_active = W_ref;
+		H_active = W_ref / aspect;
+		delta_x = 0.0;
+		delta_y = (H_active - H_ref) * 0.5;
+	}
+
+	double new_x = offset_from_target.x;
+	if (aspect >= ref_aspect) {
+		int xref = xref_pos;
+		if (xref == static_cast<int32_t>(UIRef::AUTO_X)) {
+			xref = (offset_from_target.x < 0.0) ? static_cast<int32_t>(UIRef::LEFT) : static_cast<int32_t>(UIRef::RIGHT);
+		}
+		if (xref == static_cast<int32_t>(UIRef::LEFT)) {
+			if (xref_relative) {
+				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
+			} else {
+				new_x = offset_from_target.x - delta_x;
+			}
+		} else if (xref == static_cast<int32_t>(UIRef::RIGHT)) {
+			if (xref_relative) {
+				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
+			} else {
+				new_x = offset_from_target.x + delta_x;
+			}
+		} else if (xref == static_cast<int32_t>(UIRef::CENTER_X) || xref == static_cast<int32_t>(UIRef::DEFAULT)) {
+			new_x = offset_from_target.x;
+		}
+	}
+
+	double new_y = offset_from_target.y;
+	if (aspect < ref_aspect) {
+		int yref = yref_pos;
+		if (yref == static_cast<int32_t>(UIRef::AUTO_Y)) {
+			// In Godot, Y increases downwards, so offset.y < 0 is TOP, offset.y >= 0 is BOTTOM
+			yref = (offset_from_target.y < 0.0) ? static_cast<int32_t>(UIRef::TOP) : static_cast<int32_t>(UIRef::BOTTOM);
+		}
+		if (yref == static_cast<int32_t>(UIRef::TOP)) {
+			if (yref_relative) {
+				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
+			} else {
+				new_y = offset_from_target.y - delta_y;
+			}
+		} else if (yref == static_cast<int32_t>(UIRef::BOTTOM)) {
+			if (yref_relative) {
+				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
+			} else {
+				new_y = offset_from_target.y + delta_y;
+			}
+		} else if (yref == static_cast<int32_t>(UIRef::CENTER_Y) || yref == static_cast<int32_t>(UIRef::DEFAULT)) {
+			new_y = offset_from_target.y;
+		}
+	}
+
+	return Vector2(static_cast<real_t>(new_x), static_cast<real_t>(new_y));
+}
+
+// The copy-chain recursion budget, matching ColorChannelWatcher.COPY_ITERATIONS
+// and GDRweb's CopyColor iteration guard: a chain longer than this (or a copy
+// cycle) resolves to white instead of recursing forever.
+constexpr int COPY_RESOLUTION_BUDGET = 8;
+
+// Applies a channel's copy HSV adjustment (kS38 key 10 / trigger key 49, held
+// on the ColorChannelData) to a resolved source colour, in Geometry Dash's
+// additive and multiplicative slider modes. Mirrors
+// ColorChannelWatcher._shift_copy_hsv and GDRweb's HSVShift.shiftColor.
+static Color shift_copy_hsv(const Color &base, Object *data) {
+	const double hue = static_cast<double>(data->get("copy_hue"));
+	const double saturation = static_cast<double>(data->get("copy_saturation"));
+	const double value = static_cast<double>(data->get("copy_value"));
+	if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value))
+		return base;
+	const bool saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
+	const bool value_additive = static_cast<bool>(data->get("copy_value_additive"));
+	if (Math::is_zero_approx(hue) &&
+		Math::is_equal_approx(saturation, saturation_additive ? 0.0 : 1.0) &&
+		Math::is_equal_approx(value, value_additive ? 0.0 : 1.0))
+		return base;
+	double h = static_cast<double>(base.get_h()) + hue;
+	h -= Math::floor(h);
+	const double s = Math::clamp(
+		saturation_additive ? static_cast<double>(base.get_s()) + saturation
+							: static_cast<double>(base.get_s()) * saturation,
+		0.0, 1.0);
+	const double v = Math::clamp(
+		value_additive ? static_cast<double>(base.get_v()) + value
+					   : static_cast<double>(base.get_v()) * value,
+		0.0, 1.0);
+	return Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), base.a);
+}
+
+// The channel a colour trigger targeted when it carries no key 23: the legacy
+// families each had a fixed target (GDRweb's COLOR_TRIGGER_IDS), and a bare
+// modern 899 falls back to channel 1. 0 means "no default" (drop the trigger).
+static int32_t legacy_color_trigger_channel(int64_t gd_id) {
+	switch (gd_id) {
+		case 29: return 1000;
+		case 30: return 1001;
+		case 104: return 1002;
+		case 105: return 1004;
+		case 744: return 1003;
+		case 221: return 1;
+		case 717: return 2;
+		case 718: return 3;
+		case 743: return 4;
+		case 899: return 1;
+		case 900: return 1009; // Ground 2 (decompiled GameObject::getColorIndex)
+		case 915: return 1002; // Line (decompiled GameObject::getColorIndex)
+		default: return 0;
+	}
+}
+
+// Resolves where a colour/pulse trigger's target colour comes from. Geometry
+// Dash always serialises the RGB keys of a hand-picked colour - even pure
+// white - so their absence means the colour comes from a copied channel
+// (key 50) or one of the player colours (keys 15/16). A trigger with none of
+// those only fades opacity (KEEP). Mirrors the Color trigger converter arm.
+static void parse_color_source(const Dictionary &properties, TriggerEffect &effect) {
+	effect.opacity = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+	// The Blending checkbox is part of the trigger's target state, but only
+	// when the trigger actually carries key 17 (tri-state): a fading trigger
+	// without the checkbox must not clobber a Blending flip made by an
+	// overlapping trigger - its ticks kept reverting channels to normal
+	// mid-fade, killing the glow effect levels build out of these flips.
+	if (properties.has("17")) {
+		effect.has_blending = true;
+		effect.blending = String(properties.get("17", String("0"))) == "1";
+	}
+	const String copied = String(properties.get("50", String())).strip_edges();
+	if (copied.is_valid_int() && copied.to_int() > 0) {
+		effect.copy_channel = static_cast<int32_t>(copied.to_int());
+		effect.copy_opacity = String(properties.get("60", String("0"))) == "1";
+		parse_copy_hsv(properties, effect);
+		return;
+	}
+	if (String(properties.get("15", String("0"))) == "1") {
+		effect.player_color = 1;
+		return;
+	}
+	if (String(properties.get("16", String("0"))) == "1") {
+		effect.player_color = 2;
+		return;
+	}
+	if (properties.has("7") || properties.has("8") || properties.has("9")) {
+		effect.color = Color(
+			static_cast<real_t>(prop_float(properties, "7", 255.0) / 255.0),
+			static_cast<real_t>(prop_float(properties, "8", 255.0) / 255.0),
+			static_cast<real_t>(prop_float(properties, "9", 255.0) / 255.0));
+		effect.has_color = true;
+	}
+	// else KEEP: fade opacity only.
+}
+
+// Level colours the reserved channel IDs alias to; P1/P2/GLOW have no runtime
+// representation (matching TargetColorChannelComponent.Type.LEVEL no-ops).
+static String level_color_property_for_channel(int32_t channel) {
+	if (channel == 1000) return String("background_color");
+	if (channel == 1001 || channel == 1009) return String("ground_color");
+	if (channel == 1002) return String("line_color");
+	return String();
+}
+
+static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &properties) {
+	TriggerEffect effect;
+	switch (gd_id) {
+		case 901: effect.kind = TriggerEffectKind::MOVE; break;
+		case 1346: effect.kind = TriggerEffectKind::ROTATE; break;
+		case 2067: effect.kind = TriggerEffectKind::SCALE; break;
+		case 1007: effect.kind = TriggerEffectKind::ALPHA; break;
+		case 1049: effect.kind = TriggerEffectKind::TOGGLE; break;
+		case 899:
+		// Legacy colour-trigger families: each targeted a fixed channel
+		// before key 23 existed (GDRweb's COLOR_TRIGGER_IDS).
+		case 29: case 30: case 104: case 105: case 221: case 717:
+		case 718: case 743: case 744: case 900: case 915:
+			effect.kind = TriggerEffectKind::COLOR; break;
+		case 1006: effect.kind = TriggerEffectKind::PULSE; break;
+		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
+		case 1616: effect.kind = TriggerEffectKind::STOP; break;
+		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
+		case 1613: effect.kind = TriggerEffectKind::SHOW; break;
+		case 1935: effect.kind = TriggerEffectKind::TIMEWARP; break;
+		case 1913: effect.kind = TriggerEffectKind::CAMERA_ZOOM; break;
+		case 1916: effect.kind = TriggerEffectKind::CAMERA_OFFSET; break;
+		case 2015: effect.kind = TriggerEffectKind::CAMERA_ROTATE; break;
+		case 1520: effect.kind = TriggerEffectKind::SHAKE; break;
+		case 3022: effect.kind = TriggerEffectKind::TELEPORT; break;
+		case 2919: effect.kind = TriggerEffectKind::SHADER_GRAYSCALE; break;
+		case 2920: effect.kind = TriggerEffectKind::SHADER_SEPIA; break;
+		case 2913: effect.kind = TriggerEffectKind::SHADER_LENS_CIRCLE; break;
+		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
+		case 3613: effect.kind = TriggerEffectKind::UI; break;
+		case 3602: effect.kind = TriggerEffectKind::SFX; break;
+		case 10:  // blue gravity portal (normal)
+		case 11:  // yellow gravity portal (upside down)
+		case 2926: // green gravity portal (toggle)
+			effect.kind = TriggerEffectKind::GRAVITY_PORTAL; break;
+		default: return effect; // inert
+	}
+	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
+	effect.easing = static_cast<int32_t>(prop_int(properties, "30", 0));
+	effect.target_groups = parse_group_list(properties, "51");
+	const String center = String(properties.get("71", String())).strip_edges();
+	if (center.is_valid_int() && center.to_int() > 0) effect.center_group = String("g_") + center;
+	if (properties.has("45") || properties.has("46") || properties.has("47")) {
+		effect.pulse_envelope = true;
+		effect.fade_in = Math::max(0.0, prop_float(properties, "45", 0.0));
+		effect.hold = Math::max(0.0, prop_float(properties, "46", 0.0));
+		effect.fade_out = Math::max(0.0, prop_float(properties, "47", 0.0));
+	}
+	switch (effect.kind) {
+		case TriggerEffectKind::MOVE:
+		case TriggerEffectKind::CAMERA_OFFSET:
+			// GD units to pixels; +Y in GD is up, +Y in Godot is down.
+			effect.move_px = Vector2(
+				static_cast<real_t>(prop_float(properties, "28", 0.0) * CELLS_TO_PX_X),
+				static_cast<real_t>(prop_float(properties, "29", 0.0) * CELLS_TO_PX_Y));
+			effect.camera_offset_px = effect.move_px;
+			break;
+		case TriggerEffectKind::ROTATE:
+		case TriggerEffectKind::CAMERA_ROTATE:
+			effect.degrees = prop_float(properties, "68", 0.0) + prop_float(properties, "69", 0.0) * 360.0;
+			effect.camera_rotation_degrees = effect.degrees;
+			effect.allow_self_rotation = String(properties.get("70", String("0"))) != "1";
+			break;
+		case TriggerEffectKind::SCALE:
+			effect.scale_factor = Vector2(
+				static_cast<real_t>(prop_float(properties, "150", 1.0)),
+				static_cast<real_t>(prop_float(properties, "151", 1.0)));
+			break;
+		case TriggerEffectKind::ALPHA:
+			effect.alpha = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+			break;
+		case TriggerEffectKind::TOGGLE:
+			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
+			break;
+		case TriggerEffectKind::COLOR: {
+			const String target = String(properties.get("23", String())).strip_edges();
+			int32_t channel = 0;
+			if (target.is_valid_int() && target.to_int() > 0) {
+				channel = static_cast<int32_t>(target.to_int());
+			} else {
+				// No key 23: the legacy families each targeted a fixed
+				// channel, and a bare 899 defaults to channel 1.
+				channel = legacy_color_trigger_channel(gd_id);
+				if (channel == 0) {
+					effect.kind = TriggerEffectKind::NONE; // no target: nothing to fade
+					break;
+				}
+			}
+			const String level_property = level_color_property_for_channel(channel);
+			if (!level_property.is_empty()) {
+				effect.channel_is_level_color = true;
+				effect.target_channel = channel;
+			} else if (channel == 1005 || channel == 1006) {
+				effect.kind = TriggerEffectKind::NONE; // player channels: no-op, like the component
+				break;
+			} else {
+				effect.target_channel = channel;
+			}
+			parse_color_source(properties, effect);
+			if ((gd_id == 915 || gd_id == 104) && !properties.has("17")) {
+				// Decompiled EffectGameObject::customSetup: 915 (Line) defaults blending to true
+				effect.has_blending = true;
+				effect.blending = true;
+			}
+			break;
+		}
+		case TriggerEffectKind::PULSE: {
+			// Key 52 selects the target type: 0 = colour channel in key 51,
+			// 1 = object group. Group pulses and HSV pulses need per-object
+			// colour overrides this engine models differently, so they stay
+			// inert until that changes.
+			const String target_type = String(properties.get("52", String("0"))).strip_edges();
+			const String hsv_mode = String(properties.get("48", String("0"))).strip_edges();
+			const String target = String(properties.get("51", String())).strip_edges();
+			if (target_type == "1" || hsv_mode == "1" || !target.is_valid_int() || target.to_int() <= 0) {
+				effect.kind = TriggerEffectKind::NONE;
+				break;
+			}
+			const int32_t channel = static_cast<int32_t>(target.to_int());
+			const String level_property = level_color_property_for_channel(channel);
+			if (!level_property.is_empty()) {
+				effect.channel_is_level_color = true;
+				effect.target_channel = channel;
+			} else if (channel == 1005 || channel == 1006) {
+				effect.kind = TriggerEffectKind::NONE;
+				break;
+			} else {
+				effect.target_channel = channel;
+			}
+			parse_color_source(properties, effect);
+			break;
+		}
+		case TriggerEffectKind::SHAKE:
+			effect.shake_strength = Math::max(0.01, prop_float(properties, "75", 5.0));
+			break;
+		case TriggerEffectKind::TIMEWARP: {
+			const double time_mod = prop_float(properties, "120", 1.0);
+			effect.time_scale = Math::clamp(time_mod > 0.0 ? time_mod : 1.0, 0.01, 10.0);
+			break;
+		}
+		case TriggerEffectKind::CAMERA_ZOOM:
+			// Key 371 is a percentage (100 = the default zoom), not a raw
+			// multiplier: 50 means half the player camera's default 0.8.
+			effect.camera_zoom = Math::max(0.01, prop_float(properties, "371", 100.0) / 100.0);
+			break;
+		case TriggerEffectKind::SHADER_GRAYSCALE:
+			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+			effect.shader_use_lum = prop_int(properties, "138", 0) != 0;
+			break;
+		case TriggerEffectKind::SHADER_SEPIA:
+		case TriggerEffectKind::SHADER_LENS_CIRCLE:
+		case TriggerEffectKind::SHADER_INVERT_COLOR:
+			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+			break;
+		case TriggerEffectKind::UI:
+			effect.xref_pos = static_cast<int32_t>(prop_int(properties, "385", 0));
+			effect.yref_pos = static_cast<int32_t>(prop_int(properties, "386", 0));
+			effect.xref_relative = prop_bool(properties, "387", false);
+			effect.yref_relative = prop_bool(properties, "388", false);
+			break;
+		case TriggerEffectKind::SFX:
+			effect.sfx_id = static_cast<int32_t>(prop_int(properties, "392", 0));
+			effect.sfx_volume = Math::clamp(prop_float(properties, "406", 1.0), 0.0, 2.0);
+			effect.sfx_pitch = Math::clamp(prop_float(properties, "407", 1.0), 0.01, 5.0);
+			effect.sfx_loop = prop_bool(properties, "404", false);
+			break;
+		case TriggerEffectKind::GRAVITY_PORTAL:
+			effect.gravity_mode = static_cast<int32_t>(gravity_portal_mode_from_id(
+				static_cast<int>(gd_id), static_cast<int>(prop_int(properties, "gravity_mode", -1))));
+			break;
+		default:
+			break;
+	}
+	return effect;
+}
+
+// Applies a gravity portal to a live player. Shared by the overlap scan and
+// GravityFlipChangerComponent so orbs, pads and editor playtests use the same
+// flip, velocity reverse and floor-leave as imported portals.
+static bool apply_gravity_portal_player(Object *player, int mode) {
+	if (!player || mode < GRAVITY_PORTAL_DOWN || mode > GRAVITY_PORTAL_TOGGLE) {
+		return false;
+	}
+	if (static_cast<bool>(player->get("dead"))) {
+		return false;
+	}
+	const Variant flip_value = player->get("gravity_flip");
+	if (flip_value.get_type() == Variant::NIL) {
+		return false;
+	}
+	const double rotation = player->get("gameplay_rotation");
+	const Vector2 velocity = player->get("velocity");
+	const Vector2 local = velocity.rotated(static_cast<real_t>(-rotation));
+	const GravityPortalResult result = compute_gravity_portal(
+		static_cast<double>(flip_value), static_cast<double>(local.y), mode);
+	if (!result.changed) {
+		return false;
+	}
+	Vector2 launched = local;
+	launched.y = static_cast<real_t>(result.local_velocity_y);
+	player->set("velocity", launched.rotated(static_cast<real_t>(rotation)));
+	player->set("gravity_flip", static_cast<int64_t>(result.gravity_flip));
+	const Vector2 up = Vector2(0.0f, -1.0f).rotated(static_cast<real_t>(rotation))
+		* static_cast<real_t>(result.gravity_flip);
+	player->set("up_direction", up);
+	// The next physics step still reports the old floor. Pending tells the
+	// velocity kernel to treat that contact as airborne so the reversed launch
+	// is not cancelled, and grace keeps the old floor from counting as a ceiling.
+	player->set("gravity_portal_pending", true);
+	const int64_t grace = player->get("gravity_portal_grace");
+	player->set("gravity_portal_grace", grace < 4 ? static_cast<int64_t>(4) : grace);
+	Node2D *node = Object::cast_to<Node2D>(player);
+	if (node) {
+		node->set_global_position(node->get_global_position() - up * 8.0f);
+	}
+	return true;
+}
+
+// Packed trigger scheduler. One instance replaces thousands of Area2D broad-
+// phase checks: trigger crossings, spawn/event delays, activation state,
+// checkpoint snapshots AND the executed effect stay in C++.
+class NativeTriggerRuntime : public RefCounted {
+	GDCLASS(NativeTriggerRuntime, RefCounted)
+
+	enum Flags : int32_t {
+		SPAWN_ONLY = 1,
+		TOUCH_ONLY = 2,
+		MULTI_ACTIVATE = 4,
+	};
+	struct Record {
+		double x = 0.0;
+		double y = 0.0;
+		ObjectID object;
+		int64_t source_order = 0;
+		int32_t flags = 0;
+		int64_t gd_id = 0;
+		Dictionary properties;
+		TriggerEffect effect;
+		bool activated = false;
+	};
+	struct Event {
+		double due = 0.0;
+		uint64_t sequence = 0;
+		StringName group;
+		ObjectID player;
+	};
+	// One running eased effect. Everything it needs was captured when the
+	// trigger fired, mirroring the components' export_storage initial values:
+	// restarting effects see the state at their own activation.
+	struct Fade {
+		size_t record_index = 0;
+		ObjectID player;
+		double start = 0.0;
+		double prev_weight = 0.0;
+		std::vector<ObjectID> members;        // union of the target groups
+		std::vector<Vector2> initial_scales;  // 2067 multiplies from these
+		std::vector<String> group_targets;    // 1007 eases each group's opacity
+		std::vector<double> initial_group_opacities; // captured at fire time
+		ObjectID pivot;                       // rotate/scale centre (key 71)
+		ObjectID channel_data;                // ColorChannelData resource
+		String level_color_property;          // set for bg/ground/line targets
+		Color from_color = Color(1.0f, 1.0f, 1.0f);
+		Color to_color = Color(1.0f, 1.0f, 1.0f);
+		double alpha_target = 1.0;            // resolved opacity (copied alpha included)
+		double initial_hue = 0.0, initial_saturation = 0.0, initial_value = 0.0;
+		double initial_intensity = 1.0, initial_alpha = 1.0;
+		Vector2 initial_camera_zoom;
+		Vector2 initial_camera_offset;
+		double initial_camera_rotation = 0.0;
+		double initial_time_scale = 1.0;
+		double linear_eased_weight = 0.0;     // shake noise position
+		Ref<FastNoiseLite> noise;
+		double initial_shader_value = 0.0;
+		double target_shader_value = 1.0;
+	};
+	std::vector<Record> records;
+	std::vector<size_t> x_order;
+	// Direct group -> record index lookup makes spawn/event dispatch proportional
+	// to the target group, not to every trigger in a 100k-object level. Hashed:
+	// spawn-heavy levels look groups up for every scheduled event, and a
+	// red-black tree walk with full String compares showed up in those profiles.
+	HashMap<String, std::vector<size_t>> group_index;
+	// Group membership captured at level finalisation: effect targets resolve
+	// against the members present when the level starts, exactly when the
+	// component path first queries them, without a SceneTree walk per fire.
+	HashMap<String, std::vector<ObjectID>> member_index;
+	// Colour channel table: "c_N" -> ColorChannelData resource.
+	HashMap<String, ObjectID> channel_index;
+	// Level/camera/Config objects for colour resolution and camera effects.
+	ObjectID level_id;
+	ObjectID camera_id;
+	ObjectID config_id;
+	ObjectID shader_layer_id;
+	ObjectID ui_layer_id;
+	ObjectID ui_root_id;
+	bool ui_triggers_applied = false;
+
+	struct UIObjectState {
+		ObjectID node_id;
+		ObjectID original_parent_id;
+		int32_t original_index = 0;
+		Transform2D original_transform;
+		int32_t original_z_index = 0;
+		bool original_z_as_relative = true;
+		uint32_t original_collision_layer = 0;
+		uint32_t original_collision_mask = 0;
+		bool had_collision = false;
+		bool original_monitoring = false;
+		bool original_monitorable = false;
+		bool was_area = false;
+		bool original_cull = false;
+		bool was_batch = false;
+	};
+	std::vector<UIObjectState> ui_objects;
+	std::unordered_set<uint64_t> ui_affected_objects;
+	// Records with the touch-only flag, in x order, for hitbox overlap checks.
+	std::vector<size_t> touch_order;
+	// Which touch records each player currently overlaps, so multi-activate
+	// variants re-fire on a fresh touch instead of every physics frame.
+	std::map<uint64_t, std::set<size_t>> touch_inside_players;
+	// Gravity portals (10/11/2926) are not X-line triggers. They fire when the
+	// player enters the portal rect, and again every time they re-enter it.
+	std::vector<size_t> gravity_portal_order;
+	std::map<uint64_t, std::set<size_t>> gravity_inside_players;
+	// Players advanced this physics frame; touch checks need stationary and
+	// vertically-moving players too, which x-crossing skips.
+	std::vector<ObjectID> frame_players;
+	// Running eased effects.
+	std::vector<Fade> fades;
+	// GD's group opacity: every group keeps a persistent opacity that Fade
+	// (1007) triggers ease, and an object's rendered alpha is its own alpha
+	// times the product of the opacities of every group it belongs to
+	// (gdrender's GameObject::updateOpacity). The previous model eased one
+	// per-object alpha from whatever it currently was, so fades on
+	// overlapping groups fought over a single number: fading one group back
+	// up un-hid objects another group's fade had hidden, which is exactly
+	// how a level's hidden collision blocks came back mid-level.
+	HashMap<String, double> group_opacity;
+	// Each member's own alpha, captured once at registration, so group
+	// products never compound onto an already-faded value.
+	HashMap<ObjectID, double> member_own_alpha;
+	// Reverse of member_index: which effect-referenced groups a member is in.
+	HashMap<ObjectID, std::vector<String>> member_groups;
+	// Budgets for the FADIAG fire-time diagnostic (see report_fade_capture).
+	int64_t fade_capture_count = 0;
+	int64_t fade_capture_reports = 0;
+	// Min-heap ordered by due time/source sequence. Inserting a spawn event is
+	// O(log n), replacing the old full stable_sort after every insertion.
+	std::vector<Event> events;
+	double clock = 0.0;
+	uint64_t event_sequence = 0;
+	bool index_dirty = false;
+	// Budgets for the colorcap fire-time diagnostic (see report_color_capture).
+	int64_t color_capture_count = 0;
+	int64_t color_capture_reports = 0;
+	// Bumped whenever container identity changes (clear/finalize/reset/
+	// restore). Trigger activation can call back into GDScript — including
+	// handlers that restart the level, which clears and re-registers every
+	// record and frees the old buffers mid-scan. Every loop that holds
+	// iterators or references across such a call-out captures this value
+	// first and bails out as soon as it changes.
+	uint64_t structure_epoch = 0;
+
+	static bool event_later(const Event &a, const Event &b) {
+		return a.due == b.due ? a.sequence > b.sequence : a.due > b.due;
+	}
+
+	void ensure_index() {
+		if (!index_dirty) return;
+		x_order.resize(records.size());
+		std::iota(x_order.begin(), x_order.end(), 0);
+		std::stable_sort(x_order.begin(), x_order.end(), [&](size_t a, size_t b) {
+			if (records[a].x != records[b].x) return records[a].x < records[b].x;
+			return records[a].source_order < records[b].source_order;
+		});
+		gravity_portal_order.clear();
+		for (size_t index : x_order) {
+			if (records[index].effect.kind == TriggerEffectKind::GRAVITY_PORTAL) {
+				gravity_portal_order.push_back(index);
+			}
+		}
+		index_dirty = false;
+	}
+
+	// 2026-09-13 device tombstones (two builds, MTE): SEGV_ACCERR while the
+	// lower_bound comparators read records[order[i]].x. The runtime object
+	// and its vector metadata were provably alive both times (tick ran to
+	// the scan), so the fault is in the data itself: either an index in an
+	// order table is out of range, or a data buffer was freed. Validate the
+	// tables before every scan; when one is broken, report the exact state
+	// to logcat (ERR_PRINT is visible via adb) and rebuild it instead of
+	// crashing. The two canary reads below put a freed records buffer on a
+	// known line of the next tombstone instead of inside the binary search.
+	bool index_table_valid(const std::vector<size_t> &table, const char *name) {
+		if (table.empty()) return true;
+		const size_t count = records.size();
+		if (count == 0) {
+			ERR_PRINT(String("[gdash_native] corrupt index table '") + name
+				+ "': " + String::num_uint64(static_cast<uint64_t>(table.size()))
+				+ " entries but records is empty"
+				+ ", epoch=" + String::num_uint64(structure_epoch)
+				+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+					Engine::get_singleton()->get_process_frames()))
+				+ "; rebuilding");
+			return false;
+		}
+		// volatile so -O3 cannot elide the reads.
+		volatile double canary = records[0].x;
+		canary = records[count - 1].x;
+		(void)canary;
+		for (size_t position = 0; position < table.size(); ++position) {
+			const size_t index = table[position];
+			if (index >= count) {
+				ERR_PRINT(String("[gdash_native] corrupt index table '") + name
+					+ "': position " + String::num_uint64(static_cast<uint64_t>(position))
+					+ " holds index " + String::num_uint64(static_cast<uint64_t>(index))
+					+ ", records=" + String::num_uint64(static_cast<uint64_t>(count))
+					+ ", table=" + String::num_uint64(static_cast<uint64_t>(table.size()))
+					+ ", epoch=" + String::num_uint64(structure_epoch)
+					+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+						Engine::get_singleton()->get_process_frames()))
+					+ ", records_ptr=" + String::num_uint64(static_cast<uint64_t>(
+						reinterpret_cast<uintptr_t>(records.data())))
+					+ ", table_ptr=" + String::num_uint64(static_cast<uint64_t>(
+						reinterpret_cast<uintptr_t>(table.data())))
+					+ "; rebuilding");
+				return false;
+			}
+		}
+		return true;
+	}
+
+	void rebuild_touch_order() {
+		touch_order.clear();
+		for (size_t index : x_order) {
+			if (records[index].flags & TOUCH_ONLY) touch_order.push_back(index);
+		}
+	}
+
+	void repair_index_tables() {
+		if (!index_table_valid(x_order, "x_order")) {
+			index_dirty = true;
+			ensure_index();
+		}
+		if (!index_table_valid(touch_order, "touch_order")) rebuild_touch_order();
+		if (!index_table_valid(gravity_portal_order, "gravity_portal_order")) {
+			index_dirty = true;
+			ensure_index();
+		}
+	}
+
+	void activate(size_t index, Object *player, bool forced = false) {
+		if (index >= records.size()) return;
+		if (records[index].effect.kind == TriggerEffectKind::UI) return; // on-load only
+		// Portals use the rect-enter scan. An X crossing would flip a player
+		// who jumped over the portal, and would toggle twice with that scan.
+		if (records[index].effect.kind == TriggerEffectKind::GRAVITY_PORTAL) return;
+		const uint64_t epoch = structure_epoch;
+		const int32_t flags = records[index].flags;
+		if (records[index].activated && !(flags & MULTI_ACTIVATE)) return;
+		if (!forced && (flags & (SPAWN_ONLY | TOUCH_ONLY))) return;
+		if (!player) return;
+		// Families with a C++ effect run entirely here. Records without one
+		// keep emitting the Interactable signal so scene-backed families
+		// (camera static/edge, end level) execute their components.
+		if (records[index].effect.kind == TriggerEffectKind::NONE) {
+			Object *target = ObjectDB::get_instance(records[index].object);
+			if (target) target->call("emit_signal", StringName("interacted"), player);
+		} else {
+			// Copy by value: execute_effect must not hold a reference into
+			// records across its call-outs.
+			const Record snapshot = records[index];
+			execute_effect(snapshot, index, player);
+		}
+		// The signal or effect above can synchronously restart the level,
+		// which clears and re-registers every record; finalize() frees the
+		// old records buffer, so a reference captured before the call would
+		// dangle. Write back through a fresh lookup, and only when the
+		// runtime was not rebuilt (a rebuilt runtime starts with fresh
+		// activation state).
+		if (!(flags & MULTI_ACTIVATE) && index < records.size()
+				&& structure_epoch == epoch) {
+			records[index].activated = true;
+		}
+	}
+
+	// ---------------------------------------------------------------
+	// Effect execution. Immediate kinds run inline; eased kinds create a
+	// fade entry whose state was captured at fire time.
+	// ---------------------------------------------------------------
+
+	std::vector<ObjectID> resolve_effect_members(const TriggerEffect &effect) const {
+		std::vector<ObjectID> members;
+		for (const String &group : effect.target_groups) {
+			const auto found = member_index.find(group);
+			if (found == member_index.end()) continue;
+			members.insert(members.end(), found->value.begin(), found->value.end());
+		}
+		if (members.size() > 1) {
+			// Multi-group targets must not double-apply on shared members; sort
+			// and unique keeps this linearithmic for thousand-member groups.
+			std::sort(members.begin(), members.end());
+			members.erase(std::unique(members.begin(), members.end()), members.end());
+		}
+		return members;
+	}
+
+	Node2D *resolve_first_member(const String &group) const {
+		if (group.is_empty()) return nullptr;
+		const auto found = member_index.find(group);
+		if (found == member_index.end()) return nullptr;
+		for (ObjectID id : found->value) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+			if (node) return node;
+		}
+		return nullptr;
+	}
+
+	static bool is_decoration_batch(Node *node) {
+		if (!node) return false;
+		const Ref<Script> script = node->get_script();
+		return script.is_valid() && script->get_path() == String("res://src/DecorationBatch.gd");
+	}
+
+	// A member's own alpha, independent of any group opacity: a decoration
+	// batch carries it in modulate.a, a scene object in its root HSVWatcher.
+	static double read_member_alpha(Object *node) {
+		if (!node) return 1.0;
+		if (is_decoration_batch(Object::cast_to<Node>(node))) {
+			CanvasItem *item = Object::cast_to<CanvasItem>(node);
+			return item ? static_cast<double>(item->get_modulate().a) : 1.0;
+		}
+		if (node->has_meta(StringName("hsv_watcher"))) {
+			Object *watcher = node->get_meta(StringName("hsv_watcher"));
+			return static_cast<double>(watcher->get("alpha"));
+		}
+		return 1.0;
+	}
+
+	// Re-renders one member from its own alpha times the product of all its
+	// groups' opacities. Concurrent fades on different groups stay correct:
+	// each recomputation reads the shared opacity table, never a value some
+	// other fade already wrote onto the object.
+	void refresh_member_alpha(ObjectID id) {
+		Object *node = ObjectDB::get_instance(id);
+		if (!node) return;
+		double alpha = 1.0;
+		const double *own = member_own_alpha.getptr(id);
+		if (own) alpha = *own;
+		const std::vector<String> *groups = member_groups.getptr(id);
+		if (groups) {
+			for (const String &group : *groups) {
+				const double *opacity = group_opacity.getptr(group);
+				if (opacity) alpha *= *opacity;
+			}
+		}
+		if (is_decoration_batch(Object::cast_to<Node>(node))) {
+			CanvasItem *item = Object::cast_to<CanvasItem>(node);
+			if (!item) return;
+			Color modulate = item->get_modulate();
+			modulate.a = static_cast<real_t>(alpha);
+			item->set_modulate(modulate);
+		} else if (node->has_meta(StringName("hsv_watcher"))) {
+			Object *watcher = node->get_meta(StringName("hsv_watcher"));
+			watcher->set("alpha", alpha);
+			watcher->call("update_color");
+		}
+	}
+
+	// Budgeted diagnostic for the invisible-blocks investigation: what each
+	// Fade (1007) fire actually resolved - its target groups, how many
+	// members, and how many of those can actually be faded (watcher or
+	// batch) versus nothing at all. Grep "FADIAG".
+	void report_fade_capture(const TriggerEffect &effect, const Fade &fade) {
+		++fade_capture_count;
+		if (fade_capture_reports >= 60) return;
+		if (fade_capture_count > 20 && (fade_capture_count % 1000) != 0) return;
+		++fade_capture_reports;
+		int64_t watchers = 0, batches = 0, naked = 0;
+		for (ObjectID id : fade.members) {
+			Object *node = ObjectDB::get_instance(id);
+			if (!node) continue;
+			if (is_decoration_batch(Object::cast_to<Node>(node))) {
+				++batches;
+			} else if (node->has_meta(StringName("hsv_watcher"))) {
+				++watchers;
+			} else {
+				++naked;
+			}
+		}
+		String groups_text;
+		for (const String &group : fade.group_targets) {
+			if (!groups_text.is_empty()) groups_text += ",";
+			groups_text += group;
+		}
+		// print(), not ERR_PRINT(): this describes what a capture resolved, not
+		// a failure. ERR_PRINT marked every fire as "ERROR: [gdash_native]
+		// FADIAG ..." in the Web build's console (and in logcat), which made a
+		// diagnostic look like a defect.
+		UtilityFunctions::print(String("[gdash_native] FADIAG fire #")
+			+ String::num_uint64(static_cast<uint64_t>(fade_capture_count))
+			+ " groups=" + groups_text
+			+ " members=" + String::num_uint64(static_cast<uint64_t>(fade.members.size()))
+			+ " watchers=" + String::num_uint64(static_cast<uint64_t>(watchers))
+			+ " batches=" + String::num_uint64(static_cast<uint64_t>(batches))
+			+ " naked=" + String::num_uint64(static_cast<uint64_t>(naked))
+			+ " alpha=" + String::num(effect.alpha, 3)
+			+ " dur=" + String::num(effect.duration, 3));
+	}
+
+	// The live colour of a reserved channel ID.
+	Color live_special_color(int32_t channel) const {
+		Object *level = ObjectDB::get_instance(level_id);
+		Object *config = ObjectDB::get_instance(config_id);
+		const String property = level_color_property_for_channel(channel);
+		if (!property.is_empty() && level) return level->get(property);
+		if (channel == 1005 && config) return config->get("primary_color");
+		if (channel == 1006 && config) return config->get("secondary_color");
+		if (channel == 1007 && level) {
+			const Color bg = level->get("background_color");
+			return bg.lightened(0.2f);
+		}
+		if (channel == 1010) return Color(0.0f, 0.0f, 0.0f);
+		if (channel == 1011) return Color(1.0f, 1.0f, 1.0f);
+		if (channel == 1003 || channel == 1004 || channel == 1012 || channel == 1013 || channel == 1014) {
+			Object *data = channel_lookup(channel);
+			if (data) return resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET);
+			if (channel == 1012) {
+				Object *obj_data = channel_lookup(1004);
+				if (obj_data) return resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
+			}
+			return Color(1.0f, 1.0f, 1.0f);
+		}
+		if (config) return config->get("glow_color");
+		return Color(1.0f, 1.0f, 1.0f);
+	}
+	Dictionary resolve_copied_channel(int32_t copy_id) const {
+		Dictionary empty;
+		if (copy_id <= 0) return empty;
+		const String level_property = level_color_property_for_channel(copy_id);
+		if (!level_property.is_empty()) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (!level) return empty;
+			Dictionary result;
+			result["color"] = level->get(level_property);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1005 || copy_id == 1006) {
+			Object *config = ObjectDB::get_instance(config_id);
+			if (!config) return empty;
+			Dictionary result;
+			result["color"] = config->get(copy_id == 1005 ? "primary_color" : "secondary_color");
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1007) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (!level) return empty;
+			const Color bg = level->get("background_color");
+			Dictionary result;
+			result["color"] = bg.lightened(0.2f);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1010) {
+			Dictionary result;
+			result["color"] = Color(0.0f, 0.0f, 0.0f);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		if (copy_id == 1011) {
+			Dictionary result;
+			result["color"] = Color(1.0f, 1.0f, 1.0f);
+			result["alpha"] = 1.0;
+			return result;
+		}
+		Object *data = channel_lookup(copy_id);
+		if (!data) {
+			if (copy_id == 1003 || copy_id == 1004 || copy_id == 1012 || copy_id == 1013 || copy_id == 1014) {
+				Color col = Color(1.0f, 1.0f, 1.0f);
+				if (copy_id == 1012) {
+					Object *obj_data = channel_lookup(1004);
+					if (obj_data) col = resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
+				}
+				Dictionary result;
+				result["color"] = col;
+				result["alpha"] = 1.0;
+				return result;
+			}
+			return empty;
+		}
+		// The source resolves through its own state - special link, ordinary
+		// copy link or literal - exactly like ColorChannelWatcher does for
+		// rendering, so a copy of a copy lands on the same colour the level
+		// draws (GDRweb's recursive CopyColor evaluation).
+		Dictionary result;
+		result["color"] = resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET);
+		result["alpha"] = resolve_channel_data_alpha(data, COPY_RESOLUTION_BUDGET);
+		return result;
+	}
+
+	// A channel data's fully resolved colour: its literal colour, its special
+	// (level/player) colour, or - for an ordinary copy link - the source's
+	// resolved colour with this channel's copy HSV applied on top. The budget
+	// bounds copy chains the same way ColorChannelWatcher.COPY_ITERATIONS and
+	// GDRweb's CopyColor iteration guard do. The alpha is deliberately not
+	// folded into this colour: it travels separately through
+	// resolve_channel_data_alpha, so a copy-opacity channel never gets the
+	// source's alpha twice.
+	Color resolve_channel_data_color(Object *data, int budget) const {
+		if (budget <= 0) return Color(1.0f, 1.0f, 1.0f, 1.0f);
+		if (static_cast<bool>(data->get("copy"))) {
+			const int32_t special = static_cast<int32_t>(data->get("copied_channel"));
+			switch (special) {
+				case 0: return shift_copy_hsv(live_special_color(1000), data);
+				case 1: return shift_copy_hsv(live_special_color(1001), data);
+				case 2: return shift_copy_hsv(live_special_color(1002), data);
+				case 3: return shift_copy_hsv(live_special_color(1005), data);
+				case 4: return shift_copy_hsv(live_special_color(1006), data);
+				default: return shift_copy_hsv(live_special_color(-1), data); // glow
+			}
+		}
+		const int32_t link = static_cast<int32_t>(data->get("copied_channel_id"));
+		if (link <= 0) return static_cast<Color>(data->get("color"));
+		Color color;
+		const String level_property = level_color_property_for_channel(link);
+		if (!level_property.is_empty()) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (level) color = level->get(level_property);
+			else color = Color(1.0f, 1.0f, 1.0f);
+		} else if (link == 1005 || link == 1006) {
+			Object *config = ObjectDB::get_instance(config_id);
+			if (config) color = config->get(link == 1005 ? "primary_color" : "secondary_color");
+			else color = Color(1.0f, 1.0f, 1.0f);
+		} else if (link == 1007) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (level) {
+				const Color bg = level->get("background_color");
+				color = bg.lightened(0.2f);
+			} else {
+				color = Color(1.0f, 1.0f, 1.0f);
+			}
+		} else if (link == 1010) {
+			color = Color(0.0f, 0.0f, 0.0f);
+		} else if (link == 1011) {
+			color = Color(1.0f, 1.0f, 1.0f);
+		} else {
+			Object *source = channel_lookup(link);
+			if (!source) {
+				if (link == 1003 || link == 1004 || link == 1012 || link == 1013 || link == 1014) {
+					if (link == 1012) {
+						Object *obj_data = channel_lookup(1004);
+						color = obj_data ? resolve_channel_data_color(obj_data, budget - 1).lightened(0.2f) : Color(1.0f, 1.0f, 1.0f);
+					} else {
+						color = Color(1.0f, 1.0f, 1.0f);
+					}
+				} else {
+					return static_cast<Color>(data->get("color"));
+				}
+			} else {
+				color = resolve_channel_data_color(source, budget - 1);
+			}
+		}
+		return shift_copy_hsv(color, data);
+	}
+
+	// The opacity a channel's members render with: its own, or the source's
+	// when it copies opacity (kS38 key 17 / trigger key 60).
+	double resolve_channel_data_alpha(Object *data, int budget) const {
+		if (static_cast<bool>(data->get("copy"))) return 1.0;
+		const int32_t link = static_cast<int32_t>(data->get("copied_channel_id"));
+		if (link <= 0 || !static_cast<bool>(data->get("copy_opacity")))
+			return static_cast<double>(data->get("alpha"));
+		if (budget <= 0) return 1.0;
+		const String level_property = level_color_property_for_channel(link);
+		if (!level_property.is_empty() || link == 1005 || link == 1006 || link == 1007 || link == 1010 || link == 1011) return 1.0;
+		Object *source = channel_lookup(link);
+		if (!source) return static_cast<double>(data->get("alpha"));
+		return resolve_channel_data_alpha(source, budget - 1);
+	}
+
+	Object *channel_lookup(int32_t channel) const {
+		const auto found = channel_index.find(String("c_") + String::num_int64(channel));
+		if (found == channel_index.end()) return nullptr;
+		return ObjectDB::get_instance(found->value);
+	}
+
+	// The colour this trigger fades its channel towards; copy and player
+	// sources resolve at activation so they track later recolours, and a
+	// copied opacity (key 60) replaces the trigger's own for this activation.
+	Color resolve_source_color(const TriggerEffect &effect, const Color &keep, double &alpha_target) const {
+		if (effect.has_color) return effect.color;
+		if (effect.copy_channel > 0) {
+			const Dictionary copied = resolve_copied_channel(effect.copy_channel);
+			if (copied.is_empty()) return keep;
+			if (effect.copy_opacity) alpha_target = copied["alpha"];
+			const Color base = copied["color"];
+			if (Math::is_zero_approx(effect.copy_hue) && Math::is_zero_approx(effect.copy_saturation)
+					&& Math::is_zero_approx(effect.copy_value)) {
+				return base;
+			}
+			double hue = static_cast<double>(base.get_h()) + effect.copy_hue;
+			hue -= Math::floor(hue);
+			const double saturation = effect.copy_saturation_additive
+				? Math::clamp(static_cast<double>(base.get_s()) + effect.copy_saturation, 0.0, 1.0)
+				: Math::clamp(static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
+			const double value = effect.copy_value_additive
+				? Math::clamp(static_cast<double>(base.get_v()) + effect.copy_value, 0.0, 1.0)
+				: Math::clamp(static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
+			return Color::from_hsv(
+				static_cast<real_t>(hue), static_cast<real_t>(saturation),
+				static_cast<real_t>(value), base.a);
+		}
+		if (effect.player_color == 1 || effect.player_color == 2) {
+			return live_special_color(effect.player_color == 1 ? 1005 : 1006);
+		}
+		return keep;
+	}
+
+	void execute_effect(const Record &record, size_t index, Object *player) {
+		const TriggerEffect &effect = record.effect;
+		switch (effect.kind) {
+			case TriggerEffectKind::SPAWN: {
+				double delay = Math::max(0.0, prop_float(record.properties, "63", 0.0));
+				const double delay_pm = Math::max(0.0, prop_float(record.properties, "556", 0.0));
+				if (delay_pm > 0.0) {
+					delay += delay_pm * (2.0 * (static_cast<double>(std::rand() % 10000) / 9999.0) - 1.0);
+					delay = Math::max(0.0, delay);
+				}
+				for (const String &group : effect.target_groups) {
+					schedule_group(StringName(group), delay, player);
+				}
+				break;
+			}
+			case TriggerEffectKind::STOP:
+				// Cancels pending spawns targeting each group, cutting spawn loops.
+				for (const String &group : effect.target_groups) {
+					cancel_group_events(StringName(group));
+				}
+				break;
+			case TriggerEffectKind::HIDE:
+				set_player_visible(player, false);
+				break;
+			case TriggerEffectKind::SHOW:
+				set_player_visible(player, true);
+				break;
+			case TriggerEffectKind::TOGGLE:
+				apply_toggle(effect);
+				break;
+			case TriggerEffectKind::TELEPORT:
+				apply_teleport(index, record, player);
+				break;
+			case TriggerEffectKind::SFX: {
+				if (effect.sfx_id > 0) {
+					MainLoop *main_loop = Engine::get_singleton()->get_main_loop();
+					SceneTree *tree = Object::cast_to<SceneTree>(main_loop);
+					if (tree && tree->get_root()) {
+						Node *sfx_mgr = tree->get_root()->find_child("SFXManager", true, false);
+						if (sfx_mgr) {
+							sfx_mgr->call("play_sfx_id", effect.sfx_id, effect.sfx_volume, effect.sfx_pitch);
+						}
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::MOVE:
+			case TriggerEffectKind::ROTATE:
+			case TriggerEffectKind::SCALE:
+			case TriggerEffectKind::ALPHA:
+			case TriggerEffectKind::COLOR:
+			case TriggerEffectKind::PULSE:
+			case TriggerEffectKind::TIMEWARP:
+			case TriggerEffectKind::CAMERA_ZOOM:
+			case TriggerEffectKind::CAMERA_OFFSET:
+			case TriggerEffectKind::CAMERA_ROTATE:
+			case TriggerEffectKind::SHAKE:
+			case TriggerEffectKind::SHADER_GRAYSCALE:
+			case TriggerEffectKind::SHADER_SEPIA:
+			case TriggerEffectKind::SHADER_LENS_CIRCLE:
+			case TriggerEffectKind::SHADER_INVERT_COLOR:
+				start_fade(index, effect, player);
+				break;
+			default:
+				break;
+		}
+	}
+
+	static void set_player_visible(Object *player, bool visible) {
+		CanvasItem *item = Object::cast_to<CanvasItem>(player);
+		if (item) item->set_visible(visible);
+	}
+
+	void apply_toggle(const TriggerEffect &effect) {
+		for (ObjectID id : resolve_effect_members(effect)) {
+			Object *node = ObjectDB::get_instance(id);
+			if (!node) continue;
+			CanvasItem *item = Object::cast_to<CanvasItem>(node);
+			if (item) item->set_visible(effect.toggle_on);
+			// process_mode changes from the physics callback are deferred,
+			// exactly like ToggleComponent's set_deferred.
+			node->call_deferred("set_process_mode",
+				static_cast<int64_t>(effect.toggle_on ? Node::PROCESS_MODE_INHERIT : Node::PROCESS_MODE_DISABLED));
+		}
+	}
+
+	void apply_teleport(size_t index, const Record &record, Object *player) {
+		Node2D *target = resolve_first_member(record.effect.center_group);
+		if (!target && !record.effect.target_groups.empty()) {
+			target = resolve_first_member(record.effect.target_groups[0]);
+		}
+		Node2D *player_node = Object::cast_to<Node2D>(player);
+		// Device forensics 2026-09-13: the user sees a teleport interaction with
+		// an unresolved target at the exact moment the process dies at Amethyst
+		// level start. Log every native teleport attempt so the next logcat
+		// capture timestamps it against the gdash-mem checkpoints. print() so a
+		// routine interaction isn't reported as an "ERROR:" in game consoles.
+		UtilityFunctions::print(String("[gdash_native] teleport attempt: record ")
+			+ String::num_uint64(static_cast<uint64_t>(index))
+			+ ", center_group='" + record.effect.center_group + "'"
+			+ ", target_groups=" + String::num_uint64(static_cast<uint64_t>(record.effect.target_groups.size()))
+			+ ", resolved=" + (target ? "yes" : "no")
+			+ ", epoch=" + String::num_uint64(structure_epoch)
+			+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+				Engine::get_singleton()->get_process_frames())));
+		if (target && player_node) {
+			player_node->set_global_position(target->get_global_position());
+		}
+	}
+
+public:
+	static bool is_shader_kind(TriggerEffectKind kind) {
+		return kind == TriggerEffectKind::SHADER_GRAYSCALE
+			|| kind == TriggerEffectKind::SHADER_SEPIA
+			|| kind == TriggerEffectKind::SHADER_LENS_CIRCLE
+			|| kind == TriggerEffectKind::SHADER_INVERT_COLOR;
+	}
+
+private:
+
+	CanvasItem *get_shader_node(const StringName &name) {
+		Node *sl = nullptr;
+		if (shader_layer_id.is_valid()) {
+			sl = Object::cast_to<Node>(ObjectDB::get_instance(shader_layer_id));
+		}
+		if (!sl && level_id.is_valid()) {
+			Node *n = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+			while (n) {
+				Node *candidate = n->get_node_or_null(NodePath("ShaderLayer"));
+				if (candidate) {
+					shader_layer_id = candidate->get_instance_id();
+					sl = candidate;
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+		if (!sl) return nullptr;
+		Node *child = sl->get_node_or_null(NodePath(name));
+		if (!child && sl->get_name() == name) return Object::cast_to<CanvasItem>(sl);
+		return Object::cast_to<CanvasItem>(child);
+	}
+
+	static double get_shader_param(CanvasItem *item, const StringName &param, double default_val = 0.0) {
+		if (!item) return default_val;
+		Ref<Material> mat = item->get_material();
+		if (mat.is_null()) return default_val;
+		Variant val = mat->call("get_shader_parameter", param);
+		if (val.get_type() == Variant::NIL) return default_val;
+		return static_cast<double>(val);
+	}
+
+	static void set_shader_param(CanvasItem *item, const StringName &param, const Variant &val) {
+		if (!item) return;
+		Ref<Material> mat = item->get_material();
+		if (mat.is_valid()) {
+			mat->call("set_shader_parameter", param, val);
+		}
+	}
+
+	void reset_shaders() {
+		CanvasItem *gray = get_shader_node(StringName("Grayscale"));
+		if (gray) {
+			gray->set_visible(false);
+			set_shader_param(gray, StringName("grayscale_factor"), 0.0);
+		}
+		CanvasItem *sepia = get_shader_node(StringName("Sepia"));
+		if (sepia) {
+			sepia->set_visible(false);
+			set_shader_param(sepia, StringName("sepia_factor"), 0.0);
+		}
+		CanvasItem *lens = get_shader_node(StringName("LensCircle"));
+		if (lens) {
+			lens->set_visible(false);
+			set_shader_param(lens, StringName("alpha"), 0.0);
+		}
+		CanvasItem *invert = get_shader_node(StringName("InvertColor"));
+		if (invert) {
+			invert->set_visible(false);
+			set_shader_param(invert, StringName("invert_factor"), 0.0);
+		}
+	}
+
+	void start_fade(size_t index, const TriggerEffect &effect, Object *player) {
+		// prevent_restart_during_animation: re-activating a record mid-fade is
+		// ignored, like EasingComponent's default guard.
+		const ObjectID player_id = ObjectID(player->get_instance_id());
+		for (const Fade &existing : fades) {
+			if (existing.record_index == index && existing.player == player_id) return;
+		}
+		// If another shader fade of the same kind is active, remove it so the new trigger smoothly takes over
+		if (is_shader_kind(effect.kind)) {
+			for (size_t fi = 0; fi < fades.size(); ) {
+				if (fades[fi].record_index < records.size() && records[fades[fi].record_index].effect.kind == effect.kind) {
+					fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(fi));
+				} else {
+					++fi;
+				}
+			}
+		}
+		Fade fade;
+		fade.record_index = index;
+		fade.player = player_id;
+		fade.start = clock;
+		switch (effect.kind) {
+			case TriggerEffectKind::MOVE:
+			case TriggerEffectKind::ROTATE:
+				fade.members = resolve_effect_members(effect);
+				fade.pivot = resolve_pivot(effect);
+				break;
+			case TriggerEffectKind::SCALE: {
+				fade.members = resolve_effect_members(effect);
+				fade.pivot = resolve_pivot(effect);
+				fade.initial_scales.reserve(fade.members.size());
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
+				for (ObjectID id : fade.members) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					fade.initial_scales.push_back(node ? (ui_root && node->get_parent() == ui_root ? node->get_scale() : node->get_global_scale()) : Vector2(1.0f, 1.0f));
+				}
+				break;
+			}
+			case TriggerEffectKind::ALPHA: {
+				fade.members = resolve_effect_members(effect);
+				fade.group_targets.reserve(effect.target_groups.size());
+				fade.initial_group_opacities.reserve(effect.target_groups.size());
+				for (const String &group : effect.target_groups) {
+					if (!group_opacity.has(group)) group_opacity.insert(group, 1.0);
+					fade.group_targets.push_back(group);
+					fade.initial_group_opacities.push_back(group_opacity[group]);
+				}
+				report_fade_capture(effect, fade);
+				break;
+			}
+			case TriggerEffectKind::COLOR:
+			case TriggerEffectKind::PULSE: {
+				if (!capture_color_target(effect, fade)) return; // missing channel: no-op, like the component
+				break;
+			}
+			case TriggerEffectKind::TIMEWARP:
+				fade.initial_time_scale = Engine::get_singleton()->get_time_scale();
+				break;
+			case TriggerEffectKind::CAMERA_ZOOM: {
+				Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) return;
+				fade.initial_camera_zoom = camera->get_zoom();
+				break;
+			}
+			case TriggerEffectKind::CAMERA_OFFSET: {
+				Object *camera = ObjectDB::get_instance(camera_id);
+				if (!camera) return;
+				fade.initial_camera_offset = camera->get("additional_offset");
+				break;
+			}
+			case TriggerEffectKind::CAMERA_ROTATE: {
+				Node2D *camera = Object::cast_to<Node2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) return;
+				fade.initial_camera_rotation = camera->get_rotation_degrees();
+				break;
+			}
+			case TriggerEffectKind::SHAKE:
+				fade.noise.instantiate();
+				if (fade.noise.is_valid()) fade.noise->set_seed(static_cast<int64_t>(std::rand()));
+				break;
+			case TriggerEffectKind::SHADER_GRAYSCALE: {
+				CanvasItem *node = get_shader_node(StringName("Grayscale"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("grayscale_factor"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+					if (effect.shader_use_lum) {
+						set_shader_param(node, StringName("use_lum"), true);
+					}
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			case TriggerEffectKind::SHADER_SEPIA: {
+				CanvasItem *node = get_shader_node(StringName("Sepia"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("sepia_factor"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			case TriggerEffectKind::SHADER_LENS_CIRCLE: {
+				CanvasItem *node = get_shader_node(StringName("LensCircle"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("alpha"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			case TriggerEffectKind::SHADER_INVERT_COLOR: {
+				CanvasItem *node = get_shader_node(StringName("InvertColor"));
+				if (node) {
+					fade.initial_shader_value = get_shader_param(node, StringName("invert_factor"), 0.0);
+					if (effect.duration > 0.0) node->set_visible(true);
+				}
+				fade.target_shader_value = effect.shader_value;
+				break;
+			}
+			default:
+				break;
+		}
+		if (!effect.pulse_envelope && effect.duration <= 0.0) {
+			// Instant triggers apply the full weight in one step, matching a
+			// zero-length tween completing on its first frame.
+			apply_fade(fade, effect, 1.0, 1.0, 0.0);
+			return;
+		}
+		if (effect.pulse_envelope && effect.fade_in + effect.hold + effect.fade_out <= 0.0) {
+			// A zero-length pulse envelope never leaves weight 0.
+			return;
+		}
+		fades.push_back(std::move(fade));
+	}
+
+	ObjectID resolve_pivot(const TriggerEffect &effect) {
+		Node2D *pivot = resolve_first_member(effect.center_group);
+		return pivot ? ObjectID(pivot->get_instance_id()) : ObjectID();
+	}
+
+	// Captures the fade's channel target and from/to colours. Returns false
+	// when the target does not exist (the component path no-ops then).
+	bool capture_color_target(const TriggerEffect &effect, Fade &fade) {
+		if (effect.channel_is_level_color) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (!level) return false;
+			fade.level_color_property = level_color_property_for_channel(effect.target_channel);
+			const Color current = level->get(fade.level_color_property);
+			fade.from_color = current;
+			double alpha_target = effect.opacity;
+			fade.to_color = resolve_source_color(effect, current, alpha_target);
+			fade.alpha_target = alpha_target;
+			report_color_capture(effect, current, fade.to_color, alpha_target);
+			return true;
+		}
+		Object *data = channel_lookup(effect.target_channel);
+		if (!data) return false;
+		fade.channel_data = ObjectID(data->get_instance_id());
+		const Color current = data->get("color");
+		fade.from_color = current;
+		const Array hsv = data->get("hsv_shift");
+		if (hsv.size() >= 3) {
+			fade.initial_hue = hsv[0];
+			fade.initial_saturation = hsv[1];
+			fade.initial_value = hsv[2];
+		}
+		fade.initial_intensity = data->get("intensity");
+		fade.initial_alpha = data->get("alpha");
+		double alpha_target = effect.opacity;
+		fade.to_color = resolve_source_color(effect, current, alpha_target);
+		fade.alpha_target = alpha_target;
+		report_color_capture(effect, current, fade.to_color, alpha_target);
+		return true;
+	}
+
+	// Diagnostic for the white-beams investigation, budgeted so it never
+	// floods logcat: the first colour-target captures print exactly what a
+	// fire resolved - parse flags, the colour it fades FROM and the colour
+	// it fades TO - then every 1000th fire keeps sampling mid-level
+	// behaviour, up to a hard cap of 60 lines per level load. A device run
+	// showed 348k recolour events while no channel ever left white; the
+	// parsed keys (TRIGDIAG) look correct, so the missing fact is what the
+	// fires actually computed. Grep "[gdash_native] colorcap".
+	void report_color_capture(const TriggerEffect &effect, const Color &from, const Color &to, double alpha_target) {
+		++color_capture_count;
+		if (color_capture_reports >= 60) return;
+		if (color_capture_count > 20 && (color_capture_count % 1000) != 0) return;
+		++color_capture_reports;
+		// print(), for the same reason as FADIAG above: diagnostic, not failure.
+		UtilityFunctions::print(String("[gdash_native] colorcap #")
+			+ String::num_int64(color_capture_count)
+			+ (effect.kind == TriggerEffectKind::PULSE ? " pulse" : " color")
+			+ (effect.channel_is_level_color ? " level" : " channel")
+			+ " ch=" + String::num_int64(effect.target_channel)
+			+ " rgb=" + (effect.has_color ? "y" : "n")
+			+ " copy=" + String::num_int64(effect.copy_channel)
+			+ " player=" + String::num_int64(effect.player_color)
+			+ " from=(" + String::num(from.r, 3) + "," + String::num(from.g, 3) + "," + String::num(from.b, 3) + ")"
+			+ " to=(" + String::num(to.r, 3) + "," + String::num(to.g, 3) + "," + String::num(to.b, 3) + ")"
+			+ " alpha_to=" + String::num(alpha_target, 3)
+			+ " dur=" + String::num(effect.duration, 3)
+			+ (effect.pulse_envelope ? " envelope" : ""));
+	}
+
+	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta) {
+		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE) return;
+		switch (effect.kind) {
+			case TriggerEffectKind::MOVE: {
+				const Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
+				if (offset == Vector2()) break;
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
+				for (ObjectID id : fade.members) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (!node) continue;
+					if (ui_root && node->get_parent() == ui_root) {
+						node->set_position(node->get_position() + offset);
+					} else {
+						node->set_global_position(node->get_global_position() + offset);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::ROTATE: {
+				const double delta_degrees = effect.degrees * weight_delta;
+				Node2D *pivot = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
+				for (ObjectID id : fade.members) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (!node) continue;
+					// GD's "lock object rotation" keeps a member's own angle;
+					// unchecked members also spin while orbiting the centre.
+					if (effect.allow_self_rotation) {
+						node->set_global_rotation_degrees(node->get_global_rotation_degrees() + delta_degrees);
+					}
+					if (pivot) {
+						const bool both_in_ui = ui_root && node->get_parent() == ui_root && pivot->get_parent() == ui_root;
+						const Vector2 relative = both_in_ui
+							? (node->get_position() - pivot->get_position())
+							: (node->get_global_position() - pivot->get_global_position());
+						const Vector2 rotated = relative.rotated(
+							static_cast<real_t>(Math::deg_to_rad(delta_degrees))) - relative;
+						if (ui_root && node->get_parent() == ui_root) {
+							node->set_position(node->get_position() + rotated);
+						} else {
+							node->set_global_position(node->get_global_position() + rotated);
+						}
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SCALE: {
+				Node2D *pivot = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
+				for (size_t i = 0; i < fade.members.size(); ++i) {
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.members[i]));
+					if (!node) continue;
+					const Vector2 initial = fade.initial_scales[i];
+					const Vector2 scale_delta = (initial * effect.scale_factor - initial)
+						* static_cast<real_t>(weight_delta);
+					if (pivot) {
+						const Vector2 current = (ui_root && node->get_parent() == ui_root) ? node->get_scale() : node->get_global_scale();
+						if (Math::is_zero_approx(current.x) || Math::is_zero_approx(current.y)) continue;
+						const bool both_in_ui = ui_root && node->get_parent() == ui_root && pivot->get_parent() == ui_root;
+						const Vector2 relative = both_in_ui
+							? (node->get_position() - pivot->get_position())
+							: (node->get_global_position() - pivot->get_global_position());
+						const Vector2 position_delta = relative * ((current + scale_delta) / current) - relative;
+						if (ui_root && node->get_parent() == ui_root) {
+							node->set_position(node->get_position() + position_delta);
+						} else {
+							node->set_global_position(node->get_global_position() + position_delta);
+						}
+					}
+					if (ui_root && node->get_parent() == ui_root) {
+						node->set_scale(node->get_scale() + scale_delta);
+					} else {
+						node->set_global_scale(node->get_global_scale() + scale_delta);
+					}
+					if (node->is_class("StaticBody2D") && scale_delta != Vector2()) {
+						if (Node *absolute_size = node->get_node_or_null(NodePath("NinePatchSprite2DAbsoluteSize"))) {
+							absolute_size->call("update_size");
+						}
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::ALPHA: {
+				// Ease each target group's persistent opacity, then recompute
+				// every affected member from its own alpha times the product
+				// of all its groups' opacities - GD's multiplicative model.
+				// A member shared with another group keeps that group's
+				// opacity in its product, so fading the other group back up
+				// cannot resurrect what this fade hid.
+				for (size_t gi = 0; gi < fade.group_targets.size(); ++gi) {
+					const double initial = fade.initial_group_opacities[gi];
+					// Accumulate: the per-tick weight deltas sum to 1 over
+					// the fade, so this lands exactly on the target.
+					group_opacity[fade.group_targets[gi]] +=
+						(effect.alpha - initial) * weight_delta;
+				}
+				for (ObjectID id : fade.members) {
+					refresh_member_alpha(id);
+				}
+				break;
+			}
+			case TriggerEffectKind::COLOR:
+			case TriggerEffectKind::PULSE:
+				apply_color(fade, effect, weight, weight_delta);
+				break;
+			case TriggerEffectKind::TIMEWARP: {
+				double time_scale = Engine::get_singleton()->get_time_scale();
+				time_scale = Math::max(0.01, time_scale + (effect.time_scale - fade.initial_time_scale) * weight_delta);
+				Engine::get_singleton()->set_time_scale(time_scale);
+				break;
+			}
+			case TriggerEffectKind::CAMERA_ZOOM: {
+				Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) break;
+				const Vector2 target = Vector2(
+					static_cast<real_t>(effect.camera_zoom * PLAYER_CAMERA_DEFAULT_ZOOM),
+					static_cast<real_t>(effect.camera_zoom * PLAYER_CAMERA_DEFAULT_ZOOM));
+				camera->set_zoom(camera->get_zoom() + (target - fade.initial_camera_zoom) * static_cast<real_t>(weight_delta));
+				break;
+			}
+			case TriggerEffectKind::CAMERA_OFFSET: {
+				Object *camera = ObjectDB::get_instance(camera_id);
+				if (!camera) break;
+				const Vector2 current = camera->get("additional_offset");
+				camera->set("additional_offset",
+					current + (effect.camera_offset_px - fade.initial_camera_offset) * static_cast<real_t>(weight_delta));
+				break;
+			}
+			case TriggerEffectKind::CAMERA_ROTATE: {
+				Node2D *camera = Object::cast_to<Node2D>(ObjectDB::get_instance(camera_id));
+				if (!camera) break;
+				camera->set_rotation_degrees(camera->get_rotation_degrees()
+					+ static_cast<real_t>(effect.camera_rotation_degrees * weight_delta));
+				break;
+			}
+			case TriggerEffectKind::SHAKE:
+				apply_shake(fade, effect, weight);
+				break;
+			case TriggerEffectKind::SHADER_GRAYSCALE: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("Grayscale"));
+				if (node) {
+					set_shader_param(node, StringName("grayscale_factor"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SHADER_SEPIA: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("Sepia"));
+				if (node) {
+					set_shader_param(node, StringName("sepia_factor"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SHADER_LENS_CIRCLE: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("LensCircle"));
+				if (node) {
+					set_shader_param(node, StringName("alpha"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::SHADER_INVERT_COLOR: {
+				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
+				CanvasItem *node = get_shader_node(StringName("InvertColor"));
+				if (node) {
+					set_shader_param(node, StringName("invert_factor"), val);
+					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
+						node->set_visible(false);
+					} else if (val > 0.001) {
+						node->set_visible(true);
+					}
+				}
+				break;
+			}
+			default:
+				break;
+		}
+	}
+
+	// Colour fades lerp sRGB per channel (GD's own fade behaviour) between the
+	// captured channel colour and the resolved source. Channel-table targets
+	// also fade HSV shift, intensity and opacity toward the trigger's values;
+	// the watcher fan-out runs from the resource's changed signal, whose
+	// native fast path recolours every bound object in C++.
+	void apply_color(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta) {
+		const Color color = fade.from_color.lerp(fade.to_color, static_cast<real_t>(weight));
+		if (!fade.level_color_property.is_empty()) {
+			Object *level = ObjectDB::get_instance(level_id);
+			if (level) level->set(fade.level_color_property, color);
+			return;
+		}
+		Object *data = ObjectDB::get_instance(fade.channel_data);
+		if (!data) return;
+		data->set("color", color);
+		if (effect.kind == TriggerEffectKind::COLOR) {
+			Array hsv = data->get("hsv_shift");
+			if (hsv.size() >= 3) {
+				const double hue = hsv[0];
+				const double saturation = hsv[1];
+				const double value = hsv[2];
+				hsv.set(0, hue + (0.0 - fade.initial_hue) * weight_delta);
+				hsv.set(1, saturation + (0.0 - fade.initial_saturation) * weight_delta);
+				hsv.set(2, value + (0.0 - fade.initial_value) * weight_delta);
+				data->set("hsv_shift", hsv);
+			}
+			data->set("intensity", static_cast<double>(data->get("intensity")) + (1.0 - fade.initial_intensity) * weight_delta);
+			data->set("alpha", static_cast<double>(data->get("alpha")) + (fade.alpha_target - fade.initial_alpha) * weight_delta);
+			// Blending is target state, not a faded value: it applies the
+			// moment a trigger carrying key 17 fires. The channel resource's
+			// changed signal fans out to the watcher, which pushes the flip
+			// onto the channel's batches. Triggers without the checkbox leave
+			// the channel's blend alone (tri-state), so a long fade cannot
+			// revert an overlapping Blending flip on its next tick.
+			if (effect.has_blending) {
+				data->set("blending", effect.blending);
+			}
+			// The copy link and the link sever have different timings, so
+			// the weight gate applies to the set only:
+			// - Setting the link is target state (key 50): once the
+			//   trigger's fade completes, the channel is re-pointed at its
+			//   source and keeps following that source's later recolours.
+			//   The link only goes live at completion (or instantly for
+			//   duration-0 triggers, where the fire already carries weight
+			//   1) so the fade towards the source stays visible - GDRweb
+			//   mixes towards the live copy during the fade, and the
+			//   finished link continues that.
+			// - Severing the link happens the moment the trigger fires:
+			//   an explicit colour or player target replaces the channel's
+			//   CopyColor start value right away (GDRweb's track model), so
+			//   the fade runs from the colour the channel showed at fire -
+			//   its copy source's colour at that moment - to the literal
+			//   target. Repeated severs while the fade ticks are idempotent.
+			if (effect.copy_channel > 0 || effect.has_color || effect.player_color != 0) {
+				if (effect.copy_channel > 0) {
+					if (weight >= 1.0) {
+						data->set("copied_channel_id", static_cast<int64_t>(effect.copy_channel));
+						data->set("copy_opacity", effect.copy_opacity);
+						data->set("copy_hue", effect.copy_hue);
+						data->set("copy_saturation", effect.copy_saturation);
+						data->set("copy_value", effect.copy_value);
+						data->set("copy_saturation_additive", effect.copy_saturation_additive);
+						data->set("copy_value_additive", effect.copy_value_additive);
+					}
+				} else {
+					// An explicit colour or player target severs the link.
+					data->set("copied_channel_id", static_cast<int64_t>(0));
+				}
+			}
+		}
+		data->emit_signal(StringName("changed"));
+	}
+
+	// Screen shake decays with the eased weight while the noise position keeps
+	// advancing, matching CameraShakeComponent's STRENGTH easing at speed 100.
+	// The noise cursor (linear_eased_weight) is advanced by the caller before
+	// the snapshot is taken; this function only reads the fade.
+	void apply_shake(const Fade &fade, const TriggerEffect &effect, double weight) {
+		Object *camera = ObjectDB::get_instance(camera_id);
+		if (!camera || fade.noise.is_null()) return;
+		const double noise_position = fade.linear_eased_weight * 100.0 * 100.0;
+		const double sample_strength = (1.0 - weight) * effect.shake_strength * 10.0;
+		const Vector2 offset(
+			static_cast<real_t>(fade.noise->get_noise_2d(noise_position, 0.0) * sample_strength),
+			static_cast<real_t>(fade.noise->get_noise_2d(1.0, noise_position) * sample_strength));
+		camera->set("shake_offset", offset);
+	}
+
+	void cancel_group_events(const StringName &group) {
+		if (events.empty()) return;
+		std::vector<Event> kept;
+		kept.reserve(events.size());
+		for (Event &event : events) {
+			if (event.group != group) kept.push_back(std::move(event));
+		}
+		if (kept.size() == events.size()) return;
+		events.swap(kept);
+		std::make_heap(events.begin(), events.end(), event_later);
+	}
+
+	void check_touch_overlaps() {
+		if (frame_players.empty() || touch_order.empty()) return;
+		ensure_index();
+		repair_index_tables();
+		if (records.empty() || touch_order.empty()) return;
+		// activate() below can reenter GDScript (an interacted handler that
+		// restarts the level rebuilds records/touch_order and frees the old
+		// buffers), which would leave the scan iterators and the `inside`
+		// reference dangling. Bail out as soon as that happens; the next
+		// physics frame re-evaluates the overlaps from scratch.
+		const uint64_t epoch = structure_epoch;
+		const size_t record_count = records.size();
+		for (ObjectID player_object : frame_players) {
+			if (structure_epoch != epoch) return;
+			Node2D *player = Object::cast_to<Node2D>(ObjectDB::get_instance(player_object));
+			if (!player) continue;
+			const uint64_t player_id = static_cast<uint64_t>(player_object);
+			const Vector2 position = player->get_global_position();
+			std::set<size_t> &inside = touch_inside_players[player_id];
+			// Multi-activate touch triggers re-fire on every fresh overlap:
+			// forget records that left the player's X window in earlier frames
+			// so returning to them counts as a new touch.
+			// 2026-09-13 tombstones (five, four builds): MTE fault reading
+			// records[idx] with idx just past records.size(). The order tables
+			// are validated above, so the remaining unvalidated index source
+			// in this function is this per-player `inside` set: an index
+			// inserted while records was larger (a re-registration without a
+			// clear) reads past the post-finalize shrink_to_fit allocation.
+			// Drop stale entries instead of reading them, and report them.
+			for (auto entry = inside.begin(); entry != inside.end(); ) {
+				const size_t remembered = *entry;
+				if (remembered >= record_count) {
+					ERR_PRINT(String("[gdash_native] stale touch-inside entry ")
+						+ String::num_uint64(static_cast<uint64_t>(remembered))
+						+ " with records=" + String::num_uint64(static_cast<uint64_t>(record_count))
+						+ ", set=" + String::num_uint64(static_cast<uint64_t>(inside.size()))
+						+ ", player=" + String::num_uint64(player_id)
+						+ ", epoch=" + String::num_uint64(structure_epoch)
+						+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+							Engine::get_singleton()->get_process_frames()))
+						+ "; erasing");
+					entry = inside.erase(entry);
+					continue;
+				}
+				if (records[remembered].x < position.x - TOUCH_HALF_EXTENT
+						|| records[remembered].x > position.x + TOUCH_HALF_EXTENT) {
+					entry = inside.erase(entry);
+				} else {
+					++entry;
+				}
+			}
+			// 2026-09-13 device tombstones: five crashes faulted reading
+			// records[index] one to four past records.size() inside this
+			// scan. Solved 2026-09-15: the lower_bound comparator below
+			// had upper_bound's argument order, so the player's X was
+			// being passed to this accessor as a record index - the read
+			// went out of bounds exactly when the player crossed
+			// x = records.size(). The order tables were never corrupt.
+			// The bounds-checked accessor stays as defence in depth:
+			// an out-of-range index is reported once per call and sorts
+			// outside every player window instead of faulting.
+			bool reported_bounds = false;
+			const size_t bounds_count = records.size();
+			auto touch_x = [&](size_t index) -> double {
+				if (index < bounds_count) return records[index].x;
+				if (!reported_bounds) {
+					reported_bounds = true;
+					ERR_PRINT(String("[gdash_native] out-of-range index ")
+						+ String::num_uint64(static_cast<uint64_t>(index))
+						+ " in touch scan, records=" + String::num_uint64(static_cast<uint64_t>(bounds_count))
+						+ ", touch_order=" + String::num_uint64(static_cast<uint64_t>(touch_order.size()))
+						+ ", epoch=" + String::num_uint64(structure_epoch)
+						+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+							Engine::get_singleton()->get_process_frames())));
+				}
+				return INFINITY;
+			};
+			// lower_bound invokes the comparator as comp(element, value):
+			// the record index comes first and the search value (the
+			// window edge) second. This lambda was previously written in
+			// upper_bound's comp(value, element) order, so the PLAYER'S X
+			// was passed to touch_x() as a record index - the moment the
+			// player ran past x = records.size() (5208 records, about two
+			// seconds into Amethyst) every physics tick logged an
+			// out-of-range error, the comparator degenerated to always
+			// true, lower_bound returned end() and no touch trigger ever
+			// activated. That player-X-as-index read is also what the
+			// 2026-09-13 tombstones actually faulted on: the order tables
+			// were never corrupt. upper_bound in advance() uses the
+			// opposite order and is correct as written.
+			auto first = std::lower_bound(touch_order.begin(), touch_order.end(),
+				position.x - TOUCH_HALF_EXTENT,
+				[&](size_t index, double value) { return touch_x(index) < value; });
+			for (auto it = first; it != touch_order.end(); ++it) {
+				const size_t index = *it;
+				if (index >= bounds_count) continue;
+				if (records[index].x > position.x + TOUCH_HALF_EXTENT) break;
+				const bool inside_now = Math::abs(records[index].y - position.y) <= TOUCH_HALF_EXTENT;
+				const bool was_inside = inside.count(index) != 0;
+				if (inside_now && !was_inside) {
+					activate(index, player, true);
+					if (structure_epoch != epoch) return;
+					// activate() re-entered GDScript. A rebuild bumps the
+					// epoch (handled above); an append-only re-registration
+					// grows records without bumping it. Nothing registers
+					// during play, so ANY size change here is unexpected:
+					// report it and let the next physics frame re-validate
+					// the whole scan instead of trusting stale iterators.
+					if (records.size() != record_count) {
+						ERR_PRINT(String("[gdash_native] records resized mid-scan: ")
+							+ String::num_uint64(static_cast<uint64_t>(record_count))
+							+ " -> " + String::num_uint64(static_cast<uint64_t>(records.size()))
+							+ " after activating record "
+							+ String::num_uint64(static_cast<uint64_t>(index))
+							+ ", epoch=" + String::num_uint64(structure_epoch)
+							+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+								Engine::get_singleton()->get_process_frames()))
+							+ "; aborting scan");
+						return;
+					}
+				}
+				if (inside_now) inside.insert(index);
+				else if (was_inside) inside.erase(index);
+			}
+		}
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
+		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeTriggerRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
+		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeTriggerRuntime::bind_shader_layer);
+		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeTriggerRuntime::bind_ui_layer);
+		ClassDB::bind_method(D_METHOD("apply_ui_triggers"), &NativeTriggerRuntime::apply_ui_triggers);
+		ClassDB::bind_method(D_METHOD("restore_ui_objects"), &NativeTriggerRuntime::restore_ui_objects);
+		ClassDB::bind_method(D_METHOD("is_ui_applied"), &NativeTriggerRuntime::is_ui_applied);
+		ClassDB::bind_static_method("NativeTriggerRuntime", D_METHOD("compute_ui_anchor", "offset_from_target", "xref_pos", "yref_pos", "xref_relative", "yref_relative", "viewport_size", "zoom"), &NativeTriggerRuntime::compute_ui_anchor, DEFVAL(PLAYER_CAMERA_DEFAULT_ZOOM));
+		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeTriggerRuntime::register_channel);
+		ClassDB::bind_method(D_METHOD("set_group_members", "group", "members"), &NativeTriggerRuntime::set_group_members);
+		ClassDB::bind_method(D_METHOD("finalize"), &NativeTriggerRuntime::finalize);
+		ClassDB::bind_method(D_METHOD("advance", "player", "previous_x", "current_x"), &NativeTriggerRuntime::advance);
+		ClassDB::bind_method(D_METHOD("advance_player", "player"), &NativeTriggerRuntime::advance_player);
+		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
+		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
+		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
+		ClassDB::bind_method(D_METHOD("reset"), &NativeTriggerRuntime::reset);
+		ClassDB::bind_method(D_METHOD("snapshot"), &NativeTriggerRuntime::snapshot);
+		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeTriggerRuntime::restore);
+		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeTriggerRuntime::trigger_count);
+		ClassDB::bind_method(D_METHOD("active_fade_count"), &NativeTriggerRuntime::active_fade_count);
+		ClassDB::bind_integer_constant(get_class_static(), "Flags", "SPAWN_ONLY", SPAWN_ONLY);
+		ClassDB::bind_integer_constant(get_class_static(), "Flags", "TOUCH_ONLY", TOUCH_ONLY);
+		ClassDB::bind_integer_constant(get_class_static(), "Flags", "MULTI_ACTIVATE", MULTI_ACTIVATE);
+	}
+
+public:
+	static Vector2 compute_ui_anchor(
+		const Vector2 &offset_from_target,
+		int32_t xref_pos,
+		int32_t yref_pos,
+		bool xref_relative,
+		bool yref_relative,
+		const Vector2 &viewport_size,
+		double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
+	{
+		return ::godot::compute_ui_anchor(offset_from_target, xref_pos, yref_pos, xref_relative, yref_relative, viewport_size, zoom);
+	}
+
+	~NativeTriggerRuntime() {
+		restore_ui_objects();
+	}
+
+	void clear() {
+		++structure_epoch;
+		restore_ui_objects();
+		ui_triggers_applied = false;
+		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
+		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
+		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
+		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
+		fade_capture_count = 0; fade_capture_reports = 0;
+		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
+		frame_players.clear(); previous_positions.clear();
+		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID(); shader_layer_id = ObjectID();
+		ui_layer_id = ObjectID(); ui_root_id = ObjectID();
+		reset_shaders();
+	}
+	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		Record record;
+		record.x = x;
+		record.y = y;
+		if (trigger) record.object = trigger->get_instance_id();
+		record.flags = static_cast<int32_t>(flags); record.source_order = source_order;
+		record.gd_id = gd_id; record.properties = properties;
+		record.effect = parse_trigger_effect(gd_id, properties);
+		const size_t index = records.size();
+		for (int64_t i = 0; i < groups.size(); ++i)
+			group_index[String(groups[i])].push_back(index);
+		records.push_back(std::move(record)); index_dirty = true;
+		return static_cast<int64_t>(index);
+	}
+	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return register_trigger(nullptr, x, y, flags, source_order, groups, gd_id, properties);
+	}
+	// Level, camera, Config, ShaderLayer and UILayer objects the effects read/write.
+	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
+		if (level) level_id = level->get_instance_id();
+		if (camera) camera_id = camera->get_instance_id();
+		if (config) config_id = config->get_instance_id();
+		if (shader_layer) {
+			shader_layer_id = shader_layer->get_instance_id();
+		} else if (level) {
+			Node *n = Object::cast_to<Node>(level);
+			while (n) {
+				Node *sl = n->get_node_or_null(NodePath("ShaderLayer"));
+				if (sl) {
+					shader_layer_id = sl->get_instance_id();
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+		if (ui_layer) {
+			ui_layer_id = ui_layer->get_instance_id();
+		} else if (level) {
+			Node *n = Object::cast_to<Node>(level);
+			while (n) {
+				Node *ul = n->get_node_or_null(NodePath("UILayer"));
+				if (ul && ul->is_class("CanvasLayer")) {
+					ui_layer_id = ul->get_instance_id();
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+	}
+	void bind_shader_layer(Object *shader_layer) {
+		if (shader_layer) shader_layer_id = shader_layer->get_instance_id();
+	}
+	void bind_ui_layer(Object *ui_layer) {
+		if (ui_layer) ui_layer_id = ui_layer->get_instance_id();
+	}
+
+	Vector2 get_viewport_size() const {
+		Camera2D *cam = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+		if (cam) {
+			Viewport *vp = cam->get_viewport();
+			if (vp) {
+				Vector2 sz = vp->get_visible_rect().size;
+				if (sz.x > 0.0 && sz.y > 0.0) return sz;
+			}
+		}
+		Node *lvl = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+		if (lvl) {
+			Viewport *vp = lvl->get_viewport();
+			if (vp) {
+				Vector2 sz = vp->get_visible_rect().size;
+				if (sz.x > 0.0 && sz.y > 0.0) return sz;
+			}
+		}
+		return Vector2(1920.0, 1080.0);
+	}
+
+	Node2D *ensure_ui_root() {
+		CanvasLayer *layer = Object::cast_to<CanvasLayer>(ObjectDB::get_instance(ui_layer_id));
+		if (!layer) {
+			Node *level = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+			Node *n = level;
+			while (n) {
+				Node *found = n->get_node_or_null(NodePath("UILayer"));
+				if (found && found->is_class("CanvasLayer")) {
+					layer = Object::cast_to<CanvasLayer>(found);
+					ui_layer_id = layer->get_instance_id();
+					break;
+				}
+				n = n->get_parent();
+			}
+		}
+		if (!layer) {
+			Node *level = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+			if (level) {
+				layer = memnew(CanvasLayer);
+				layer->set_name(StringName("UILayer"));
+				layer->set_layer(60);
+				level->add_child(layer);
+				ui_layer_id = layer->get_instance_id();
+			}
+		}
+		if (!layer) return nullptr;
+
+		Node2D *root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
+		if (!root || root->get_parent() != layer) {
+			root = Object::cast_to<Node2D>(layer->get_node_or_null(NodePath("UIRoot")));
+			if (!root) {
+				root = memnew(Node2D);
+				root->set_name(StringName("UIRoot"));
+				layer->add_child(root);
+			}
+			ui_root_id = root->get_instance_id();
+		}
+
+		const Vector2 vp_size = get_viewport_size();
+		root->set_position(vp_size * 0.5);
+		root->set_scale(Vector2(PLAYER_CAMERA_DEFAULT_ZOOM, PLAYER_CAMERA_DEFAULT_ZOOM));
+		return root;
+	}
+
+	void apply_ui_triggers() {
+		if (ui_triggers_applied) return;
+		ui_triggers_applied = true;
+
+		Node2D *ui_root = ensure_ui_root();
+		const Vector2 vp_size = get_viewport_size();
+
+		for (size_t i = 0; i < records.size(); ++i) {
+			Record &rec = records[i];
+			if (rec.effect.kind != TriggerEffectKind::UI) continue;
+			rec.activated = true;
+
+			const TriggerEffect &effect = rec.effect;
+			std::vector<ObjectID> target_members = resolve_effect_members(effect);
+			if (target_members.empty()) continue;
+
+			Vector2 target_center;
+			bool has_target_center = false;
+			if (!effect.center_group.is_empty()) {
+				Node2D *guide = resolve_first_member(effect.center_group);
+				if (guide) {
+					target_center = guide->get_global_position();
+					has_target_center = true;
+				}
+			}
+			if (!has_target_center) {
+				Rect2 bounds;
+				bool first = true;
+				for (ObjectID id : target_members) {
+					Node2D *n = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (!n) continue;
+					if (first) {
+						bounds = Rect2(n->get_global_position(), Vector2());
+						first = false;
+					} else {
+						bounds = bounds.expand(n->get_global_position());
+					}
+				}
+				target_center = first ? Vector2() : bounds.get_center();
+			}
+
+			for (ObjectID id : target_members) {
+				if (ui_affected_objects.count(static_cast<uint64_t>(id)) > 0) continue;
+				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+				if (!node) continue;
+
+				ui_affected_objects.insert(static_cast<uint64_t>(id));
+
+				UIObjectState state;
+				state.node_id = id;
+				Node *parent = node->get_parent();
+				if (parent) {
+					state.original_parent_id = parent->get_instance_id();
+					state.original_index = node->get_index();
+				}
+				state.original_transform = node->get_transform();
+				state.original_z_index = node->get_z_index();
+				state.original_z_as_relative = node->is_z_relative();
+
+				if (node->is_class("CollisionObject2D")) {
+					state.had_collision = true;
+					state.original_collision_layer = node->call("get_collision_layer");
+					state.original_collision_mask = node->call("get_collision_mask");
+					node->call("set_collision_layer", 0);
+					node->call("set_collision_mask", 0);
+				}
+				if (node->is_class("Area2D")) {
+					state.was_area = true;
+					state.original_monitoring = node->call("is_monitoring");
+					state.original_monitorable = node->call("is_monitorable");
+					node->call("set_monitoring", false);
+					node->call("set_monitorable", false);
+				}
+				if (is_decoration_batch(node)) {
+					state.was_batch = true;
+					state.original_cull = node->get("_cull");
+					node->set("_cull", false);
+					node->queue_redraw();
+				}
+
+				ui_objects.push_back(state);
+
+				const Vector2 offset = node->get_global_position() - target_center;
+				const Vector2 ui_anchor = compute_ui_anchor(
+					offset, effect.xref_pos, effect.yref_pos,
+					effect.xref_relative, effect.yref_relative,
+					vp_size, PLAYER_CAMERA_DEFAULT_ZOOM);
+
+				if (ui_root && parent) {
+					parent->remove_child(node);
+					ui_root->add_child(node);
+					node->set_position(ui_anchor);
+				} else {
+					node->set_global_position(target_center + ui_anchor);
+				}
+			}
+		}
+	}
+
+	void restore_ui_objects() {
+		if (ui_objects.empty()) {
+			ui_affected_objects.clear();
+			return;
+		}
+		std::sort(ui_objects.begin(), ui_objects.end(), [](const UIObjectState &a, const UIObjectState &b) {
+			return a.original_index < b.original_index;
+		});
+
+		for (const UIObjectState &state : ui_objects) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(state.node_id));
+			Node *parent = Object::cast_to<Node>(ObjectDB::get_instance(state.original_parent_id));
+			if (node && parent) {
+				Node *cur_parent = node->get_parent();
+				if (cur_parent) cur_parent->remove_child(node);
+				parent->add_child(node);
+				int max_idx = parent->get_child_count() - 1;
+				parent->move_child(node, Math::clamp(state.original_index, 0, max_idx));
+				node->set_transform(state.original_transform);
+				node->set_z_index(state.original_z_index);
+				node->set_z_as_relative(state.original_z_as_relative);
+				if (state.had_collision) {
+					node->call("set_collision_layer", state.original_collision_layer);
+					node->call("set_collision_mask", state.original_collision_mask);
+				}
+				if (state.was_area) {
+					node->call("set_monitoring", state.original_monitoring);
+					node->call("set_monitorable", state.original_monitorable);
+				}
+				if (state.was_batch) {
+					node->set("_cull", state.original_cull);
+					node->queue_redraw();
+				}
+			}
+		}
+		ui_objects.clear();
+		ui_affected_objects.clear();
+	}
+
+	bool is_ui_applied() const { return ui_triggers_applied; }
+	void register_channel(const String &name, Object *data) {
+		if (data && !name.is_empty()) channel_index[name] = data->get_instance_id();
+	}
+	void set_group_members(const String &group, const Array &members) {
+		std::vector<ObjectID> ids;
+		ids.reserve(static_cast<size_t>(members.size()));
+		for (int64_t i = 0; i < members.size(); ++i) {
+			Object *member = members[i];
+			if (member) ids.push_back(ObjectID(member->get_instance_id()));
+		}
+		member_index[group] = std::move(ids);
+		if (!group_opacity.has(group)) group_opacity[group] = 1.0;
+		for (ObjectID id : member_index[group]) {
+			if (!member_own_alpha.has(id)) {
+				member_own_alpha.insert(id, read_member_alpha(ObjectDB::get_instance(id)));
+			}
+			std::vector<String> &groups = member_groups[id];
+			bool duplicate = false;
+			for (const String &existing : groups) {
+				if (existing == group) {
+					duplicate = true;
+					break;
+				}
+			}
+			if (!duplicate) groups.push_back(group);
+		}
+	}
+	// Every group an effect may resolve against, for the membership snapshot
+	// the owner Node takes at finalize time.
+	std::vector<String> referenced_effect_groups() const {
+		std::vector<String> groups;
+		for (const Record &record : records) {
+			for (const String &group : record.effect.target_groups) {
+				bool duplicate = false;
+				for (const String &existing : groups) {
+					if (existing == group) {
+						duplicate = true;
+						break;
+					}
+				}
+				if (!duplicate) groups.push_back(group);
+			}
+			const String &center = record.effect.center_group;
+			if (!center.is_empty()) {
+				bool duplicate = false;
+				for (const String &existing : groups) {
+					if (existing == center) {
+						duplicate = true;
+						break;
+					}
+				}
+				if (!duplicate) groups.push_back(center);
+			}
+		}
+		return groups;
+	}
+	void finalize() {
+		++structure_epoch;
+		ensure_index();
+		records.shrink_to_fit();
+		x_order.shrink_to_fit();
+		for (auto &entry : group_index) {
+			std::stable_sort(entry.value.begin(), entry.value.end(), [&](size_t a, size_t b) {
+				return records[a].source_order < records[b].source_order;
+				});
+			entry.value.shrink_to_fit();
+		}
+		touch_order.clear();
+		for (size_t index : x_order) {
+			if (records[index].flags & TOUCH_ONLY) touch_order.push_back(index);
+		}
+		touch_order.shrink_to_fit();
+		gravity_portal_order.shrink_to_fit();
+		apply_ui_triggers();
+	}
+	void advance(Object *player, double previous_x, double current_x) {
+		if (!player) return;
+		// Touch overlap checks run from tick() for every player advanced this
+		// frame, including ones that did not move on X.
+		frame_players.push_back(ObjectID(player->get_instance_id()));
+		if (Math::is_equal_approx(previous_x, current_x)) return;
+		ensure_index();
+		repair_index_tables();
+		if (x_order.empty()) return;
+		// activate() below can reenter GDScript and rebuild the runtime,
+		// freeing x_order/records; the scan iterators would dangle.
+		const uint64_t epoch = structure_epoch;
+		// Bounds-checked accessor for the same reason as the touch scan:
+		// tombstones showed table entries one to four past records.size()
+		// surviving entry validation. Reported once per call; an out-of-range
+		// entry sorts outside the crossing range instead of faulting.
+		bool reported_bounds = false;
+		const size_t bounds_count = records.size();
+		auto order_x = [&](size_t index) -> double {
+			if (index < bounds_count) return records[index].x;
+			if (!reported_bounds) {
+				reported_bounds = true;
+				ERR_PRINT(String("[gdash_native] out-of-range index ")
+					+ String::num_uint64(static_cast<uint64_t>(index))
+					+ " in crossing scan, records=" + String::num_uint64(static_cast<uint64_t>(bounds_count))
+					+ ", x_order=" + String::num_uint64(static_cast<uint64_t>(x_order.size()))
+					+ ", epoch=" + String::num_uint64(structure_epoch)
+					+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
+						Engine::get_singleton()->get_process_frames())));
+			}
+			return INFINITY;
+		};
+		auto index_before_value = [&](size_t index, double value) { return order_x(index) < value; };
+		if (current_x > previous_x) {
+			// (previous_x, current_x] in O(log n + crossed), rather than scanning
+			// every trigger from the start once per player and physics frame.
+			auto first = std::upper_bound(x_order.begin(), x_order.end(), previous_x,
+				[&](double value, size_t index) { return value < order_x(index); });
+			auto last = std::upper_bound(x_order.begin(), x_order.end(), current_x,
+				[&](double value, size_t index) { return value < order_x(index); });
+			for (auto it = first; it != last; ++it) {
+				if (structure_epoch != epoch) return;
+				activate(*it, player);
+			}
+		} else {
+			// [current_x, previous_x), preserving descending spatial/source order.
+			auto first = std::lower_bound(x_order.begin(), x_order.end(), current_x, index_before_value);
+			auto last = std::lower_bound(x_order.begin(), x_order.end(), previous_x, index_before_value);
+			for (auto it = std::make_reverse_iterator(last); it != std::make_reverse_iterator(first); ++it) {
+				if (structure_epoch != epoch) return;
+				activate(*it, player);
+			}
+		}
+	}
+	// Per-player x tracking lives inside the RefCounted runtime, not the
+	// owner Node: an interacted handler can free the owner Node synchronously,
+	// and the physics step holds a local Ref to this object, so state owned
+	// here stays alive for the whole step no matter what the scene does.
+	std::map<uint64_t, double> previous_positions;
+
+	void advance_player(Object *player) {
+		Node2D *node = Object::cast_to<Node2D>(player);
+		if (!node) return;
+		const uint64_t id = static_cast<uint64_t>(player->get_instance_id());
+		const double x = node->get_global_position().x;
+		auto previous = previous_positions.find(id);
+		const bool is_first_registration = (previous == previous_positions.end());
+		const bool is_initial_spawn = previous_positions.empty();
+		const double from = !is_first_registration ? previous->second : x;
+		// Update the tracking map before advance(): activate() inside it can
+		// re-enter GDScript and retire this runtime for the rest of the step.
+		previous_positions[id] = x;
+
+		if (is_initial_spawn) {
+			repair_index_tables();
+			const uint64_t epoch = structure_epoch;
+			const size_t bounds_count = records.size();
+			auto trigger_x = [&](size_t index) -> double {
+				return index < bounds_count ? records[index].x : INFINITY;
+			};
+			auto last = std::upper_bound(x_order.begin(), x_order.end(), x,
+				[&](double value, size_t index) { return value < trigger_x(index); });
+			for (auto it = x_order.begin(); it != last; ++it) {
+				if (structure_epoch != epoch) return;
+				activate(*it, player);
+			}
+			return;
+		}
+
+		if (is_first_registration) {
+			// A dual player spawned mid-level: start tracking from current position without re-triggering past events.
+			return;
+		}
+
+		// 2026-09-13 device forensics: a portal at the Amethyst spawn
+		// teleports the player on the first physics frame, and treating the
+		// jump as a crossing activated the ENTIRE level's trigger range in
+		// one shot (stop, end-level and restart handlers included), which is
+		// what lit up the level-start crashes. Portals must not activate the
+		// triggers they skip over: any jump larger than any legitimate speed
+		// registers the player for touch checks at the new position but
+		// fires no crossings. Physics runs at a fixed rate, so a real player
+		// moves ~tens of pixels per step; 1024 is far above that and far
+		// below any portal jump.
+		constexpr double TELEPORT_JUMP_PX = 1024.0;
+		if (Math::abs(x - from) > TELEPORT_JUMP_PX) {
+			advance(player, x, x);
+		} else {
+			advance(player, from, x);
+		}
+	}
+	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
+	void schedule_group(const StringName &group, double delay, Object *player) {
+		if (!player || group.is_empty()) return;
+		Event event;
+		event.due = clock + std::max(0.0, delay);
+		event.sequence = event_sequence++;
+		event.group = group;
+		event.player = player->get_instance_id();
+		events.push_back(std::move(event));
+		std::push_heap(events.begin(), events.end(), event_later);
+	}
+	// Portal hitbox is 128x384 in the scene. Expand it by the player half-size
+	// so the center test matches the Area2D overlap, including rotated portals.
+	static constexpr double GRAVITY_PORTAL_HALF_X = 64.0;
+	static constexpr double GRAVITY_PORTAL_HALF_Y = 192.0;
+	static constexpr double GRAVITY_PLAYER_HALF = 70.0;
+
+	bool gravity_portal_local(size_t index, Node2D *player, Vector2 &local_out, Vector2 &half_out) const {
+		if (index >= records.size() || !player) {
+			return false;
+		}
+		Node2D *portal = Object::cast_to<Node2D>(ObjectDB::get_instance(records[index].object));
+		if (!portal) {
+			return false;
+		}
+		const Transform2D inverse = portal->get_global_transform().affine_inverse();
+		local_out = inverse.xform(player->get_global_position());
+		const Vector2 scale = portal->get_global_scale().abs();
+		const double scale_x = std::max(0.25, static_cast<double>(scale.x));
+		const double scale_y = std::max(0.25, static_cast<double>(scale.y));
+		half_out.x = static_cast<real_t>(GRAVITY_PORTAL_HALF_X * scale_x + GRAVITY_PLAYER_HALF);
+		half_out.y = static_cast<real_t>(GRAVITY_PORTAL_HALF_Y * scale_y + GRAVITY_PLAYER_HALF);
+		return true;
+	}
+
+	void apply_passed_gravity_portals(Object *player, double x) {
+		Node2D *player_node = Object::cast_to<Node2D>(player);
+		if (!player_node) {
+			return;
+		}
+		ensure_index();
+		repair_index_tables();
+		const uint64_t player_id = static_cast<uint64_t>(player->get_instance_id());
+		std::set<size_t> &inside = gravity_inside_players[player_id];
+		std::set<uint64_t> applied_objects;
+		for (size_t index : gravity_portal_order) {
+			if (index >= records.size() || records[index].x > x + 1.0) {
+				break;
+			}
+			const uint64_t object_id = static_cast<uint64_t>(records[index].object);
+			if (object_id != 0 && !applied_objects.insert(object_id).second) {
+				continue;
+			}
+			Vector2 local;
+			Vector2 half;
+			if (!gravity_portal_local(index, player_node, local, half)) {
+				continue;
+			}
+			if (std::abs(static_cast<double>(local.y)) > static_cast<double>(half.y)) {
+				continue;
+			}
+			apply_gravity_portal_player(player, records[index].effect.gravity_mode);
+			if (std::abs(static_cast<double>(local.x)) <= static_cast<double>(half.x)) {
+				inside.insert(index);
+			}
+		}
+	}
+
+	void check_gravity_portals() {
+		if (gravity_portal_order.empty() || frame_players.empty()) {
+			return;
+		}
+		ensure_index();
+		repair_index_tables();
+		const uint64_t epoch = structure_epoch;
+		for (ObjectID player_object : frame_players) {
+			if (structure_epoch != epoch) {
+				return;
+			}
+			Object *player = ObjectDB::get_instance(player_object);
+			Node2D *player_node = Object::cast_to<Node2D>(player);
+			if (!player_node) {
+				continue;
+			}
+			const uint64_t player_id = static_cast<uint64_t>(player_object);
+			std::set<size_t> &inside = gravity_inside_players[player_id];
+			std::set<size_t> now_inside;
+			std::set<uint64_t> applied_objects;
+			for (size_t index : gravity_portal_order) {
+				if (structure_epoch != epoch) {
+					return;
+				}
+				if (index >= records.size()) {
+					continue;
+				}
+				Vector2 local;
+				Vector2 half;
+				if (!gravity_portal_local(index, player_node, local, half)) {
+					continue;
+				}
+				const bool contained = std::abs(static_cast<double>(local.x)) <= static_cast<double>(half.x)
+					&& std::abs(static_cast<double>(local.y)) <= static_cast<double>(half.y);
+				if (!contained) {
+					continue;
+				}
+				now_inside.insert(index);
+				const uint64_t object_id = static_cast<uint64_t>(records[index].object);
+				if (inside.count(index) == 0 && (object_id == 0 || applied_objects.insert(object_id).second)) {
+					apply_gravity_portal_player(player, records[index].effect.gravity_mode);
+				}
+			}
+			inside.swap(now_inside);
+		}
+	}
+
+	void tick(double delta) {
+		clock += std::max(0.0, delta);
+		int64_t dispatched = 0;
+		// activate() inside the dispatch loop can reenter GDScript and
+		// rebuild this runtime; stop dispatching in that case (pending
+		// events of a rebuilt runtime belong to its own timeline).
+		const uint64_t epoch = structure_epoch;
+		while (structure_epoch == epoch && !events.empty() && events.front().due <= clock && dispatched < 10000) {
+			std::pop_heap(events.begin(), events.end(), event_later);
+			const Event event = std::move(events.back());
+			events.pop_back();
+			Object *player = ObjectDB::get_instance(event.player);
+			if (player) {
+				auto group = group_index.find(String(event.group));
+				if (group != group_index.end()) {
+					for (size_t index : group->value) activate(index, player, true);
+				}
+			}
+			++dispatched;
+		}
+		check_touch_overlaps();
+		frame_players.clear();
+		for (size_t i = 0; i < fades.size(); ) {
+			const uint64_t fade_epoch = structure_epoch;
+			if (fades[i].record_index >= records.size()) {
+				// Defensive: state is inconsistent (should not happen; a
+				// rebuild clears fades too). Drop the corrupt entry.
+				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
+				continue;
+			}
+			const TriggerEffect effect = records[fades[i].record_index].effect;
+			double weight = 0.0;
+			bool finished = false;
+			const double t = clock - fades[i].start;
+			if (effect.pulse_envelope) {
+				// Pulse envelope: eased fade in, hold at full, eased fade out.
+				if (t < effect.fade_in) {
+					weight = ease_weight(effect.easing, t / effect.fade_in);
+				} else if (t < effect.fade_in + effect.hold) {
+					weight = 1.0;
+				} else if (t < effect.fade_in + effect.hold + effect.fade_out) {
+					weight = 1.0 - ease_weight(effect.easing,
+						(t - effect.fade_in - effect.hold) / effect.fade_out);
+				} else {
+					weight = 0.0;
+					finished = true;
+				}
+			} else if (t >= effect.duration) {
+				weight = 1.0;
+				finished = true;
+			} else {
+				weight = ease_weight(effect.easing, t / effect.duration);
+			}
+			const double weight_delta = weight - fades[i].prev_weight;
+			// Persist progress before any call out into the scene: a
+			// reentrant rebuild clears fades while apply_fade is still
+			// running. The shake noise cursor advances here too (matching
+			// the old in-apply_shake behaviour, camera present and noise
+			// valid) so the snapshot below already carries it.
+			fades[i].prev_weight = weight;
+			if (effect.kind == TriggerEffectKind::SHAKE
+					&& ObjectDB::get_instance(camera_id)
+					&& !fades[i].noise.is_null()) {
+				fades[i].linear_eased_weight += delta
+					/ (effect.duration > 0.0 ? effect.duration : 1.0);
+			}
+			// Snapshot by value: apply_fade reaches back into GDScript
+			// (update_size/update_color/channel changed signals) which can
+			// rebuild this runtime and free fades/records mid-application.
+			const Fade fade = fades[i];
+			apply_fade(fade, effect, weight, weight_delta, delta);
+			if (structure_epoch != fade_epoch) return;
+			if (finished) {
+				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
+				continue;
+			}
+			++i;
+		}
+	}
+	void reset() {
+		++structure_epoch;
+		restore_ui_objects();
+		ui_triggers_applied = false;
+		for (Record &record : records) record.activated = false;
+		events.clear(); clock = 0.0; event_sequence = 0;
+		// Restarts rebuild object transforms from level data; running fades
+		// must not keep mutating mid-animation state. The respawn jump is a
+		// teleport, not a crossing: forget the tracked positions so the
+		// first frame after a restart fires no crossings.
+		fades.clear();
+		// Group opacity is level state, not object state: a restart clears
+		// it (the same fades re-fire as the player crosses them again), and
+		// every member re-renders from its own alpha until they do.
+		group_opacity.clear();
+		for (const KeyValue<ObjectID, std::vector<String>> &entry : member_groups) {
+			refresh_member_alpha(entry.key);
+		}
+		touch_inside_players.clear();
+		gravity_inside_players.clear();
+		frame_players.clear();
+		previous_positions.clear();
+		reset_shaders();
+	}
+	Dictionary snapshot() const {
+		Dictionary state; PackedByteArray active;
+		active.resize(records.size());
+		for (size_t i = 0; i < records.size(); ++i) active.set(i, records[i].activated ? 1 : 0);
+		state["active"] = active; state["clock"] = clock;
+		return state;
+	}
+	void restore(const Dictionary &state) {
+		++structure_epoch;
+		const PackedByteArray active = state.get("active", PackedByteArray());
+		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
+		clock = state.get("clock", 0.0); events.clear(); fades.clear();
+		frame_players.clear(); previous_positions.clear(); gravity_inside_players.clear();
+	}
+	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }
+	int64_t active_fade_count() const { return static_cast<int64_t>(fades.size()); }
+};
+
+struct DecorationCullJob {
+	uint64_t renderer_id = 0;
+	Transform2D from_screen;
+	Vector2 screen_size;
+	double radius = 0.0;
+	double cell_size = 256.0;
+	int64_t first = 0;
+	int64_t last = -1;
+	int64_t top = 0;
+	int64_t bottom = -1;
+};
+static std::vector<DecorationCullJob> decoration_cull_jobs;
+// The in-flight worker-pool cull group; file scope so teardown can drain it
+// (see finalize_decoration_culling).
+static int64_t decoration_cull_active_group = -1;
+
+// WorkerThreadPool invokes one element per renderer and automatically spreads
+// the group across the engine's worker pool (not a hard-coded two-thread cap).
+// Jobs contain only copied transforms/numbers: workers never touch SceneTree,
+// ObjectDB, textures, RIDs, or RenderingServer.
+class NativeDecorationCullWorker : public RefCounted {
+	GDCLASS(NativeDecorationCullWorker, RefCounted)
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("compute", "index"), &NativeDecorationCullWorker::compute);
+	}
+public:
+	void compute(int64_t index) {
+		if (index < 0 || index >= static_cast<int64_t>(decoration_cull_jobs.size())) return;
+		DecorationCullJob &job = decoration_cull_jobs[static_cast<size_t>(index)];
+		Rect2 local_view(job.from_screen.xform(Vector2()), Vector2());
+		local_view = local_view.expand(job.from_screen.xform(Vector2(job.screen_size.x, 0.0)));
+		local_view = local_view.expand(job.from_screen.xform(job.screen_size));
+		local_view = local_view.expand(job.from_screen.xform(Vector2(0.0, job.screen_size.y)));
+		// One additional cell covers camera movement while this asynchronous
+		// result is in flight, preventing one-frame streaming gaps.
+		local_view = local_view.grow(job.radius + job.cell_size);
+		job.first = static_cast<int64_t>(std::floor(local_view.position.x / job.cell_size));
+		job.last = static_cast<int64_t>(std::floor(local_view.get_end().x / job.cell_size));
+		job.top = static_cast<int64_t>(std::floor(local_view.position.y / job.cell_size));
+		job.bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / job.cell_size));
+	}
+};
+
+// Decoration renderers register in a native global list. NativeLevelRuntime
+// snapshots thread-unsafe scene transforms on the main thread, then delegates
+// all spatial range math to WorkerThreadPool.
+static void decoration_coordinator_enter();
+static void decoration_coordinator_exit();
+static void update_registered_decoration_renderers(double delta);
+static void finalize_decoration_culling();
+static Dictionary registered_decoration_stats();
+
+// Native owner for the packed runtime. Besides being the migration point for
+// rendering/collision stores, this removes the last per-physics-frame
+// GDScript->GDExtension calls: player discovery, crossing queries and event
+// clock advancement happen in one C++ notification.
+class NativeLevelRuntime : public Node {
+	GDCLASS(NativeLevelRuntime, Node)
+
+	Ref<NativeTriggerRuntime> triggers;
+	Node *level_manager = nullptr;
+	Node *context_level = nullptr;
+	bool coordinates_rendering = false;
+
+	// Effect targets resolve against the group members present when the level
+	// starts. The runtime is a RefCounted without tree access, so the owner
+	// Node snapshots membership here: once at finalize, never per fire.
+	void snapshot_effect_groups() {
+		SceneTree *tree = get_tree();
+		if (!tree) return;
+		for (const String &group : triggers->referenced_effect_groups()) {
+			Array members;
+			const Array nodes = tree->get_nodes_in_group(StringName(group));
+			for (int64_t i = 0; i < nodes.size(); ++i) {
+				Node2D *candidate = Object::cast_to<Node2D>(nodes[i]);
+				// Nodes of other levels can still be in the tree while their
+				// queue_free resolves; only this level's objects are targets.
+				if (candidate && (!context_level || context_level->is_ancestor_of(candidate))) {
+					members.append(candidate);
+				}
+			}
+			triggers->set_group_members(group, members);
+		}
+	}
+
+	static void ensure_visible(Object *object) {
+		CanvasItem *item = Object::cast_to<CanvasItem>(object);
+		if (item) item->set_visible(true);
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("clear"), &NativeLevelRuntime::clear);
+		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeLevelRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
+		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeLevelRuntime::bind_shader_layer);
+		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeLevelRuntime::bind_ui_layer);
+		ClassDB::bind_method(D_METHOD("apply_ui_triggers"), &NativeLevelRuntime::apply_ui_triggers);
+		ClassDB::bind_method(D_METHOD("restore_ui_objects"), &NativeLevelRuntime::restore_ui_objects);
+		ClassDB::bind_method(D_METHOD("is_ui_applied"), &NativeLevelRuntime::is_ui_applied);
+		ClassDB::bind_static_method("NativeLevelRuntime", D_METHOD("compute_ui_anchor", "offset_from_target", "xref_pos", "yref_pos", "xref_relative", "yref_relative", "viewport_size", "zoom"), &NativeLevelRuntime::compute_ui_anchor, DEFVAL(PLAYER_CAMERA_DEFAULT_ZOOM));
+		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeLevelRuntime::register_channel);
+		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
+		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
+		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
+		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
+		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeLevelRuntime::trigger_count);
+		ClassDB::bind_method(D_METHOD("active_fade_count"), &NativeLevelRuntime::active_fade_count);
+		ClassDB::bind_method(D_METHOD("render_stats"), &NativeLevelRuntime::render_stats);
+	}
+
+	void _notification(int what) {
+		if (what == Node::NOTIFICATION_ENTER_TREE && !coordinates_rendering) {
+			coordinates_rendering = true;
+			decoration_coordinator_enter();
+			return;
+		}
+		if (what == Node::NOTIFICATION_EXIT_TREE) {
+			// Never leave the worker pool's cull group pending across a
+			// scene change or engine shutdown (see finalize_decoration_culling).
+			finalize_decoration_culling();
+			if (coordinates_rendering) {
+				coordinates_rendering = false;
+				decoration_coordinator_exit();
+			}
+			return;
+		}
+		if (what == Node::NOTIFICATION_READY) {
+			SceneTree *tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+			if (tree) level_manager = tree->get_root()->get_node_or_null(NodePath("LevelManager"));
+			set_process(true);
+			set_physics_process(true);
+			return;
+		}
+		if (what == Node::NOTIFICATION_PROCESS) {
+			update_registered_decoration_renderers(get_process_delta_time());
+			return;
+		}
+		if (what != Node::NOTIFICATION_PHYSICS_PROCESS || !level_manager || !triggers.is_valid()) return;
+		if (!static_cast<bool>(level_manager->get("level_playing"))) return;
+		if (!triggers->is_ui_applied()) {
+			triggers->apply_ui_triggers();
+		}
+		// 2026-09-13 device forensics: an interacted handler reached from
+		// advance_player()/tick() can free this node synchronously (an
+		// immediate free() of an ancestor in the scene). Snapshot every
+		// member this step needs before the first reentry point, and hold a
+		// strong local Ref so the runtime outlives the whole step even if
+		// this node's destructor releases the member reference with tick()
+		// still on the stack. Nothing below touches `this` after the first
+		// advance_player call.
+		Node *const manager = level_manager;
+		Ref<NativeTriggerRuntime> const runtime = triggers;
+		const double physics_delta = get_physics_process_delta_time();
+		Variant main_value = manager->get("player");
+		Object *main_player = main_value;
+		runtime->advance_player(main_player);
+		// advance_player can reenter GDScript (a trigger activation that
+		// restarts the level replaces the dual icons), so re-read the array
+		// every iteration instead of holding one snapshot of Object pointers.
+		for (int64_t i = 0; ; ++i) {
+			const Array duals = manager->get("player_duals");
+			if (i >= duals.size()) break;
+			runtime->advance_player(duals[i]);
+		}
+		runtime->tick(physics_delta);
+	}
+
+public:
+	NativeLevelRuntime() { triggers.instantiate(); }
+
+	void clear() { triggers->clear(); context_level = nullptr; }
+	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return triggers->register_trigger(trigger, x, y, flags, source_order, groups, gd_id, properties);
+	}
+	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
+		return triggers->register_packed_trigger(x, y, flags, source_order, groups, gd_id, properties);
+	}
+	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
+		Node *level_node = Object::cast_to<Node>(level);
+		if (level_node) context_level = level_node;
+		triggers->bind_context(level, camera, config, shader_layer, ui_layer);
+	}
+	void bind_shader_layer(Object *shader_layer) {
+		triggers->bind_shader_layer(shader_layer);
+	}
+	void bind_ui_layer(Object *ui_layer) {
+		triggers->bind_ui_layer(ui_layer);
+	}
+	void apply_ui_triggers() {
+		triggers->apply_ui_triggers();
+	}
+	void restore_ui_objects() {
+		triggers->restore_ui_objects();
+	}
+	bool is_ui_applied() const {
+		return triggers->is_ui_applied();
+	}
+	static Vector2 compute_ui_anchor(
+		const Vector2 &offset_from_target,
+		int32_t xref_pos,
+		int32_t yref_pos,
+		bool xref_relative,
+		bool yref_relative,
+		const Vector2 &viewport_size,
+		double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
+	{
+		return ::godot::compute_ui_anchor(offset_from_target, xref_pos, yref_pos, xref_relative, yref_relative, viewport_size, zoom);
+	}
+	void register_channel(const String &name, Object *data) { triggers->register_channel(name, data); }
+	void finalize() {
+		snapshot_effect_groups();
+		triggers->finalize();
+	}
+	void reset() {
+		triggers->reset();
+		// A Hide Player trigger must not survive the restart: Geometry Dash
+		// always respawns a visible icon.
+		if (level_manager) {
+			ensure_visible(level_manager->get("player"));
+			const Array duals = level_manager->get("player_duals");
+			for (int64_t i = 0; i < duals.size(); ++i) ensure_visible(duals[i]);
+		}
+	}
+	Dictionary snapshot() const { return triggers->snapshot(); }
+	void restore(const Dictionary &state) { triggers->restore(state); }
+	int64_t trigger_count() const { return triggers->trigger_count(); }
+	int64_t active_fade_count() const { return triggers->active_fade_count(); }
+	Dictionary render_stats() const { return registered_decoration_stats(); }
+};
+
+class GdashNative : public RefCounted {
+	GDCLASS(GdashNative, RefCounted)
+
+	static String standard_base64(String value) {
+		value = value.replace("-", "+").replace("_", "/");
+		while ((value.length() & 3) != 0) {
+			value += "=";
+		}
+		return value;
+	}
+
+	static String url_base64(String value) {
+		return value.replace("+", "-").replace("/", "_").replace("=", "");
+	}
+
+	static uint32_t crc32(const PackedByteArray &bytes) {
+		uint32_t crc = 0xffffffffU;
+		for (int64_t i = 0; i < bytes.size(); ++i) {
+			crc ^= static_cast<uint8_t>(bytes[i]);
+			for (int bit = 0; bit < 8; ++bit) {
+				crc = (crc >> 1U) ^ (0xedb88320U & static_cast<uint32_t>(-(static_cast<int32_t>(crc & 1U))));
+			}
+		}
+		return crc ^ 0xffffffffU;
+	}
+
+	static PackedByteArray wrap_gzip(const PackedByteArray &raw, const PackedByteArray &deflated) {
+		PackedByteArray out;
+		out.resize(10 + deflated.size() + 8);
+		const uint8_t header[10] = {0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3};
+		for (int i = 0; i < 10; ++i) out.set(i, header[i]);
+		for (int64_t i = 0; i < deflated.size(); ++i) out.set(10 + i, deflated[i]);
+		const uint32_t checksum = crc32(raw);
+		const uint32_t size = static_cast<uint32_t>(raw.size());
+		const int64_t trailer = 10 + deflated.size();
+		for (int i = 0; i < 4; ++i) {
+			out.set(trailer + i, (checksum >> (8 * i)) & 0xff);
+			out.set(trailer + 4 + i, (size >> (8 * i)) & 0xff);
+		}
+		return out;
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("build_string"), &GdashNative::build_string);
+		ClassDB::bind_method(D_METHOD("version"), &GdashNative::version);
+		ClassDB::bind_method(D_METHOD("add", "a", "b"), &GdashNative::add);
+		ClassDB::bind_method(D_METHOD("parse_gd_pairs", "chunk"), &GdashNative::parse_gd_pairs);
+		ClassDB::bind_method(D_METHOD("parse_channel_styles", "color_string"), &GdashNative::parse_channel_styles);
+		ClassDB::bind_method(D_METHOD("parse_online_level", "level_string"), &GdashNative::parse_online_level);
+		ClassDB::bind_method(D_METHOD("decode_level_string", "encoded"), &GdashNative::decode_level_string);
+		ClassDB::bind_method(D_METHOD("encode_level_string", "plain"), &GdashNative::encode_level_string);
+		ClassDB::bind_method(D_METHOD("sort_decoration_indices", "z_orders", "draw_orders", "texture_ids"), &GdashNative::sort_decoration_indices);
+		ClassDB::bind_method(D_METHOD("build_x_buckets", "origins", "bucket_width"), &GdashNative::build_x_buckets);
+		ClassDB::bind_method(D_METHOD("visible_bucket_keys", "keys", "first", "last"), &GdashNative::visible_bucket_keys);
+		ClassDB::bind_method(D_METHOD("commit_collision_shapes", "body", "source", "descriptors"), &GdashNative::commit_collision_shapes);
+		ClassDB::bind_method(D_METHOD("reenable_collision_shapes", "container"), &GdashNative::reenable_collision_shapes);
+		ClassDB::bind_method(D_METHOD("compute_player_velocity", "params"), &GdashNative::compute_player_velocity);
+		ClassDB::bind_method(D_METHOD("compute_player_velocity_packed", "params"), &GdashNative::compute_player_velocity_packed);
+		ClassDB::bind_method(D_METHOD("apply_gravity_portal", "player", "mode"), &GdashNative::apply_gravity_portal);
+		ClassDB::bind_method(D_METHOD("classify_collision", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision);
+		ClassDB::bind_method(D_METHOD("classify_collision_flags", "collision_angle", "floor_max_angle"), &GdashNative::classify_collision_flags);
+		ClassDB::bind_method(D_METHOD("extract_object_geometry", "object"), &GdashNative::extract_object_geometry);
+		ClassDB::bind_method(D_METHOD("is_html_error_response", "response"), &GdashNative::is_html_error_response);
+		ClassDB::bind_method(D_METHOD("extract_level_data_string", "payload"), &GdashNative::extract_level_data_string);
+		ClassDB::bind_method(D_METHOD("extract_level_sfx_ids", "level_string"), &GdashNative::extract_level_sfx_ids);
+		ClassDB::bind_method(D_METHOD("resolve_proxy_url", "endpoint", "proxy_prefix"), &GdashNative::resolve_proxy_url, DEFVAL(""));
+		ClassDB::bind_method(D_METHOD("is_cors_error", "result", "http_status", "is_web"), &GdashNative::is_cors_error, DEFVAL(true));
+		ClassDB::bind_method(D_METHOD("is_audio_stream", "bytes", "extension"), &GdashNative::is_audio_stream, DEFVAL(""));
+	}
+
+public:
+	String build_string() const {
+		return String("gdash_native 1.12.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / gravity portals / quiet diagnostics / api 4.7");
+	}
+	// 23: fade/teleport/colour-capture diagnostics report through print() instead
+	// of ERR_PRINT, so a normal capture is no longer an "ERROR:" in the console.
+	int64_t version() const { return 23; }
+	int64_t add(int64_t a, int64_t b) const { return a + b; }
+
+	// Geometry Dash values are allowed to be empty. String::split(..., false)
+	// discarded those fields and shifted every following key onto the previous
+	// value, silently changing trigger semantics. Scan pairs directly so empty
+	// values retain their position and large levels avoid a temporary token
+	// array for every object.
+	Dictionary parse_pairs(const String &chunk, int64_t *odd_fields = nullptr,
+			int64_t *duplicate_keys = nullptr, int64_t *empty_keys = nullptr) const {
+		Dictionary result;
+		String key;
+		bool expecting_key = true;
+		int64_t token_start = 0;
+		const int64_t length = chunk.length();
+		for (int64_t cursor = 0; cursor <= length; ++cursor) {
+			if (cursor < length && chunk[cursor] != ',') continue;
+			if (cursor == length && token_start == cursor && expecting_key) {
+				// Trailing delimiter at the end of the chunk; no trailing key.
+				break;
+			}
+			const String token = chunk.substr(token_start, cursor - token_start);
+			token_start = cursor + 1;
+			if (expecting_key) {
+				key = token.strip_edges();
+				expecting_key = false;
+			} else {
+				if (key.is_empty()) {
+					if (empty_keys) ++*empty_keys;
+				} else {
+					if (result.has(key) && duplicate_keys) ++*duplicate_keys;
+					// Last value wins, matching Geometry Dash and the old Dictionary
+					// assignment behavior for duplicate properties.
+					result[key] = token;
+				}
+				expecting_key = true;
+			}
+		}
+		if (!expecting_key && odd_fields) ++*odd_fields;
+		return result;
+	}
+
+	Dictionary parse_gd_pairs(const String &chunk) const {
+		return parse_pairs(chunk);
+	}
+
+	// Synthesizes a modern kS38 color channel string from pre-2.0 / 1.9 / pre-1.9 level headers
+	// matching decompiled Geometry Dash (LevelSettingsObject::setupColorsFromLegacyMode and 1.9 kS29-kS37).
+	static void resolve_legacy_header_colors(Dictionary &header) {
+		if (header.has("kS38") && !String(header["kS38"]).strip_edges().is_empty()) {
+			return;
+		}
+
+		// 1. Check 1.9 format: kS29 through kS37
+		bool has_1_9 = false;
+		for (int i = 29; i <= 37; ++i) {
+			const String key = String("kS") + String::num_int64(i);
+			if (header.has(key) && !String(header[key]).strip_edges().is_empty()) {
+				has_1_9 = true;
+				break;
+			}
+		}
+
+		if (has_1_9) {
+			static const int k_channel_ids[9] = { 1000, 1001, 1002, 1004, 1, 2, 3, 4, 1003 };
+			PackedStringArray synthesized_channels;
+
+			for (int i = 0; i < 9; ++i) {
+				const String key = String("kS") + String::num_int64(29 + i);
+				const int target_channel = k_channel_ids[i];
+				if (!header.has(key)) continue;
+				String val = String(header[key]).strip_edges();
+				if (val.is_empty()) continue;
+
+				if (val.contains(",") && !val.contains("_")) {
+					val = val.replace(",", "_");
+				}
+
+				if (!val.contains("6_") && !val.contains("_6_") && !val.begins_with("6_")) {
+					val += String("_6_") + String::num_int64(target_channel);
+				}
+				if (!val.contains("7_") && !val.contains("_7_") && !val.begins_with("7_")) {
+					val += String("_7_1");
+				}
+				if (target_channel == 1002 && !val.contains("5_") && !val.contains("_5_") && !val.begins_with("5_")) {
+					val += String("_5_1");
+				}
+				synthesized_channels.append(val);
+			}
+			if (!synthesized_channels.is_empty()) {
+				header["kS38"] = String("|").join(synthesized_channels);
+				return;
+			}
+		}
+
+		// 2. Check pre-1.9 format: kS1 ... kS28
+		bool has_pre_1_9 = false;
+		for (int i = 1; i <= 28; ++i) {
+			const String key = String("kS") + String::num_int64(i);
+			if (header.has(key) && !String(header[key]).strip_edges().is_empty()) {
+				has_pre_1_9 = true;
+				break;
+			}
+		}
+
+		if (has_pre_1_9) {
+			PackedStringArray synthesized_channels;
+
+			auto get_int_prop = [&](const String &key, int def) -> int {
+				if (!header.has(key)) return def;
+				const String str = String(header[key]).strip_edges();
+				return str.is_valid_int() ? static_cast<int>(str.to_int()) : def;
+			};
+
+			const int bg_r = get_int_prop("kS1", 40);
+			const int bg_g = get_int_prop("kS2", 125);
+			const int bg_b = get_int_prop("kS3", 255);
+			const int bg_pcol = get_int_prop("kS16", 0);
+			synthesized_channels.append(String("1_") + String::num_int64(bg_r) +
+					"_2_" + String::num_int64(bg_g) +
+					"_3_" + String::num_int64(bg_b) +
+					"_4_" + String::num_int64(bg_pcol) +
+					"_6_1000_7_1");
+
+			const int g_r = get_int_prop("kS4", 0);
+			const int g_g = get_int_prop("kS5", 102);
+			const int g_b = get_int_prop("kS6", 255);
+			const int g_pcol = get_int_prop("kS17", 0);
+			synthesized_channels.append(String("1_") + String::num_int64(g_r) +
+					"_2_" + String::num_int64(g_g) +
+					"_3_" + String::num_int64(g_b) +
+					"_4_" + String::num_int64(g_pcol) +
+					"_6_1001_7_1");
+
+			if (header.has("kS7")) {
+				const int l_r = get_int_prop("kS7", 255);
+				const int l_g = get_int_prop("kS8", 255);
+				const int l_b = get_int_prop("kS9", 255);
+				const int l_pcol = get_int_prop("kS18", 0);
+				synthesized_channels.append(String("1_") + String::num_int64(l_r) +
+						"_2_" + String::num_int64(l_g) +
+						"_3_" + String::num_int64(l_b) +
+						"_4_" + String::num_int64(l_pcol) +
+						"_5_1_6_1002_7_1");
+
+				const int o_r = get_int_prop("kS10", 255);
+				const int o_g = get_int_prop("kS11", 255);
+				const int o_b = get_int_prop("kS12", 255);
+				const int o_pcol = get_int_prop("kS19", 0);
+				synthesized_channels.append(String("1_") + String::num_int64(o_r) +
+						"_2_" + String::num_int64(o_g) +
+						"_3_" + String::num_int64(o_b) +
+						"_4_" + String::num_int64(o_pcol) +
+						"_6_1004_7_1");
+
+				const int c1_r = get_int_prop("kS13", 255);
+				const int c1_g = get_int_prop("kS14", 255);
+				const int c1_b = get_int_prop("kS15", 255);
+				const int c1_pcol = get_int_prop("kS20", 0);
+				const int c1_blend = (String(header.get("kA5", "0")) == "1") ? 1 : 0;
+				synthesized_channels.append(String("1_") + String::num_int64(c1_r) +
+						"_2_" + String::num_int64(c1_g) +
+						"_3_" + String::num_int64(c1_b) +
+						"_4_" + String::num_int64(c1_pcol) +
+						"_5_" + String::num_int64(c1_blend) +
+						"_6_1_7_1");
+
+				const int c2_r = get_int_prop("kS21", 255);
+				const int c2_g = get_int_prop("kS22", 255);
+				const int c2_b = get_int_prop("kS23", 255);
+				const int c2_pcol = get_int_prop("kS28", 0);
+				synthesized_channels.append(String("1_") + String::num_int64(c2_r) +
+						"_2_" + String::num_int64(c2_g) +
+						"_3_" + String::num_int64(c2_b) +
+						"_4_" + String::num_int64(c2_pcol) +
+						"_6_2_7_1");
+
+				const int c3_r = get_int_prop("kS24", 255);
+				const int c3_g = get_int_prop("kS25", 255);
+				const int c3_b = get_int_prop("kS26", 255);
+				const int c3_blend = (String(header.get("kA12", "0")) == "1") ? 1 : 0;
+				synthesized_channels.append(String("1_") + String::num_int64(c3_r) +
+						"_2_" + String::num_int64(c3_g) +
+						"_3_" + String::num_int64(c3_b) +
+						"_5_" + String::num_int64(c3_blend) +
+						"_6_3_7_1");
+
+				synthesized_channels.append("1_255_2_255_3_255_6_4_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1003_7_1");
+			} else {
+				synthesized_channels.append("1_255_2_255_3_255_5_1_6_1002_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1004_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_2_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_3_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_4_7_1");
+				synthesized_channels.append("1_255_2_255_3_255_6_1003_7_1");
+			}
+
+			header["kS38"] = String("|").join(synthesized_channels);
+		}
+	}
+
+	Dictionary parse_channel_styles(const String &color_string) const {
+		Dictionary styles;
+		Dictionary entries;
+
+		if (!color_string.strip_edges().is_empty()) {
+			const PackedStringArray raw_entries = color_string.split("|", false);
+			for (int64_t i = 0; i < raw_entries.size(); ++i) {
+				const String entry = raw_entries[i].strip_edges();
+				if (entry.is_empty()) continue;
+				const char delim = entry.contains("_") ? '_' : ',';
+				Dictionary pairs;
+				String key;
+				bool expecting_key = true;
+				int64_t token_start = 0;
+				const int64_t len = entry.length();
+				for (int64_t cursor = 0; cursor <= len; ++cursor) {
+					if (cursor < len && entry[cursor] != delim) continue;
+					if (cursor == len && token_start == cursor && expecting_key) break;
+					const String token = entry.substr(token_start, cursor - token_start);
+					token_start = cursor + 1;
+					if (expecting_key) {
+						key = token.strip_edges();
+						expecting_key = false;
+					} else {
+						if (!key.is_empty()) {
+							pairs[key] = token;
+						}
+						expecting_key = true;
+					}
+				}
+				const String ch_str = String(pairs.get("6", String())).strip_edges();
+				if (ch_str.is_valid_int() && ch_str.to_int() > 0) {
+					entries[ch_str.to_int()] = pairs;
+				}
+			}
+		}
+
+		auto literal_color = [&](int64_t channel_id, const Color &fallback) -> Color {
+			if (!entries.has(channel_id)) return fallback;
+			const Dictionary val = entries[channel_id];
+			const String r_str = String(val.get("1", String())).strip_edges();
+			const String g_str = String(val.get("2", String())).strip_edges();
+			const String b_str = String(val.get("3", String())).strip_edges();
+			if (!r_str.is_valid_int() || !g_str.is_valid_int() || !b_str.is_valid_int()) return fallback;
+			return Color(
+				static_cast<real_t>(Math::clamp(r_str.to_int(), static_cast<int64_t>(0), static_cast<int64_t>(255)) / 255.0),
+				static_cast<real_t>(Math::clamp(g_str.to_int(), static_cast<int64_t>(0), static_cast<int64_t>(255)) / 255.0),
+				static_cast<real_t>(Math::clamp(b_str.to_int(), static_cast<int64_t>(0), static_cast<int64_t>(255)) / 255.0),
+				1.0
+			);
+		};
+
+		const Color default_bg = Color(static_cast<real_t>(40.0 / 255.0), static_cast<real_t>(125.0 / 255.0), 1.0);
+		const Color default_ground = Color(0.0, static_cast<real_t>(102.0 / 255.0), 1.0);
+		const Color default_line = Color(1.0, 1.0, 1.0);
+
+		const Color bg_col = literal_color(1000, default_bg);
+		const Color g1_col = literal_color(1001, default_ground);
+		const Color line_col = literal_color(1002, default_line);
+		const Color g2_col = literal_color(1009, g1_col);
+
+		const int64_t reserved_ids[] = { 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1009, 1010, 1011, 1012, 1013, 1014 };
+		for (int64_t r_id : reserved_ids) {
+			Dictionary ch;
+			Color base_c = Color(1.0, 1.0, 1.0);
+			if (r_id == 1000) base_c = bg_col;
+			else if (r_id == 1001) base_c = g1_col;
+			else if (r_id == 1002) base_c = line_col;
+			else if (r_id == 1007) base_c = bg_col.lightened(0.2f);
+			else if (r_id == 1009) base_c = g2_col;
+			else if (r_id == 1010) base_c = Color(0.0, 0.0, 0.0);
+			ch["color"] = base_c;
+			ch["alpha"] = 1.0;
+			ch["blending"] = (r_id == 1002);
+			styles[r_id] = ch;
+		}
+
+		const Array all_entry_keys = entries.keys();
+		for (int64_t i = 0; i < all_entry_keys.size(); ++i) {
+			const int64_t cid = all_entry_keys[i];
+			const Dictionary val = entries[cid];
+			Dictionary ch;
+			if (styles.has(cid)) {
+				ch = styles[cid];
+			} else {
+				ch["color"] = Color(1.0, 1.0, 1.0);
+				ch["alpha"] = 1.0;
+				ch["blending"] = false;
+			}
+			if (val.has("1") || val.has("2") || val.has("3")) {
+				ch["color"] = literal_color(cid, Color(ch["color"]));
+			}
+			if (val.has("5")) {
+				ch["blending"] = String(val["5"]) == "1";
+			}
+			if (val.has("7")) {
+				ch["alpha"] = Math::clamp(String(val["7"]).to_float(), 0.0, 1.0);
+			}
+			const String copy_id_str = String(val.get("9", String())).strip_edges();
+			if (copy_id_str.is_valid_int() && copy_id_str.to_int() > 0) {
+				ch["copy_source"] = copy_id_str.to_int();
+				ch["copy_hsv"] = String(val.get("10", String()));
+				ch["copy_opacity"] = String(val.get("17", "0")) == "1";
+			}
+			styles[cid] = ch;
+		}
+
+		for (int iter = 0; iter < COPY_RESOLUTION_BUDGET; ++iter) {
+			bool changed = false;
+			for (int64_t i = 0; i < all_entry_keys.size(); ++i) {
+				const int64_t cid = all_entry_keys[i];
+				const Dictionary val = entries[cid];
+				const String source_str = String(val.get("9", String())).strip_edges();
+				if (!source_str.is_valid_int()) continue;
+				const int64_t source_id = source_str.to_int();
+				if (source_id <= 0 || source_id == cid || !styles.has(source_id)) continue;
+
+				const Dictionary source_style = styles[source_id];
+				const Color source_color = source_style.get("color", Color(1.0, 1.0, 1.0));
+				const String hsv_str = String(val.get("10", String()));
+
+				Color shifted = source_color;
+				if (!hsv_str.is_empty()) {
+					PackedStringArray parts = hsv_str.split("a", false);
+					if (parts.size() >= 3) {
+						double dh = String(parts[0]).to_float() / 360.0;
+						double ds = String(parts[1]).to_float();
+						double dv = String(parts[2]).to_float();
+						bool s_add = parts.size() > 3 && String(parts[3]) == "1";
+						bool v_add = parts.size() > 4 && String(parts[4]) == "1";
+						double h = static_cast<double>(source_color.get_h()) + dh;
+						h -= Math::floor(h);
+						double s = Math::clamp(
+							s_add ? static_cast<double>(source_color.get_s()) + ds
+								  : static_cast<double>(source_color.get_s()) * ds,
+							0.0, 1.0);
+						double v = Math::clamp(
+							v_add ? static_cast<double>(source_color.get_v()) + dv
+								  : static_cast<double>(source_color.get_v()) * dv,
+							0.0, 1.0);
+						shifted = Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), source_color.a);
+					}
+				}
+
+				double alpha = static_cast<double>(Dictionary(styles[cid]).get("alpha", 1.0));
+				if (String(val.get("17", "0")) == "1") {
+					alpha = static_cast<double>(source_style.get("alpha", 1.0));
+				}
+
+				Dictionary cur = styles[cid];
+				Color cur_c = cur.get("color", Color(1.0, 1.0, 1.0));
+				double cur_a = cur.get("alpha", 1.0);
+				if (cur_c != shifted || !Math::is_equal_approx(cur_a, alpha)) {
+					cur["color"] = shifted;
+					cur["alpha"] = alpha;
+					styles[cid] = cur;
+					changed = true;
+				}
+			}
+			if (!changed) break;
+		}
+
+		if (!entries.has(1012) && styles.has(1004)) {
+			Color obj_c = Color(Dictionary(styles[1004]).get("color", Color(1.0, 1.0, 1.0)));
+			Dictionary ch;
+			ch["color"] = obj_c.lightened(0.2f);
+			ch["alpha"] = 1.0;
+			ch["blending"] = false;
+			styles[1012] = ch;
+		}
+
+		return styles;
+	}
+
+	// Parses one complete decompressed server level in a single native pass.
+	// The online download response can contain hundreds of thousands of comma
+	// pairs; crossing the GDScript/native boundary once per object was both
+	// expensive and made partial parsing harder to diagnose. Keep one entry per
+	// source chunk so converter indices and draw order remain exact.
+	Dictionary parse_online_level(const String &level_string) const {
+		Dictionary parsed;
+		Array objects;
+		PackedByteArray object_validity;
+		PackedInt32Array sfx_ids;
+		int64_t odd_pair_chunks = 0;
+		int64_t duplicate_keys = 0;
+		int64_t empty_keys = 0;
+		int64_t valid_objects = 0;
+		int64_t malformed_objects = 0;
+		int64_t invalid_numeric_objects = 0;
+		int64_t source_chunks = 0;
+		Dictionary object_id_counts;
+		Dictionary header;
+		double min_x = INFINITY;
+		double max_x = -INFINITY;
+		bool have_header = false;
+
+		auto validate_and_record_object = [&](Dictionary &properties, int64_t chunk_odd) {
+			++source_chunks;
+			odd_pair_chunks += chunk_odd;
+
+			// Handle legacy object ID substitution and initial property setup (decompiled GameObject::newObjectFromVector):
+			if (properties.has("1")) {
+				const String raw1 = String(properties["1"]).strip_edges();
+				if (raw1.is_valid_int()) {
+					int64_t key = raw1.to_int();
+					int64_t key_orig = -1;
+					switch (key) {
+						case 104:
+							key_orig = key;
+							key = 915;
+							break;
+						case 221:
+						case 717:
+						case 718:
+						case 743:
+							key_orig = key;
+							key = 899;
+							break;
+						case 675: key = 1734; break;
+						case 676: key = 1735; break;
+						case 677: key = 1736; break;
+						case 1008: key = 1292; break;
+						default:
+							if (key >= 1964 && key < 2012) {
+								key = 1964;
+							}
+							break;
+					}
+					if (key != raw1.to_int()) {
+						properties["1"] = String::num_int64(key);
+					}
+					if (key_orig != -1) {
+						switch (key_orig) {
+							case 104:
+								if (!properties.has("17")) properties["17"] = "1"; // usesBlending
+								break;
+							case 221: if (!properties.has("23")) properties["23"] = "1"; break;
+							case 717: if (!properties.has("23")) properties["23"] = "2"; break;
+							case 718: if (!properties.has("23")) properties["23"] = "3"; break;
+							case 743: if (!properties.has("23")) properties["23"] = "4"; break;
+						}
+					}
+					if ((key == 9 || key == 1715) && !properties.has("25")) {
+						properties["25"] = "2";
+					} else if (key == 3613) {
+						if (!properties.has("24")) properties["24"] = "5";
+						if (!properties.has("25")) properties["25"] = "2";
+					}
+				}
+			}
+
+			// Handle legacy 1.9 object color selection key 19 (decompiled GameObject::newObjectFromVector):
+			if (properties.has("19") && !properties.has("21")) {
+				const String raw19 = String(properties["19"]).strip_edges();
+				if (raw19.is_valid_int()) {
+					const int64_t old_id = raw19.to_int();
+					int64_t mapped_id = 0;
+					switch (old_id) {
+						case 1: mapped_id = 1005; break; // Player 1
+						case 2: mapped_id = 1006; break; // Player 2
+						case 3: mapped_id = 1; break;    // Color 1
+						case 4: mapped_id = 2; break;    // Color 2
+						case 5: mapped_id = 1007; break; // Tint / LBG
+						case 6: mapped_id = 3; break;    // Color 3
+						case 7: mapped_id = 4; break;    // Color 4
+						case 8: mapped_id = 1003; break; // 3DL
+						default: mapped_id = 0; break;
+					}
+					if (mapped_id > 0) {
+						properties["21"] = String::num_int64(mapped_id);
+					}
+				}
+			}
+
+			// Handle legacy groups: merge keys 26 and 33 into 57 (decompiled GameObject::newObjectFromVector):
+			static const char *legacy_group_keys[2] = { "26", "33" };
+			for (int gi = 0; gi < 2; ++gi) {
+				const char *group_key = legacy_group_keys[gi];
+				if (properties.has(group_key)) {
+					const String grp = String(properties[group_key]).strip_edges();
+					if (!grp.is_empty() && grp != "0") {
+						const String cur57 = properties.has("57") ? String(properties["57"]).strip_edges() : String();
+						if (cur57.is_empty()) {
+							properties["57"] = grp;
+						} else {
+							bool found = false;
+							const PackedStringArray grps = cur57.split(".");
+							for (int64_t i = 0; i < grps.size(); ++i) {
+								if (String(grps[i]).strip_edges() == grp) {
+									found = true;
+									break;
+								}
+							}
+							if (!found) {
+								properties["57"] = cur57 + String(".") + grp;
+							}
+						}
+					}
+				}
+			}
+
+			// Handle scale fallback: key 32 to 128 / 129 (decompiled GameObject::newObjectFromVector)
+			if (properties.has("32")) {
+				const String s32 = String(properties["32"]).strip_edges();
+				if (!s32.is_empty() && s32.to_float() != 0.0f) {
+					bool need_128 = !properties.has("128") || String(properties["128"]).strip_edges().to_float() == 0.0f;
+					bool need_129 = !properties.has("129") || String(properties["129"]).strip_edges().to_float() == 0.0f;
+					if (need_128 && need_129) {
+						properties["128"] = s32;
+						properties["129"] = s32;
+					}
+				}
+			}
+
+			objects.append(properties);
+			object_validity.append(0);
+			if (properties.has("392")) {
+				const String sfx_str = String(properties["392"]).strip_edges();
+				if (sfx_str.is_valid_int()) {
+					const int32_t sid = static_cast<int32_t>(sfx_str.to_int());
+					if (sid > 0) {
+						bool exists = false;
+						for (int64_t s = 0; s < sfx_ids.size(); ++s) {
+							if (sfx_ids[s] == sid) { exists = true; break; }
+						}
+						if (!exists) sfx_ids.append(sid);
+					}
+				}
+			}
+			if (chunk_odd != 0 || !properties.has("1") || !properties.has("2") || !properties.has("3")) {
+				++malformed_objects;
+				return;
+			}
+			const String id_text = String(properties["1"]).strip_edges();
+			const String x_text = String(properties["2"]).strip_edges();
+			const String y_text = String(properties["3"]).strip_edges();
+			if (!id_text.is_valid_int() || !x_text.is_valid_float() || !y_text.is_valid_float()) {
+				++invalid_numeric_objects;
+				++malformed_objects;
+				return;
+			}
+			const int64_t object_id = id_text.to_int();
+			if (object_id <= 0) {
+				++invalid_numeric_objects;
+				++malformed_objects;
+				return;
+			}
+			++valid_objects;
+			object_validity.set(object_validity.size() - 1, 1);
+			object_id_counts[object_id] = static_cast<int64_t>(object_id_counts.get(object_id, 0)) + 1;
+			const double x = x_text.to_float();
+			min_x = std::min(min_x, x);
+			max_x = std::max(max_x, x);
+		};
+
+		// Scan semicolon chunks directly.
+		int64_t chunk_start = 0;
+		const int64_t length = level_string.length();
+		for (int64_t cursor = 0; cursor <= length; ++cursor) {
+			if (cursor < length && level_string[cursor] != ';') continue;
+			const String chunk = level_string.substr(chunk_start, cursor - chunk_start);
+			chunk_start = cursor + 1;
+			if (chunk.strip_edges().is_empty()) continue;
+			if (!have_header) {
+				int64_t header_odd = 0;
+				Dictionary test_chunk = parse_pairs(chunk, &header_odd, &duplicate_keys, &empty_keys);
+
+				// In Geometry Dash, level start / header keys start with 'k' (e.g. kA, kS, kCEK).
+				// An object chunk has numeric keys (1 for object ID, 2 for X, 3 for Y).
+				bool is_header = true;
+				if (test_chunk.has("1") && !test_chunk.has("kA1") && !test_chunk.has("kA2") &&
+						!test_chunk.has("kS38") && !test_chunk.has("kS1") && !test_chunk.has("kS29")) {
+					bool has_k_key = false;
+					const Array keys = test_chunk.keys();
+					for (int64_t ki = 0; ki < keys.size(); ++ki) {
+						if (String(keys[ki]).begins_with("k")) {
+							has_k_key = true;
+							break;
+						}
+					}
+					if (!has_k_key) {
+						is_header = false;
+					}
+				}
+
+				if (is_header) {
+					header = test_chunk;
+					odd_pair_chunks += header_odd;
+					have_header = true;
+					resolve_legacy_header_colors(header);
+					continue;
+				}
+
+				// Headerless object stream: chunk is the first object!
+				have_header = true;
+				resolve_legacy_header_colors(header);
+				validate_and_record_object(test_chunk, header_odd);
+				continue;
+			}
+
+			int64_t chunk_odd = 0;
+			Dictionary properties = parse_pairs(chunk, &chunk_odd, &duplicate_keys, &empty_keys);
+			validate_and_record_object(properties, chunk_odd);
+		}
+
+		parsed["header"] = header;
+		parsed["objects"] = objects;
+		parsed["object_validity"] = object_validity;
+		parsed["source_chunks"] = source_chunks;
+		parsed["valid_objects"] = valid_objects;
+		parsed["malformed_objects"] = malformed_objects;
+		parsed["invalid_numeric_objects"] = invalid_numeric_objects;
+		parsed["odd_pair_chunks"] = odd_pair_chunks;
+		parsed["duplicate_keys"] = duplicate_keys;
+		parsed["empty_keys"] = empty_keys;
+		parsed["object_id_counts"] = object_id_counts;
+		parsed["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
+		parsed["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
+		parsed["channel_styles"] = parse_channel_styles(String(header.get("kS38", String())));
+		parsed["sfx_ids"] = sfx_ids;
+		return parsed;
+	}
+
+	String decode_level_string(const String &encoded) const {
+		String data = encoded.strip_edges();
+		if (data.is_empty()) return String();
+		if (data.contains(";") || data.begins_with("kS") || data.begins_with("kA") || data.begins_with("1,")) return data;
+
+		Marshalls *marshalls = Marshalls::get_singleton();
+		if (!marshalls) return String();
+
+		// Downloaded user levels carry a complete URL-safe Base64 payload. The
+		// 13-character H4sIAAAAAAAAA prefix is omitted ONLY by bundled official
+		// levels. Prefixing every payload whose text did not happen to begin
+		// with H4sI corrupted valid user levels with a different gzip timestamp or
+		// a zlib wrapper. Decode first, inspect the binary wrapper, and use the
+		// official-level compatibility prefix only as a final fallback.
+		auto decode_payload = [&](const String &payload) -> String {
+			const PackedByteArray bytes = marshalls->base64_to_raw(standard_base64(payload));
+			if (bytes.is_empty()) return String();
+
+			PackedByteArray inflated;
+			if (bytes.size() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+				inflated = bytes.decompress_dynamic(-1, 3); // FileAccess::COMPRESSION_GZIP
+			} else if (bytes.size() >= 2 && (bytes[0] & 0x0f) == 8 &&
+					(((static_cast<int>(bytes[0]) << 8) | bytes[1]) % 31) == 0) {
+				// GD documentation describes the format as zlib and recommends
+				// inflateInit2(15|32), which accepts either zlib or gzip wrappers.
+				inflated = bytes.decompress_dynamic(-1, 1); // FileAccess::COMPRESSION_DEFLATE
+			} else {
+				const String plain = bytes.get_string_from_utf8();
+				if (plain.contains(";") || plain.begins_with("k") || plain.begins_with("1,")) return plain;
+				return String();
+			}
+			if (inflated.is_empty()) return String();
+			const String plain = inflated.get_string_from_utf8();
+			// A successful inflate is not sufficient: reject binary garbage before
+			// it reaches the object parser.
+			if (!plain.contains(";") && !plain.begins_with("k") && !plain.begins_with("1,")) return String();
+			return plain;
+		};
+
+		String plain = decode_payload(data);
+		if (!plain.is_empty()) return plain;
+		if (!data.begins_with("H4sI")) {
+			plain = decode_payload(String("H4sIAAAAAAAAA") + data);
+		}
+		return plain;
+	}
+
+	String encode_level_string(const String &plain) const {
+		const PackedByteArray raw = plain.to_utf8_buffer();
+		PackedByteArray compressed = raw.compress(3); // FileAccess::COMPRESSION_GZIP
+		if (compressed.size() < 2 || compressed[0] != 0x1f || compressed[1] != 0x8b) {
+			compressed = wrap_gzip(raw, compressed);
+		}
+		Marshalls *marshalls = Marshalls::get_singleton();
+		return marshalls ? url_base64(marshalls->raw_to_base64(compressed)) : String();
+	}
+
+	bool is_html_error_response(const String &response) const {
+		const String trimmed = response.strip_edges();
+		if (trimmed.is_empty()) return false;
+		const String lower = trimmed.to_lower();
+		if (lower.begins_with("<!doctype") || lower.begins_with("<html") || lower.begins_with("<head")) {
+			return true;
+		}
+		if (lower.contains("<html") && (lower.contains("522") || lower.contains("502") || lower.contains("503") ||
+				lower.contains("500") || lower.contains("404") || lower.contains("403") ||
+				lower.contains("cloudflare") || lower.contains("error") || lower.contains("access denied") ||
+				lower.contains("ray id:"))) {
+			return true;
+		}
+		return false;
+	}
+
+	String extract_level_data_string(const String &payload) const {
+		String text = payload.strip_edges();
+		if (text.is_empty() || is_html_error_response(text)) {
+			return String();
+		}
+
+		if (text.begins_with("{") && text.contains("\"contents\"")) {
+			const int64_t c_pos = text.find("\"contents\"");
+			const int64_t colon = text.find(":", c_pos);
+			if (colon != -1) {
+				const int64_t q1 = text.find("\"", colon);
+				if (q1 != -1) {
+					const int64_t q2 = text.rfind("\"");
+					if (q2 > q1) {
+						text = text.substr(q1 + 1, q2 - q1 - 1).replace("\\\"", "\"").replace("\\\\", "\\").strip_edges();
+					}
+				}
+			}
+		}
+
+		if (text.contains("#")) {
+			const int64_t hash_idx = text.find("#");
+			const String sec0 = text.substr(0, hash_idx);
+			const PackedStringArray pairs = sec0.split(":");
+			for (int64_t i = 0; i + 1 < pairs.size(); i += 2) {
+				if (pairs[i].strip_edges() == "4") {
+					const String val = pairs[i + 1].strip_edges();
+					if (!val.is_empty()) return val;
+				}
+			}
+		}
+
+		int64_t tilde_idx = text.find("k4 ~~");
+		if (tilde_idx == -1) tilde_idx = text.find("k4~~");
+		if (tilde_idx != -1) {
+			int64_t start = text.find("~~", tilde_idx);
+			if (start != -1) {
+				start += 2;
+				const int64_t finish = text.find("~~", start);
+				if (finish != -1) {
+					const String cand = text.substr(start, finish - start).strip_edges();
+					if (!cand.is_empty()) return cand;
+				}
+			}
+		}
+
+		const int64_t under_idx = text.find("k4 _");
+		if (under_idx != -1) {
+			const int64_t start = under_idx + 4;
+			const int64_t finish = text.find("_", start);
+			if (finish != -1) {
+				const String cand = text.substr(start, finish - start).strip_edges();
+				if (!cand.is_empty()) return cand;
+			}
+		}
+
+		if (text.contains(":4:") || text.begins_with("4:")) {
+			const PackedStringArray pairs = text.split(":");
+			for (int64_t i = 0; i + 1 < pairs.size(); i += 2) {
+				if (pairs[i].strip_edges() == "4") {
+					const String val = pairs[i + 1].strip_edges();
+					if (!val.is_empty()) return val;
+				}
+			}
+		}
+
+		int64_t k_pos = text.find("<k>k4</k>");
+		if (k_pos == -1) k_pos = text.find("<k>k4 </k>");
+		if (k_pos != -1) {
+			const int64_t s_start = text.find("<s>", k_pos);
+			if (s_start != -1) {
+				const int64_t s_end = text.find("</s>", s_start + 3);
+				if (s_end != -1) {
+					const String cand = text.substr(s_start + 3, s_end - (s_start + 3)).strip_edges();
+					if (!cand.is_empty()) return cand;
+				}
+			}
+		}
+
+		const int64_t key_idx = text.find("<key>k4</key>");
+		if (key_idx != -1) {
+			const int64_t str_start = text.find("<string>", key_idx);
+			if (str_start != -1) {
+				const int64_t str_end = text.find("</string>", str_start + 8);
+				if (str_end != -1) {
+					const String cand = text.substr(str_start + 8, str_end - (str_start + 8)).strip_edges();
+					if (!cand.is_empty()) return cand;
+				}
+			}
+		}
+
+		if (text.begins_with("H4sI") || text.begins_with("eJ") || text.begins_with("H4sIA")) {
+			return text;
+		}
+		if (text.contains(";") || text.begins_with("kS") || text.begins_with("kA") || text.begins_with("1,")) {
+			return text;
+		}
+
+		return text;
+	}
+
+	PackedInt32Array extract_level_sfx_ids(const String &level_string) const {
+		PackedInt32Array sfx_ids;
+		String data = decode_level_string(level_string);
+		if (data.is_empty()) return sfx_ids;
+
+		int64_t chunk_start = 0;
+		const int64_t len = data.length();
+		bool first_chunk = true;
+
+		while (chunk_start < len) {
+			int64_t chunk_end = data.find(";", chunk_start);
+			if (chunk_end == -1) chunk_end = len;
+			const String chunk = data.substr(chunk_start, chunk_end - chunk_start).strip_edges();
+			chunk_start = chunk_end + 1;
+			if (chunk.is_empty()) continue;
+
+			if (first_chunk) {
+				first_chunk = false;
+				if (chunk.begins_with("kS") || chunk.begins_with("kA")) continue;
+			}
+
+			int64_t idx = 0;
+			while ((idx = chunk.find("392,", idx)) != -1) {
+				if (idx == 0 || chunk[idx - 1] == ',') {
+					int64_t val_start = idx + 4;
+					int64_t val_end = chunk.find(",", val_start);
+					if (val_end == -1) val_end = chunk.length();
+					const String val_str = chunk.substr(val_start, val_end - val_start).strip_edges();
+					if (val_str.is_valid_int()) {
+						int32_t id = static_cast<int32_t>(val_str.to_int());
+						if (id > 0) {
+							bool exists = false;
+							for (int64_t s = 0; s < sfx_ids.size(); ++s) {
+								if (sfx_ids[s] == id) { exists = true; break; }
+							}
+							if (!exists) sfx_ids.append(id);
+						}
+					}
+					idx = val_end;
+				} else {
+					idx += 4;
+				}
+			}
+		}
+		return sfx_ids;
+	}
+
+	String resolve_proxy_url(const String &endpoint, const String &proxy_prefix = "") const {
+		if (proxy_prefix.is_empty()) {
+			return endpoint;
+		}
+		const String clean_prefix = proxy_prefix.strip_edges();
+		if (clean_prefix.contains("allorigins.win/raw?url=")) {
+			return String("https://api.allorigins.win/raw?url=") + endpoint.uri_encode();
+		}
+		if (clean_prefix.contains("codetabs.com/v1/proxy?quest=")) {
+			return String("https://api.codetabs.com/v1/proxy?quest=") + endpoint.uri_encode();
+		}
+		if (clean_prefix.ends_with("?url=") || clean_prefix.ends_with("?") || clean_prefix.ends_with("=")) {
+			return clean_prefix + endpoint.uri_encode();
+		}
+		if (clean_prefix.ends_with("/")) {
+			return clean_prefix + endpoint;
+		}
+		return clean_prefix + String("/") + endpoint;
+	}
+
+	bool is_cors_error(int64_t result, int64_t http_status, bool is_web = true) const {
+		if (!is_web) return false;
+		return (result == 2 || result == 4) && http_status == 0;
+	}
+
+	bool is_audio_stream(const PackedByteArray &bytes, const String &extension = "") const {
+		if (bytes.size() < 32) return false;
+		const uint8_t *ptr = bytes.ptr();
+		const int64_t head_len = std::min((int64_t)128, (int64_t)bytes.size());
+		String head;
+		for (int64_t i = 0; i < head_len; ++i) {
+			char c = static_cast<char>(ptr[i]);
+			if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+			head += String::chr(c);
+		}
+		if (head.begins_with("<!doctype") || head.begins_with("<html") || head.begins_with("<?xml") ||
+				head.begins_with("{") || head.begins_with("error")) {
+			return false;
+		}
+		if (extension == "ogg" || (ptr[0] == 0x4f && ptr[1] == 0x67 && ptr[2] == 0x67 && ptr[3] == 0x53)) {
+			return true;
+		}
+		if (extension == "wav" || (ptr[0] == 0x52 && ptr[1] == 0x49 && ptr[2] == 0x46 && ptr[3] == 0x46)) {
+			return true;
+		}
+		if (ptr[0] == 0x49 && ptr[1] == 0x44 && ptr[2] == 0x33) {
+			return true;
+		}
+		if (ptr[0] == 0xff && (ptr[1] & 0xe0) == 0xe0) {
+			return true;
+		}
+		if (bytes.size() >= 16384) {
+			return true;
+		}
+		return false;
+	}
+
+	PackedInt32Array sort_decoration_indices(const PackedInt32Array &z_orders,
+			const PackedInt32Array &draw_orders, const PackedInt64Array &texture_ids) const {
+		const int64_t count = std::min(z_orders.size(), std::min(draw_orders.size(), texture_ids.size()));
+		std::vector<int32_t> indices(static_cast<size_t>(count));
+		std::iota(indices.begin(), indices.end(), 0);
+		std::stable_sort(indices.begin(), indices.end(), [&](int32_t a, int32_t b) {
+			if (z_orders[a] != z_orders[b]) return z_orders[a] < z_orders[b];
+			if (draw_orders[a] != draw_orders[b]) return draw_orders[a] < draw_orders[b];
+			if (texture_ids[a] != texture_ids[b]) return texture_ids[a] < texture_ids[b];
+			return a < b;
+		});
+		PackedInt32Array result;
+		result.resize(count);
+		for (int64_t i = 0; i < count; ++i) result.set(i, indices[static_cast<size_t>(i)]);
+		return result;
+	}
+
+	Dictionary build_x_buckets(const PackedFloat32Array &origins, double bucket_width) const {
+		Dictionary result;
+		if (bucket_width <= 0.0) return result;
+		std::map<int32_t, std::vector<int32_t>> buckets;
+		for (int64_t i = 0; i < origins.size(); ++i) {
+			buckets[static_cast<int32_t>(std::floor(origins[i] / bucket_width))].push_back(static_cast<int32_t>(i));
+		}
+		for (const auto &[key, values] : buckets) {
+			PackedInt32Array packed;
+			packed.resize(static_cast<int64_t>(values.size()));
+			for (size_t i = 0; i < values.size(); ++i) packed.set(static_cast<int64_t>(i), values[i]);
+			result[key] = packed;
+		}
+		return result;
+	}
+
+	PackedInt32Array visible_bucket_keys(const PackedInt32Array &keys, int64_t first, int64_t last) const {
+		PackedInt32Array result;
+		for (int64_t i = 0; i < keys.size(); ++i) {
+			const int32_t key = keys[i];
+			if (key >= first && key <= last) result.append(key);
+		}
+		return result;
+	}
+
+	Array commit_collision_shapes(Node2D *body, Node2D *source, const Array &descriptors) const {
+		Array added;
+		if (!body || !source) return added;
+		for (int64_t i = 0; i < descriptors.size(); ++i) {
+			const Dictionary descriptor = descriptors[i];
+			Ref<Shape2D> shape = descriptor.get("resource", Variant());
+			if (shape.is_null()) continue;
+			CollisionShape2D *shape_node = memnew(CollisionShape2D);
+			shape_node->set_shape(shape);
+			shape_node->set_debug_color(descriptor.get("debug_color", Color()));
+			body->add_child(shape_node);
+			const Transform2D local = descriptor.get("local_xform", Transform2D());
+			shape_node->set_global_transform(source->get_global_transform() * local);
+			added.append(shape_node);
+		}
+		return added;
+	}
+
+	void reenable_collision_shapes(Node *container) const {
+		if (!container) return;
+		const Array bodies = container->get_children();
+		for (int64_t i = 0; i < bodies.size(); ++i) {
+			Node *body = Object::cast_to<Node>(static_cast<Object *>(bodies[i]));
+			if (!body) continue;
+			const Array shapes = body->get_children();
+			for (int64_t j = 0; j < shapes.size(); ++j) {
+				Object *shape = shapes[j];
+				if (shape && static_cast<bool>(shape->get("disabled"))) shape->set("disabled", false);
+			}
+		}
+	}
+
+	struct PlayerPhysicsOutput {
+		Vector2 local_velocity;
+		Vector2 world_velocity;
+		Vector2 slope_velocity;
+		double gravity_flip = 1.0;
+		double coyote_time = 0.0;
+		int64_t spider_dash_frames = 0;
+		int64_t slope_exit_velocity_frames = 0;
+		int64_t instant_jump_mode = -1;
+	};
+
+	static PlayerPhysicsOutput run_player_physics_kernel(
+			double delta,
+			const Vector2 &previous_velocity,
+			int64_t direction,
+			int64_t jump_state,
+			bool was_sliding_on_slope,
+			bool has_last_slide_collision,
+			double floor_angle,
+			double floor_max_angle,
+			Vector2 slope_velocity,
+			int64_t internal_gamemode,
+			int64_t player_scale,
+			const Vector2 &speed,
+			double speed_multiplier,
+			double gravity_flip,
+			double gravity_multiplier,
+			double gameplay_rotation,
+			bool is_on_floor,
+			bool is_on_ceiling,
+			bool is_platformer,
+			bool colliding_pad,
+			bool has_dash_control,
+			bool orb_queue_empty,
+			double robot_timer_time_left,
+			bool deferred_velocity_redirect,
+			double coyote_time,
+			int64_t spider_dash_frames,
+			int64_t slope_exit_velocity_frames,
+			bool gravity_portal_pending = false) {
+		PlayerPhysicsOutput out;
+		Vector2 local_velocity = previous_velocity.rotated(static_cast<real_t>(-gameplay_rotation));
+		// A gravity portal just reversed local Y and nudged us off the old floor.
+		// move_and_slide has not run yet, so is_on_floor is still the old contact
+		// and would cancel the launch and skip gravity for this step.
+		if (gravity_portal_pending) {
+			is_on_floor = false;
+			is_on_ceiling = false;
+		}
+
+		if (spider_dash_frames > 0) {
+			spider_dash_frames--;
+		}
+		if (slope_exit_velocity_frames > 0) {
+			slope_exit_velocity_frames--;
+		}
+
+		// Slope physics
+		if (was_sliding_on_slope && has_last_slide_collision) {
+			if (std::abs(std::sin(floor_angle)) < std::sin(floor_max_angle)) {
+				slope_velocity.y = static_cast<real_t>(std::tan(-floor_angle) * std::abs(local_velocity.x) * direction);
+				slope_exit_velocity_frames = 4;
+			}
+		}
+
+		// Ball or Swing gravity flip on jump press
+		if ((internal_gamemode == 7 /*SWING*/ || internal_gamemode == 3 /*BALL*/) && jump_state == 1 && orb_queue_empty) {
+			gravity_flip *= -1.0;
+		}
+
+		static constexpr double GRAVITY = 10600.0;
+		static constexpr double FLY_GRAVITY_MULTIPLIER = 0.5;
+		static constexpr double UFO_GRAVITY_MULTIPLIER = 0.7;
+		static constexpr double SPIDER_GRAVITY_MULTIPLIER = 0.65;
+		static constexpr double FLY_TERMINAL_VELOCITY_Y = 1800.0;
+		static constexpr double TERMINAL_VELOCITY_Y = 3000.0;
+		static constexpr double PLATFORMER_ACCELERATION = 5.0;
+
+		if (!has_dash_control) {
+			if (internal_gamemode == 1 /*SHIP*/) {
+				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1.0 * FLY_GRAVITY_MULTIPLIER);
+				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
+			} else if (internal_gamemode == 7 /*SWING*/) {
+				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * FLY_GRAVITY_MULTIPLIER);
+				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
+			} else if (internal_gamemode == 4 /*WAVE*/) {
+				local_velocity.y = static_cast<real_t>(1250.0 * gravity_flip * gravity_multiplier * jump_state * -1.0);
+				if (speed_multiplier > 0.0) {
+					local_velocity.y = static_cast<real_t>(local_velocity.y * speed_multiplier);
+				}
+				if (player_scale == 0 /*MINI*/) {
+					local_velocity.y *= 2.0f;
+				} else if (player_scale == 2 /*BIG*/) {
+					local_velocity.y *= 0.5f;
+				}
+			} else if (internal_gamemode == 6 /*SPIDER*/) {
+				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1.0 * SPIDER_GRAVITY_MULTIPLIER);
+				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
+			} else if (!is_on_floor) {
+				if (internal_gamemode == 2 /*UFO*/) {
+					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER);
+				} else {
+					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier);
+				}
+			}
+		}
+
+		bool flying_gamemode_slope_boost = (internal_gamemode == 1 || internal_gamemode == 7) &&
+			((is_on_ceiling && jump_state >= 0) ||
+			(is_on_floor && has_last_slide_collision && floor_angle != 0.0 && direction != 0 && jump_state == 1));
+		bool isnt_jumping = is_on_floor && jump_state <= 0 && !deferred_velocity_redirect;
+
+		if ((!colliding_pad && flying_gamemode_slope_boost) || isnt_jumping) {
+			local_velocity.y = slope_velocity.y;
+		}
+
+		// Robot hold jump
+		if (jump_state == 1 && robot_timer_time_left > 0.0 && internal_gamemode == 5 /*ROBOT*/) {
+			local_velocity.y = static_cast<real_t>(1250.0 * gravity_flip * -1.0);
+		}
+
+		int64_t instant_jump_mode = -1;
+		bool is_instant_jump = (internal_gamemode == 6 || internal_gamemode == 3 || internal_gamemode == 2 || internal_gamemode == 0);
+		if (is_instant_jump && jump_state == 1 && !colliding_pad && orb_queue_empty) {
+			instant_jump_mode = internal_gamemode;
+			if (internal_gamemode == 3 /*BALL*/) {
+				local_velocity.y = static_cast<real_t>(speed.y * gravity_flip * 0.5);
+			} else if (internal_gamemode == 2 /*UFO*/) {
+				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip * UFO_GRAVITY_MULTIPLIER);
+			} else if (internal_gamemode == 0 /*CUBE*/) {
+				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip);
+			}
+		}
+
+		// Horizontal velocity
+		if (!is_platformer || internal_gamemode == 4 /*WAVE*/) {
+			if (direction != 0) {
+				local_velocity.x = static_cast<real_t>(direction * speed.x * speed_multiplier);
+			} else {
+				local_velocity.x = 0.0f;
+			}
+		} else {
+			double target_x = direction != 0 ? direction * speed.x * speed_multiplier : 0.0;
+			local_velocity.x = static_cast<real_t>(Math::move_toward(
+				static_cast<double>(local_velocity.x), target_x,
+				speed.x * delta * speed_multiplier * PLATFORMER_ACCELERATION));
+		}
+
+		// Coyote time
+		bool is_falling = local_velocity.y * gravity_flip > 0.0f;
+		if (is_on_floor) {
+			coyote_time = 2.0 / 60.0;
+		} else {
+			if (is_falling) {
+				coyote_time = std::max(0.0, coyote_time - delta);
+			} else {
+				coyote_time = 0.0;
+			}
+		}
+
+		// Reset slope velocity if needed
+		if (!is_on_floor && slope_exit_velocity_frames == 0) {
+			slope_velocity = Vector2();
+		}
+
+		Vector2 world_velocity = local_velocity.rotated(static_cast<real_t>(gameplay_rotation));
+
+		out.local_velocity = local_velocity;
+		out.world_velocity = world_velocity;
+		out.slope_velocity = slope_velocity;
+		out.gravity_flip = gravity_flip;
+		out.coyote_time = coyote_time;
+		out.spider_dash_frames = spider_dash_frames;
+		out.slope_exit_velocity_frames = slope_exit_velocity_frames;
+		out.instant_jump_mode = instant_jump_mode;
+		return out;
+	}
+
+	Dictionary compute_player_velocity(const Dictionary &params) const {
+		const double delta = params.get("delta", 1.0 / 60.0);
+		const Vector2 previous_velocity = params.get("previous_velocity", Vector2());
+		const int64_t direction = params.get("direction", 1);
+		const int64_t jump_state = params.get("jump_state", 0);
+		const bool was_sliding_on_slope = params.get("was_sliding_on_slope", false);
+		const bool has_last_slide_collision = params.get("has_last_slide_collision", false);
+		const double floor_angle = params.get("floor_angle", 0.0);
+		const double floor_max_angle = params.get("floor_max_angle", 0.785398);
+		const Vector2 slope_velocity = params.get("slope_velocity", Vector2());
+		const int64_t internal_gamemode = params.get("internal_gamemode", 0);
+		const int64_t player_scale = params.get("player_scale", 1);
+		const Vector2 speed = params.get("speed", Vector2(1250.0, 2395.0));
+		const double speed_multiplier = params.get("speed_multiplier", 1.0);
+		const double gravity_flip = params.get("gravity_flip", 1.0);
+		const double gravity_multiplier = params.get("gravity_multiplier", 1.0);
+		const double gameplay_rotation = params.get("gameplay_rotation", 0.0);
+		const bool is_on_floor = params.get("is_on_floor", false);
+		const bool is_on_ceiling = params.get("is_on_ceiling", false);
+		const bool is_platformer = params.get("is_platformer", false);
+		const bool colliding_pad = params.get("colliding_pad", false);
+		const bool has_dash_control = params.get("has_dash_control", false);
+		const bool orb_queue_empty = params.get("orb_queue_empty", true);
+		const double robot_timer_time_left = params.get("robot_timer_time_left", 0.0);
+		const bool deferred_velocity_redirect = params.get("deferred_velocity_redirect", false);
+		const double coyote_time = params.get("coyote_time", 0.0);
+		const int64_t spider_dash_frames = params.get("spider_dash_frames", 0);
+		const int64_t slope_exit_velocity_frames = params.get("slope_exit_velocity_frames", 0);
+		const bool gravity_portal_pending = params.get("gravity_portal_pending", false);
+
+		PlayerPhysicsOutput out = run_player_physics_kernel(
+			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
+			has_last_slide_collision, floor_angle, floor_max_angle, slope_velocity,
+			internal_gamemode, player_scale, speed, speed_multiplier, gravity_flip,
+			gravity_multiplier, gameplay_rotation, is_on_floor, is_on_ceiling,
+			is_platformer, colliding_pad, has_dash_control, orb_queue_empty,
+			robot_timer_time_left, deferred_velocity_redirect, coyote_time,
+			spider_dash_frames, slope_exit_velocity_frames, gravity_portal_pending);
+
+		Dictionary result;
+		result["local_velocity"] = out.local_velocity;
+		result["velocity"] = out.world_velocity;
+		result["slope_velocity"] = out.slope_velocity;
+		result["gravity_flip"] = out.gravity_flip;
+		result["coyote_time"] = out.coyote_time;
+		result["spider_dash_frames"] = out.spider_dash_frames;
+		result["slope_exit_velocity_frames"] = out.slope_exit_velocity_frames;
+		result["instant_jump_mode"] = out.instant_jump_mode;
+		return result;
+	}
+
+	PackedFloat64Array compute_player_velocity_packed(const PackedFloat64Array &params) const {
+		if (params.size() < 30) {
+			return PackedFloat64Array();
+		}
+		const double delta = params[0];
+		const Vector2 previous_velocity(static_cast<real_t>(params[1]), static_cast<real_t>(params[2]));
+		const int64_t direction = static_cast<int64_t>(params[3]);
+		const int64_t jump_state = static_cast<int64_t>(params[4]);
+		const bool was_sliding_on_slope = params[5] != 0.0;
+		const bool has_last_slide_collision = params[6] != 0.0;
+		const double floor_angle = params[7];
+		const double floor_max_angle = params[8];
+		const Vector2 slope_velocity(static_cast<real_t>(params[9]), static_cast<real_t>(params[10]));
+		const int64_t internal_gamemode = static_cast<int64_t>(params[11]);
+		const int64_t player_scale = static_cast<int64_t>(params[12]);
+		const Vector2 speed(static_cast<real_t>(params[13]), static_cast<real_t>(params[14]));
+		const double speed_multiplier = params[15];
+		const double gravity_flip = params[16];
+		const double gravity_multiplier = params[17];
+		const double gameplay_rotation = params[18];
+		const bool is_on_floor = params[19] != 0.0;
+		const bool is_on_ceiling = params[20] != 0.0;
+		const bool is_platformer = params[21] != 0.0;
+		const bool colliding_pad = params[22] != 0.0;
+		const bool has_dash_control = params[23] != 0.0;
+		const bool orb_queue_empty = params[24] != 0.0;
+		const double robot_timer_time_left = params[25];
+		const bool deferred_velocity_redirect = params[26] != 0.0;
+		const double coyote_time = params[27];
+		const int64_t spider_dash_frames = static_cast<int64_t>(params[28]);
+		const int64_t slope_exit_velocity_frames = static_cast<int64_t>(params[29]);
+		// Optional so existing 30-float callers keep working. Param 30 is set
+		// only for the step that leaves the floor after a gravity portal.
+		const bool gravity_portal_pending = params.size() > 30 && params[30] != 0.0;
+
+		PlayerPhysicsOutput out = run_player_physics_kernel(
+			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
+			has_last_slide_collision, floor_angle, floor_max_angle, slope_velocity,
+			internal_gamemode, player_scale, speed, speed_multiplier, gravity_flip,
+			gravity_multiplier, gameplay_rotation, is_on_floor, is_on_ceiling,
+			is_platformer, colliding_pad, has_dash_control, orb_queue_empty,
+			robot_timer_time_left, deferred_velocity_redirect, coyote_time,
+			spider_dash_frames, slope_exit_velocity_frames, gravity_portal_pending);
+
+		PackedFloat64Array result;
+		result.resize(11);
+		result.set(0, static_cast<double>(out.local_velocity.x));
+		result.set(1, static_cast<double>(out.local_velocity.y));
+		result.set(2, static_cast<double>(out.world_velocity.x));
+		result.set(3, static_cast<double>(out.world_velocity.y));
+		result.set(4, static_cast<double>(out.slope_velocity.x));
+		result.set(5, static_cast<double>(out.slope_velocity.y));
+		result.set(6, out.gravity_flip);
+		result.set(7, out.coyote_time);
+		result.set(8, static_cast<double>(out.spider_dash_frames));
+		result.set(9, static_cast<double>(out.slope_exit_velocity_frames));
+		result.set(10, static_cast<double>(out.instant_jump_mode));
+		return result;
+	}
+
+	bool apply_gravity_portal(Object *player, int64_t mode) const {
+		return apply_gravity_portal_player(player, static_cast<int>(mode));
+	}
+
+	int64_t classify_collision_flags(double collision_angle, double floor_max_angle) const {
+		int64_t flags = 0;
+		if (collision_angle <= Math::deg_to_rad(10.0)) {
+			flags |= 1; // is_floor
+		} else if (collision_angle >= Math::deg_to_rad(180.0 - 10.0)) {
+			flags |= 2; // is_ceiling
+		} else if (collision_angle > floor_max_angle && collision_angle < Math::PI - floor_max_angle) {
+			flags |= 4; // is_wall
+		} else {
+			flags |= 8; // is_slope
+		}
+		return flags;
+	}
+
+	Dictionary classify_collision(double collision_angle, double floor_max_angle) const {
+		const int64_t flags = classify_collision_flags(collision_angle, floor_max_angle);
+		Dictionary result;
+		result["is_floor"] = (flags & 1) != 0;
+		result["is_ceiling"] = (flags & 2) != 0;
+		result["is_wall"] = (flags & 4) != 0;
+		result["is_slope"] = (flags & 8) != 0;
+		return result;
+	}
+
+	Dictionary extract_object_geometry(Node2D *object) const {
+		Dictionary geometry;
+		geometry["collision_layer"] = 0;
+		geometry["descriptors"] = Array();
+		if (!object) return geometry;
+		if (object->has_meta("_gd_level_physics_descriptors")) {
+			return object->get_meta("_gd_level_physics_descriptors");
+		}
+		Node2D *body = nullptr;
+		Node *collision_child = object->get_node_or_null(NodePath("Collision"));
+		if (collision_child) {
+			body = Object::cast_to<Node2D>(collision_child);
+		} else {
+			body = object;
+		}
+		if (!body) return geometry;
+		const int64_t collision_layer = body->get("collision_layer");
+		geometry["collision_layer"] = collision_layer;
+		Array descriptors;
+		const Transform2D inverse = object->get_global_transform().affine_inverse();
+		const Array children = body->get_children();
+		for (int64_t i = 0; i < children.size(); ++i) {
+			CollisionShape2D *shape_node = Object::cast_to<CollisionShape2D>(children[i]);
+			if (!shape_node) continue;
+			Ref<Shape2D> shape = shape_node->get_shape();
+			if (shape.is_null()) continue;
+			Dictionary desc;
+			desc["resource"] = shape;
+			desc["local_xform"] = inverse * shape_node->get_global_transform();
+			desc["debug_color"] = shape_node->get_debug_color();
+			descriptors.append(desc);
+		}
+		geometry["descriptors"] = descriptors;
+		if (!descriptors.is_empty()) {
+			object->set_meta("_gd_level_physics_descriptors", geometry);
+		}
+		return geometry;
+	}
+};
+
+// Native visibility index used by FrustumCuller. The facade still computes the
+// camera rectangle (a handful of operations); all large object-set storage,
+// intersection and visibility transitions happen here without GDScript loops.
+class NativeFrustumIndex : public RefCounted {
+	GDCLASS(NativeFrustumIndex, RefCounted)
+
+	struct Entry {
+		uint64_t id = 0;
+		double left = 0.0;
+		double right = 0.0;
+		int64_t first = 0;
+		int64_t last = 0;
+	};
+	std::vector<Entry> entries;
+	// OpenGD also partitions the level into fixed horizontal sections. Keep an
+	// index from section to entry here so normal camera motion touches only the
+	// sections leaving/entering the view instead of scanning the full level.
+	std::map<int64_t, std::vector<size_t>> sections;
+	std::vector<uint32_t> visited;
+	uint32_t visit_generation = 0;
+	double section_width = 1024.0;
+	std::set<uint64_t> hidden;
+	int64_t current_first = INT64_MAX;
+	int64_t current_last = INT64_MIN;
+	double current_left = INFINITY;
+	double current_right = -INFINITY;
+
+	CanvasItem *canvas_for(uint64_t id) const {
+		Object *object = ObjectDB::get_instance(ObjectID(id));
+		return Object::cast_to<CanvasItem>(object);
+	}
+
+	void apply_visibility(size_t index, double left, double right) {
+		if (index >= entries.size()) return;
+		const Entry &entry = entries[index];
+		CanvasItem *canvas = canvas_for(entry.id);
+		if (!canvas) {
+			hidden.erase(entry.id);
+			return;
+		}
+		const bool desired = entry.right >= left && entry.left <= right;
+		if (desired) {
+			auto found = hidden.find(entry.id);
+			if (found != hidden.end()) {
+				Node *node = Object::cast_to<Node>(canvas);
+				if (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED) canvas->set_visible(true);
+				hidden.erase(found);
+			}
+		} else if (canvas->is_visible()) {
+			canvas->set_visible(false);
+			hidden.insert(entry.id);
+		}
+	}
+
+	void visit_sections(int64_t first, int64_t last, double desired_left, double desired_right) {
+		if (first > last) return;
+		auto section = sections.lower_bound(first);
+		while (section != sections.end() && section->first <= last) {
+			for (size_t index : section->second) {
+				if (visited[index] == visit_generation) continue;
+				visited[index] = visit_generation;
+				apply_visibility(index, desired_left, desired_right);
+			}
+			++section;
+		}
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("configure", "objects", "lefts", "rights", "bucket_width"), &NativeFrustumIndex::configure);
+		ClassDB::bind_method(D_METHOD("set_view", "left", "right"), &NativeFrustumIndex::set_view);
+		ClassDB::bind_method(D_METHOD("show_all"), &NativeFrustumIndex::show_all);
+		ClassDB::bind_method(D_METHOD("tracked_count"), &NativeFrustumIndex::tracked_count);
+		ClassDB::bind_method(D_METHOD("hidden_count"), &NativeFrustumIndex::hidden_count);
+	}
+
+public:
+	void configure(const Array &objects, const PackedFloat32Array &lefts,
+			const PackedFloat32Array &rights, double bucket_width) {
+		show_all();
+		entries.clear();
+		sections.clear();
+		const int64_t count = std::min(objects.size(), std::min(lefts.size(), rights.size()));
+		if (bucket_width <= 0.0) return;
+		section_width = bucket_width;
+		entries.reserve(static_cast<size_t>(count));
+		for (int64_t i = 0; i < count; ++i) {
+			Object *object = objects[i];
+			CanvasItem *canvas = Object::cast_to<CanvasItem>(object);
+			if (!canvas) continue;
+			Entry entry;
+			entry.id = canvas->get_instance_id();
+			entry.left = std::min(static_cast<double>(lefts[i]), static_cast<double>(rights[i]));
+			entry.right = std::max(static_cast<double>(lefts[i]), static_cast<double>(rights[i]));
+			entry.first = static_cast<int64_t>(std::floor(entry.left / bucket_width));
+			entry.last = static_cast<int64_t>(std::floor(entry.right / bucket_width));
+			const size_t index = entries.size();
+			entries.push_back(entry);
+			for (int64_t key = entry.first; key <= entry.last; ++key) sections[key].push_back(index);
+		}
+		visited.assign(entries.size(), 0);
+		visit_generation = 0;
+		current_first = INT64_MAX;
+		current_last = INT64_MIN;
+		current_left = INFINITY;
+		current_right = -INFINITY;
+	}
+
+	void set_view(double left, double right) {
+		if (right < left) std::swap(left, right);
+		if (left == current_left && right == current_right) return;
+		const int64_t first = sections.empty() ? 0 : static_cast<int64_t>(std::floor(left / section_width));
+		const int64_t last = sections.empty() ? -1 : static_cast<int64_t>(std::floor(right / section_width));
+		if (current_first > current_last) {
+			// One complete reconciliation at level start. Later frames inspect only
+			// the old and new screen sections, but retain exact world-coordinate
+			// bounds so an object disappears precisely after its final pixel exits.
+			for (size_t index = 0; index < entries.size(); ++index) apply_visibility(index, left, right);
+		} else {
+			if (++visit_generation == 0) {
+				std::fill(visited.begin(), visited.end(), 0);
+				visit_generation = 1;
+			}
+			visit_sections(current_first, current_last, left, right);
+			visit_sections(first, last, left, right);
+		}
+		current_first = first;
+		current_last = last;
+		current_left = left;
+		current_right = right;
+	}
+
+	void show_all() {
+		for (uint64_t id : hidden) {
+			CanvasItem *canvas = canvas_for(id);
+			Node *node = Object::cast_to<Node>(canvas);
+			if (canvas && (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED)) canvas->set_visible(true);
+		}
+		hidden.clear();
+		current_first = INT64_MAX;
+		current_last = INT64_MIN;
+		current_left = INFINITY;
+		current_right = -INFINITY;
+	}
+
+	int64_t tracked_count() const { return static_cast<int64_t>(entries.size()); }
+	int64_t hidden_count() const { return static_cast<int64_t>(hidden.size()); }
+};
+
+// Native fast path for ColorChannelWatcher.refresh_objects_color. A colour
+// trigger (and every pulse-animation frame of one) repaints every HSVWatcher of
+// its channel: the old path cost a GDScript call plus ~15 Variant property
+// accesses per object, each frame, for channels with thousands of members.
+// The index snapshots the per-object state once and applies a channel update
+// with direct CanvasItem calls, skipping the interpreter entirely. The bridge
+// in ColorChannelWatcher.gd rebuilds the snapshot whenever watcher state or
+// group membership changes, and keeps the old loop for editor builds.
+class NativeColorChannelIndex : public RefCounted {
+	GDCLASS(NativeColorChannelIndex, RefCounted)
+
+	struct Record {
+		ObjectID watcher;
+		float hsv[3] = { 0.0f, 0.0f, 0.0f };
+		float intensity = 1.0f;
+		float alpha = 1.0f;
+		bool sat_multiplies = false;
+		bool val_multiplies = false;
+	};
+	std::vector<Record> records;
+	// base_intensity/base_alpha are channel-wide values mirrored onto every
+	// watcher for later GDScript reads (update_color, to_data). Skipping the
+	// property writes when the channel values did not change removes two
+	// hashed script-property sets per object on colour-only pulses.
+	bool base_valid = false;
+	double last_intensity = 0.0;
+	double last_alpha = 0.0;
+
+	static Node *node_for(ObjectID id) {
+		return Object::cast_to<Node>(ObjectDB::get_instance(id));
+	}
+
+public:
+	void clear() {
+		records.clear();
+		base_valid = false;
+	}
+
+	// watchers: the channel group's HSVWatcher nodes. Per-object shift,
+	// intensity, alpha and the multiply flags are read once; the caller is
+	// responsible for re-configuring when that state changes (the GDScript
+	// bridge tracks a generation counter for this).
+	void configure(const Array &watchers) {
+		clear();
+		records.reserve(static_cast<size_t>(watchers.size()));
+		for (int64_t i = 0; i < watchers.size(); ++i) {
+			Object *object = watchers[i];
+			Node *node = Object::cast_to<Node>(object);
+			if (!node || !node->get_parent()) continue;
+			// Selection highlights are an editor-only state that repaints to a
+			// fixed colour; leave those to the GDScript path.
+			if (static_cast<int64_t>(node->get("selection_highlight")) != 0) continue;
+			Record record;
+			record.watcher = node->get_instance_id();
+			const Array shift = node->get("hsv_shift");
+			for (int component = 0; component < 3 && component < shift.size(); ++component)
+				record.hsv[component] = static_cast<float>(static_cast<double>(shift[component]));
+			record.intensity = static_cast<float>(static_cast<double>(node->get("intensity")));
+			record.alpha = static_cast<float>(static_cast<double>(node->get("alpha")));
+			record.sat_multiplies = static_cast<bool>(node->get("saturation_multiplies"));
+			record.val_multiplies = static_cast<bool>(node->get("value_multiplies"));
+			records.push_back(record);
+		}
+	}
+
+	// Applies one channel update: the channel colour (already copy-resolved by
+	// the caller), the channel HSV shift, and the channel intensity/alpha.
+	// Mirrors ColorChannelWatcher.refresh_objects_color + HSVWatcher.update_color
+	// operation for operation, including the s, v, h apply order (each Color
+	// component write round-trips through RGB, so order is observable).
+	void apply(const Color &channel_color, double shift_h, double shift_s, double shift_v,
+			double intensity, double alpha) {
+		const bool write_base = !base_valid || intensity != last_intensity || alpha != last_alpha;
+		base_valid = true;
+		last_intensity = intensity;
+		last_alpha = alpha;
+		const float fh = static_cast<float>(shift_h);
+		const float fs = static_cast<float>(shift_s);
+		const float fv = static_cast<float>(shift_v);
+		for (const Record &record : records) {
+			CanvasItem *watcher = Object::cast_to<CanvasItem>(node_for(record.watcher));
+			if (!watcher) continue;
+			// watcher.modulate = channel colour + channel shift (s, v, h).
+			Color modulate = channel_color;
+			modulate.set_s(modulate.get_s() + fs);
+			modulate.set_v(modulate.get_v() + fv);
+			modulate.set_h(modulate.get_h() + fh);
+			// HSVWatcher.update_color: per-object shift on top (s, v, h), then
+			// intensity product and alpha override on the parent's modulate.
+			// An all-zero shift in multiplicative mode is Geometry Dash's
+			// "HSV enabled but untouched" encoding and must not black the
+			// object out (GDRweb's shiftColor guard; the GDScript watcher
+			// and DecorationBatch paths match this).
+			Color shifted = modulate;
+			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
+				(record.hsv[0] == 0.0f &&
+				 record.hsv[1] == (record.sat_multiplies ? 1.0f : 0.0f) &&
+				 record.hsv[2] == (record.val_multiplies ? 1.0f : 0.0f));
+			if (!is_neutral) {
+				if (record.sat_multiplies) {
+					shifted.set_s(shifted.get_s() * record.hsv[1]);
+				} else {
+					shifted.set_s(shifted.get_s() + record.hsv[1]);
+				}
+				if (record.val_multiplies) {
+					shifted.set_v(shifted.get_v() * record.hsv[2]);
+				} else {
+					shifted.set_v(shifted.get_v() + record.hsv[2]);
+				}
+				shifted.set_h(shifted.get_h() + record.hsv[0]);
+			}
+			Color parent_modulate = shifted * (record.intensity * static_cast<float>(intensity));
+			parent_modulate.a = modulate.a * record.alpha * static_cast<float>(alpha);
+			watcher->set_modulate(modulate);
+			CanvasItem *target = Object::cast_to<CanvasItem>(watcher->get_parent());
+			if (target) target->set_modulate(parent_modulate);
+			if (write_base) {
+				watcher->set("base_intensity", intensity);
+				watcher->set("base_alpha", alpha);
+			}
+		}
+	}
+
+	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("clear"), &NativeColorChannelIndex::clear);
+		ClassDB::bind_method(D_METHOD("configure", "watchers"), &NativeColorChannelIndex::configure);
+		ClassDB::bind_method(D_METHOD("apply", "color", "shift_h", "shift_s", "shift_v", "intensity", "alpha"), &NativeColorChannelIndex::apply);
+		ClassDB::bind_method(D_METHOD("item_count"), &NativeColorChannelIndex::item_count);
+	}
+};
+
+// Native state machine for runtime level construction. It owns iteration,
+// layer creation, placement dispatch and sealing; GDScript's LevelBuildJob is
+// only a source/editor fallback and stable API facade.
+class NativeLevelBuildJob : public RefCounted {
+	GDCLASS(NativeLevelBuildJob, RefCounted)
+
+	Dictionary data;
+	Array layers_data;
+	Array decoration_data;
+	Ref<Script> level_script;
+	Ref<Script> layer_script;
+	Ref<Script> decoration_loader_script;
+	Node *level = nullptr;
+	Node *layer = nullptr;
+	int64_t layer_index = 0;
+	int64_t object_index = 0;
+	bool layer_initialized = false;
+	bool finished = false;
+	bool drop_decoration = false;
+
+	static Ref<Script> load_script(const String &path) {
+		return ResourceLoader::get_singleton()->load(path);
+	}
+
+	static Node *new_script_node(const Ref<Script> &script) {
+		if (script.is_null()) return nullptr;
+		Variant value = script->call("new");
+		Object *object = value;
+		return Object::cast_to<Node>(object);
+	}
+
+	void start_next_layer() {
+		if (layer_index >= layers_data.size()) {
+			finish_build();
+			return;
+		}
+		const Dictionary layer_data = layers_data[layer_index];
+		layer = new_script_node(layer_script);
+		if (!layer) {
+			finish_build();
+			return;
+		}
+		layer->set_name(layer_data.get("name", String("Layer")));
+		layer->set("locked", layer_data.get("locked", false));
+		layer_initialized = true;
+		object_index = 0;
+	}
+
+	void place(const Dictionary &object_data) {
+		// Generic 2.2 triggers are already complete packed records for
+		// NativeTriggerRuntime. Instantiating an Area2D, CollisionShape and script
+		// shell for each one wastes the majority of trigger-heavy level memory.
+		if (static_cast<bool>(object_data.get("native_only_trigger", false))) return;
+		if (static_cast<bool>(object_data.get("decoration", false))) {
+			if (!drop_decoration) decoration_data.append(object_data);
+			return;
+		}
+		const Dictionary static_art = object_data.get("native_static_art", Dictionary());
+		const bool hidden = static_cast<bool>(object_data.get("hidden", false));
+		if (!static_art.is_empty()) decoration_data.append(static_art);
+		Variant value = level_script->call("instantiate_object_from_data", object_data, level);
+		Object *object = value;
+		Node *node = Object::cast_to<Node>(object);
+		if (!node) return;
+		// Static gameplay art is now represented by a node-free native renderer.
+		// Preserve the root/group transform and authored Collision subtree, while
+		// dropping Sprite2D descendants and their per-node render state. Hidden
+		// objects (key 135) have no packed art but their scene sprites must go
+		// too: they render nothing while keeping collision.
+		if (!static_art.is_empty() || hidden) {
+			node->set_meta("_gd_native_packed_art", true);
+			for (const char *name : {"Base", "Detail"}) {
+				Node *visual = node->get_node_or_null(NodePath(name));
+				if (!visual) continue;
+				node->remove_child(visual);
+				visual->queue_free();
+			}
+		}
+		node->set_meta("layer", layer);
+		layer->add_child(node);
+	}
+
+	void seal_layer() {
+		if (!decoration_data.is_empty()) {
+			const double scale = decoration_loader_script->call("art_scale");
+			const Array batches = decoration_loader_script->call("build_batches", decoration_data, scale);
+			for (int64_t i = 0; i < batches.size(); ++i) {
+				Object *object = batches[i];
+				Node *batch = Object::cast_to<Node>(object);
+				if (!batch) continue;
+				batch->set_meta("layer", layer);
+				layer->add_child(batch);
+			}
+			decoration_data.clear();
+		}
+		Array layers = level->get("layers");
+		layers.append(layer);
+		level->set("layers", layers);
+		level->add_child(layer);
+		layer = nullptr;
+		layer_initialized = false;
+		++layer_index;
+	}
+
+	void finish_build() {
+		if (finished || !level) return;
+		level->call("use_data", data, 1);
+		level->connect("ready", Callable(level, "setup_color_channel_watchers"), Object::CONNECT_ONE_SHOT);
+		finished = true;
+	}
+
+	void work() {
+		if (!layer_initialized) {
+			start_next_layer();
+			return;
+		}
+		const Dictionary layer_data = layers_data[layer_index];
+		const Array objects = layer_data.get("objects", Array());
+		if (object_index < objects.size()) {
+			place(objects[object_index]);
+			++object_index;
+			return;
+		}
+		seal_layer();
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("initialize", "data", "drop_decoration"), &NativeLevelBuildJob::initialize);
+		ClassDB::bind_method(D_METHOD("step", "budget_ms"), &NativeLevelBuildJob::step);
+		ClassDB::bind_method(D_METHOD("get_level"), &NativeLevelBuildJob::get_level);
+		ClassDB::bind_method(D_METHOD("is_finished"), &NativeLevelBuildJob::is_finished);
+	}
+
+public:
+	void initialize(const Dictionary &p_data, bool p_drop_decoration) {
+		data = p_data;
+		drop_decoration = p_drop_decoration;
+		layers_data = data.get("layers", Array());
+		level_script = load_script("res://src/Level.gd");
+		layer_script = load_script("res://src/Layer.gd");
+		decoration_loader_script = load_script("res://src/static/GDDecorationLoader.gd");
+		level = new_script_node(level_script);
+		if (!level || layers_data.is_empty()) finish_build();
+	}
+
+	void step(int64_t budget_ms) {
+		if (finished) return;
+		const uint64_t deadline = Time::get_singleton()->get_ticks_msec() + static_cast<uint64_t>(std::max<int64_t>(1, budget_ms));
+		while (!finished && Time::get_singleton()->get_ticks_msec() < deadline) work();
+	}
+
+	Node *get_level() const { return level; }
+	bool is_finished() const { return finished; }
+};
+
+class NativeDecorationRenderer;
+static std::set<NativeDecorationRenderer *> registered_decoration_renderers;
+static int decoration_coordinator_count = 0;
+static uint64_t decoration_last_update_frame = UINT64_MAX;
+
+// Node-free retained renderer. DecorationBatch remains a lightweight Node2D
+// group/trigger proxy, while its artwork is emitted directly into a
+// RenderingServer canvas-item RID parented to that proxy's canvas item.
+class NativeDecorationRenderer : public RefCounted {
+	GDCLASS(NativeDecorationRenderer, RefCounted)
+
+	struct Record {
+		Ref<Texture2D> texture;
+		Rect2 region;
+		Transform2D transform;
+		Color color;
+		float base_alpha = 1.0f;
+		float hsv[5] = {0, 0, 0, 0, 0};
+		bool has_hsv = false;
+		float spin_radians = 0.0f;
+		Vector2 spin_pivot;
+		// Blend override after a colour trigger flips the channel (key 17):
+		// 0 inherits the batch's import-time material, 1 additive, 2 normal.
+		uint8_t blend = 0;
+	};
+
+	uint64_t owner_id = 0;
+	RID canvas_item;
+	// Records a colour trigger flipped away from the batch's own blend mode
+	// are re-routed onto these instead, so one batch can hold normal and
+	// additive sprites at once without rebuilding either side.
+	RID canvas_item_plain;
+	RID canvas_item_add;
+	Ref<CanvasItemMaterial> additive_material;
+	std::vector<Record> records;
+	// Dense indices are effectively a small SoA hot set: animation touches only
+	// transform/spin data for rotating records, never every static Record.
+	std::vector<size_t> spinning_indices;
+	// Generation stamps replace a per-rebuild "emitted" byte vector: a camera
+	// bucket change used to allocate and zero records.size() bytes on every
+	// rebuild, every renderer, every frame of a scrolling level.
+	std::vector<uint32_t> emitted_stamp;
+	uint32_t emit_stamp = 0;
+	std::map<int64_t, std::map<int64_t, std::vector<size_t>>> sections;
+	bool cull = true;
+	double bucket_width = 256.0;
+	double cull_margin = 0.0;
+	int64_t first_bucket = INT64_MIN;
+	int64_t last_bucket = INT64_MAX;
+	int64_t first_row = INT64_MIN;
+	int64_t last_row = INT64_MAX;
+	Vector2 last_viewport_size;
+	bool view_initialized = false;
+	bool range_has_records = false;
+	bool commands_dirty = false;
+	int64_t last_drawn_items = 0;
+
+	CanvasItem *owner() const {
+		return Object::cast_to<CanvasItem>(ObjectDB::get_instance(ObjectID(owner_id)));
+	}
+
+	bool selected_range_has_records() const {
+		auto column = sections.lower_bound(first_bucket);
+		while (column != sections.end() && column->first <= last_bucket) {
+			auto row = column->second.lower_bound(first_row);
+			if (row != column->second.end() && row->first <= last_row && !row->second.empty()) return true;
+			++column;
+		}
+		return false;
+	}
+
+	void rebuild_commands() {
+		commands_dirty = false;
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server || !canvas_item.is_valid()) return;
+		server->canvas_item_clear(canvas_item);
+		if (canvas_item_plain.is_valid()) server->canvas_item_clear(canvas_item_plain);
+		if (canvas_item_add.is_valid()) server->canvas_item_clear(canvas_item_add);
+		last_drawn_items = 0;
+		if (!range_has_records && cull) return;
+		auto draw_record = [&](const Record &record) {
+			// Flipped records draw on their own canvas item; everything else
+			// keeps the batch's import-time material through the parent.
+			RID target = canvas_item;
+			if (record.blend == 1 && canvas_item_add.is_valid()) target = canvas_item_add;
+			else if (record.blend == 2 && canvas_item_plain.is_valid()) target = canvas_item_plain;
+			server->canvas_item_add_set_transform(target, record.transform);
+			server->canvas_item_add_texture_rect_region(
+					target, Rect2(-record.region.size * 0.5, record.region.size),
+					record.texture->get_rid(), record.region, record.color, false, true);
+			++last_drawn_items;
+		};
+		if (!cull) {
+			for (const Record &record : records) draw_record(record);
+			return;
+		}
+		// Records spanning several cells are indexed into each touched cell.
+		// Emit them once even when several of those cells are visible.
+		if (records.size() != emitted_stamp.size()) emitted_stamp.assign(records.size(), 0);
+		uint32_t stamp = ++emit_stamp;
+		if (stamp == 0) { // wrapped: retire every old stamp at once
+			std::fill(emitted_stamp.begin(), emitted_stamp.end(), 0);
+			stamp = emit_stamp = 1;
+		}
+		auto column = sections.lower_bound(first_bucket);
+		while (column != sections.end() && column->first <= last_bucket) {
+			auto row = column->second.lower_bound(first_row);
+			while (row != column->second.end() && row->first <= last_row) {
+			for (size_t index : row->second) {
+				if (emitted_stamp[index] == stamp) continue;
+				emitted_stamp[index] = stamp;
+				draw_record(records[index]);
+			}
+				++row;
+			}
+			++column;
+		}
+	}
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
+		ClassDB::bind_method(D_METHOD("queue_redraw"), &NativeDecorationRenderer::request_redraw);
+		ClassDB::bind_method(D_METHOD("update_camera_range"), &NativeDecorationRenderer::update_camera_range);
+		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationRenderer::set_visible_buckets);
+		ClassDB::bind_method(D_METHOD("apply_channel_color", "indices", "color"), &NativeDecorationRenderer::apply_channel_color);
+		ClassDB::bind_method(D_METHOD("set_channel_blending", "indices", "additive"), &NativeDecorationRenderer::set_channel_blending);
+		ClassDB::bind_method(D_METHOD("get_item_blend", "index"), &NativeDecorationRenderer::get_item_blend);
+		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationRenderer::get_item_color);
+		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationRenderer::set_item_color);
+		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationRenderer::set_item_transform);
+		ClassDB::bind_method(D_METHOD("advance_animation", "delta"), &NativeDecorationRenderer::advance_animation);
+		ClassDB::bind_method(D_METHOD("get_item_transform", "index"), &NativeDecorationRenderer::get_item_transform);
+		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationRenderer::item_count);
+		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
+	}
+
+public:
+	NativeDecorationRenderer() {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server) {
+			canvas_item = server->canvas_item_create();
+			canvas_item_plain = server->canvas_item_create();
+			canvas_item_add = server->canvas_item_create();
+		}
+		registered_decoration_renderers.insert(this);
+	}
+	~NativeDecorationRenderer() override {
+		registered_decoration_renderers.erase(this);
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server) {
+			if (canvas_item.is_valid()) server->free_rid(canvas_item);
+			if (canvas_item_plain.is_valid()) server->free_rid(canvas_item_plain);
+			if (canvas_item_add.is_valid()) server->free_rid(canvas_item_add);
+		}
+	}
+
+	void request_redraw() { commands_dirty = true; }
+	void flush_commands() {
+		if (!commands_dirty || (cull && !view_initialized)) return;
+		rebuild_commands();
+		commands_dirty = false;
+	}
+
+	void configure(Object *p_owner, const Array &textures, const Array &regions, const Array &transforms,
+			const PackedColorArray &colors, const PackedFloat32Array &origins,
+			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
+			const PackedFloat32Array &spins, const PackedFloat32Array &spin_pivots,
+			bool enable_culling, double width, double margin) {
+		CanvasItem *owner_canvas = Object::cast_to<CanvasItem>(p_owner);
+		owner_id = owner_canvas ? owner_canvas->get_instance_id() : 0;
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server && owner_canvas && canvas_item.is_valid()) {
+			server->canvas_item_set_parent(canvas_item, owner_canvas->get_canvas_item());
+			server->canvas_item_set_use_parent_material(canvas_item, true);
+			server->canvas_item_set_visible(canvas_item, false);
+			// The two override canvas items ignore the batch's material: one
+			// always adds, one is always plain. Records only reach them after
+			// a colour trigger flips their channel's blending.
+			if (canvas_item_plain.is_valid()) {
+				server->canvas_item_set_parent(canvas_item_plain, owner_canvas->get_canvas_item());
+				server->canvas_item_set_use_parent_material(canvas_item_plain, false);
+				server->canvas_item_set_visible(canvas_item_plain, false);
+			}
+			if (canvas_item_add.is_valid()) {
+				if (additive_material.is_null()) {
+					additive_material.instantiate();
+					additive_material->set_blend_mode(CanvasItemMaterial::BLEND_MODE_ADD);
+				}
+				server->canvas_item_set_parent(canvas_item_add, owner_canvas->get_canvas_item());
+				server->canvas_item_set_use_parent_material(canvas_item_add, false);
+				server->canvas_item_set_material(canvas_item_add, additive_material->get_rid());
+				server->canvas_item_set_visible(canvas_item_add, false);
+			}
+		}
+		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
+		records.clear(); spinning_indices.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
+		emitted_stamp.clear();
+		bucket_width = width > 0.0 ? width : 256.0;
+		for (int64_t i = 0; i < count; ++i) {
+			Record record;
+			record.texture = textures[i]; record.region = regions[i];
+			record.transform = transforms[i]; record.color = colors[i];
+			record.base_alpha = base_alphas[i];
+			if (hsv_data.size() >= (i + 1) * 5) {
+				record.has_hsv = hsv_data[i * 5 + 4] >= 0.0f;
+				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_data[i * 5 + component];
+			}
+			if (spins.size() > i) record.spin_radians = spins[i] * 0.01745329251994329577f;
+			if (spin_pivots.size() >= (i + 1) * 2) record.spin_pivot = Vector2(spin_pivots[i * 2], spin_pivots[i * 2 + 1]);
+			else record.spin_pivot = record.transform.get_origin();
+			const Rect2 bounds = record.transform.xform(Rect2(-record.region.size * 0.5, record.region.size));
+			// Index the complete conservative rotation circle, not only the origin.
+			// The previous batch-wide maximum radius let one giant background sprite
+			// expand the query for every ordinary object and effectively submitted
+			// the whole level. Per-record coverage keeps large art correct without
+			// poisoning culling for its neighbours.
+			const Vector2 center = record.spin_pivot;
+			const double radius = record.transform.get_origin().distance_to(center) + (bounds.size * 0.5).length();
+			const Rect2 coverage(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0));
+			const size_t index = records.size(); records.push_back(record);
+			if (record.spin_radians != 0.0f) spinning_indices.push_back(index);
+			const int64_t first_column = static_cast<int64_t>(std::floor(coverage.position.x / bucket_width));
+			const int64_t last_column = static_cast<int64_t>(std::floor(coverage.get_end().x / bucket_width));
+			const int64_t top_row = static_cast<int64_t>(std::floor(coverage.position.y / bucket_width));
+			const int64_t bottom_row = static_cast<int64_t>(std::floor(coverage.get_end().y / bucket_width));
+			for (int64_t column = first_column; column <= last_column; ++column) {
+				for (int64_t row = top_row; row <= bottom_row; ++row) sections[column][row].push_back(index);
+			}
+		}
+		cull = enable_culling; cull_margin = std::max(0.0, margin);
+		view_initialized = false; range_has_records = !cull;
+		if (!cull) rebuild_commands();
+	}
+
+	void advance_animation(double delta) {
+		if (spinning_indices.empty() || delta <= 0.0) return;
+		for (size_t index : spinning_indices) {
+			Record &record = records[index];
+			const double angle = static_cast<double>(record.spin_radians) * delta;
+			const Vector2 old_origin = record.transform.get_origin();
+			record.transform = record.transform.rotated_local(angle);
+			record.transform.set_origin(record.spin_pivot + (old_origin - record.spin_pivot).rotated(angle));
+		}
+		commands_dirty = true;
+	}
+
+	bool capture_cull_job(DecorationCullJob &job) const {
+		CanvasItem *owner_canvas = owner();
+		if (!cull || !owner_canvas || !owner_canvas->is_inside_tree()) return false;
+		job.renderer_id = get_instance_id();
+		job.from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
+		job.screen_size = owner_canvas->get_viewport_rect().size;
+		job.radius = cull_margin;
+		job.cell_size = bucket_width;
+		return true;
+	}
+
+	void apply_cull_job(const DecorationCullJob &job) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server || !canvas_item.is_valid()) return;
+		if (view_initialized && job.first == first_bucket && job.last == last_bucket &&
+				job.top == first_row && job.bottom == last_row && job.screen_size == last_viewport_size) return;
+		first_bucket = job.first; last_bucket = job.last;
+		first_row = job.top; last_row = job.bottom;
+		last_viewport_size = job.screen_size; view_initialized = true;
+		range_has_records = selected_range_has_records();
+		server->canvas_item_set_visible(canvas_item, range_has_records);
+		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
+		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
+		rebuild_commands();
+	}
+
+	void update_camera_range() {
+		CanvasItem *owner_canvas = owner();
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!cull || !owner_canvas || !owner_canvas->is_inside_tree() || !server) return;
+		const Transform2D from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
+		const Vector2 screen_size = owner_canvas->get_viewport_rect().size;
+		Rect2 local_view(from_screen.xform(Vector2()), Vector2());
+		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0)));
+		local_view = local_view.expand(from_screen.xform(screen_size));
+		local_view = local_view.expand(from_screen.xform(Vector2(0, screen_size.y)));
+		local_view = local_view.grow(cull_margin);
+		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
+		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
+		const int64_t top = static_cast<int64_t>(std::floor(local_view.position.y / bucket_width));
+		const int64_t bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / bucket_width));
+		if (view_initialized && first == first_bucket && last == last_bucket && top == first_row && bottom == last_row && screen_size == last_viewport_size) return;
+		first_bucket = first; last_bucket = last; first_row = top; last_row = bottom;
+		last_viewport_size = screen_size; view_initialized = true;
+		range_has_records = selected_range_has_records();
+		server->canvas_item_set_visible(canvas_item, range_has_records);
+		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
+		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
+		rebuild_commands();
+	}
+
+	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; range_has_records = selected_range_has_records(); rebuild_commands(); }
+	// Flips the given records between normal and additive blending when a
+	// colour trigger toggles their channel (key 17). Idempotent: the batch's
+	// GDScript side caches the last state per channel.
+	void set_channel_blending(const PackedInt32Array &indices, bool additive) {
+		for (int64_t i = 0; i < indices.size(); ++i) {
+			const int64_t index = indices[i];
+			if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
+			records[static_cast<size_t>(index)].blend = additive ? 1 : 2;
+		}
+		commands_dirty = true;
+	}
+	// Blend override of one record (0 inherit, 1 additive, 2 normal) for tests.
+	int64_t get_item_blend(int64_t index) const {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return -1;
+		return records[static_cast<size_t>(index)].blend;
+	}
+	void apply_channel_color(const PackedInt32Array &indices, const Color &channel_color) {
+		for (int64_t i = 0; i < indices.size(); ++i) {
+			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
+			Record &record = records[static_cast<size_t>(index)]; Color tinted = channel_color;
+			// An all-zero shift with the sliders in multiplicative mode is
+			// Geometry Dash's "HSV enabled but untouched" encoding; the
+			// zeros would otherwise multiply saturation and value to 0 and
+			// render the item as a black silhouette. GDRweb's
+			// HSVShift.shiftColor returns the colour unchanged then.
+			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
+				(record.hsv[0] == 0.0f &&
+				 record.hsv[1] == (record.hsv[3] > 0.5f ? 0.0f : 1.0f) &&
+				 record.hsv[2] == (record.hsv[4] > 0.5f ? 0.0f : 1.0f));
+			if (record.has_hsv && !is_neutral) {
+				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
+				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
+				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
+				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
+			}
+			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
+		}
+		commands_dirty = true;
+	}
+	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }
+	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].color = color; commands_dirty = true; } }
+	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].transform = transform; commands_dirty = true; } }
+	Transform2D get_item_transform(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].transform : Transform2D(); }
+	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
+	int64_t animated_item_count() const { return static_cast<int64_t>(spinning_indices.size()); }
+	int64_t last_drawn_count() const { return last_drawn_items; }
+	bool is_spatially_culled() const { return cull; }
+};
+static void decoration_coordinator_enter() {
+	++decoration_coordinator_count;
+}
+
+static void decoration_coordinator_exit() {
+	decoration_coordinator_count = std::max(0, decoration_coordinator_count - 1);
+}
+
+static void update_registered_decoration_renderers(double delta) {
+	// Several level runtimes can briefly coexist during scene replacement.
+	const uint64_t frame = Engine::get_singleton()->get_process_frames();
+	if (frame == decoration_last_update_frame) return;
+	decoration_last_update_frame = frame;
+	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+	static Ref<NativeDecorationCullWorker> worker;
+	// Coalesce any number of channel/spin updates into one RID command rebuild
+	// per renderer per frame instead of clearing/re-emitting after every item.
+	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
+		if (!renderer) continue;
+		renderer->advance_animation(delta);
+		renderer->flush_commands();
+	}
+	if (!pool) return;
+	if (worker.is_null()) {
+		worker.instantiate();
+		// This static outlives the engine: C++ static destructors run after
+		// main, and a plain Ref would memdelete the worker into an
+		// already-torn-down ObjectDB during teardown - a shutdown segfault.
+		// The immortal reference trades one leak-counter entry for a clean
+		// exit, the standard pattern for process-wide Godot objects.
+		if (worker.is_valid()) worker->reference();
+	}
+
+	// Never wait on the game thread. Apply a completed previous-frame result;
+	// if workers are still busy, retain the conservative old cells and try next
+	// frame. This makes culling incapable of becoming a new frame-time spike.
+	if (decoration_cull_active_group >= 0) {
+		if (!pool->is_group_task_completed(decoration_cull_active_group)) return;
+		pool->wait_for_group_task_completion(decoration_cull_active_group);
+		for (const DecorationCullJob &job : decoration_cull_jobs) {
+			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
+			NativeDecorationRenderer *renderer = Object::cast_to<NativeDecorationRenderer>(object);
+			if (renderer) renderer->apply_cull_job(job);
+		}
+		decoration_cull_active_group = -1;
+	}
+
+	decoration_cull_jobs.clear();
+	decoration_cull_jobs.reserve(registered_decoration_renderers.size());
+	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
+		if (!renderer) continue;
+		DecorationCullJob job;
+		if (renderer->capture_cull_job(job)) decoration_cull_jobs.push_back(job);
+	}
+	if (!decoration_cull_jobs.empty()) {
+		decoration_cull_active_group = pool->add_group_task(
+				Callable(worker.ptr(), "compute"), static_cast<int32_t>(decoration_cull_jobs.size()),
+				-1, true, "GD visible-cell culling");
+	}
+}
+
+// Drains the pending cull group. The update above never waits on the game
+// thread: it applies the previous frame's group and posts a new one. When the
+// tree is exiting - a scene change, or the engine shutting down right after
+// the final frame - that freshly posted group is never waited on, the worker
+// pool reports its group pages as still in use, and teardown races the worker
+// still reading the job array (observed as a shutdown segfault once the smoke
+// test survived long enough to quit with a live coordinator). Waiting here is
+// safe at teardown: jobs are tiny, and applying them only touches renderers
+// that are still alive (freed ones resolve to null and are skipped).
+static void finalize_decoration_culling() {
+	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+	if (pool != nullptr && decoration_cull_active_group >= 0) {
+		pool->wait_for_group_task_completion(decoration_cull_active_group);
+		for (const DecorationCullJob &job : decoration_cull_jobs) {
+			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
+			NativeDecorationRenderer *renderer = Object::cast_to<NativeDecorationRenderer>(object);
+			if (renderer) renderer->apply_cull_job(job);
+		}
+	}
+	decoration_cull_active_group = -1;
+	decoration_cull_jobs.clear();
+}
+
+static Dictionary registered_decoration_stats() {
+	Dictionary stats;
+	int64_t records = 0;
+	int64_t animated_records = 0;
+	int64_t submitted = 0;
+	int64_t empty_canvases = 0;
+	int64_t culled_canvases = 0;
+	for (NativeDecorationRenderer *canvas : registered_decoration_renderers) {
+		if (!canvas) continue;
+		records += canvas->item_count();
+		animated_records += canvas->animated_item_count();
+		submitted += canvas->last_drawn_count();
+		if (canvas->last_drawn_count() == 0) ++empty_canvases;
+		if (canvas->is_spatially_culled()) ++culled_canvases;
+	}
+	stats["canvases"] = static_cast<int64_t>(registered_decoration_renderers.size());
+	stats["culled_canvases"] = culled_canvases;
+	stats["empty_canvases"] = empty_canvases;
+	stats["records"] = records;
+	stats["animated_records"] = animated_records;
+	stats["submitted_records"] = submitted;
+	return stats;
+}
+
+} // namespace godot
+
+namespace {
+void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
+	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
+		GDREGISTER_CLASS(godot::NativeTriggerRuntime);
+		GDREGISTER_CLASS(godot::NativeDecorationCullWorker);
+		GDREGISTER_CLASS(godot::NativeLevelRuntime);
+		GDREGISTER_CLASS(godot::GdashNative);
+		GDREGISTER_CLASS(godot::NativeFrustumIndex);
+		GDREGISTER_CLASS(godot::NativeLevelBuildJob);
+		GDREGISTER_CLASS(godot::NativeDecorationRenderer);
+		GDREGISTER_CLASS(godot::NativeColorChannelIndex);
+	}
+}
+void gdash_native_terminate(godot::ModuleInitializationLevel) {}
+} // namespace
+
+extern "C" {
+GDExtensionBool GDE_EXPORT gdash_native_library_init(
+		GDExtensionInterfaceGetProcAddress p_get_proc_address,
+		GDExtensionClassLibraryPtr p_library,
+		GDExtensionInitialization *r_initialization) {
+	godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
+	init_obj.register_initializer(gdash_native_initialize);
+	init_obj.register_terminator(gdash_native_terminate);
+	init_obj.set_minimum_library_initialization_level(godot::MODULE_INITIALIZATION_LEVEL_SCENE);
+	return init_obj.init();
+}
+}

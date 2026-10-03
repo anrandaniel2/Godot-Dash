@@ -1,0 +1,72 @@
+[gd_scene format=3 uid="uid://danxhobafrnci"]
+
+[ext_resource type="Script" uid="uid://f5fvarclvwxg" path="res://src/interactables/OrbInteractable.gd" id="1_g02sd"]
+[ext_resource type="PackedScene" uid="uid://bejm8xhsl8h0b" path="res://scenes/particle_emitter_presets/OrbParticles.tscn" id="2_1dxkm"]
+[ext_resource type="Texture2D" uid="uid://c2yhbwvo7g3jj" path="res://assets/textures/orbs/GreenOrb.svg" id="3_iopft"]
+[ext_resource type="Script" uid="uid://dsrhynpnvau8u" path="res://src/interactables/private_components/PulseScale.gd" id="7_3d1lc"]
+[ext_resource type="Script" uid="uid://cvm8jm6xidbjf" path="res://src/interactables/private_components/PulseCircle.gd" id="7_j4u86"]
+[ext_resource type="Script" uid="uid://blkbj1no2k35m" path="res://src/interactables/private_components/PulseRing.gd" id="8_6lhw2"]
+[ext_resource type="Script" uid="uid://cqkay7r3kwd6f" path="res://src/interactables/public_components/JumpBoostComponent.gd" id="10_ofvbe"]
+[ext_resource type="Script" uid="uid://crvw7wonis42n" path="res://src/interactables/public_components/DirectionChangerComponent.gd" id="10_ulqwe"]
+[ext_resource type="Script" uid="uid://df636dbhnu65v" path="res://src/interactables/public_components/GravityFlipChangerComponent.gd" id="11_ihas7"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="11_opstn"]
+[ext_resource type="Script" uid="uid://cx0n1qip15t20" path="res://src/interactables/private_components/MusicScale.gd" id="11_ysoaw"]
+[ext_resource type="Script" uid="uid://uatxmfuua4wq" path="res://src/interactables/public_components/TextureRotateComponent.gd" id="13_gbohu"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_jwypc"]
+size = Vector2(128, 128)
+
+[node name="GreenOrb" type="Area2D" unique_id=995980815]
+collision_layer = 8
+script = ExtResource("1_g02sd")
+
+[node name="ParticleEmitter" parent="." unique_id=1263748929 instance=ExtResource("2_1dxkm")]
+modulate = Color(0.364706, 1, 0.172549, 1)
+
+[node name="MusicScale" type="Node" parent="ParticleEmitter" unique_id=758252613]
+script = ExtResource("11_ysoaw")
+
+[node name="Sprite" type="Sprite2D" parent="." unique_id=1398506456]
+scale = Vector2(0.25, 0.25)
+texture = ExtResource("3_iopft")
+
+[node name="MusicScale" type="Node" parent="Sprite" unique_id=656648384]
+script = ExtResource("11_ysoaw")
+
+[node name="Hitbox" type="CollisionShape2D" parent="." unique_id=1256875638]
+scale = Vector2(1.2, 1.2)
+shape = SubResource("RectangleShape2D_jwypc")
+debug_color = Color(0, 1, 0, 0)
+
+[node name="PulseCircle" type="Node2D" parent="." unique_id=1413909862]
+modulate = Color(1, 1, 1, 0.3)
+scale = Vector2(1.2, 1.2)
+script = ExtResource("7_j4u86")
+
+[node name="PulseRing" type="Node2D" parent="." unique_id=942323692]
+scale = Vector2(1.2, 1.2)
+script = ExtResource("8_6lhw2")
+
+[node name="PulseScale" type="Node" parent="." unique_id=426395491 node_paths=PackedStringArray("sprite")]
+script = ExtResource("7_3d1lc")
+sprite = NodePath("../Sprite")
+metadata/_custom_type_script = "uid://dsrhynpnvau8u"
+
+[node name="JumpBoostComponent" type="Node" parent="." unique_id=1489965246]
+script = ExtResource("10_ofvbe")
+jump_boost = 0.985
+
+[node name="GravityFlipChangerComponent" type="Node" parent="." unique_id=1882225510]
+script = ExtResource("11_ihas7")
+flip_state = 2
+
+[node name="TextureRotateComponent" type="Node" parent="." unique_id=1544423483 node_paths=PackedStringArray("_sprite")]
+script = ExtResource("13_gbohu")
+_sprite = NodePath("../Sprite")
+rotation_rate = 180.0
+
+[node name="DirectionChangerComponent" type="Node" parent="." unique_id=595324448]
+script = ExtResource("10_ulqwe")
+
+[node name="EditorSelectionCollider" parent="." unique_id=1618152668 instance=ExtResource("11_opstn")]
+type = 8

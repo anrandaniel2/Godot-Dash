@@ -1,0 +1,15 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Comment=A Geometry Dash remake made in Godot Engine
+Exec=godot-dash -- %u
+Icon=godot-dash
+MimeType=application/x-godot-dash-level;
+Categories=Game;
+Name[en_CA]=Godot Dash
+Name=Godot Dash
+NoDisplay=false
+PrefersNonDefaultGPU=false
+StartupNotify=true
+Terminal=false
+Type=Application
+X-Desktop-File-Install-Version=0.28
