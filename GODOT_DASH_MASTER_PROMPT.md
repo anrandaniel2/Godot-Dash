@@ -189,8 +189,9 @@ only for `serve_web.py`/`pin_webgpu_templates.py`.
 
 **Sandbox reality check:** a plain coding sandbox usually has **no Godot binary, no scons, no
 git-lfs, no `native/godot-cpp`**, and LFS pointers for `assets/logo/logo.ico`. You can still
-run: Python tools/py_compile, JSON validation, scene/text consistency checks, static greps,
-and all shell logic. Full in-engine tests only run in CI or on a machine with Godot 4.7.
+run: Python syntax checks (`python3 -m py_compile tools/*.py`), JSON validation, scene/text
+consistency checks, static greps, and all shell logic. Full in-engine tests only run in CI or on
+a machine with Godot 4.7.
 
 ---
 
