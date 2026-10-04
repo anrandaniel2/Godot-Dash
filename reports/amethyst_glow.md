@@ -12,6 +12,6 @@ Traceback (most recent call last):
 RuntimeError: could not download the level:
   gdhistory download: HTTPError: HTTP Error 403: Forbidden
   boomlings download: HTTPError: HTTP Error 403: Forbidden
-  gdbrowser download: URLError: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1000)>
+  gdbrowser download: HTTPError: HTTP Error 500: Internal Server Error
   snapshot download: FileNotFoundError: no level snapshot committed
 ```
