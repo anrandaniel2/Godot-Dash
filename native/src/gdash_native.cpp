@@ -59,6 +59,7 @@
 #include <vector>
 
 #include "gravity_portal.h"
+#include "hsv_shift.h"
 
 namespace godot {
 
@@ -274,6 +275,8 @@ struct TriggerEffect {
 	bool channel_is_level_color = false; // target is the level's own bg/ground/line
 	Color color = Color(1.0f, 1.0f, 1.0f);
 	bool has_color = false;      // 899/1006: any of keys 7/8/9 present
+	bool pulse_hsv = false;      // 1006: key 48 == "1" - pulse the HSV shift, not the RGB
+	HSVShift pulse_shift;        // 1006: key 49 (hue in degrees in the string)
 	int32_t copy_channel = 0;    // key 50
 	bool copy_opacity = false;   // key 60
 	double copy_hue = 0.0, copy_saturation = 0.0, copy_value = 0.0; // key 49 HSV string
@@ -321,18 +324,33 @@ static std::vector<String> parse_group_list(const Dictionary &properties, const 
 	return groups;
 }
 
-// Parses a "h a s a v a sat_additive a val_additive" copied-colour HSV string
-// (hue normalised from degrees), matching GMDConverter._hsv_values.
-static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) {
-	const String raw = String(properties.get("49", String()));
-	if (raw.is_empty()) return false;
-	const PackedStringArray parts = raw.split("a", false);
+// Parses Geometry Dash's "h a s a v a sat_additive a val_additive" HSV encoding
+// (hue in degrees, the rest already 0-1 multipliers or deltas), matching
+// GMDConverter._hsv_values. Key 49 is both a copied colour's adjustment and a
+// Pulse trigger's own sliders, hence the shared shift struct.
+static bool parse_hsv_shift(const String &raw, HSVShift &shift) {
+	const String trimmed = raw.strip_edges();
+	if (trimmed.is_empty()) return false;
+	const PackedStringArray parts = trimmed.split("a", false);
 	if (parts.size() < 3) return false;
-	effect.copy_hue = String(parts[0]).to_float() / 360.0;
-	effect.copy_saturation = String(parts[1]).to_float();
-	effect.copy_value = String(parts[2]).to_float();
-	effect.copy_saturation_additive = parts.size() > 3 && String(parts[3]) == "1";
-	effect.copy_value_additive = parts.size() > 4 && String(parts[4]) == "1";
+	shift.hue = String(parts[0]).to_float() / 360.0;
+	shift.saturation = String(parts[1]).to_float();
+	shift.value = String(parts[2]).to_float();
+	shift.saturation_additive = parts.size() > 3 && String(parts[3]) == "1";
+	shift.value_additive = parts.size() > 4 && String(parts[4]) == "1";
+	return true;
+}
+
+// The copied-colour (key 49) adjustment of a colour trigger, held on the
+// effect and applied to the source colour at resolution time.
+static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) {
+	HSVShift shift;
+	if (!parse_hsv_shift(String(properties.get("49", String())), shift)) return false;
+	effect.copy_hue = shift.hue;
+	effect.copy_saturation = shift.saturation;
+	effect.copy_value = shift.value;
+	effect.copy_saturation_additive = shift.saturation_additive;
+	effect.copy_value_additive = shift.value_additive;
 	return true;
 }
 
@@ -426,33 +444,55 @@ static Vector2 compute_ui_anchor(
 // cycle) resolves to white instead of recursing forever.
 constexpr int COPY_RESOLUTION_BUDGET = 8;
 
+// Applies one HSV adjustment to a colour, keeping its alpha. The arithmetic
+// lives in hsv_shift.h so the standalone test runs the exact code the runtime
+// does; this bridge only moves the values across the Color record.
+static Color shift_color_hsv(const Color &base, const HSVShift &shift) {
+	if (shift.is_identity()) return base;
+	RGB rgb;
+	rgb.r = static_cast<double>(base.r);
+	rgb.g = static_cast<double>(base.g);
+	rgb.b = static_cast<double>(base.b);
+	const RGB shifted = apply_hsv_shift(rgb, shift);
+	return Color(static_cast<real_t>(shifted.r), static_cast<real_t>(shifted.g),
+			static_cast<real_t>(shifted.b), base.a);
+}
+
 // Applies a channel's copy HSV adjustment (kS38 key 10 / trigger key 49, held
-// on the ColorChannelData) to a resolved source colour, in Geometry Dash's
-// additive and multiplicative slider modes. Mirrors
+// on the ColorChannelData) to a resolved source colour. Mirrors
 // ColorChannelWatcher._shift_copy_hsv and GDRweb's HSVShift.shiftColor.
 static Color shift_copy_hsv(const Color &base, Object *data) {
+	HSVShift shift;
 	const double hue = static_cast<double>(data->get("copy_hue"));
 	const double saturation = static_cast<double>(data->get("copy_saturation"));
 	const double value = static_cast<double>(data->get("copy_value"));
 	if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value))
 		return base;
-	const bool saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
-	const bool value_additive = static_cast<bool>(data->get("copy_value_additive"));
+	shift.hue = hue;
+	shift.saturation = saturation;
+	shift.value = value;
+	shift.saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
+	shift.value_additive = static_cast<bool>(data->get("copy_value_additive"));
 	if (Math::is_zero_approx(hue) &&
-		Math::is_equal_approx(saturation, saturation_additive ? 0.0 : 1.0) &&
-		Math::is_equal_approx(value, value_additive ? 0.0 : 1.0))
+		Math::is_equal_approx(saturation, shift.saturation_additive ? 0.0 : 1.0) &&
+		Math::is_equal_approx(value, shift.value_additive ? 0.0 : 1.0))
 		return base;
-	double h = static_cast<double>(base.get_h()) + hue;
-	h -= Math::floor(h);
-	const double s = Math::clamp(
-		saturation_additive ? static_cast<double>(base.get_s()) + saturation
-							: static_cast<double>(base.get_s()) * saturation,
-		0.0, 1.0);
-	const double v = Math::clamp(
-		value_additive ? static_cast<double>(base.get_v()) + value
-					   : static_cast<double>(base.get_v()) * value,
-		0.0, 1.0);
-	return Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), base.a);
+	return shift_color_hsv(base, shift);
+}
+
+// Geometry Dash's Light BG channel (1007): the background desaturated a
+// little, blended towards player colour 1 as the background darkens - "This
+// copies the background color, except lighter and with blending enabled, but
+// the color is tinted to player color 1 as the background gets darker"
+// (gdcreatorschool.com, Using Channels; GDRweb's ColorManager.getLBG encodes
+// the same model). LBG is the default base channel of a large object family,
+// so every site that resolves it has to agree with GMDConverter's
+// lighter_background - the importer's snapshot colour.
+static Color lighter_background(const Color &background, const Color &player) {
+	const double saturation = Math::max(static_cast<double>(background.get_s()) - 0.2, 0.0);
+	const Color shifted = Color::from_hsv(
+			background.get_h(), static_cast<real_t>(saturation), background.get_v(), 1.0f);
+	return player.lerp(shifted, background.get_v());
 }
 
 // The channel a colour trigger targeted when it carries no key 23: the legacy
@@ -634,13 +674,12 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		}
 		case TriggerEffectKind::PULSE: {
 			// Key 52 selects the target type: 0 = colour channel in key 51,
-			// 1 = object group. Group pulses and HSV pulses need per-object
-			// colour overrides this engine models differently, so they stay
-			// inert until that changes.
+			// 1 = object group. A group pulse recolours every member's own
+			// sprite, which needs per-object colour overrides this engine
+			// models differently, so it stays inert until that changes.
 			const String target_type = String(properties.get("52", String("0"))).strip_edges();
-			const String hsv_mode = String(properties.get("48", String("0"))).strip_edges();
 			const String target = String(properties.get("51", String())).strip_edges();
-			if (target_type == "1" || hsv_mode == "1" || !target.is_valid_int() || target.to_int() <= 0) {
+			if (target_type == "1" || !target.is_valid_int() || target.to_int() <= 0) {
 				effect.kind = TriggerEffectKind::NONE;
 				break;
 			}
@@ -655,7 +694,24 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			} else {
 				effect.target_channel = channel;
 			}
-			parse_color_source(properties, effect);
+			if (String(properties.get("48", String("0"))).strip_edges() == "1") {
+				// HSV mode (EffectGameObject::customObjectSetup, 2.11): key 49
+				// is the pulse's own HSV sliders and key 50 the colour it
+				// pulses from - GD's Copy Color for a pulse. Keys 7/8/9 are
+				// the colour-mode sliders and are not read in this mode; the
+				// pulse shifts the channel's live colour, exactly like
+				// GDRweb's PulseHSVEntry.applyToColor.
+				effect.pulse_hsv = true;
+				parse_hsv_shift(String(properties.get("49", String())), effect.pulse_shift);
+				effect.opacity = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+				const String copied = String(properties.get("50", String())).strip_edges();
+				if (copied.is_valid_int() && copied.to_int() > 0) {
+					effect.copy_channel = static_cast<int32_t>(copied.to_int());
+					effect.copy_opacity = String(properties.get("60", String("0"))) == "1";
+				}
+			} else {
+				parse_color_source(properties, effect);
+			}
 			break;
 		}
 		case TriggerEffectKind::SHAKE:
@@ -1145,8 +1201,8 @@ class NativeTriggerRuntime : public RefCounted {
 		if (channel == 1005 && config) return config->get("primary_color");
 		if (channel == 1006 && config) return config->get("secondary_color");
 		if (channel == 1007 && level) {
-			const Color bg = level->get("background_color");
-			return bg.lightened(0.2f);
+			const Color primary = config ? static_cast<Color>(config->get("primary_color")) : Color(1.0f, 1.0f, 1.0f);
+			return lighter_background(level->get("background_color"), primary);
 		}
 		if (channel == 1010) return Color(0.0f, 0.0f, 0.0f);
 		if (channel == 1011) return Color(1.0f, 1.0f, 1.0f);
@@ -1185,9 +1241,10 @@ class NativeTriggerRuntime : public RefCounted {
 		if (copy_id == 1007) {
 			Object *level = ObjectDB::get_instance(level_id);
 			if (!level) return empty;
-			const Color bg = level->get("background_color");
+			Object *config = ObjectDB::get_instance(config_id);
+			const Color primary = config ? static_cast<Color>(config->get("primary_color")) : Color(1.0f, 1.0f, 1.0f);
 			Dictionary result;
-			result["color"] = bg.lightened(0.2f);
+			result["color"] = lighter_background(level->get("background_color"), primary);
 			result["alpha"] = 1.0;
 			return result;
 		}
@@ -1240,12 +1297,15 @@ class NativeTriggerRuntime : public RefCounted {
 		if (budget <= 0) return Color(1.0f, 1.0f, 1.0f, 1.0f);
 		if (static_cast<bool>(data->get("copy"))) {
 			const int32_t special = static_cast<int32_t>(data->get("copied_channel"));
+			// Ordinals are Constants.SpecialColorChannel; LBG is appended last
+			// so the existing values keep their numbers.
 			switch (special) {
 				case 0: return shift_copy_hsv(live_special_color(1000), data);
 				case 1: return shift_copy_hsv(live_special_color(1001), data);
 				case 2: return shift_copy_hsv(live_special_color(1002), data);
 				case 3: return shift_copy_hsv(live_special_color(1005), data);
 				case 4: return shift_copy_hsv(live_special_color(1006), data);
+				case 6: return shift_copy_hsv(live_special_color(1007), data);
 				default: return shift_copy_hsv(live_special_color(-1), data); // glow
 			}
 		}
@@ -1264,8 +1324,9 @@ class NativeTriggerRuntime : public RefCounted {
 		} else if (link == 1007) {
 			Object *level = ObjectDB::get_instance(level_id);
 			if (level) {
-				const Color bg = level->get("background_color");
-				color = bg.lightened(0.2f);
+				Object *config = ObjectDB::get_instance(config_id);
+				const Color primary = config ? static_cast<Color>(config->get("primary_color")) : Color(1.0f, 1.0f, 1.0f);
+				color = lighter_background(level->get("background_color"), primary);
 			} else {
 				color = Color(1.0f, 1.0f, 1.0f);
 			}
@@ -1323,27 +1384,28 @@ class NativeTriggerRuntime : public RefCounted {
 			const Dictionary copied = resolve_copied_channel(effect.copy_channel);
 			if (copied.is_empty()) return keep;
 			if (effect.copy_opacity) alpha_target = copied["alpha"];
-			const Color base = copied["color"];
-			if (Math::is_zero_approx(effect.copy_hue) && Math::is_zero_approx(effect.copy_saturation)
-					&& Math::is_zero_approx(effect.copy_value)) {
-				return base;
-			}
-			double hue = static_cast<double>(base.get_h()) + effect.copy_hue;
-			hue -= Math::floor(hue);
-			const double saturation = effect.copy_saturation_additive
-				? Math::clamp(static_cast<double>(base.get_s()) + effect.copy_saturation, 0.0, 1.0)
-				: Math::clamp(static_cast<double>(base.get_s()) * effect.copy_saturation, 0.0, 1.0);
-			const double value = effect.copy_value_additive
-				? Math::clamp(static_cast<double>(base.get_v()) + effect.copy_value, 0.0, 1.0)
-				: Math::clamp(static_cast<double>(base.get_v()) * effect.copy_value, 0.0, 1.0);
-			return Color::from_hsv(
-				static_cast<real_t>(hue), static_cast<real_t>(saturation),
-				static_cast<real_t>(value), base.a);
+			HSVShift shift;
+			shift.hue = effect.copy_hue;
+			shift.saturation = effect.copy_saturation;
+			shift.value = effect.copy_value;
+			shift.saturation_additive = effect.copy_saturation_additive;
+			shift.value_additive = effect.copy_value_additive;
+			return shift_color_hsv(copied["color"], shift);
 		}
 		if (effect.player_color == 1 || effect.player_color == 2) {
 			return live_special_color(effect.player_color == 1 ? 1005 : 1006);
 		}
 		return keep;
+	}
+
+	// The colour a colour/pulse trigger fades towards: the resolved source
+	// (literal, copied channel or player colour) with an HSV pulse's own
+	// adjustment applied on top. Key 49 is shared by the two, so an HSV pulse
+	// never reaches parse_copy_hsv - its shift lives on pulse_shift instead.
+	Color resolve_target_color(const TriggerEffect &effect, const Color &current, double &alpha_target) const {
+		const Color source = resolve_source_color(effect, current, alpha_target);
+		if (!effect.pulse_hsv) return source;
+		return shift_color_hsv(source, effect.pulse_shift);
 	}
 
 	void execute_effect(const Record &record, size_t index, Object *player) {
@@ -1679,7 +1741,7 @@ private:
 			const Color current = level->get(fade.level_color_property);
 			fade.from_color = current;
 			double alpha_target = effect.opacity;
-			fade.to_color = resolve_source_color(effect, current, alpha_target);
+			fade.to_color = resolve_target_color(effect, current, alpha_target);
 			fade.alpha_target = alpha_target;
 			report_color_capture(effect, current, fade.to_color, alpha_target);
 			return true;
@@ -1698,7 +1760,7 @@ private:
 		fade.initial_intensity = data->get("intensity");
 		fade.initial_alpha = data->get("alpha");
 		double alpha_target = effect.opacity;
-		fade.to_color = resolve_source_color(effect, current, alpha_target);
+		fade.to_color = resolve_target_color(effect, current, alpha_target);
 		fade.alpha_target = alpha_target;
 		report_color_capture(effect, current, fade.to_color, alpha_target);
 		return true;
@@ -1721,6 +1783,7 @@ private:
 		UtilityFunctions::print(String("[gdash_native] colorcap #")
 			+ String::num_int64(color_capture_count)
 			+ (effect.kind == TriggerEffectKind::PULSE ? " pulse" : " color")
+			+ (effect.pulse_hsv ? " (hsv)" : "")
 			+ (effect.channel_is_level_color ? " level" : " channel")
 			+ " ch=" + String::num_int64(effect.target_channel)
 			+ " rgb=" + (effect.has_color ? "y" : "n")
@@ -3484,7 +3547,8 @@ public:
 			else if (r_id == 1010) base_c = Color(0.0, 0.0, 0.0);
 			ch["color"] = base_c;
 			ch["alpha"] = 1.0;
-			ch["blending"] = (r_id == 1002);
+			// Line is additive in GD, and so is Light BG (see lighter_background).
+			ch["blending"] = (r_id == 1002 || r_id == 1007);
 			styles[r_id] = ch;
 		}
 
@@ -5302,20 +5366,23 @@ public:
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
 			Record &record = records[static_cast<size_t>(index)]; Color tinted = channel_color;
-			// An all-zero shift with the sliders in multiplicative mode is
-			// Geometry Dash's "HSV enabled but untouched" encoding; the
-			// zeros would otherwise multiply saturation and value to 0 and
-			// render the item as a black silhouette. GDRweb's
-			// HSVShift.shiftColor returns the colour unchanged then.
-			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
-				(record.hsv[0] == 0.0f &&
-				 record.hsv[1] == (record.hsv[3] > 0.5f ? 0.0f : 1.0f) &&
-				 record.hsv[2] == (record.hsv[4] > 0.5f ? 0.0f : 1.0f));
-			if (record.has_hsv && !is_neutral) {
-				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
-				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
-				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
-				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
+			// The object's own HSV shift, through the same implementation the
+			// trigger runtime uses. is_identity() covers Geometry Dash's
+			// "HSV enabled but untouched" encoding (an all-zero shift with the
+			// sliders in multiplicative mode), whose zeros would otherwise
+			// multiply saturation and value to 0 and render the item as a
+			// black silhouette - GDRweb's HSVShift.shiftColor returns the
+			// colour unchanged there.
+			if (record.has_hsv) {
+				HSVShift shift;
+				shift.hue = record.hsv[0];
+				shift.saturation = record.hsv[1];
+				shift.value = record.hsv[2];
+				shift.saturation_additive = record.hsv[3] > 0.5f;
+				shift.value_additive = record.hsv[4] > 0.5f;
+				if (!shift.is_identity()) {
+					tinted = shift_color_hsv(channel_color, shift);
+				}
 			}
 			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
 		}

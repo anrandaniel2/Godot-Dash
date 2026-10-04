@@ -21,6 +21,9 @@ enum SpecialColorChannel {
 	P1,
 	P2,
 	GLOW,
+	# Light BG: derived from the background and player colour 1 rather than
+	# stored in the level, so it has to be resolved live.
+	LBG,
 }
 
 const GROUP_PREFIX: String = "g_"

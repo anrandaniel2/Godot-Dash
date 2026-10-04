@@ -78,20 +78,29 @@ const Prop := {
 	DISABLE_ROTATION = "98",
 }
 
-## Geometry Dash's reserved channel IDs that alias a [i]level[/i] colour, mapped
-## onto [enum Constants.SpecialColorChannel].
+## Geometry Dash's reserved channel IDs that are [i]derived[/i] rather than
+## stored, mapped onto [enum Constants.SpecialColorChannel].
 ##
-## The remaining reserved IDs - 1003 (3DL), 1004 (Obj), 1007 (LBG), 1010
-## (Black), 1011 (White), 1012 (Lighter), 1013/1014 (MG) - are literal colours
-## rather than level properties. They are synthesised into the channel table by
-## [method _resolve_channel_styles] and imported as ordinary static channels, so
-## an object bound to them is tinted correctly instead of being left white.
+## These become live [i]copy[/i] channels: when the colour they derive from
+## changes, the channel follows it (a channel copying the background re-resolves
+## the moment a colour trigger recolours the background). 1007 (LBG) derives
+## from the background and player colour 1 - see [method lighter_background] -
+## and is the default base channel of a large object family
+## ([member GMDDefaultChannels.BASE]), so freezing it at the import snapshot
+## leaves every one of those objects on the level's opening colour.
+##
+## The remaining reserved IDs - 1003 (3DL), 1004 (Obj), 1010 (Black), 1011
+## (White), 1012 (Lighter), 1013/1014 (MG) - are literal colours. They are
+## synthesised into the channel table by [method _resolve_channel_styles] and
+## imported as ordinary static channels, so an object bound to them is tinted
+## correctly instead of being left white.
 const SPECIAL_CHANNELS: Dictionary[int, int] = {
 	1000: Constants.SpecialColorChannel.BACKGROUND,
 	1001: Constants.SpecialColorChannel.GROUND,
 	1002: Constants.SpecialColorChannel.LINE,
 	1005: Constants.SpecialColorChannel.P1,
 	1006: Constants.SpecialColorChannel.P2,
+	1007: Constants.SpecialColorChannel.LBG,
 	1009: Constants.SpecialColorChannel.GROUND,
 }
 
@@ -1453,7 +1462,7 @@ static func _resolve_channel_styles(raw: String) -> Dictionary[int, Dictionary]:
 		CHANNEL_OBJ: Color.WHITE,
 		CHANNEL_P1: p1,
 		CHANNEL_P2: p2,
-		CHANNEL_LBG: _lighter_background(background, p1),
+		CHANNEL_LBG: lighter_background(background, p1),
 		CHANNEL_G2: _literal_channel_color(entries, CHANNEL_G2, ground),
 		CHANNEL_BLACK: Color.BLACK,
 		CHANNEL_WHITE: Color.WHITE,
@@ -1465,8 +1474,14 @@ static func _resolve_channel_styles(raw: String) -> Dictionary[int, Dictionary]:
 		styles[channel_id] = {
 			"color": defaults[channel_id],
 			"alpha": 1.0,
-			# Geometry Dash always draws the line channel additively.
-			"blending": channel_id == CHANNEL_LINE,
+			# Geometry Dash draws the line channel additively, and Light BG is
+			# additive by definition: "This copies the background color, except
+			# lighter and with blending enabled, but the color is tinted to
+			# player color 1 as the background gets darker"
+			# (gdcreatorschool.com, Using Channels). The reference renderer
+			# agrees - GDRweb's ColorManager.getLBG returns blending true.
+			# An explicit kS38 key 5 overrides this just below.
+			"blending": channel_id == CHANNEL_LINE or channel_id == CHANNEL_LBG,
 		}
 	# The player colours are not stored in the level, so any header entry for
 	# them is really the copy/HSV settings on top of the local player colour.
@@ -1621,9 +1636,19 @@ static func _literal_channel_color(entries: Dictionary[int, Dictionary], channel
 	return _entry_color(entries[channel_id], fallback)
 
 
-## Geometry Dash's LBG channel: the background desaturated a little, blended
-## towards the player colour as the background darkens.
-static func _lighter_background(background: Color, player: Color) -> Color:
+## Geometry Dash's LBG channel (1007): the background desaturated a little,
+## blended towards the player colour as the background darkens.
+##
+## GD's own wording is "This copies the background color, except lighter and
+## with blending enabled, but the color is tinted to player color 1 as the
+## background gets darker" (gdcreatorschool.com, Using Channels) - the same
+## model GDRweb's ColorManager.getLBG encodes (desaturate the background, blend
+## towards/away from player colour 1). LBG is the default base channel of a
+## large object family (see [GMDDefaultChannels.BASE]), so this is a common
+## colour, not a corner case. Used both as the import-time channel colour and
+## by [method ColorChannelWatcher.live_special_color], so a channel that copies
+## LBG resolves to the same colour the imported channel shows.
+static func lighter_background(background: Color, player: Color) -> Color:
 	var shifted := Color.from_hsv(
 			background.h,
 			maxf(background.s - 0.2, 0.0),

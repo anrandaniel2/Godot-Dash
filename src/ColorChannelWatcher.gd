@@ -216,7 +216,11 @@ static func live_special_color(id: int) -> Color:
 		1006:
 			return Config.secondary_color
 		1007:
-			return level.background_color.lightened(0.2)
+			# Light BG is not just a lighter background: it is tinted towards
+			# player colour 1 as the background darkens, and it is additive.
+			# Shares the importer's formula so a channel copying LBG resolves
+			# to the same colour the imported LBG channel renders with.
+			return GMDConverter.lighter_background(level.background_color, Config.primary_color)
 		1010:
 			return Color.BLACK
 		1011:
@@ -314,6 +318,12 @@ static func _special_color(channel: Constants.SpecialColorChannel) -> Color:
 			return Config.primary_color
 		Constants.SpecialColorChannel.P2:
 			return Config.secondary_color
+		Constants.SpecialColorChannel.LBG:
+			# Light BG is derived, not stored: it is the background desaturated
+			# and tinted towards player colour 1 as the background darkens.
+			# Shares the importer's formula so the live value and the imported
+			# snapshot agree.
+			return GMDConverter.lighter_background(level.background_color, Config.primary_color)
 		Constants.SpecialColorChannel.GLOW:
 			return Config.glow_color
 	return Color.WHITE

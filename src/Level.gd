@@ -438,6 +438,11 @@ func setup_color_channel_watchers() -> void:
 		match color_channel.copied_channel:
 			Constants.SpecialColorChannel.BACKGROUND:
 				_background_copy_watchers.append(color_channel.watcher)
+			Constants.SpecialColorChannel.LBG:
+				# Light BG follows the background (it is the background
+				# desaturated and tinted by the player colour), so a background
+				# recolour has to reach these watchers too.
+				_background_copy_watchers.append(color_channel.watcher)
 			Constants.SpecialColorChannel.GROUND:
 				_ground_copy_watchers.append(color_channel.watcher)
 			Constants.SpecialColorChannel.LINE:

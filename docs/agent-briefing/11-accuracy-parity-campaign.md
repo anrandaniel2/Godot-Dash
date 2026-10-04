@@ -143,9 +143,17 @@ parser drop?":
   `failed_ids`, `substituted_block_ids`, `decoration_ids`, `empty_target_groups`, and
   `skipped_breakdown()` which prints the top offenders. **`empty_target_groups` is the
   "trigger that does nothing" detector**: a group whose every member was skipped.
+  `inert_trigger_ids` is its sibling for the trigger itself: families that imported onto the
+  component-less `NativeGenericTrigger.tscn` shell with no C++ arm behind them
+  (`GMDObjects.has_native_effect`), record-only families that will not run in this build, and
+  group-targeted pulses. A trigger in that list plays no sound, moves nothing and logs nothing.
 - `_parse_pairs` (`:1665`) routes through the **native** `parse_gd_pairs` when the C++ backend
   exists — a malformed pair handling difference between native and GDScript is a parser-accuracy
-  bug by itself; check both.
+  bug by itself; check both. The portable branch then applies
+  `_normalize_legacy_properties` so a chunked import lands on the same object IDs, keys and
+  groups the native bulk parser produces (the native parser rewrites inside
+  `validate_and_record_object`; the rewrite must stay idempotent for re-imports of
+  already-normalised data).
 - `_components_from_properties` is where per-ID key vocabularies live: if a trigger's fields
   are not read here, the trigger does nothing no matter how correct the runtime is.
 
@@ -220,21 +228,42 @@ Verified key vocabulary:
 
 These are real, in-tree, and each is a plausible "colours look slightly off" root cause:
 
-1. **sRGB vs linear.** The GDScript parser builds colours with `Color8(...)` (`_entry_color`,
-   `:1566`; colour-trigger arm `:1211`). The native parser builds them with
-   `Color(r / 255.0, g / 255.0, b / 255.0)` (`gdash_native.cpp:511`). These are **not** the same
-   colour: `Color(0.5,0.5,0.5)` is a linear value that displays near sRGB 188, while
-   `Color8(128,…)` displays as 128. Any channel recoloured by a trigger on the native path will
-   be visibly lighter/washed compared to the editor path and to GD.
-   **Fix direction:** decode bytes in the native path the way `Color8` does
-   (`Color::from_rgba8` / `Color::from_string("…")`), and add a unit test asserting
-   `native(RGB) == Color8(RGB)` for a few mid-tone values.
-2. **LBG (1007) is implemented twice, differently.** GDScript `_lighter_background()` (`:1581`)
-   desaturates 0.2 and lerps toward the player colour by `background.v`; native
-   `live_special_color(1007)` uses `bg.lightened(0.2f)`. Channels copying LBG will not match
-   each other between paths.
-3. **Copy/HSV has two implementations** — GDScript `_shift_hsv_string`/`_apply_copy_link`
-   (`:1539`) and C++ `parse_copy_hsv`/`shift_copy_hsv`. Keep them identical or pick one owner.
+1. ~~**sRGB vs linear.**~~ **Retracted — the two paths agree.** The claim was that
+   `Color8(...)` and `Color(r / 255.0, …)` build different colours. They do not:
+   `Color::from_rgba8` *is* `Color(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f)`
+   (`godotengine/godot` 4.4, `core/math/color.cpp`), and `Color::html` divides by 255 the same
+   way. There is no sRGB decode anywhere in the pipeline; both paths produce the identical
+   float. Do not "fix" this — a change here would introduce the divergence it claims to remove.
+2. ~~**LBG (1007) is implemented twice, differently.**~~ **Fixed — one formula, three call
+   sites.** There were three: GDScript `lighter_background()` (desaturate 0.2, `lerp` towards
+   player colour 1 by `background.v`), the watcher's `live_special_color(1007)`
+   (`lightened(0.2)`), and native `live_special_color(1007)`/`resolve_copied_channel`/
+   `resolve_channel_data_color` (`lightened(0.2)`). GD's own wording is "This copies the
+   background color, except lighter and **with blending enabled**, but the color is tinted to
+   player color 1 as the background gets darker" (gdcreatorschool.com, *Using Channels* — that
+   site is documentation, not a decompilation; the same model is what GDRweb's
+   `ColorManager.getLBG` encodes, and its `blend(P1, desaturatedBG, v/100)` only differs by a
+   units slip). All sites now call `GMDConverter.lighter_background` /
+   `gdash_native.cpp::lighter_background`, and 1007's channel default is **blending = true**
+   in both style tables. Note LBG is the *default base channel* of a large object family
+   (`GMDDefaultChannels.BASE`: 157-159, 227-235, 279-285, 406-420, 448, 767, 1050-1055,
+   1099-1120, 1752-1757, 1830-1834, …), so this is a common colour, not a corner case.
+   **Still open:** LBG is now a live derived channel in **GDScript** (1007 is in
+   `SPECIAL_CHANNELS`, `Constants.SpecialColorChannel.LBG`, refreshed from the background
+   setters) but the native *style seed* in `parse_channel_styles` cannot see `Config`, and its
+   `channel_styles` output has no consumer today — reconcile it or delete it before relying on
+   it. P1/P2 (1005/1006) are *not* defaulted to blending, although the same doc page claims
+   they are: GDRweb defaults them off (`parseStartColor`, key 5 default false), so the two
+   sources disagree. Verify on a device before changing that.
+3. **Copy/HSV had four implementations; the C++ side is now one.** GDScript
+   `_shift_hsv_string`/`_apply_copy_link` (`:1539`) and `ColorChannelWatcher._shift_copy_hsv`
+   stay separate from C++ because they must work without the extension. On the C++ side,
+   `parse_copy_hsv`/`shift_copy_hsv`, the copy branch of `resolve_source_color`, and the inline
+   block in `NativeDecorationRenderer::apply_channel_color` now all call
+   `native/src/hsv_shift.h` (`apply_hsv_shift`), which `native/tests/test_hsv_shift.cpp`
+   exercises directly with plain g++. Keep `_hsv_string_is_neutral` and `HSVShift::is_identity`
+   agreeing on what "neutral" means: multiplicative `* 1` and additive `+ 0` are both neutral,
+   `* 0` is not.
 4. **Blending is tri-state** (key `17` present vs absent) and both paths, plus the C++
    `parse_color_source`, carry comments explaining that a trigger without the checkbox must not
    revert an overlapping Blending flip. Preserve this when editing either side.
@@ -246,9 +275,18 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
 
 ### Known gaps (verified)
 
-- `PULSE` (1006/1007) is inert when `key 52 == 1` (object-group target) or `key 48 == 1` (HSV
-  mode) — `gdash_native.cpp`, `case TriggerEffectKind::PULSE`. Group pulses and HSV pulses
-  simply do not happen. On 2.0/2.1 effect levels this alone changes the look.
+- `PULSE` (1006) is still inert when `key 52 == 1` (object-group target) — `gdash_native.cpp`,
+  `case TriggerEffectKind::PULSE`. A group pulse recolours each member's own sprite, which needs
+  per-object colour overrides this engine does not model; GDRweb does not implement it either
+  (`ColorManager.getTrackListForTrigger` returns null for a group pulse), so there is no
+  reference implementation to port. On 2.0/2.1 effect levels this changes the look.
+  **HSV-mode pulses (`key 48 == 1`) were implemented** in the same change as this note: key 49
+  is the pulse's own HSV shift, key 50 the colour it pulses from, and the shift is applied to
+  the channel's live colour (`resolve_target_color`), matching GDRweb's
+  `PulseHSVEntry.applyToColor` + `HSVShift.shiftColor`. The component path still has no pulse at
+  all: 1006 has no `GMDObjects.MAP` entry, so it imports as the component-less
+  `NativeGenericTrigger.tscn` shell. That path is unchanged and remains a known gap — the
+  editor and any build without the extension still do not pulse colours.
 - Player channels P1/P2 (1005/1006) are intentional no-ops in the trigger arms in both paths
   (matching the component). If a level recolours P1/P2 via a trigger, GD *does* apply it —
   decide deliberately which is right.
@@ -281,10 +319,14 @@ const MAX_DISTANCE   := Vector2(400.0, 300.0)
 @export var offset_smoothing   := 0.125
 ```
 
-- `_process`: player/ground distance → rotate into gameplay space → `local_target_distance_axis`
-  (deadzone at `MAX_DISTANCE / zoom`, then `* 0.2 * delta * 60` catch-up) → rotate back → apply
-  per axis unless `static_factor` blocks that axis → clamp the view to `ground_down + 160` /
-  `ground_up - 160` → `offset = get_offset_target(≈delta*60)`.
+- `_physics_process` → `_step_camera(delta * 60)`: player/ground distance → rotate into gameplay
+  space → `local_target_distance_axis` (deadzone at `MAX_DISTANCE / zoom`, then
+  `* 0.2 * framerate_compensation` catch-up) → rotate back → apply per axis unless
+  `static_factor` blocks that axis → clamp the view to `ground_down + 160` / `ground_up - 160`
+  → `offset = get_offset_target(framerate_compensation)`. This is the fix for divergence (e)
+  below: the follow previously ran in `_process` and multiplied the *render* delta by 60, so the
+  lead and catch-up scaled with the frame rate. Only the debug overlay's `queue_redraw` and the
+  render-frame `snap_view` step remain in `_process`.
 - `get_offset_target()`: `(gameplay_offset / zoom) * gameplay_offset_factor * (1 - static_factor)
   + additional_offset + shake_offset`; `gameplay_offset` eases toward
   `DEFAULT_OFFSET.x * player.get_direction() * player_speed_sign` at 0.125 per 60 Hz frame.
@@ -302,8 +344,14 @@ const MAX_DISTANCE   := Vector2(400.0, 300.0)
 `half-screen − 75`), (b) the catch-up law (linear `0.2·60·delta` here vs GD's velocity model),
 (c) where the vertical deadzone comes from (`MAX_DISTANCE.y / zoom.y` here vs GD's view-derived
 threshold), (d) the ground clamp (`±160` on `default_y` here vs GD's floor/ceiling from level
-bounds), (e) camera updates running in `_process` (frame-rate dependent, `delta * 60`) rather
-than in the physics step. **Measure, don't guess** — see §9.
+bounds), ~~(e) camera updates running in `_process`~~ — **(e) is now fixed**: the follow runs on
+the physics tick with a 60-unit step, so it is no longer frame-rate dependent. (a)–(d) remain
+open hypotheses. **Measure, don't guess** — see §9.
+
+`updateCamera()`'s body itself is still unfetched: `camila314/gdp` puts it outside
+`GJBaseGameLayer/GJBaseGameLayer_update.cpp`, and only the call site (`updateCamera(physicsDelta
+* 60)` inside the fixed-step loop) is verified. Do not describe the follow as "matching GD"
+until the lead and catch-up law are read from that function.
 
 ### Camera trigger families (the table the rest of the work uses)
 
