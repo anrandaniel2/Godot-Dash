@@ -175,7 +175,23 @@ inline RGB lighter_object_rgb(const RGB &color) {
 
 // Applies one HSV adjustment to an RGB colour, wrapping hue into [0, 1) and
 // clamping saturation and value into [0, 1].
+//
+// An all-zero shift is Geometry Dash's "HSV enabled but the sliders were never
+// touched" encoding, which it writes with the saturation and value sliders
+// still in multiplicative mode. Applying those zeros literally multiplies the
+// colour's saturation and value to 0 and paints the object as a solid black
+// silhouette, so GDRweb's HSVShift.shiftColor returns the colour unchanged in
+// that case (third_party/gdrweb/src/util/hsvshift.ts, the first statement of
+// shiftColor) and so does every GDScript twin here. The guard lives in the
+// shift itself rather than in the callers because every caller needs it:
+// object HSV (key 43), a copied colour's HSV (key 10 / trigger key 49) and a
+// Pulse's HSV (key 49). is_identity() is the *other* rule - GDRweb's isEmpty(),
+// which reads the slider flags - and is what callers test to skip the round
+// trip entirely.
 inline RGB apply_hsv_shift(const RGB &base, const HSVShift &shift) {
+	if (shift.hue == 0.0 && shift.saturation == 0.0 && shift.value == 0.0) {
+		return base;
+	}
 	const HSV hsv = rgb_to_hsv(base);
 	HSV shifted;
 	shifted.h = hsv.h + shift.hue;

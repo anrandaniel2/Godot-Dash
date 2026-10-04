@@ -276,12 +276,17 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
 3. **Copy/HSV had four implementations; the C++ side is now one.** GDScript
    `_shift_hsv_string`/`_apply_copy_link` (`:1539`) and `ColorChannelWatcher._shift_copy_hsv`
    stay separate from C++ because they must work without the extension. On the C++ side,
-   `parse_copy_hsv`/`shift_copy_hsv`, the copy branch of `resolve_source_color`, and the inline
-   block in `NativeDecorationRenderer::apply_channel_color` now all call
-   `native/src/hsv_shift.h` (`apply_hsv_shift`), which `native/tests/test_hsv_shift.cpp`
-   exercises directly with plain g++. Keep `_hsv_string_is_neutral` and `HSVShift::is_identity`
-   agreeing on what "neutral" means: multiplicative `* 1` and additive `+ 0` are both neutral,
-   `* 0` is not.
+   `parse_copy_hsv`/`shift_copy_hsv`, the copy branch of `resolve_source_color`, the pulse's
+   `resolve_target_color` and the inline block in `NativeDecorationRenderer::apply_channel_color`
+   now all call `native/src/hsv_shift.h` (`apply_hsv_shift`), which `native/tests/test_hsv_shift.cpp`
+   exercises directly with plain g++. **Two different "neutral" rules live in that header and both
+   are needed**: an all-zero shift is GD's "HSV enabled but the sliders were never touched"
+   encoding and must be a no-op *inside* `apply_hsv_shift` (GDRweb's `HSVShift.shiftColor`
+   returns early on it; applying the zeros paints objects black, which is what
+   `tools/runtime_visual_smoke_test.gd` asserts against on both render paths), while
+   `HSVShift::is_identity()` is GDRweb's flag-aware `isEmpty()` and answers *false* for that same
+   shift. Folding the callers onto `is_identity()` alone is exactly the regression CI's Android
+   job caught on `3e12d64`; do not remove the all-zero guard to "simplify" this.
 4. **Blending is tri-state** (key `17` present vs absent) and both paths, plus the C++
    `parse_color_source`, carry comments explaining that a trigger without the checkbox must not
    revert an overlapping Blending flip. Preserve this when editing either side.

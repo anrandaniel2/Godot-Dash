@@ -135,6 +135,39 @@ int main() {
 	expect_rgb("additive value 1 brightens",
 			apply_hsv_shift(make(0.2, 0.4, 0.6), additive_value_one), 1.0 / 3.0, 2.0 / 3.0, 1.0);
 
+	// Geometry Dash's "HSV enabled but the sliders were never touched"
+	// encoding is an all-zero shift with the sliders still multiplicative: it
+	// has to leave the colour alone (GDRweb's shiftColor returns early there),
+	// or every object with an untouched HSV block renders as a black
+	// silhouette - tools/runtime_visual_smoke_test.gd guards both render paths
+	// for exactly this. is_identity() is the stricter, flag-aware test and
+	// answers false for it, which is why the no-op cannot live in the callers.
+	HSVShift untouched;
+	untouched.saturation = 0.0;   // "0a0a0a0a0" parses to exactly this
+	untouched.value = 0.0;
+	if (untouched.is_identity()) {
+		std::printf("FAIL the all-zero shift is not is_identity()\n");
+		++failures;
+	}
+	expect_rgb("all-zero shift leaves the colour alone",
+			apply_hsv_shift(make(0.9, 0.6, 0.3), untouched), 0.9, 0.6, 0.3);
+	expect_rgb("all-zero shift leaves grey alone",
+			apply_hsv_shift(make(0.25, 0.25, 0.25), untouched), 0.25, 0.25, 0.25);
+	HSVShift untouched_additive;
+	untouched_additive.saturation = 0.0;
+	untouched_additive.value = 0.0;
+	untouched_additive.saturation_additive = true;
+	untouched_additive.value_additive = true;
+	expect_rgb("all-zero shift with additive flags",
+			apply_hsv_shift(make(0.9, 0.6, 0.3), untouched_additive), 0.9, 0.6, 0.3);
+	// A shift that only zeroes saturation is *not* the untouched encoding and
+	// still applies: that one is how a level asks for a grey.
+	HSVShift zero_saturation;
+	zero_saturation.saturation = 0.0;
+	zero_saturation.value = 1.0;
+	expect_rgb("zero saturation still greys the colour",
+			apply_hsv_shift(make(0.2, 0.4, 0.6), zero_saturation), 0.6, 0.6, 0.6);
+
 	// The two derived special channels live here too, so the runtime and the
 	// importer cannot drift: LBG (1007) desaturates the background by 20 points
 	// and blends player colour 1 towards it by the background's value
