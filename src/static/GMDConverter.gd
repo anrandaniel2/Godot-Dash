@@ -379,6 +379,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var native_objects: Array = []
 	var native_validity := PackedByteArray()
 	var native_parsed := false
+	var native_channel_styles: Dictionary = {}
 	if use_online_parser:
 		var native := NativeCore.backend()
 		if native != null and native.has_method(&"parse_online_level"):
@@ -386,6 +387,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			header = parsed.get("header", { })
 			native_objects = parsed.get("objects", [])
 			native_validity = parsed.get("object_validity", PackedByteArray())
+			native_channel_styles = parsed.get("channel_styles", { })
 			native_parsed = not header.is_empty() or int(parsed.get("source_chunks", 0)) > 0
 			print("[RobTop] C++ parse: chars=%d header_keys=%d chunks=%d valid=%d malformed=%d invalid_numeric=%d odd_pairs=%d duplicate_keys=%d empty_keys=%d x=%s..%s" % [
 				level_string.length(), header.size(), int(parsed.get("source_chunks", 0)),
@@ -398,16 +400,20 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		chunks = level_string.split(";", false)
 		header = _parse_pairs(chunks[0]) if not chunks.is_empty() else {}
 
-	# Per-channel appearance: colour, opacity (key 7) and the additive
-	# "blending" flag (key 5). This covers every channel an object can name -
-	# the ones listed in kS38, the copies they make of each other (key 9) and
-	# the reserved 1000+ channels the header never spells out - so no object
-	# ends up with a channel the importer cannot colour. An unresolvable
-	# channel used to fall back to opaque white, and because most Geometry
-	# Dash frames are white masks that only look right once tinted, that is
-	# what painted random solid white blocks across imported levels.
-	var channel_style: Dictionary[int, Dictionary] = _resolve_channel_styles(
-			header.get(HeaderKey.COLORS, "")
+	# Per-channel appearance. The default runtime is native, so the C++
+	# parser (GdashNative.parse_channel_styles) owns the table whenever the
+	# extension is loaded - including a .gmd import that did not go through
+	# parse_online_level. GDScript _resolve_channel_styles is the portable
+	# fallback for editor/desktop builds without the library.
+	var color_string: String = String(header.get(HeaderKey.COLORS, ""))
+	if native_channel_styles.is_empty():
+		var styles_native := NativeCore.backend()
+		if styles_native != null and styles_native.has_method(&"parse_channel_styles"):
+			native_channel_styles = styles_native.call(&"parse_channel_styles", color_string)
+	var channel_style: Dictionary[int, Dictionary] = (
+			_adopt_native_channel_styles(native_channel_styles)
+			if not native_channel_styles.is_empty()
+			else _resolve_channel_styles(color_string)
 	)
 	# Which channels the level's objects actually use, filled in as they are
 	# converted, so ColorChannelData is only created for channels with a user.
@@ -1456,6 +1462,18 @@ static func _components_from_properties(
 ## then overridden by whatever the header says, so an object bound to one is
 ## always colourable even when the header omits it - which it does for 1004,
 ## 1007, 1010, 1011 and 1012 in every level Geometry Dash writes.
+##
+## Portable fallback: the default runtime consumes
+## [method GdashNative.parse_channel_styles] via [method _adopt_native_channel_styles].
+static func _adopt_native_channel_styles(raw: Dictionary) -> Dictionary[int, Dictionary]:
+	var styles: Dictionary[int, Dictionary] = { }
+	for channel_id: Variant in raw.keys():
+		var style: Variant = raw[channel_id]
+		if style is Dictionary:
+			styles[int(channel_id)] = style
+	return styles
+
+
 static func _resolve_channel_styles(raw: String) -> Dictionary[int, Dictionary]:
 	var styles: Dictionary[int, Dictionary] = { }
 	var entries: Dictionary[int, Dictionary] = { }

@@ -168,11 +168,14 @@ parser drop?":
   on decoration - as long as the objects sharing the group also share the rest of the key. That
   is why objects that move together always land in one batch and objects that move differently
   never merge. It also means group membership is *not* node-per-object for decoration.
-- `GdashNative::parse_channel_styles`'s `channel_styles` output has **no consumer**: the import
-  table used by the runtime is GDScript `_resolve_channel_styles` (the only other
-  `channel_styles` hits are its own doc comment and the `parse_online_level` result dictionary).
-  Keep the two formulas in step anyway - the native one is one call away from being consumed,
-  and the 1007/1012 divergences above existed precisely because it was not.
+- `GdashNative::parse_channel_styles` **is the import table on the default path.**
+  `GMDConverter._import_level_string` consumes `parsed["channel_styles"]` from
+  `parse_online_level`, and otherwise calls `parse_channel_styles` directly whenever the
+  extension is loaded (including a `.gmd` import). GDScript `_resolve_channel_styles` is the
+  portable fallback for editor/desktop builds without the library. The copy-HSV pass goes
+  through `apply_hsv_shift` (all-zero no-op included); key 4 (player colour) and the
+  P1/P2/LBG/Black/White pin match the fallback. Keep the two formulas in step - a divergence
+  here is a colour bug the moment someone runs without the extension.
 
 ---
 

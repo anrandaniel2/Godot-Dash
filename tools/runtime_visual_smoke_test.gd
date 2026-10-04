@@ -162,6 +162,29 @@ func _test_reserved_channel_resolution() -> void:
 			and built_1012.copy_saturation_additive and built_1012.copy_value_additive,
 			"visual smoke: runtime 1012 lost the lighter HSV shift")
 
+	# The executing import path is C++ parse_channel_styles. Pin the same
+	# 1012/Obj rules and the all-zero copy-HSV no-op on that table, not only
+	# on the GDScript fallback.
+	var native: Object = NativeCore.backend()
+	if native != null and native.has_method(&"parse_channel_styles"):
+		var native_obj: Dictionary = native.call(&"parse_channel_styles", "1_255_2_0_3_0_6_1004_7_1")
+		assert(int(native_obj[1012].get("copy_source", 0)) == 1004,
+				"native smoke: parse_channel_styles 1012 must copy Obj")
+		assert(String(native_obj[1012].get("copy_hsv", "")) == GMDConverter.LIGHTER_COPY_HSV,
+				"native smoke: parse_channel_styles 1012 lost LIGHTER_COPY_HSV")
+		var native_1012: Color = native_obj[1012]["color"]
+		assert(native_1012.is_equal_approx(GMDConverter.lighter_object(Color8(255, 0, 0))),
+				"native smoke: parse_channel_styles 1012 is not lighter_object(Obj)")
+		var native_pinned: Dictionary = native.call(&"parse_channel_styles", "1_10_2_20_3_30_6_1012_7_1")
+		assert(int(native_pinned[1012].get("copy_source", 0)) == 0,
+				"native smoke: a header 1012 entry must win over the Obj copy")
+		var native_copy: Dictionary = native.call(
+				&"parse_channel_styles",
+				"1_255_2_0_3_0_6_1_7_1|1_255_2_255_3_255_6_2_7_1_9_1_10_0a0a0a0a0")
+		var copied: Color = native_copy[2]["color"]
+		assert(copied.is_equal_approx(Color8(255, 0, 0)),
+				"native smoke: all-zero copy HSV must not black out the source")
+
 	var previous_level: Level = LevelManager.current_level
 	var level := Level.new()
 	var obj := ColorChannelData.new()

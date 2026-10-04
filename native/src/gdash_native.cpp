@@ -3617,11 +3617,22 @@ public:
 				ch["alpha"] = 1.0;
 				ch["blending"] = false;
 			}
-			if (val.has("1") || val.has("2") || val.has("3")) {
+			// P1/P2/LBG/Black/White are derived (or literal) reserved colours.
+			// A header RGB for them is the editor's snapshot, not the live value;
+			// GMDConverter._resolve_channel_styles pins the same set. Player-colour
+			// key 4 still applies below, matching the importer's order.
+			const bool pinned = cid == 1005 || cid == 1006 || cid == 1007 || cid == 1010 || cid == 1011;
+			if (!pinned && (val.has("1") || val.has("2") || val.has("3"))) {
 				ch["color"] = literal_color(cid, Color(ch["color"]));
 			}
 			if (val.has("5")) {
 				ch["blending"] = String(val["5"]) == "1";
+			}
+			const String player_col = String(val.get("4", String("-1"))).strip_edges();
+			if (player_col == "1") {
+				ch["color"] = config_player_color(false);
+			} else if (player_col == "2") {
+				ch["color"] = config_player_color(true);
 			}
 			if (val.has("7")) {
 				ch["alpha"] = Math::clamp(String(val["7"]).to_float(), 0.0, 1.0);
@@ -3648,29 +3659,13 @@ public:
 				const Dictionary source_style = styles[source_id];
 				const Color source_color = source_style.get("color", Color(1.0, 1.0, 1.0));
 				const String hsv_str = String(val.get("10", String()));
-
-				Color shifted = source_color;
-				if (!hsv_str.is_empty()) {
-					PackedStringArray parts = hsv_str.split("a", false);
-					if (parts.size() >= 3) {
-						double dh = String(parts[0]).to_float() / 360.0;
-						double ds = String(parts[1]).to_float();
-						double dv = String(parts[2]).to_float();
-						bool s_add = parts.size() > 3 && String(parts[3]) == "1";
-						bool v_add = parts.size() > 4 && String(parts[4]) == "1";
-						double h = static_cast<double>(source_color.get_h()) + dh;
-						h -= Math::floor(h);
-						double s = Math::clamp(
-							s_add ? static_cast<double>(source_color.get_s()) + ds
-								  : static_cast<double>(source_color.get_s()) * ds,
-							0.0, 1.0);
-						double v = Math::clamp(
-							v_add ? static_cast<double>(source_color.get_v()) + dv
-								  : static_cast<double>(source_color.get_v()) * dv,
-							0.0, 1.0);
-						shifted = Color::from_hsv(static_cast<real_t>(h), static_cast<real_t>(s), static_cast<real_t>(v), source_color.a);
-					}
-				}
+				// One HSV implementation: parse_hsv_shift + apply_hsv_shift.
+				// The previous inline Color::from_hsv block had no all-zero
+				// guard, so an untouched copy-HSV string ("0a0a0a0a0") would
+				// have multiplied saturation and value to 0 and stored black.
+				HSVShift copy_shift;
+				const bool has_shift = parse_hsv_shift(hsv_str, copy_shift);
+				const Color shifted = has_shift ? shift_color_hsv(source_color, copy_shift) : source_color;
 
 				double alpha = static_cast<double>(Dictionary(styles[cid]).get("alpha", 1.0));
 				if (String(val.get("17", "0")) == "1") {
@@ -3683,9 +3678,11 @@ public:
 				if (cur_c != shifted || !Math::is_equal_approx(cur_a, alpha)) {
 					cur["color"] = shifted;
 					cur["alpha"] = alpha;
-					styles[cid] = cur;
 					changed = true;
 				}
+				cur["copied_from"] = source_id;
+				cur["copy_plain"] = !has_shift || copy_shift.is_identity();
+				styles[cid] = cur;
 			}
 			if (!changed) break;
 		}
@@ -3711,6 +3708,8 @@ public:
 			ch["blending"] = false;
 			ch["copy_source"] = 1004;
 			ch["copy_hsv"] = "0a-0.2a0.2a1a1";
+			ch["copied_from"] = 1004;
+			ch["copy_plain"] = false;
 			styles[1012] = ch;
 		}
 
@@ -5434,13 +5433,11 @@ public:
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
 			Record &record = records[static_cast<size_t>(index)]; Color tinted = channel_color;
-			// The object's own HSV shift, through the same implementation the
-			// trigger runtime uses. is_identity() covers Geometry Dash's
-			// "HSV enabled but untouched" encoding (an all-zero shift with the
-			// sliders in multiplicative mode), whose zeros would otherwise
-			// multiply saturation and value to 0 and render the item as a
-			// black silhouette - GDRweb's HSVShift.shiftColor returns the
-			// colour unchanged there.
+			// The object's own HSV shift, through apply_hsv_shift. An all-zero
+			// shift with multiplicative sliders is Geometry Dash's "HSV enabled
+			// but untouched" encoding; is_identity() is the *other* (flag-aware)
+			// rule and is false for that shift, so the no-op lives inside
+			// apply_hsv_shift, not in this caller.
 			if (record.has_hsv) {
 				HSVShift shift;
 				shift.hue = record.hsv[0];
@@ -5448,9 +5445,7 @@ public:
 				shift.value = record.hsv[2];
 				shift.saturation_additive = record.hsv[3] > 0.5f;
 				shift.value_additive = record.hsv[4] > 0.5f;
-				if (!shift.is_identity()) {
-					tinted = shift_color_hsv(channel_color, shift);
-				}
+				tinted = shift_color_hsv(channel_color, shift);
 			}
 			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
 		}
