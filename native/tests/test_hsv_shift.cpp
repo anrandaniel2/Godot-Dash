@@ -135,6 +135,24 @@ int main() {
 	expect_rgb("additive value 1 brightens",
 			apply_hsv_shift(make(0.2, 0.4, 0.6), additive_value_one), 1.0 / 3.0, 2.0 / 3.0, 1.0);
 
+	// The two derived special channels live here too, so the runtime and the
+	// importer cannot drift: LBG (1007) desaturates the background by 20 points
+	// and blends player colour 1 towards it by the background's value
+	// (Wyliemaster/gddocs, Level Colors); "Lighter" (1012) applies the same
+	// saturation step to a colour and brightens it instead.
+	expect_rgb("lbg on a black background is the player colour",
+			lighter_background_rgb(make(0.0, 0.0, 0.0), make(1.0, 0.0, 0.0)), 1.0, 0.0, 0.0);
+	expect_rgb("lbg half way on a grey background",
+			lighter_background_rgb(make(0.5, 0.5, 0.5), make(1.0, 0.0, 0.0)), 0.75, 0.25, 0.25);
+	expect_rgb("lbg desaturates a saturated background",
+			lighter_background_rgb(make(0.0, 0.0, 1.0), make(1.0, 0.0, 0.0)), 0.2, 0.2, 1.0);
+	expect_rgb("lbg of a white background stays white",
+			lighter_background_rgb(make(1.0, 1.0, 1.0), make(0.0, 0.0, 1.0)), 1.0, 1.0, 1.0);
+	expect_rgb("lighter red", lighter_object_rgb(make(1.0, 0.0, 0.0)), 1.0, 0.2, 0.2);
+	expect_rgb("lighter brightens a grey", lighter_object_rgb(make(0.5, 0.5, 0.5)), 0.7, 0.7, 0.7);
+	expect_rgb("lighter white stays white", lighter_object_rgb(make(1.0, 1.0, 1.0)), 1.0, 1.0, 1.0);
+	expect_rgb("lighter black lifts to grey", lighter_object_rgb(make(0.0, 0.0, 0.0)), 0.2, 0.2, 0.2);
+
 	if (failures == 0) {
 		std::printf("all HSV shift checks passed\n");
 	}

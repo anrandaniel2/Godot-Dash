@@ -126,6 +126,53 @@ inline RGB hsv_to_rgb(const HSV &c) {
 	return out;
 }
 
+// Linear blend of two colours, the operation Godot's Color::lerp performs.
+inline RGB lerp_rgb(const RGB &from, const RGB &to, double weight) {
+	RGB out;
+	out.r = from.r + (to.r - from.r) * weight;
+	out.g = from.g + (to.g - from.g) * weight;
+	out.b = from.b + (to.b - from.b) * weight;
+	return out;
+}
+
+// Geometry Dash's Light BG channel (1007): the background with its saturation
+// lowered by 20 points, blended towards player colour 1 by the background's
+// value - "This copies the background color, except lighter and with blending
+// enabled, but the color is tinted to player color 1 as the background gets
+// darker" (gdcreatorschool.com, Using Channels). GDRweb's
+// ColorManager.getLBG encodes the same model (p1.blend(desaturatedBG,
+// bgHSV.v / 100)), and Wyliemaster/gddocs gives it in full: "takes the HSV of
+// background. Subtracts 20 from its saturation, then interpolates from P1 to
+// the last HSV by a factor of the last HSV's value devided by 100".
+//
+// LBG is the default base channel of a large object family
+// (GMDDefaultChannels.BASE), so the runtime and the importer must agree; the
+// GDScript twin is GMDConverter.lighter_background.
+inline RGB lighter_background_rgb(const RGB &background, const RGB &player) {
+	HSV hsv = rgb_to_hsv(background);
+	hsv.s = std::fmax(hsv.s - 0.2, 0.0);
+	return lerp_rgb(player, hsv_to_rgb(hsv), hsv.v);
+}
+
+// Geometry Dash's "Lighter" channel (1012): the same saturation step applied
+// to a colour rather than to the background, and brightened rather than
+// blended towards the player colour. Wyliemaster/gddocs (Level Colors) calls it
+// "A lighter version of the primary color in objects. Used in the white small
+// blocks found in build tab 2 on page 6" - that page is format documentation,
+// not a decompilation, GD's colour resolver (GJEffectManager) is in no public
+// decompilation, and the page gives no amount, so the 0.2 step is this
+// project's extrapolation from the LBG formula above. The family that defaults
+// to this channel is the block008/block009 set
+// (GMDDefaultChannels.DETAIL: object IDs 850-896), whose drawn detail is the
+// coloured overlay of those blocks. The GDScript twin is
+// GMDConverter.lighter_object.
+inline RGB lighter_object_rgb(const RGB &color) {
+	HSV hsv = rgb_to_hsv(color);
+	hsv.s = std::fmax(hsv.s - 0.2, 0.0);
+	hsv.v = std::fmin(hsv.v + 0.2, 1.0);
+	return hsv_to_rgb(hsv);
+}
+
 // Applies one HSV adjustment to an RGB colour, wrapping hue into [0, 1) and
 // clamping saturation and value into [0, 1].
 inline RGB apply_hsv_shift(const RGB &base, const HSVShift &shift) {

@@ -89,11 +89,15 @@ const Prop := {
 ## ([member GMDDefaultChannels.BASE]), so freezing it at the import snapshot
 ## leaves every one of those objects on the level's opening colour.
 ##
-## The remaining reserved IDs - 1003 (3DL), 1004 (Obj), 1010 (Black), 1011
-## (White), 1012 (Lighter), 1013/1014 (MG) - are literal colours. They are
-## synthesised into the channel table by [method _resolve_channel_styles] and
-## imported as ordinary static channels, so an object bound to them is tinted
-## correctly instead of being left white.
+## The remaining reserved IDs are [i]synthesised[/i] into the static channel
+## table by [method _resolve_channel_styles] and imported as ordinary
+## channels, so an object bound to them is tinted correctly instead of being
+## left white: 1003 (3DL), 1004 (Obj), 1010 (Black) and 1011 (White) as
+## literal colours, and 1012 (Lighter) as a lighter copy of Obj
+## ([method lighter_object]) - Wyliemaster/gddocs, [i]Level Colors[/i].
+## 1012 is the default [i]detail[/i] channel of the block008/block009 sets
+## ([member GMDDefaultChannels.DETAIL], object IDs 850-896), whose coloured
+## overlay is drawn lighter than the block itself.
 const SPECIAL_CHANNELS: Dictionary[int, int] = {
 	1000: Constants.SpecialColorChannel.BACKGROUND,
 	1001: Constants.SpecialColorChannel.GROUND,
@@ -1538,9 +1542,11 @@ static func _resolve_channel_styles(raw: String) -> Dictionary[int, Dictionary]:
 		if not changed:
 			break
 
-	# Lighter is derived from Obj, which the header may have recoloured.
+	# Lighter (1012) is derived from Obj, which the header may have recoloured.
+	# A header entry for 1012 wins, because a level that spells the channel out
+	# is describing the colour it wants.
 	if not entries.has(CHANNEL_LIGHTER):
-		styles[CHANNEL_LIGHTER]["color"] = _lighten(styles[CHANNEL_OBJ].get("color", Color.WHITE))
+		styles[CHANNEL_LIGHTER]["color"] = lighter_object(styles[CHANNEL_OBJ].get("color", Color.WHITE))
 	return styles
 
 
@@ -1657,8 +1663,29 @@ static func lighter_background(background: Color, player: Color) -> Color:
 	return player.lerp(shifted, background.v)
 
 
-## The "Lighter" channel: a brightened, slightly desaturated copy of [param color].
-static func _lighten(color: Color) -> Color:
+## The "Lighter" channel (1012): the same saturation step as Light BG, applied
+## to a colour instead of the background and brightened rather than blended
+## towards the player colour.
+##
+## Geometry Dash documents it as "A lighter version of the primary color in
+## objects. Used in the white small blocks found in [i]build tab 2 on page
+## 6[/i]" (Wyliemaster/gddocs, [i]Level Colors[/i]) - that page is format
+## documentation, not a decompilation, and GD's own colour resolver
+## ([code]GJEffectManager[/code]) is in no public decompilation, so the exact
+## amount is unverified. It is expressed in HSV rather than as Godot's
+## [method Color.lightened] because the one "lighter" formula GD documents in
+## detail (LBG, on the same page) is an HSV operation - subtract 20 from the
+## saturation - and the family that defaults to this channel
+## ([member GMDDefaultChannels.DETAIL]: the block008/block009 sets, object IDs
+## 850-896, whose drawn detail is exactly the "small blocks" that page
+## describes) is the block set the page names.
+## If a device report ever contradicts this, the sibling candidate is
+## [code]color.lightened(0.2)[/code].
+##
+## [b]Known gap:[/b] the result is a static import-time colour. GD re-derives
+## it when a colour trigger recolours Obj; the runtime only refreshes the
+## derived channels in [member Constants.SpecialColorChannel].
+static func lighter_object(color: Color) -> Color:
 	return Color.from_hsv(color.h, maxf(color.s - 0.2, 0.0), minf(color.v + 0.2, 1.0), color.a)
 
 

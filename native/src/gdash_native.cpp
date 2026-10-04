@@ -447,15 +447,24 @@ constexpr int COPY_RESOLUTION_BUDGET = 8;
 // Applies one HSV adjustment to a colour, keeping its alpha. The arithmetic
 // lives in hsv_shift.h so the standalone test runs the exact code the runtime
 // does; this bridge only moves the values across the Color record.
+static RGB rgb_from_color(const Color &color) {
+	RGB rgb;
+	rgb.r = static_cast<double>(color.r);
+	rgb.g = static_cast<double>(color.g);
+	rgb.b = static_cast<double>(color.b);
+	return rgb;
+}
+
+// Keeps the alpha of the colour the shift started from: every GD HSV
+// adjustment (key 10, key 49) changes hue/saturation/value only.
+static Color color_from_rgb(const RGB &rgb, real_t alpha) {
+	return Color(static_cast<real_t>(rgb.r), static_cast<real_t>(rgb.g),
+			static_cast<real_t>(rgb.b), alpha);
+}
+
 static Color shift_color_hsv(const Color &base, const HSVShift &shift) {
 	if (shift.is_identity()) return base;
-	RGB rgb;
-	rgb.r = static_cast<double>(base.r);
-	rgb.g = static_cast<double>(base.g);
-	rgb.b = static_cast<double>(base.b);
-	const RGB shifted = apply_hsv_shift(rgb, shift);
-	return Color(static_cast<real_t>(shifted.r), static_cast<real_t>(shifted.g),
-			static_cast<real_t>(shifted.b), base.a);
+	return color_from_rgb(apply_hsv_shift(rgb_from_color(base), shift), base.a);
 }
 
 // Applies a channel's copy HSV adjustment (kS38 key 10 / trigger key 49, held
@@ -489,10 +498,43 @@ static Color shift_copy_hsv(const Color &base, Object *data) {
 // so every site that resolves it has to agree with GMDConverter's
 // lighter_background - the importer's snapshot colour.
 static Color lighter_background(const Color &background, const Color &player) {
-	const double saturation = Math::max(static_cast<double>(background.get_s()) - 0.2, 0.0);
-	const Color shifted = Color::from_hsv(
-			background.get_h(), static_cast<real_t>(saturation), background.get_v(), 1.0f);
-	return player.lerp(shifted, background.get_v());
+	// Godot's Color::lerp blends alpha too, and the importer's twin lerps the
+	// player colour towards the derived colour's opaque alpha by the same
+	// weight, so do the same here rather than copying the background's.
+	const double weight = static_cast<double>(background.get_v());
+	const double alpha = static_cast<double>(player.a) + (1.0 - static_cast<double>(player.a)) * weight;
+	return color_from_rgb(
+			lighter_background_rgb(rgb_from_color(background), rgb_from_color(player)),
+			static_cast<real_t>(alpha));
+}
+
+// Geometry Dash's "Lighter" channel (1012): the same saturation step as LBG,
+// applied to a colour rather than the background and brightened instead of
+// blended towards the player colour. Expressed as an HSV shift so the runtime
+// has one implementation of that arithmetic (native/src/hsv_shift.h). The
+// exact amount is unverified - see the 1012 case in parse_channel_styles -
+// but this must stay identical to GMDConverter.lighter_object.
+static Color lighter_object(const Color &color) {
+	return color_from_rgb(lighter_object_rgb(rgb_from_color(color)), color.a);
+}
+
+// The Config autoload holds the local player's colours, which every reserved
+// channel that derives from a player colour needs. The parser can run from the
+// import path as well as from a level load, so the autoload is looked up by
+// name; when it is missing (headless tools, an import with no game running)
+// the player colour is unknown and white is the fallback the live resolvers
+// use too, rather than a silently different guess.
+static Color config_player_color(bool secondary) {
+	SceneTree *tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+	if (tree && tree->get_root()) {
+		Node *config = tree->get_root()->get_node_or_null(NodePath("Config"));
+		if (config) {
+			// static_cast, not an implicit conversion: Variant only converts to
+			// Color explicitly (godot-cpp's Variant::operator Color).
+			return static_cast<Color>(config->get(secondary ? "secondary_color" : "primary_color"));
+		}
+	}
+	return Color(1.0f, 1.0f, 1.0f);
 }
 
 // The channel a colour trigger targeted when it carries no key 23: the legacy
@@ -703,7 +745,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 				// GDRweb's PulseHSVEntry.applyToColor.
 				effect.pulse_hsv = true;
 				parse_hsv_shift(String(properties.get("49", String())), effect.pulse_shift);
-				effect.opacity = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
+				// No key 35 here: a Pulse never changes opacity (see
+				// capture_color_target). Key 35 is the Alpha trigger's slider,
+				// and reading it as a pulse's opacity used to snap every
+				// semi-transparent channel a pulse touched back to opaque.
 				const String copied = String(properties.get("50", String())).strip_edges();
 				if (copied.is_valid_int() && copied.to_int() > 0) {
 					effect.copy_channel = static_cast<int32_t>(copied.to_int());
@@ -1211,7 +1256,7 @@ class NativeTriggerRuntime : public RefCounted {
 			if (data) return resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET);
 			if (channel == 1012) {
 				Object *obj_data = channel_lookup(1004);
-				if (obj_data) return resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
+				if (obj_data) return lighter_object(resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET));
 			}
 			return Color(1.0f, 1.0f, 1.0f);
 		}
@@ -1266,7 +1311,7 @@ class NativeTriggerRuntime : public RefCounted {
 				Color col = Color(1.0f, 1.0f, 1.0f);
 				if (copy_id == 1012) {
 					Object *obj_data = channel_lookup(1004);
-					if (obj_data) col = resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
+					if (obj_data) col = lighter_object(resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET));
 				}
 				Dictionary result;
 				result["color"] = col;
@@ -1340,7 +1385,7 @@ class NativeTriggerRuntime : public RefCounted {
 				if (link == 1003 || link == 1004 || link == 1012 || link == 1013 || link == 1014) {
 					if (link == 1012) {
 						Object *obj_data = channel_lookup(1004);
-						color = obj_data ? resolve_channel_data_color(obj_data, budget - 1).lightened(0.2f) : Color(1.0f, 1.0f, 1.0f);
+						color = obj_data ? lighter_object(resolve_channel_data_color(obj_data, budget - 1)) : Color(1.0f, 1.0f, 1.0f);
 					} else {
 						color = Color(1.0f, 1.0f, 1.0f);
 					}
@@ -1734,13 +1779,19 @@ private:
 	// Captures the fade's channel target and from/to colours. Returns false
 	// when the target does not exist (the component path no-ops then).
 	bool capture_color_target(const TriggerEffect &effect, Fade &fade) {
+		// A Pulse leaves opacity alone whatever it does to the colour: GDRweb's
+		// PulseEntry.applyToColor puts the input colour's alpha back on the
+		// pulsed colour (third_party/gdrweb/src/pulse/pulse-entry.ts), and the
+		// 2.11 1006 key table has no opacity key either. So the target alpha is
+		// whatever the channel already has, not effect.opacity.
+		const bool pulse = effect.kind == TriggerEffectKind::PULSE;
 		if (effect.channel_is_level_color) {
 			Object *level = ObjectDB::get_instance(level_id);
 			if (!level) return false;
 			fade.level_color_property = level_color_property_for_channel(effect.target_channel);
 			const Color current = level->get(fade.level_color_property);
 			fade.from_color = current;
-			double alpha_target = effect.opacity;
+			double alpha_target = pulse ? static_cast<double>(current.a) : effect.opacity;
 			fade.to_color = resolve_target_color(effect, current, alpha_target);
 			fade.alpha_target = alpha_target;
 			report_color_capture(effect, current, fade.to_color, alpha_target);
@@ -1759,7 +1810,7 @@ private:
 		}
 		fade.initial_intensity = data->get("intensity");
 		fade.initial_alpha = data->get("alpha");
-		double alpha_target = effect.opacity;
+		double alpha_target = pulse ? fade.initial_alpha : effect.opacity;
 		fade.to_color = resolve_target_color(effect, current, alpha_target);
 		fade.alpha_target = alpha_target;
 		report_color_capture(effect, current, fade.to_color, alpha_target);
@@ -3542,7 +3593,9 @@ public:
 			if (r_id == 1000) base_c = bg_col;
 			else if (r_id == 1001) base_c = g1_col;
 			else if (r_id == 1002) base_c = line_col;
-			else if (r_id == 1007) base_c = bg_col.lightened(0.2f);
+			else if (r_id == 1005) base_c = config_player_color(false);
+			else if (r_id == 1006) base_c = config_player_color(true);
+			else if (r_id == 1007) base_c = lighter_background(bg_col, config_player_color(false));
 			else if (r_id == 1009) base_c = g2_col;
 			else if (r_id == 1010) base_c = Color(0.0, 0.0, 0.0);
 			ch["color"] = base_c;
@@ -3637,10 +3690,20 @@ public:
 			if (!changed) break;
 		}
 
+		// "Lighter" (1012): a lighter version of the object's colour, and the
+		// default detail channel of the block008/block009 sets (GDRweb's
+		// object definitions, tools/gdrweb_objects_22.json: 850-896 carry
+		// defaultDetailColorChannel 1012). Wyliemaster/gddocs (Level Colors)
+		// names it "A lighter version of the primary color in objects" and
+		// gives no formula; this is the importer's rule
+		// (GMDConverter.lighter_object), an HSV step rather than a lerp
+		// towards white because GD's other documented "lighter" channel, LBG,
+		// is the HSV saturation-20 operation directly above. A header entry
+		// for 1012 wins, exactly as in the importer.
 		if (!entries.has(1012) && styles.has(1004)) {
 			Color obj_c = Color(Dictionary(styles[1004]).get("color", Color(1.0, 1.0, 1.0)));
 			Dictionary ch;
-			ch["color"] = obj_c.lightened(0.2f);
+			ch["color"] = lighter_object(obj_c);
 			ch["alpha"] = 1.0;
 			ch["blending"] = false;
 			styles[1012] = ch;

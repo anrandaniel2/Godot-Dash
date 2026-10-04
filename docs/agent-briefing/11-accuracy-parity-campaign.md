@@ -157,6 +157,23 @@ parser drop?":
 - `_components_from_properties` is where per-ID key vocabularies live: if a trigger's fields
   are not read here, the trigger does nothing no matter how correct the runtime is.
 
+**Verified design facts — do not "fix" these** (checked 2026-10-04):
+
+- Decoration (objects with no `GMDObjects.MAP` scene) is drawn by batched `DecorationBatch`
+  nodes, and a batch is keyed by *group set + z layer + blend mode*
+  (`GDDecorationLoader.add_object`), joining those groups itself
+  (`GDDecorationLoader.gd:605`, "Joining the groups is what lets triggers move this batch").
+  `NativeLevelRuntime::snapshot_effect_groups` collects the `Node2D` members of every
+  effect-referenced group at level start, so a Move/Rotate/Scale/Toggle/Alpha trigger does act
+  on decoration - as long as the objects sharing the group also share the rest of the key. That
+  is why objects that move together always land in one batch and objects that move differently
+  never merge. It also means group membership is *not* node-per-object for decoration.
+- `GdashNative::parse_channel_styles`'s `channel_styles` output has **no consumer**: the import
+  table used by the runtime is GDScript `_resolve_channel_styles` (the only other
+  `channel_styles` hits are its own doc comment and the `parse_online_level` result dictionary).
+  Keep the two formulas in step anyway - the native one is one call away from being consumed,
+  and the 1007/1012 divergences above existed precisely because it was not.
+
 ---
 
 ## 4. Two execution paths — the single most common cause of "trigger doesn't work"
@@ -222,6 +239,7 @@ Verified key vocabulary:
 | `kS38` entry keys | `1/2/3` RGB, `4` player colour, `5` blending, `6` channel id, `7` opacity, `9` copied channel, `10` copy HSV, `17` copy opacity | `ChannelKey`, `GMDConverter.gd:113` |
 | Colour trigger | `7/8/9` RGB, `23` target channel, `35` opacity, `50` copied channel, `49` copy HSV, `60` copy opacity, `17` blending, `15/16` player colours | `Prop`, `LEGACY_COLOR_TRIGGER_CHANNELS` (`:151`) |
 | Reserved channels | `1000` BG, `1001`/`1009` G1/G2, `1002` line, `1003` 3DL, `1004` obj, `1005` P1, `1006` P2, `1007` LBG, `1010` black, `1011` white, `1012` lighter, `1013`/`1014` MG | `:96` |
+| `kS38` keys `11`-`16` | `11/12/13` ToColour RGB, `14` DeltaTime, `15` ToOpacity, `16` Duration — a level-start From→To transition of a channel. **Read by neither path** (nor by GDRweb's `parseStartColor`); GD only writes them for pre-2.0 levels | Wyliemaster/gddocs, *Client Color String* |
 | Header aliases | `kA6` BG, `kA7` ground, `kA17` line, `kA2..kA13` gamemode/mini/speed/dual/start-pos/song-offset, `kA20` reverse, `kA22` platformer, `kA11` flip | `HeaderKey`, `:127` |
 
 ### Verified divergences between the two paths — check these first
@@ -267,7 +285,22 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
 4. **Blending is tri-state** (key `17` present vs absent) and both paths, plus the C++
    `parse_color_source`, carry comments explaining that a trigger without the checkbox must not
    revert an overlapping Blending flip. Preserve this when editing either side.
-5. **Legacy families default a channel**: `LEGACY_COLOR_TRIGGER_CHANNELS` maps 29→BG, 30→G1,
+5. ~~**"Lighter" (1012) is derived twice, differently.**~~ **Fixed — one formula.** The
+   executing path derived it in HSV (`GMDConverter._lighten`: saturation −0.2, value +0.2) and
+   the native style seed in RGB (`parse_channel_styles`: `obj.lightened(0.2)`), so the two paths
+   disagreed whenever Obj was not fully saturated. Both now call one formula per language —
+   `GMDConverter.lighter_object` / `hsv_shift.h`'s `lighter_object_rgb` (covered by
+   `native/tests/test_hsv_shift.cpp`) — expressed in HSV because GD's other documented
+   "lighter" channel, LBG, is the saturation−20 operation (Wyliemaster/gddocs, *Level Colors*).
+   That page names 1012 ("A lighter version of the primary color in objects. Used in the white
+   small blocks found in build tab 2 on page 6") but gives no amount, and GD's colour resolver
+   (`GJEffectManager`) is in no public decompilation, so **the 0.2 step is our extrapolation —
+   the citation for the amount is missing**. What is certain: 1012 is the default *detail*
+   channel of the block008/block009 sets (`GMDDefaultChannels.DETAIL`: 850-896), whose drawn
+   detail is the "small blocks" that page describes. Both paths keep a level's own kS38 entry
+   for 1012 when it has one. **Still open:** like LBG before its fix, the derived colour is a
+   static import-time value — GD re-derives it when a trigger recolours Obj.
+6. **Legacy families default a channel**: `LEGACY_COLOR_TRIGGER_CHANNELS` maps 29→BG, 30→G1,
    104→line, 105→obj, 221→1, 717→2, 718→3, 743→4, 744→3DL, 899→1, 900→G2, 915→line; a bare
    899 with no key 23 falls back to channel 1. Do not extend that table from memory: `901` is
    the *Move* trigger (native `case 901: MOVE`), and every ID in it must be verified against the
@@ -283,7 +316,12 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   **HSV-mode pulses (`key 48 == 1`) were implemented** in the same change as this note: key 49
   is the pulse's own HSV shift, key 50 the colour it pulses from, and the shift is applied to
   the channel's live colour (`resolve_target_color`), matching GDRweb's
-  `PulseHSVEntry.applyToColor` + `HSVShift.shiftColor`. The component path still has no pulse at
+  `PulseHSVEntry.applyToColor` + `HSVShift.shiftColor`. **A Pulse never changes opacity**: GDRweb
+  puts the input colour's alpha back on the pulsed colour
+  (`third_party/gdrweb/src/pulse/pulse-entry.ts`: `fullColor.a = color.a`) and the 2.11 1006 key
+  table has no key 35. The native arm used to read key 35 as a pulse's opacity, which snapped
+  every semi-transparent channel a pulse touched back to 1.0 - it now keeps the channel's own
+  alpha (`capture_color_target`, `const bool pulse = ...`). The component path still has no pulse at
   all: 1006 has no `GMDObjects.MAP` entry, so it imports as the component-less
   `NativeGenericTrigger.tscn` shell. That path is unchanged and remains a known gap — the
   editor and any build without the extension still do not pulse colours.
@@ -292,6 +330,18 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   decide deliberately which is right.
 - `_is_colorable_channel()` (`:855`) synthesises never-defined custom channels as white so a later
   colour trigger can reach them; that is deliberate GD behaviour, not a bug.
+- **The two legacy normalisers are mutually exclusive and both idempotent** (checked 2026-10-04,
+  no fix needed). The portable chunk path only runs when the native bulk parse produced nothing
+  (`if not native_parsed: chunks = level_string.split(";", false)`), so `_normalize_legacy_properties`
+  can never re-apply a rewrite the native `validate_and_record_object` already made; and every rule
+  in both is written as "only when the modern key is absent" (104→915 sets key 17 only when it has
+  no key 17, the 19→21 map only when key 21 is absent, keys 26/33 only when key 57 does not already
+  contain the group, 32→128/129 only when both are absent or zero). Keep that shape when adding a
+  rule — a normaliser that rewrites unconditionally turns a second pass into a different level.
+- **`kS38` key 7 vs 17**: gddocs documents key 7 as FromOpacity and key 17 as CopyOpacity; the
+  importer follows that (`ChannelKey`), while GDRweb's `ColorManager.parseStartColor` reads key 7
+  twice (`let a = rd.number(7, 1)` and `copyOpacity = rd.bool(7, false)`). That is a GDRweb bug —
+  do not "align" the importer with it.
 
 ### Bisect procedure for "slightly off"
 
@@ -352,6 +402,15 @@ open hypotheses. **Measure, don't guess** — see §9.
 `GJBaseGameLayer/GJBaseGameLayer_update.cpp`, and only the call site (`updateCamera(physicsDelta
 * 60)` inside the fixed-step loop) is verified. Do not describe the follow as "matching GD"
 until the lead and catch-up law are read from that function.
+
+Re-verified 2026-10-04, do not repeat: the `camila314/gdp` tree on branch `2.2` contains only
+`GJBaseGameLayer/GJBaseGameLayer_update.cpp` (11 kB) under that folder, and
+`CallocGD/GD-2.205-Decompiled`'s `GD/code/src/GJBaseGameLayer.cpp` is 28.5 kB of constructors,
+capacity setup and layer creation — no `updateCamera`. Its `EffectGameObject.cpp` is a 235-line
+stub whose only trigger case is `case 1007: // Alpha Trigger`, so there is no colour-resolver
+source there either. **The camera follow's citation is missing, not merely unfetched**; treat
+(a)-(d) as hypotheses that need a device measurement, and keep any change behind the numbers in
+§9 rather than "fixing" the lead or the catch-up law from memory.
 
 ### Camera trigger families (the table the rest of the work uses)
 
