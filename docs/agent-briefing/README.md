@@ -19,6 +19,7 @@ these files was read out of that checkout.
 | [`08-formats-and-schemas.md`](08-formats-and-schemas.md) | Every on-disk format and data shape: level dict, `.gmd` keys, `.gdr`, `.meta`, config, input actions. |
 | [`09-conventions-invariants-verification.md`](09-conventions-invariants-verification.md) | Style rules, ~30 invariants/landmines, the verification playbook with exact CI gates. |
 | [`10-task-playbooks-and-reference.md`](10-task-playbooks-and-reference.md) | Change recipes, glossary, cheat-sheet numbers, key-file index, open items. |
+| [`11-accuracy-parity-campaign.md`](11-accuracy-parity-campaign.md) | **The current mission**, start here for correctness work: parser/trigger/camera parity, the OuterSpace acceptance level, decompiled-GD citations, native-vs-component paths, colour and camera failure maps. |
 
 The root-level [`GODOT_DASH_MASTER_PROMPT.md`](../../GODOT_DASH_MASTER_PROMPT.md) is the same
 material as one long single-file briefing; this folder is the expanded, per-subsystem version.
