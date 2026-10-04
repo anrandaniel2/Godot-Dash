@@ -106,6 +106,130 @@ func _test_hsv_neutral() -> void:
 	batch.free()
 
 
+## Reserved table channels (1003/1004/1012-1014) must resolve from the channel
+## table, not fall through to white, and a synthesised Lighter (1012) must be a
+## live copy of Obj so a mid-level Obj recolour drags it. The GDScript path
+## used to return white for every copy of those ids while gdash_native read
+## the table - the mirror-image of the LBG divergence.
+func _test_reserved_channel_resolution() -> void:
+	var hsv: PackedFloat32Array = GMDConverter._hsv_values(GMDConverter.LIGHTER_COPY_HSV)
+	assert(hsv.size() == 5, "visual smoke: LIGHTER_COPY_HSV did not parse")
+	assert(is_zero_approx(hsv[0]) and is_equal_approx(hsv[1], -0.2) and is_equal_approx(hsv[2], 0.2),
+			"visual smoke: LIGHTER_COPY_HSV is not s-0.2 v+0.2")
+	assert(hsv[3] > 0.5 and hsv[4] > 0.5, "visual smoke: LIGHTER_COPY_HSV must be additive")
+
+	var empty_styles: Dictionary[int, Dictionary] = GMDConverter._resolve_channel_styles("")
+	assert(int(empty_styles[GMDConverter.CHANNEL_LIGHTER].get("copy_source", 0)) == GMDConverter.CHANNEL_OBJ,
+			"visual smoke: synthesised 1012 must copy Obj")
+	assert(String(empty_styles[GMDConverter.CHANNEL_LIGHTER].get("copy_hsv", "")) == GMDConverter.LIGHTER_COPY_HSV,
+			"visual smoke: synthesised 1012 lost LIGHTER_COPY_HSV")
+	assert(empty_styles[GMDConverter.CHANNEL_LIGHTER]["color"].is_equal_approx(
+			GMDConverter.lighter_object(empty_styles[GMDConverter.CHANNEL_OBJ].get("color", Color.WHITE))),
+			"visual smoke: synthesised 1012 snapshot is not lighter_object(Obj)")
+
+	var obj_styles: Dictionary[int, Dictionary] = GMDConverter._resolve_channel_styles(
+			"1_255_2_0_3_0_6_1004_7_1")
+	assert(obj_styles[GMDConverter.CHANNEL_LIGHTER]["color"].is_equal_approx(
+			GMDConverter.lighter_object(Color8(255, 0, 0))),
+			"visual smoke: 1012 did not derive from a header Obj recolour")
+
+	var pinned_styles: Dictionary[int, Dictionary] = GMDConverter._resolve_channel_styles(
+			"1_10_2_20_3_30_6_1012_7_1")
+	assert(not pinned_styles[GMDConverter.CHANNEL_LIGHTER].has("copy_source"),
+			"visual smoke: a header 1012 entry must win over the Obj copy")
+	assert(pinned_styles[GMDConverter.CHANNEL_LIGHTER]["color"].is_equal_approx(Color8(10, 20, 30)),
+			"visual smoke: header 1012 colour was not kept")
+
+	var used: Dictionary[int, bool] = {}
+	used[1012] = true
+	var built: Array = GMDConverter._build_color_channels(obj_styles, used)
+	assert(used.has(GMDConverter.CHANNEL_OBJ),
+			"visual smoke: 1012 copy must pull Obj into the runtime table")
+	var built_1012: ColorChannelData = null
+	var built_1004: ColorChannelData = null
+	for channel: ColorChannelData in built:
+		var channel_id: int = int(String(channel.associated_group).trim_prefix(
+				Constants.COLOR_CHANNEL_GROUP_PREFIX))
+		if channel_id == GMDConverter.CHANNEL_LIGHTER:
+			built_1012 = channel
+		elif channel_id == GMDConverter.CHANNEL_OBJ:
+			built_1004 = channel
+	assert(built_1012 != null and built_1004 != null,
+			"visual smoke: 1012/1004 ColorChannelData missing after copy-source pull")
+	assert(built_1012.copied_channel_id == GMDConverter.CHANNEL_OBJ,
+			"visual smoke: runtime 1012 is not linked to Obj")
+	assert(is_equal_approx(built_1012.copy_saturation, -0.2) and is_equal_approx(built_1012.copy_value, 0.2)
+			and built_1012.copy_saturation_additive and built_1012.copy_value_additive,
+			"visual smoke: runtime 1012 lost the lighter HSV shift")
+
+	var previous_level: Level = LevelManager.current_level
+	var level := Level.new()
+	var obj := ColorChannelData.new()
+	obj.associated_group = "c_1004"
+	obj.color = Color(1.0, 0.0, 0.0)
+	obj.alpha = 0.4
+	var copier := ColorChannelData.new()
+	copier.associated_group = "c_1"
+	copier.copied_channel_id = 1004
+	var opacity_copier := ColorChannelData.new()
+	opacity_copier.associated_group = "c_2"
+	opacity_copier.copied_channel_id = 1004
+	opacity_copier.copy_opacity = true
+	opacity_copier.alpha = 1.0
+	var lighter := ColorChannelData.new()
+	lighter.associated_group = "c_1012"
+	lighter.copied_channel_id = 1004
+	lighter.copy_saturation = -0.2
+	lighter.copy_value = 0.2
+	lighter.copy_saturation_additive = true
+	lighter.copy_value_additive = true
+	var bg_opacity := ColorChannelData.new()
+	bg_opacity.associated_group = "c_3"
+	bg_opacity.copied_channel_id = 1000
+	bg_opacity.copy_opacity = true
+	bg_opacity.alpha = 0.25
+	var self_copy := ColorChannelData.new()
+	self_copy.associated_group = "c_1013"
+	self_copy.copied_channel_id = 1013
+	var channels: Array[ColorChannelData] = [
+			obj, copier, opacity_copier, lighter, bg_opacity, self_copy]
+	level.color_channels = channels
+	LevelManager.current_level = level
+
+	var expected_lighter: Color = GMDConverter.lighter_object(Color(1.0, 0.0, 0.0))
+	assert(ColorChannelWatcher.live_special_color(1004).is_equal_approx(Color(1.0, 0.0, 0.0)),
+			"visual smoke: live_special_color(1004) did not read the channel table")
+	assert(ColorChannelWatcher.resolve_channel_color(copier).is_equal_approx(Color(1.0, 0.0, 0.0)),
+			"visual smoke: a copy of Obj resolved white instead of Obj")
+	assert(ColorChannelWatcher.live_special_color(1012).is_equal_approx(expected_lighter),
+			"visual smoke: live_special_color(1012) is not lighter_object(Obj)")
+	assert(ColorChannelWatcher.resolve_channel_color(lighter).is_equal_approx(expected_lighter),
+			"visual smoke: 1012 copy link did not apply the lighter HSV")
+	assert(is_equal_approx(ColorChannelWatcher.resolve_channel_alpha(opacity_copier), 0.4),
+			"visual smoke: copying Obj opacity assumed 1.0 instead of chasing the channel")
+	assert(is_equal_approx(ColorChannelWatcher.resolve_channel_alpha(bg_opacity), 1.0),
+			"visual smoke: copying a level colour's opacity must stay opaque")
+	assert(ColorChannelWatcher.live_special_color(1013) == Color.WHITE,
+			"visual smoke: a reserved self-copy must hit the iteration budget")
+	assert(ColorChannelWatcher.live_special_color(1014) == Color.WHITE,
+			"visual smoke: missing MG2 must stay white")
+
+	# 1012 with no channel of its own still derives from live Obj.
+	var fallback_level := Level.new()
+	var fallback_channels: Array[ColorChannelData] = []
+	var fallback_obj := ColorChannelData.new()
+	fallback_obj.associated_group = "c_1004"
+	fallback_obj.color = Color(1.0, 0.0, 0.0)
+	fallback_channels.append(fallback_obj)
+	fallback_level.color_channels = fallback_channels
+	LevelManager.current_level = fallback_level
+	assert(ColorChannelWatcher.live_special_color(1012).is_equal_approx(expected_lighter),
+			"visual smoke: 1012 with no channel did not derive from live Obj")
+
+	LevelManager.current_level = previous_level
+	level.free()
+	fallback_level.free()
+
 
 ## Imported gameplay objects must wear the Geometry Dash z mapping on every
 ## instantiation path: generated scenes (GDObject.setup), hand-made scenes
@@ -250,6 +374,7 @@ func _test_hidden_objects() -> void:
 func _ready() -> void:
 	_test_batch_order()
 	_test_hsv_neutral()
+	_test_reserved_channel_resolution()
 	_test_gameplay_z()
 	_test_invisible_blocks()
 	_test_hidden_objects()

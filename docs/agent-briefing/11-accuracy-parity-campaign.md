@@ -147,7 +147,7 @@ parser drop?":
   component-less `NativeGenericTrigger.tscn` shell with no C++ arm behind them
   (`GMDObjects.has_native_effect`), record-only families that will not run in this build, and
   group-targeted pulses. A trigger in that list plays no sound, moves nothing and logs nothing.
-- `_parse_pairs` (`:1665`) routes through the **native** `parse_gd_pairs` when the C++ backend
+- `_parse_pairs` (`:1934`) routes through the **native** `parse_gd_pairs` when the C++ backend
   exists — a malformed pair handling difference between native and GDScript is a parser-accuracy
   bug by itself; check both. The portable branch then applies
   `_normalize_legacy_properties` so a chunked import lands on the same object IDs, keys and
@@ -180,7 +180,7 @@ parser drop?":
 
 **`Config.use_native_core` is `true` by default** (`src/autoloads/Config.gd:94`). When the
 GDExtension is present and `Editor.in_editor` is false, `_native_trigger_execution()`
-(`src/static/GMDConverter.gd:1094`) packs these families as **records for the C++ runtime instead
+(`src/static/GMDConverter.gd:1165`) packs these families as **records for the C++ runtime instead
 of scenes**:
 
 ```
@@ -199,7 +199,7 @@ Consequences, all verified in code:
   `native/src/gdash_native.cpp`. Anything outside that vocabulary (see §5) is dropped on the
   native path while the component path might handle it.
 - **Camera Static (1914) and Edge (2062) are deliberately *not* in the list**: they keep their
-  scene and run their components (`GMDObjects.gd:375` comment; `Level.gd:740` folds the packed
+   scene and run their components (`GMDObjects.gd:375` comment; `Level.gd:745` folds the packed
   records back into the serialized layer so switching paths stays lossless).
 - Native effect arms exist for `CAMERA_ZOOM` (key `371`, `/100` of `PlayerCamera.DEFAULT_ZOOM`),
   `CAMERA_OFFSET` (keys `28`/`29` × `CELLS_TO_PX`), `CAMERA_ROTATE` (`68` + `69`×360),
@@ -227,8 +227,8 @@ Consequences, all verified in code:
 
 ### The pipeline
 
-`kS38` header string → `_resolve_channel_styles()` (`GMDConverter.gd:1377`) → per-channel
-`{color, alpha, blending}` (+ runtime copy link) → `_build_color_channels()` (`:1492`) →
+`kS38` header string → `_resolve_channel_styles()` (`GMDConverter.gd:1459`) → per-channel
+`{color, alpha, blending}` (+ runtime copy link) → `_build_color_channels()` (`:1577`) →
 `ColorChannelData` per used channel → runtime `ColorChannelWatcher` /
 `NativeTriggerBridge.register_channel` → C++ resolver.
 
@@ -236,11 +236,11 @@ Verified key vocabulary:
 
 | Key | Meaning | Where |
 | --- | --- | --- |
-| `kS38` entry keys | `1/2/3` RGB, `4` player colour, `5` blending, `6` channel id, `7` opacity, `9` copied channel, `10` copy HSV, `17` copy opacity | `ChannelKey`, `GMDConverter.gd:113` |
-| Colour trigger | `7/8/9` RGB, `23` target channel, `35` opacity, `50` copied channel, `49` copy HSV, `60` copy opacity, `17` blending, `15/16` player colours | `Prop`, `LEGACY_COLOR_TRIGGER_CHANNELS` (`:151`) |
-| Reserved channels | `1000` BG, `1001`/`1009` G1/G2, `1002` line, `1003` 3DL, `1004` obj, `1005` P1, `1006` P2, `1007` LBG, `1010` black, `1011` white, `1012` lighter, `1013`/`1014` MG | `:96` |
+| `kS38` entry keys | `1/2/3` RGB, `4` player colour, `5` blending, `6` channel id, `7` opacity, `9` copied channel, `10` copy HSV, `17` copy opacity | `ChannelKey`, `GMDConverter.gd:139` |
+| Colour trigger | `7/8/9` RGB, `23` target channel, `35` opacity, `50` copied channel, `49` copy HSV, `60` copy opacity, `17` blending, `15/16` player colours | `Prop`, `LEGACY_COLOR_TRIGGER_CHANNELS` (`:177`) |
+| Reserved channels | `1000` BG, `1001`/`1009` G1/G2, `1002` line, `1003` 3DL, `1004` obj, `1005` P1, `1006` P2, `1007` LBG, `1010` black, `1011` white, `1012` lighter, `1013`/`1014` MG | `:103` |
 | `kS38` keys `11`-`16` | `11/12/13` ToColour RGB, `14` DeltaTime, `15` ToOpacity, `16` Duration — a level-start From→To transition of a channel. **Read by neither path** (nor by GDRweb's `parseStartColor`); GD only writes them for pre-2.0 levels | Wyliemaster/gddocs, *Client Color String* |
-| Header aliases | `kA6` BG, `kA7` ground, `kA17` line, `kA2..kA13` gamemode/mini/speed/dual/start-pos/song-offset, `kA20` reverse, `kA22` platformer, `kA11` flip | `HeaderKey`, `:127` |
+| Header aliases | `kA6` BG, `kA7` ground, `kA17` line, `kA2..kA13` gamemode/mini/speed/dual/start-pos/song-offset, `kA20` reverse, `kA22` platformer, `kA11` flip | `HeaderKey`, `:153` |
 
 ### Verified divergences between the two paths — check these first
 
@@ -274,7 +274,7 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
    they are: GDRweb defaults them off (`parseStartColor`, key 5 default false), so the two
    sources disagree. Verify on a device before changing that.
 3. **Copy/HSV had four implementations; the C++ side is now one.** GDScript
-   `_shift_hsv_string`/`_apply_copy_link` (`:1539`) and `ColorChannelWatcher._shift_copy_hsv`
+   `_shift_hsv_string`/`_apply_copy_link` (`:1650`) and `ColorChannelWatcher._shift_copy_hsv`
    stay separate from C++ because they must work without the extension. On the C++ side,
    `parse_copy_hsv`/`shift_copy_hsv`, the copy branch of `resolve_source_color`, the pulse's
    `resolve_target_color` and the inline block in `NativeDecorationRenderer::apply_channel_color`
@@ -290,21 +290,23 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
 4. **Blending is tri-state** (key `17` present vs absent) and both paths, plus the C++
    `parse_color_source`, carry comments explaining that a trigger without the checkbox must not
    revert an overlapping Blending flip. Preserve this when editing either side.
-5. ~~**"Lighter" (1012) is derived twice, differently.**~~ **Fixed — one formula.** The
-   executing path derived it in HSV (`GMDConverter._lighten`: saturation −0.2, value +0.2) and
-   the native style seed in RGB (`parse_channel_styles`: `obj.lightened(0.2)`), so the two paths
-   disagreed whenever Obj was not fully saturated. Both now call one formula per language —
-   `GMDConverter.lighter_object` / `hsv_shift.h`'s `lighter_object_rgb` (covered by
-   `native/tests/test_hsv_shift.cpp`) — expressed in HSV because GD's other documented
-   "lighter" channel, LBG, is the saturation−20 operation (Wyliemaster/gddocs, *Level Colors*).
-   That page names 1012 ("A lighter version of the primary color in objects. Used in the white
-   small blocks found in build tab 2 on page 6") but gives no amount, and GD's colour resolver
-   (`GJEffectManager`) is in no public decompilation, so **the 0.2 step is our extrapolation —
-   the citation for the amount is missing**. What is certain: 1012 is the default *detail*
-   channel of the block008/block009 sets (`GMDDefaultChannels.DETAIL`: 850-896), whose drawn
-   detail is the "small blocks" that page describes. Both paths keep a level's own kS38 entry
-   for 1012 when it has one. **Still open:** like LBG before its fix, the derived colour is a
-   static import-time value — GD re-derives it when a trigger recolours Obj.
+5. ~~**"Lighter" (1012) is derived twice, differently / frozen at import.**~~ **Fixed — one
+   formula, live copy of Obj.** Both languages share `GMDConverter.lighter_object` /
+   `hsv_shift.h`'s `lighter_object_rgb` (HSV saturation −0.2, value +0.2; covered by
+   `native/tests/test_hsv_shift.cpp`). Wyliemaster/gddocs (*Level Colors*) names 1012 ("A
+   lighter version of the primary color in objects. Used in the white small blocks found in
+   build tab 2 on page 6") but gives no amount, and GD's colour resolver (`GJEffectManager`)
+   is in no public decompilation, so **the 0.2 step is our extrapolation — the citation for
+   the amount is missing**. 1012 is the default *detail* channel of the block008/block009 sets
+   (`GMDDefaultChannels.DETAIL`: 850-896). A header kS38 entry for 1012 still wins. Without
+   one, both style tables now store a live copy of Obj (`copy_source = 1004`,
+   `LIGHTER_COPY_HSV = "0a-0.2a0.2a1a1"`) so a colour trigger that recolours Obj drags 1012
+   through the watcher fan-out; `_include_copy_sources` pulls Obj into the runtime table
+   whenever 1012 is used. 1012 is **not** in `SPECIAL_CHANNELS` — a special-copy would drop
+   the header entry. The same reserved-table arm (1003/1004/1012/1013/1014) in
+   `ColorChannelWatcher.live_special_color` (`:209`) now matches gdash_native: copies of
+   those ids used to resolve white in GDScript while native read the channel table.
+   Regression: `tools/runtime_visual_smoke_test.gd` `_test_reserved_channel_resolution`.
 6. **Legacy families default a channel**: `LEGACY_COLOR_TRIGGER_CHANNELS` maps 29→BG, 30→G1,
    104→line, 105→obj, 221→1, 717→2, 718→3, 743→4, 744→3DL, 899→1, 900→G2, 915→line; a bare
    899 with no key 23 falls back to channel 1. Do not extend that table from memory: `901` is
@@ -333,7 +335,7 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
 - Player channels P1/P2 (1005/1006) are intentional no-ops in the trigger arms in both paths
   (matching the component). If a level recolours P1/P2 via a trigger, GD *does* apply it —
   decide deliberately which is right.
-- `_is_colorable_channel()` (`:855`) synthesises never-defined custom channels as white so a later
+- `_is_colorable_channel()` (`:926`) synthesises never-defined custom channels as white so a later
   colour trigger can reach them; that is deliberate GD behaviour, not a bug.
 - **The two legacy normalisers are mutually exclusive and both idempotent** (checked 2026-10-04,
   no fix needed). The portable chunk path only runs when the native bulk parse produced nothing

@@ -3699,13 +3699,18 @@ public:
 		// (GMDConverter.lighter_object), an HSV step rather than a lerp
 		// towards white because GD's other documented "lighter" channel, LBG,
 		// is the HSV saturation-20 operation directly above. A header entry
-		// for 1012 wins, exactly as in the importer.
+		// for 1012 wins, exactly as in the importer. Without one the channel
+		// keeps a live copy of Obj (copy_source = 1004, copy HSV =
+		// GMDConverter.LIGHTER_COPY_HSV) so a colour trigger that recolours
+		// Obj mid-level drags 1012 with it.
 		if (!entries.has(1012) && styles.has(1004)) {
 			Color obj_c = Color(Dictionary(styles[1004]).get("color", Color(1.0, 1.0, 1.0)));
-			Dictionary ch;
+			Dictionary ch = styles.has(1012) ? Dictionary(styles[1012]) : Dictionary();
 			ch["color"] = lighter_object(obj_c);
 			ch["alpha"] = 1.0;
 			ch["blending"] = false;
+			ch["copy_source"] = 1004;
+			ch["copy_hsv"] = "0a-0.2a0.2a1a1";
 			styles[1012] = ch;
 		}
 

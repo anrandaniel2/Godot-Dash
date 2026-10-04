@@ -93,11 +93,13 @@ const Prop := {
 ## table by [method _resolve_channel_styles] and imported as ordinary
 ## channels, so an object bound to them is tinted correctly instead of being
 ## left white: 1003 (3DL), 1004 (Obj), 1010 (Black) and 1011 (White) as
-## literal colours, and 1012 (Lighter) as a lighter copy of Obj
-## ([method lighter_object]) - Wyliemaster/gddocs, [i]Level Colors[/i].
-## 1012 is the default [i]detail[/i] channel of the block008/block009 sets
-## ([member GMDDefaultChannels.DETAIL], object IDs 850-896), whose coloured
-## overlay is drawn lighter than the block itself.
+## literal colours, and 1012 (Lighter) as a live copy of Obj with
+## [constant LIGHTER_COPY_HSV] ([method lighter_object]) - Wyliemaster/gddocs,
+## [i]Level Colors[/i]. 1012 is the default [i]detail[/i] channel of the
+## block008/block009 sets ([member GMDDefaultChannels.DETAIL], object IDs
+## 850-896), whose coloured overlay is drawn lighter than the block itself.
+## It is deliberately [i]not[/i] in this dictionary: a special-copy would
+## drop a level's own kS38 1012 entry, which must keep winning.
 const SPECIAL_CHANNELS: Dictionary[int, int] = {
 	1000: Constants.SpecialColorChannel.BACKGROUND,
 	1001: Constants.SpecialColorChannel.GROUND,
@@ -123,6 +125,15 @@ const CHANNEL_WHITE: int = 1011
 const CHANNEL_LIGHTER: int = 1012
 const CHANNEL_MG: int = 1013
 const CHANNEL_MG2: int = 1014
+
+## The copy shift that turns the Obj channel (1004) into Lighter (1012), in
+## Geometry Dash's [code]h a s a v a s_checked a v_checked[/code] copy-HSV
+## encoding: both sliders in additive mode, saturation down 0.2 and value up
+## 0.2 - the same arithmetic as [method lighter_object], so the runtime copy
+## chain and the import-time snapshot cannot drift apart. Storing it as a copy
+## link (kS38 key 9 + key 10) rather than a frozen colour is what makes 1012
+## follow a mid-level Obj recolour, the way 1007 follows the background.
+const LIGHTER_COPY_HSV: String = "0a-0.2a0.2a1a1"
 
 ## Colour string (kS38) keys.
 const ChannelKey := {
@@ -534,7 +545,9 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# The runtime channel list. Every channel an imported object is bound to
 	# gets a ColorChannelData, including the reserved 1000+ ones, so the
 	# watcher that recolours the object at load actually exists. Channels no
-	# object uses are left out, as Geometry Dash's own renderer does.
+	# object uses are left out, as Geometry Dash's own renderer does. Copy
+	# sources (a synthesised 1012 follows Obj) are pulled in inside
+	# _build_color_channels so the source has a watcher to fan out from.
 	var color_channels: Array = _build_color_channels(channel_style, used_channels)
 
 	var start_speed_index: int = int(header.get(HeaderKey.SPEED, "0"))
@@ -1544,9 +1557,15 @@ static func _resolve_channel_styles(raw: String) -> Dictionary[int, Dictionary]:
 
 	# Lighter (1012) is derived from Obj, which the header may have recoloured.
 	# A header entry for 1012 wins, because a level that spells the channel out
-	# is describing the colour it wants.
+	# is describing the colour it wants; without one the channel keeps a live
+	# link to Obj (key 9 = 1004, copy HSV = LIGHTER_COPY_HSV) so a colour
+	# trigger that recolours Obj mid-level drags 1012 with it, and so both
+	# resolvers - the watcher and gdash_native - answer with the same colour
+	# for 1012 and for a channel that copies it.
 	if not entries.has(CHANNEL_LIGHTER):
 		styles[CHANNEL_LIGHTER]["color"] = lighter_object(styles[CHANNEL_OBJ].get("color", Color.WHITE))
+		styles[CHANNEL_LIGHTER]["copy_source"] = CHANNEL_OBJ
+		styles[CHANNEL_LIGHTER]["copy_hsv"] = LIGHTER_COPY_HSV
 	return styles
 
 
@@ -1559,6 +1578,7 @@ static func _build_color_channels(
 		channel_style: Dictionary[int, Dictionary],
 		used_channels: Dictionary[int, bool],
 ) -> Array:
+	_include_copy_sources(channel_style, used_channels)
 	var channels: Array = []
 	var ids: Array = used_channels.keys()
 	ids.sort()
@@ -1597,6 +1617,33 @@ static func _build_color_channels(
 			_apply_copy_link(channel, style)
 		channels.append(channel)
 	return channels
+
+
+## Pulls each used channel's copy source into [param used_channels] so the
+## source exists as a runtime [ColorChannelData] with a watcher. Without that
+## entry a synthesised 1012 (copy of Obj) has nothing to follow when a colour
+## trigger recolours Obj, and the copy-dependency fan-out never wires.
+## Level/player colours resolve live without a table entry and stay out.
+## Bounded so a chain A→B→C still produces every hop and a cycle cannot hang.
+static func _include_copy_sources(
+		channel_style: Dictionary[int, Dictionary],
+		used_channels: Dictionary[int, bool],
+) -> void:
+	for _pass in 8:
+		var added: bool = false
+		var known: Array = used_channels.keys()
+		for channel_id: int in known:
+			if not channel_style.has(channel_id):
+				continue
+			var style: Dictionary = channel_style[channel_id]
+			var source_id: int = int(style.get("copy_source", 0))
+			if source_id <= 0 or SPECIAL_CHANNELS.has(source_id) or used_channels.has(source_id):
+				continue
+			if _is_colorable_channel(channel_style, source_id):
+				used_channels[source_id] = true
+				added = true
+		if not added:
+			break
 
 
 ## Copies a header entry's copy settings (HSV shift of key 10, opacity copy of
@@ -1682,9 +1729,11 @@ static func lighter_background(background: Color, player: Color) -> Color:
 ## If a device report ever contradicts this, the sibling candidate is
 ## [code]color.lightened(0.2)[/code].
 ##
-## [b]Known gap:[/b] the result is a static import-time colour. GD re-derives
-## it when a colour trigger recolours Obj; the runtime only refreshes the
-## derived channels in [member Constants.SpecialColorChannel].
+## When the header has no 1012 entry the importer stores this as a live copy
+## of Obj ([constant LIGHTER_COPY_HSV]) rather than a frozen snapshot, so a
+## colour trigger that recolours Obj drags 1012 with it through the watcher
+## fan-out. A header entry for 1012 still wins. 1012 is not in
+## [constant SPECIAL_CHANNELS]: a special-copy would drop that header entry.
 static func lighter_object(color: Color) -> Color:
 	return Color.from_hsv(color.h, maxf(color.s - 0.2, 0.0), minf(color.v + 0.2, 1.0), color.a)
 
