@@ -387,6 +387,23 @@ const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 ]
 
 
+## Trigger families [member NATIVE_EFFECT_TRIGGER_IDS] does not list but whose
+## effect the C++ table still implements, so their packed record is not inert.
+## 3602 (Start SFX) is reached through the C++ `SFX` arm; the import report
+## must not call it dead. Keep in sync with `parse_trigger_effect`
+## (`native/src/gdash_native.cpp`).
+const EXTRA_NATIVE_EFFECT_IDS: Array[int] = [3602]
+
+
+## [code]true[/code] when the C++ effect table has an implementation for
+## [param gd_id], whether or not [member NATIVE_EFFECT_TRIGGER_IDS] routes the
+## family through it. Every other ID parses to an inert record: the runtime
+## only re-emits the scene's [signal Interactable.interacted], which does
+## nothing for a family with no components behind it.
+static func has_native_effect(gd_id: int) -> bool:
+	return gd_id in NATIVE_EFFECT_TRIGGER_IDS or gd_id in EXTRA_NATIVE_EFFECT_IDS
+
+
 ## Geometry Dash object ID ranges that are [i]solid square blocks[/i].
 ##
 ## Any ID inside one of these ranges that isn't in [member MAP] is imported as a

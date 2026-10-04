@@ -33,6 +33,7 @@ const Prop := {
 	MAIN_HSV_ENABLED = "41",
 	MAIN_HSV = "43",
 	TARGET_GROUP = "51",
+	PULSE_TARGET_TYPE = "52", # Pulse trigger: 0 = colour channel, 1 = object group
 	CENTER_GROUP = "71", # Camera Static's followed group (and rotate/scale centre)
 	STATIC_EXIT = "110", # Camera Static's "exit static mode" toggle
 	DURATION = "10",
@@ -55,6 +56,7 @@ const Prop := {
 	MOVE_Y = "29",
 	TARGET_COLOR_ID = "23",
 	DEGREES = "68",
+	LEGACY_GROUP = "26", # pre-1.9 single group key, folded into GROUPS on import
 	SINGLE_GROUP = "33", # legacy single group ID, still used by many objects
 	EASING = "30",
 	FADE_IN = "45",
@@ -163,6 +165,22 @@ const LEGACY_COLOR_TRIGGER_CHANNELS: Dictionary[int, int] = {
 	915: CHANNEL_LINE,
 }
 
+## Pre-1.9 object colour selection (key 19) mapped onto colour channels.
+##
+## Mirrors `GameObject::getColorIndex` in the 2.11 decompilation
+## (Wyliemaster/GD-Decompiled, GD/code/src/GameObject.cpp), where the modern
+## loader rewrites the old picker index into the channel it became.
+const LEGACY_OBJECT_COLOR_CHANNELS: Dictionary[int, int] = {
+	1: CHANNEL_P1,
+	2: CHANNEL_P2,
+	3: 1,
+	4: 2,
+	5: CHANNEL_LBG,
+	6: 3,
+	7: 4,
+	8: CHANNEL_3DL,
+}
+
 ## Geometry Dash uses a 30x30 pixel grid, Godot Dash uses [member
 ## Constants.CELL_SIZE] (128) pixels.
 const GD_CELL_SIZE: float = 30.0
@@ -222,6 +240,21 @@ class ImportReport:
 	## object was skipped. Those triggers will warn "target group doesn't
 	## contain any objects" when they run.
 	var empty_target_groups: Dictionary[String, int] = { }
+	## Trigger ID -> how many imported triggers of that family no execution
+	## path will act on. [method GMDConverter._trigger_effect_is_inert]
+	## documents the cases; they are the "the trigger fires and nothing
+	## happens" family, and they are invisible without this list.
+	var inert_trigger_ids: Dictionary[int, int] = { }
+
+	var inert_triggers: int:
+		get:
+			var total: int = 0
+			for count: int in inert_trigger_ids.values():
+				total += count
+			return total
+
+	func note_inert_trigger(gd_id: int) -> void:
+		inert_trigger_ids[gd_id] = inert_trigger_ids.get(gd_id, 0) + 1
 
 	var skipped: int:
 		get:
@@ -276,6 +309,8 @@ class ImportReport:
 			parts.append("%d failed" % failed)
 		if not empty_target_groups.is_empty():
 			parts.append("%d trigger target groups left empty" % empty_target_groups.size())
+		if inert_triggers > 0:
+			parts.append("%d triggers have no effect in this build" % inert_triggers)
 		return ", ".join(parts)
 
 	## The unsupported object IDs, most common first, for the details dialog.
@@ -380,6 +415,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			if chunk.strip_edges().is_empty():
 				continue
 			properties = _parse_pairs(chunk)
+			# The native bulk parser already rewrote its objects the way GD's
+			# loader does; the portable path must land on the same IDs, keys
+			# and groups or the same level imports differently depending on
+			# which entry point opened it.
+			_normalize_legacy_properties(properties)
 		if not properties.has(Prop.ID):
 			continue
 		var gd_id: int = int(properties[Prop.ID])
@@ -423,6 +463,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		if object_data.is_empty():
 			report.note_skipped(gd_id)
 			continue
+
+		# Name the triggers that nothing will act on, so "the trigger fires and
+		# nothing happens" is visible at import instead of only in a playtest.
+		if _trigger_effect_is_inert(gd_id, properties, object_data):
+			report.note_inert_trigger(gd_id)
 
 		# A hidden decoration (key 135) contributes nothing visible and has
 		# no collision: skip it rather than building an invisible batch item.
@@ -1660,6 +1705,131 @@ static func _ground_color(header: Dictionary, _channels: Array) -> Color:
 
 static func _line_color(header: Dictionary, _channels: Array) -> Color:
 	return _special_channel_color(header.get(HeaderKey.COLORS, ""), 1002, Constants.DEFAULT_LINE_COLOR)
+
+
+## [code]true[/code] when nothing will act on a trigger object that imports.
+##
+## This is the "the trigger fires, nothing happens, no error" detector the
+## [member ImportReport] carries, alongside [member
+## ImportReport.empty_target_groups] for the group case. Three verified cases:
+## [br]1. The object lands on Geometry Dash's inert placeholder shell (see
+## [member GMDObjects.GENERIC_TRIGGER], which the converter uses for effect
+## families with no dedicated component scene) and its family has no C++ arm
+## either ([method GMDObjects.has_native_effect]): the record parses to
+## nothing and the shell carries no components, so firing it only emits
+## [signal Interactable.interacted] into an empty listener list.
+## [br]2. It is a record-only native family while the native core is not
+## available (editor import, or a build without the extension): the packed
+## record is never executed and there is no component behind it.
+## [br]3. It is a Pulse trigger (1006) whose key 52 selects a group target.
+## GD reads key 51 as a group id in that mode and pulses every member's colour
+## (`EffectGameObject::customSetup`, Wyliemaster/GD-Decompiled); this build
+## pulses colour channels only, so the group pulse is dropped - in C++ and on
+## the component path alike.
+static func _trigger_effect_is_inert(gd_id: int, properties: Dictionary, object_data: Dictionary) -> bool:
+	if not object_data.get("native_only_trigger", false):
+		return false
+	# 1. Inert shell with no C++ arm behind it.
+	if not GMDObjects.has_native_effect(gd_id):
+		return true
+	# 2. Record-only family with no native runtime to execute the record
+	# (editor import, or a build without the extension).
+	if not _native_trigger_execution(gd_id):
+		return true
+	# 3. Pulse with a group target: the C++ arm drops it.
+	if gd_id == 1006 and str(properties.get(Prop.PULSE_TARGET_TYPE, "0")).strip_edges() == "1":
+		return true
+	return false
+
+
+## Applies Geometry Dash's own object-chunk rewrite to one parsed object.
+##
+## Geometry Dash does not read a level string verbatim: `GameObject::newObjectFromVector`
+## (GD 2.11, Wyliemaster/GD-Decompiled, GD/code/src/GameObject.cpp) substitutes retired
+## object IDs and folds legacy keys into the modern ones before the object is built.
+## The C++ bulk parser mirrors that for server downloads (`NativeCore.parse_online_level`,
+## `validate_and_record_object`); this is the portable mirror for every other entry point,
+## so a `.gmd` file, a level string opened by the editor and an online download of the same
+## level produce the same objects.
+##
+## Without it the two entry points disagree about which objects exist at all. IDs
+## 1965-2011 are all substituted to 1964, and only 1964 has atlas artwork: the server
+## path imported those objects, while the chunk path looked up the original ID, found no
+## artwork and skipped every one of them - visually, a whole object family (the boss
+## parts, glow and large decoration of 2.0/2.1 effect levels) simply missing from an
+## imported `.gmd`.
+##
+## The rules, in GD's own order:
+## [br]1. Retired IDs: 104 -> 915 (Line colour trigger, key 17 defaults to blending),
+## 221/717/718/743 -> 899 with key 23 defaulting to channel 1/2/3/4, 675/676/677 ->
+## 1734/1735/1736, 1008 -> 1292, 1964..2011 -> 1964.
+## [br]2. Key 19 (pre-1.9 colour selection) -> key 21 when the object has no key 21.
+## [br]3. Legacy group keys 26 and 33 merge into key 57, which is what every consumer reads.
+## [br]4. Key 32 (uniform scale) -> keys 128/129 when those are absent or zero.
+static func _normalize_legacy_properties(properties: Dictionary) -> void:
+	var raw_id: String = str(properties.get(Prop.ID, "")).strip_edges()
+	if raw_id.is_valid_int():
+		var gd_id: int = int(raw_id)
+		var replacement: int = gd_id
+		match gd_id:
+			104:
+				replacement = 915
+				if not properties.has(Prop.BLENDING):
+					properties[Prop.BLENDING] = "1"
+			221, 717, 718, 743:
+				replacement = 899
+				if not properties.has(Prop.TARGET_COLOR_ID):
+					properties[Prop.TARGET_COLOR_ID] = str(LEGACY_COLOR_TRIGGER_CHANNELS.get(gd_id, 1))
+			675:
+				replacement = 1734
+			676:
+				replacement = 1735
+			677:
+				replacement = 1736
+			1008:
+				replacement = 1292
+			_:
+				if gd_id >= 1964 and gd_id < 2012:
+					replacement = 1964
+		if replacement != gd_id:
+			properties[Prop.ID] = str(replacement)
+			gd_id = replacement
+		# These families became decorations with a fixed draw order in GD; the
+		# level string only carries the key when the creator moved them.
+		if (gd_id == 9 or gd_id == 1715) and not properties.has(Prop.Z_ORDER):
+			properties[Prop.Z_ORDER] = "2"
+		elif gd_id == 3613:
+			if not properties.has(Prop.Z_LAYER):
+				properties[Prop.Z_LAYER] = "5"
+			if not properties.has(Prop.Z_ORDER):
+				properties[Prop.Z_ORDER] = "2"
+
+	# Key 19 is the 1.9 colour picker index; key 21 is the channel it became.
+	var legacy_color: String = str(properties.get("19", "")).strip_edges()
+	if not properties.has(Prop.MAIN_COLOR_ID) and legacy_color.is_valid_int():
+		var mapped_color: int = LEGACY_OBJECT_COLOR_CHANNELS.get(int(legacy_color), 0)
+		if mapped_color > 0:
+			properties[Prop.MAIN_COLOR_ID] = str(mapped_color)
+
+	# Keys 26 and 33 are the single-group legacy spellings; key 57 is the list.
+	for legacy_group_key: String in [Prop.LEGACY_GROUP, Prop.SINGLE_GROUP]:
+		var legacy_group: String = str(properties.get(legacy_group_key, "")).strip_edges()
+		if legacy_group.is_empty() or legacy_group == "0":
+			continue
+		var groups: String = str(properties.get(Prop.GROUPS, "")).strip_edges()
+		if groups.is_empty():
+			properties[Prop.GROUPS] = legacy_group
+		elif not ("." + groups + ".").contains("." + legacy_group + "."):
+			properties[Prop.GROUPS] = groups + "." + legacy_group
+
+	var uniform_scale: String = str(properties.get(Prop.SCALE, "")).strip_edges()
+	if uniform_scale.is_empty() or is_zero_approx(uniform_scale.to_float()):
+		return
+	var needs_x: bool = not properties.has(Prop.SCALE_X) or is_zero_approx(str(properties.get(Prop.SCALE_X, "")).to_float())
+	var needs_y: bool = not properties.has(Prop.SCALE_Y) or is_zero_approx(str(properties.get(Prop.SCALE_Y, "")).to_float())
+	if needs_x and needs_y:
+		properties[Prop.SCALE_X] = uniform_scale
+		properties[Prop.SCALE_Y] = uniform_scale
 
 
 static func _parse_pairs(chunk: String) -> Dictionary:

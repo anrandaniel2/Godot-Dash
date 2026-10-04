@@ -32,9 +32,27 @@ func _ready() -> void:
 	offset = get_offset_target(1 / offset_smoothing)
 
 
-func _process(delta: float) -> void:
-	if not (LevelManager.level_playing or is_snapping_view) or player.dead:
+## The follow model runs on the physics tick, not on the render frame.
+##
+## Geometry Dash steps its camera once per physics step inside the fixed
+## simulation loop, with a 60-per-second time base:
+## `this->updateCamera(physicsDelta * 60)` in GJBaseGameLayer::update
+## (camila314/gdp, GJBaseGameLayer/GJBaseGameLayer_update.cpp). The previous
+## `_process` implementation multiplied the *render* delta into every easing
+## term, so the follow was frame-rate dependent: at 144 fps the horizontal
+## lead collapsed and the vertical catch-up ran 2.4x faster than at 60 fps
+## (and proportionally slower below it). Stepping with the physics delta makes the
+## camera's catch-up a property of simulated time - exactly GD's model - and
+## keeps it in step with the player, which also moves on the physics tick.
+func _physics_process(delta: float) -> void:
+	if is_snapping_view:
+		# `snap_view` drives the render frames itself so the view is settled
+		# before the level starts; do not also advance it here.
 		return
+	_step_camera(delta * 60.0)
+
+
+func _process(delta: float) -> void:
 	# The debug overlay draw is the only reason this camera redraws; skip the
 	# queue_redraw (a canvas-item dirty pass every frame) when it is off. One
 	# final redraw on the true->false transition clears whatever was drawn.
@@ -44,7 +62,19 @@ func _process(delta: float) -> void:
 	elif _debug_overlays_were_on:
 		queue_redraw()
 		_debug_overlays_were_on = false
-	var framerate_compensation: float = delta * 60.0
+	# Snapping is a one-off correction driven by render frames, not gameplay
+	# time, so it keeps its own step here.
+	if is_snapping_view:
+		_step_camera(delta * 60.0)
+
+
+## One camera step. [param framerate_compensation] is the step's share of a
+## 60 Hz frame - 1.0 at 60 Hz, 0.5 at this project's 120 Hz physics tick -
+## which is how Geometry Dash's `physicsDelta * 60` scales every easing and
+## catch-up term.
+func _step_camera(framerate_compensation: float) -> void:
+	if not (LevelManager.level_playing or is_snapping_view) or player.dead:
+		return
 	smoothed_gameplay_rotation = lerp_angle(smoothed_gameplay_rotation, player.gameplay_rotation, 0.1 * framerate_compensation if not is_snapping_view else 1.0)
 
 	var player_distance = player.position - position
