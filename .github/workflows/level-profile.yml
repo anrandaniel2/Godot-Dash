@@ -133,6 +133,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           # Annotations survive when raw logs cannot be downloaded.
-          while IFS= read -r line; do echo "::notice::${line}"; done < <(grep -E "LEVEL_PROFILE" profile.log | head -20)
-          echo "::notice::$(grep -E 'Maximum resident' time.log)"
+          # One notice for every line: a step keeps only 10 annotations.
+          echo "::notice::$( { grep -E "LEVEL_PROFILE" profile.log | head -30; grep -E 'Maximum resident' time.log; } | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
           grep -q "LEVEL_PROFILE done" profile.log
