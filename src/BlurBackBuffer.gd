@@ -7,12 +7,18 @@ extends BackBufferCopy
 ## hint_screen_texture, and every later reader reuses that copy. A panel drawn
 ## after other UI would then blur a screen without that UI and cover it with
 ## its opaque fill - the "things disappear behind the blur" bug. One of these
-## sits right before each blurred panel and copies only the panel's rect (plus
-## a margin for the blur reach), so the panel blurs what is really behind it.
+## sits right before each blurred panel and refreshes the copy.
+##
+## It copies the whole viewport. A RECT copy is given in canvas units, but the
+## back buffer is in window pixels: with the canvas_items stretch mode a
+## fullscreen (or any resized) window has more pixels than canvas units, so the
+## rect covered only part of the panel and the rest sampled stale or black
+## texels - the black spots that appeared after a resolution change. RECT mode
+## is also known to sample a scaled-down screen on some renderers
+## (godotengine/godot#84987). The full copy has no edge, so the blur's mip
+## taps never reach unfilled texels either.
 
 const _MATERIAL_PATH := "res://resources/SimpleBlurMaterial.tres"
-## Screen pixels sampled outside the panel edge by the widest blur.
-const _MARGIN := 96.0
 
 var _panel: CanvasItem
 
@@ -33,7 +39,7 @@ static func attach_if_blurred(node: Node) -> void:
 
 
 func _ready() -> void:
-	copy_mode = BackBufferCopy.COPY_MODE_RECT
+	copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
 	z_as_relative = true
 	_panel.tree_exiting.connect(queue_free)
 
@@ -49,7 +55,3 @@ func _process(_delta: float) -> void:
 		return
 	var shown := _panel.is_visible_in_tree() and Config.menu_blur
 	visible = shown
-	if not shown:
-		return
-	var panel_rect := (_panel as Control).get_global_rect().grow(_MARGIN)
-	rect = get_global_transform().affine_inverse() * panel_rect
