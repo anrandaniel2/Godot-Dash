@@ -63,6 +63,7 @@ func _ready() -> void:
 		get_tree().quit(1)
 		return
 
+	_breakdown(loaded)
 	var job := LevelBuildJob.new(loaded)
 	while not job.finished:
 		job.step(0x7fffffff)
@@ -78,8 +79,14 @@ func _ready() -> void:
 				items += _sprite_count(child as DecorationBatch)
 	_mark("built (%d layer children, %d batches, %d sprites)" % [nodes, batches, items])
 
+	var use_started := Time.get_ticks_msec()
+	level._use_data_objects(loaded, Level.UseDataFlags.NONE)
+	print("LEVEL_PROFILE breakdown use_data objects pass (repeat): %d ms" % (Time.get_ticks_msec() - use_started))
+	var tree_started := Time.get_ticks_msec()
 	add_child(level)
+	print("LEVEL_PROFILE breakdown add_child (enter tree + _ready): %d ms" % (Time.get_ticks_msec() - tree_started))
 	await get_tree().process_frame
+	print("LEVEL_PROFILE breakdown first frame: %d ms" % (Time.get_ticks_msec() - tree_started))
 	await get_tree().process_frame
 	_mark("in tree, two frames drawn")
 	print("LEVEL_PROFILE done peak=%.1f MB" % (OS.get_static_memory_peak_usage() / 1048576.0))
@@ -139,6 +146,45 @@ func _import_signature_of(data: Dictionary, report: GMDConverter.ImportReport) -
 				total += float(v) * float(index % 7 + 1)
 		signature[column] = snappedf(total, 0.01)
 	return signature
+
+
+## Where build time and memory go: serialized size of the trigger records
+## against the other objects, and instantiation cost per scene.
+func _breakdown(data: Dictionary) -> void:
+	var records: Array = data.get("native_trigger_records", [])
+	var objects: Array = data.layers[0].objects
+	var triggers_in_objects := 0
+	var others: Array = []
+	for object_data: Dictionary in objects:
+		if object_data.get("native_only_trigger", false):
+			triggers_in_objects += 1
+		elif not object_data.get("decoration", false):
+			others.append(object_data)
+	print("LEVEL_PROFILE breakdown records=%d (%d bytes) triggers_in_objects=%d other_objects=%d (%d bytes)" % [
+		records.size(), var_to_bytes(records).size(), triggers_in_objects, others.size(), var_to_bytes(others).size()])
+	var by_scene: Dictionary = { }
+	var level := Level.new()
+	for object_data: Dictionary in others:
+		var started := Time.get_ticks_usec()
+		var node: Node2D = Level.instantiate_object_from_data(object_data, level)
+		var cost := Time.get_ticks_usec() - started
+		var key: String = str(object_data.get("scene_file_path", "?")).get_file()
+		var entry: Array = by_scene.get(key, [0, 0])
+		entry[0] += 1
+		entry[1] += cost
+		by_scene[key] = entry
+		if node != null:
+			node.free()
+	level.free()
+	var keys: Array = by_scene.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return by_scene[a][1] > by_scene[b][1])
+	var total := 0
+	for key: String in keys:
+		total += by_scene[key][1]
+	var lines := PackedStringArray()
+	for key: String in keys.slice(0, 8):
+		lines.append("%s x%d %d ms" % [key, by_scene[key][0], by_scene[key][1] / 1000])
+	print("LEVEL_PROFILE breakdown instantiate total %d ms: %s" % [total / 1000, ", ".join(lines)])
 
 
 func _sprite_count(batch: DecorationBatch) -> int:
