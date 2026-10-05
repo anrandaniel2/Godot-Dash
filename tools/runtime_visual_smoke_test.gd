@@ -706,6 +706,35 @@ func _test_native_core() -> void:
 		assert(pad.get_node_or_null(^"JumpBoostComponent") != null, "native smoke: imported pad lost jump behavior")
 		assert((pad.get_node(^"Hitbox") as CollisionShape2D).position.y == 0.0, "native smoke: imported pad hitbox does not match GD art")
 		pad.free()
+	# GD stores a blue teleport portal (747) alone: the orange exit exists only
+	# as TeleportPortalObject::m_teleportYOffset (key 54). The import must
+	# create the exit and target the portal at it - without it every portal
+	# fired with "target UNSET" and teleported nothing.
+	var portal_level := GMDConverter.import_online_level_string(
+			"kA2,0;1,747,2,300,3,105,54,90;",
+			"Teleport portal smoke",
+			GMDConverter.ImportReport.new(),
+		)
+	var portal_entries: Array = _imported_entries(portal_level)
+	assert(portal_entries.size() == 2, "native smoke: teleport portal import did not create its exit")
+	var portal_data: Dictionary = portal_entries[0]
+	var exit_data: Dictionary = portal_entries[1]
+	assert(str(exit_data.scene_file_path).ends_with("TeleportalOut.tscn"), "native smoke: teleport exit has the wrong scene")
+	assert(is_equal_approx((portal_data.transform as Transform2D).origin.y - (exit_data.transform as Transform2D).origin.y, 90.0 / 30.0 * Constants.CELL_SIZE),
+		"native smoke: teleport exit is not key 54 above the portal")
+	assert(is_equal_approx((portal_data.transform as Transform2D).origin.x, (exit_data.transform as Transform2D).origin.x),
+		"native smoke: teleport exit left the portal's X")
+	var portal_target: NodePath = portal_data.components.TargetObjectComponent.target
+	assert(int(portal_data.components.TeleportComponent.axis) == Constants.Axis.Y, "native smoke: teleport portal must move the player on Y only")
+	var portal_holder := Level.new()
+	var portal_layer := Layer.new()
+	portal_layer.name = GMDConverter.IMPORTED_LAYER_NAME
+	portal_holder.add_child(portal_layer)
+	var exit_node := Level.instantiate_object_from_data(exit_data, portal_holder)
+	assert(exit_node != null, "native smoke: teleport exit did not instantiate")
+	portal_layer.add_child(exit_node)
+	assert(portal_holder.get_node_or_null(portal_target) == exit_node, "native smoke: teleport target does not resolve to the exit")
+	portal_holder.free()
 	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
 	assert(ClassDB.class_exists(&"NativeDecorationCullWorker"), "native smoke: worker-pool culler missing")
 	assert(ClassDB.class_exists(&"NativeLevelRuntime"), "native smoke: level runtime missing")

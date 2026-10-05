@@ -170,6 +170,18 @@ const LEGACY_COLOR_TRIGGER_CHANNELS: Dictionary[int, int] = {
 ## Geometry Dash's Pulse trigger.
 const PULSE_TRIGGER_ID: int = 1006
 
+## Name of the single layer an import produces; level-relative NodePaths
+## (component targets) start with it.
+const IMPORTED_LAYER_NAME: String = "Imported Layer"
+## Geometry Dash's blue teleport portal. Its orange exit is not a separate
+## object in the level string: TeleportPortalObject saves only
+## m_teleportYOffset (key 54), the exit's vertical offset in GD units.
+const TELEPORT_PORTAL_ID: int = 747
+const TELEPORT_EXIT_SCENE: String = GMDObjects.OTHER_PORTALS + "TeleportalOut.tscn"
+## Exit offset when key 54 is absent. Hypothesis: GD's default yellow
+## teleport distance of 100 units; levels normally save the key.
+const TELEPORT_DEFAULT_Y_OFFSET: float = 100.0
+
 ## How a Pulse trigger sources its colour - the twin of the native
 ## [code]classify_pulse[/code] (native/src/gdash_native.cpp); keep both equal.
 ## parity: GD 2.11 EffectGameObject::customObjectSetup case 1006
@@ -507,6 +519,9 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		if object_data.is_empty():
 			report.note_skipped(gd_id)
 			continue
+		var teleport_exit: Dictionary = { }
+		if gd_id == TELEPORT_PORTAL_ID and kind == 0:
+			teleport_exit = _link_teleport_exit(object_data, properties)
 
 		# A hidden decoration (key 135) contributes nothing visible and has
 		# no collision: skip it rather than building an invisible batch item.
@@ -580,6 +595,8 @@ static func _import_level_string(level_string: String, level_name: String, repor
 				continue
 			native_trigger_records.append(object_data)
 		objects.append(object_data)
+		if not teleport_exit.is_empty():
+			objects.append(teleport_exit)
 		report.imported += 1
 
 	# A trigger whose whole target group was made of unsupported objects will
@@ -637,7 +654,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"native_trigger_records": native_trigger_records,
 		PackedTriggers.DATA_KEY: packed_triggers.to_data(),
 		"layers": [{
-			"name": "Imported Layer",
+			"name": IMPORTED_LAYER_NAME,
 			"objects": objects,
 			PackedDecorations.LAYER_KEY: native_import.get("packed_decorations", { }) if native_packed else packed_decorations.to_data(),
 			"locked": false,
@@ -755,6 +772,38 @@ static func _apply_native_import(
 ## Builds the serialized object dictionary for one Geometry Dash object.
 ## Returns an empty [Dictionary] when the object can't be represented, letting
 ## the caller skip it.
+## Builds the orange exit of a blue teleport portal entry and points the
+## portal's TargetObjectComponent at it. GD keeps the exit at the portal's X
+## (2.0/2.1 portals cannot differ in X) and key 54 above it; touching the blue
+## portal snaps the player's Y to the exit's (keeping the offset is the
+## separate 2.2 option, key 351). Returns the exit entry.
+static func _link_teleport_exit(portal: Dictionary, properties: Dictionary) -> Dictionary:
+	var offset_units: float = float(properties.get("54", str(TELEPORT_DEFAULT_Y_OFFSET)))
+	var exit_transform: Transform2D = portal.transform
+	exit_transform.origin.y -= offset_units / GD_CELL_SIZE * Constants.CELL_SIZE
+	var exit_name: String = "TeleportalOut%s" % str(portal.name).trim_prefix("TeleportalIn")
+	var exit_entry: Dictionary = {
+		"name": exit_name,
+		"scene_file_path": TELEPORT_EXIT_SCENE,
+		"transform": exit_transform,
+		"groups": [],
+		"color_channels": { },
+		"z_order": portal.z_order,
+		"z_layer": portal.z_layer,
+		"hsv": (portal.hsv as Dictionary).duplicate(true),
+		"hidden": portal.get("hidden", false),
+	}
+	var components: Dictionary = portal.get("components", { })
+	components["TargetObjectComponent"] = { "target": NodePath("%s/%s" % [IMPORTED_LAYER_NAME, exit_name]) }
+	var teleport: Dictionary = components.get("TeleportComponent", { })
+	teleport["axis"] = Constants.Axis.Y
+	components["TeleportComponent"] = teleport
+	portal["components"] = components
+	if not portal.has("markers"):
+		portal["markers"] = []
+	return exit_entry
+
+
 static func _object_from_properties(
 		gd_id: int,
 		properties: Dictionary,
