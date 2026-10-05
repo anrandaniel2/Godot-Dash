@@ -427,10 +427,8 @@ The frosted-glass backdrop behind menus and pause panels. One material is shared
 
 | Piece | File |
 | --- | --- |
-| Desktop shader | `resources/shaders/BackgroundBlur.gdshader` |
-| Web shader (swapped in at runtime) | `resources/shaders/BackgroundBlurWeb.gdshader` |
-| Downscale/soften source (web) | `resources/shaders/WebBlurSource.gdshader` |
-| Web pipeline | `src/WebSoftEffects.gd` |
+| Shader (desktop and web) | `resources/shaders/BackgroundBlur.gdshader` |
+| Per-panel screen copy | `src/BlurBackBuffer.gd` (attached by `Config._ready()` via `node_added`) |
 | Material | `resources/SimpleBlurMaterial.tres` (→ `BackgroundBlur.gdshader`) |
 | Globals | `project.godot` `[shader_globals]` — `menu_blur`, `blur_strength`, `ui_color` |
 | Settings push | `src/SettingsMenu.gd:19-21` (on ready), `:40-49` (on change) |
@@ -443,9 +441,8 @@ Status of the defects first listed here, re-checked against the checkout and the
    `TitleScreen/Settings/MarginContainer/SettingsMenu`), and its `_ready()` pushes
    `menu_blur` / `blur_strength` / `ui_color` unconditionally at boot (Godot readies hidden
    nodes). Only a boot path that skips the title scene could show stale globals; none exists.
-2. *Web shader samples an unset texture* — **does not reproduce on the normal flow.**
-   `WebSoftEffects` is created in `Config._ready()` (an autoload), so `blur_tex` is assigned
-   before the main scene draws. Only bites if that node is removed or deferred.
+2. *Web shader samples an unset texture* — **obsolete.** The web viewport blur was removed;
+   web uses the same shader as desktop.
 3. *Mipmap-LOD blur absent on Compatibility* — **false for 4.7.** Desktop runs `mobile`
    (RD); RD generates back-buffer mipmaps when a shader samples the screen texture with a
    mipmap filter (`servers/rendering/renderer_rd/renderer_canvas_render_rd.cpp`), and so does
@@ -456,14 +453,18 @@ Status of the defects first listed here, re-checked against the checkout and the
    styleboxes are black (`resources/Theme.tres`), and on the title screen text/icons inherit
    the material via `use_parent_material`; the `V <= 0.3` mask selects the frost fill and keeps
    bright foreground pixels. The variable is now `is_frost_fill` in both shaders.
-5. **Web must not gain a screen texture.** `WebSoftEffects.gd` and `WebBlurSource.gdshader` say
-   explicitly that `hint_screen_texture` on web is the hitch this pipeline exists to avoid. Do
-   not "fix" blur by copying the framebuffer on web. Strength on web is the downscale divisor
-   (`WebSoftEffects.gd:152`), not a shader uniform — keep it that way.
+5. **Panels hid UI drawn before them** — **fixed.** Godot copies the screen once per canvas
+   layer, at the first `hint_screen_texture` reader. Later panels reused that copy, so UI drawn
+   between them was missing from the blur and covered by the opaque fill (worst on the title
+   screen). `BlurBackBuffer` now puts a rect `BackBufferCopy` before each blurred panel. On web
+   the old SubViewport blur copied only background/ground/title-player sprites, so everything
+   else vanished behind panels; the user dropped the "no screen texture on web" rule, and web
+   now uses the same screen-texture blur. The look is a plain blur (3x3 tent on a mip of the
+   screen, `blur_strength` = mip level), tinted by `ui_color` as before.
 
 Acceptance for this workstream: the frost visibly blurs the backdrop on **desktop and web**;
-toggling Menu Blur off persists across a restart without opening settings; no new
-`hint_screen_texture` on the web path; before/after captures plus the guard named in §10.
+toggling Menu Blur off persists across a restart without opening settings; nothing drawn
+behind a panel disappears; the user asked for no CI step for blur.
 
 ---
 

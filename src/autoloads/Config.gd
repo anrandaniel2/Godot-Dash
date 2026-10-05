@@ -235,10 +235,6 @@ func _init():
 		config_file.save("user://config.cfg")
 	bloom = config_file.get_value("Graphics", "bloom", bloom)
 	menu_blur = config_file.get_value("Graphics", "menu_blur", menu_blur)
-	if OS.has_feature("web"):
-		var blur_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
-		if blur_mat:
-			blur_mat.shader = preload("res://resources/shaders/BackgroundBlurWeb.gdshader")
 	blur_strength = config_file.get_value("Graphics", "blur_strength", blur_strength)
 	ui_color = config_file.get_value("Graphics", "ui_color", ui_color)
 	transition_duration = config_file.get_value("Graphics", "transition_duration", transition_duration)
@@ -337,6 +333,9 @@ func _ready() -> void:
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
 			get_tree().root.set_size(saved_window_size)
+	# Every blurred panel gets its own screen copy, so it blurs what is really
+	# behind it instead of hiding it.
+	get_tree().node_added.connect(BlurBackBuffer.attach_if_blurred)
 	if OS.has_feature("web"):
 		var effects := preload("res://src/WebSoftEffects.gd").new()
 		effects.name = "WebSoftEffects"

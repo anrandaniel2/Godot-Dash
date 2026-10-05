@@ -95,8 +95,8 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
    HTTPS (or localhost). It draws at browser resolution.
 7. **Web-specific runtime behaviour**:
    - `WorldEnvironment` disables `Environment.glow` on web; `WebSoftEffects` implements a soft
-     bloom with `WebBlurSource`/`WebGlowExtract`/`WebGlowOverlay` shaders and
-     `SimpleBlurMaterial`/`BackgroundBlurWeb`.
+     bloom with `WebGlowExtract`/`WebGlowOverlay` shaders. Menu blur is the same
+     screen-texture shader as desktop (`BackgroundBlur.gdshader` + `BlurBackBuffer`).
    - `Config` forces `WINDOWED` (browsers require a user gesture for fullscreen) and runs a
      one-time bloom migration (`web_soft_glow`).
    - `UpdateManager` reports `DISABLED` (Codeberg sends no CORS headers; the host owns updates).

@@ -98,10 +98,8 @@ If a pack claim conflicts with the checkout, **the checkout wins**; say so and f
   `failed=0` / `VISUAL_SMOKE …`. The standalone `native/tests/*.cpp` run on a host with a local
   `native/godot-cpp` (the `g++` line is at the top of each file). Add your regression to one of
   those, not to a throwaway script.
-- **Blur / menu frost files**: `resources/shaders/BackgroundBlur.gdshader` (desktop),
-  `resources/shaders/BackgroundBlurWeb.gdshader` (swapped in by `src/autoloads/Config.gd:235-237`
-  on web), `resources/shaders/WebBlurSource.gdshader`, `src/WebSoftEffects.gd`,
-  `resources/SimpleBlurMaterial.tres`, globals in `project.godot [shader_globals]`. §7 of the
+- **Blur / menu frost files**: `resources/shaders/BackgroundBlur.gdshader` (desktop and
+  web), `src/BlurBackBuffer.gd` (per-panel screen copy), `resources/SimpleBlurMaterial.tres`, globals in `project.godot [shader_globals]`. §7 of the
   campaign doc lists the measured defects — start there.
 
 ## Hard rules

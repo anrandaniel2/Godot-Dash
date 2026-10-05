@@ -1,0 +1,55 @@
+class_name BlurBackBuffer
+extends BackBufferCopy
+
+## Fresh screen copy for one blurred panel.
+##
+## Godot copies the screen once per canvas layer, at the first item that reads
+## hint_screen_texture, and every later reader reuses that copy. A panel drawn
+## after other UI would then blur a screen without that UI and cover it with
+## its opaque fill - the "things disappear behind the blur" bug. One of these
+## sits right before each blurred panel and copies only the panel's rect (plus
+## a margin for the blur reach), so the panel blurs what is really behind it.
+
+const _MATERIAL_PATH := "res://resources/SimpleBlurMaterial.tres"
+## Screen pixels sampled outside the panel edge by the widest blur.
+const _MARGIN := 96.0
+
+var _panel: CanvasItem
+
+
+static func attach_if_blurred(node: Node) -> void:
+	if not node is Control or node is BlurBackBuffer:
+		return
+	var control := node as Control
+	if control.material == null or control.material.resource_path != _MATERIAL_PATH:
+		return
+	if control.get_parent() == null:
+		return
+	var copy := BlurBackBuffer.new()
+	copy._panel = control
+	copy.name = "%sBlurCopy" % control.name
+	control.get_parent().add_child.call_deferred(copy)
+	copy.ready.connect(copy._move_before_panel, CONNECT_ONE_SHOT)
+
+
+func _ready() -> void:
+	copy_mode = BackBufferCopy.COPY_MODE_RECT
+	z_as_relative = true
+	_panel.tree_exiting.connect(queue_free)
+
+
+func _move_before_panel() -> void:
+	if is_instance_valid(_panel) and _panel.get_parent() == get_parent():
+		get_parent().move_child(self, _panel.get_index())
+		z_index = _panel.z_index
+
+
+func _process(_delta: float) -> void:
+	if not is_instance_valid(_panel):
+		return
+	var shown := _panel.is_visible_in_tree() and Config.menu_blur
+	visible = shown
+	if not shown:
+		return
+	var panel_rect := (_panel as Control).get_global_rect().grow(_MARGIN)
+	rect = get_global_transform().affine_inverse() * panel_rect
