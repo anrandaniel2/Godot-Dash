@@ -10,13 +10,26 @@ full Geometry Dash fangame built in **GDScript on Godot 4.7** with an optional *
 
 ## The mission (this is the whole job)
 
-Make an imported Geometry Dash level **behave like Geometry Dash**. Three things are wrong
+Make an imported Geometry Dash level **behave like Geometry Dash**. Four things are wrong
 today, in priority order:
 
 1. **Parser accuracy** — the level string is not fully understood: object properties, header
    keys and colour channels (`kS38`) end up subtly (or completely) different from GD.
 2. **Triggers that silently do nothing** — the trigger fires, nothing happens, no error.
 3. **Camera** — camera triggers and the base follow do not match GD.
+4. **The menu frost / blur shader** (`SimpleBlurMaterial`) is broken — make the frost correct on
+   desktop and web. §7 of the campaign doc lists the defects already found in code; reproduce
+   them in-engine first and fix the ones that are real.
+
+**Where fixes land: the C++/native code first.** `Config.use_native_core` is `true` by default,
+so the code that actually runs for gameplay, parsing and triggers is `native/src/gdash_native.cpp`
+(`NativeTriggerRuntime` / `NativeLevelRuntime`). A fix written only in GDScript does **not** fix
+the reported bug on the default configuration: implement it in C++ first, then update the
+GDScript component twin in the same change. Never add a family to
+`GMDObjects.NATIVE_EFFECT_TRIGGER_IDS` (`src/static/GMDObjects.gd`) without its C++ arm —
+that list also removes the trigger's `Area2D`, so an unimplemented entry is a silent no-op.
+Exceptions: rendering/shader work (the blur shader) and editor/UI glue are GDScript + `.gdshader`
+— there is no native blur, do not add one.
 
 **The acceptance level is `OuterSpace` by Nicki1202 — online ID `27732941`, password `1202`.**
 It is a 13,903-object long level (5 stars, 3 coins, F-777 "Space Battle"), last updated in the
@@ -28,6 +41,7 @@ It is a 13,903-object long level (5 stars, 3 coins, F-777 "Space Battle"), last 
 | B | boss fight (~67–68%): *"we just don't see the boss"* | objects skipped/hidden at import |
 | C | a section with **cinematic black bars**: they don't render | geometry, layering, culling |
 | D | *"the camera follows the player in a different way than geometry dash does"* | `PlayerCamera` follow math |
+| E | the **menu frost / blur shader** is broken | `SimpleBlurMaterial` + `BackgroundBlur*.gdshader`, `src/WebSoftEffects.gd` — see §7 of the campaign doc |
 
 **Critical reading of the brief:** OuterSpace is a 2.1 level, and camera triggers (Zoom 1913,
 Static 1914, Offset 1916, Gameplay-Offset 2901, Rotate 2015, Edge 2062, Guide 2016) were added in
@@ -68,7 +82,7 @@ If a pack claim conflicts with the checkout, **the checkout wins**; say so and f
 - Import failures are already instrumented: `ImportReport` (`src/static/GMDConverter.gd`) exposes
   `skipped_ids`, `failed_ids`, `substituted_block_ids`, `empty_target_groups`. Start there for
   "I can't see object X" and "this trigger does nothing".
-- You must **cite decompiled Geometry Dash** for gameplay/camera/trigger parity — repo + file +
+- **You must cite decompiled Geometry Dash** for gameplay/camera/trigger parity — repo + file +
   function, e.g. `GD 2.11 EffectGameObject::customSetup
   (Wyliemaster/GD-Decompiled, GD/code/src/EffectGameObject.cpp)` or
   `GD 2.2 GJBaseGameLayer::updateCamera (camila314/gdp,
@@ -77,6 +91,18 @@ If a pack claim conflicts with the checkout, **the checkout wins**; say so and f
 - Native paths are **optional by contract**: reached only through `ClassDB.class_exists()` /
   `ClassDB.instantiate()` (`src/static/NativeCore.gd`). A static type reference to a native class
   breaks builds without the library.
+- **Native build gates you must keep green** (`native/SConstruct`, `scons platform=… api_version=4.7`;
+  `.github/workflows/main.yml`): the Linux test-host library must build and stay under the
+  **3,000,000-byte stripped size tripwire**; the engine-hosted checks `tools/gdr_selftest.tscn`,
+  `tools/native_color_selftest.tscn` and `tools/runtime_visual_smoke_test.tscn` must report
+  `failed=0` / `VISUAL_SMOKE …`. The standalone `native/tests/*.cpp` run on a host with a local
+  `native/godot-cpp` (the `g++` line is at the top of each file). Add your regression to one of
+  those, not to a throwaway script.
+- **Blur / menu frost files**: `resources/shaders/BackgroundBlur.gdshader` (desktop),
+  `resources/shaders/BackgroundBlurWeb.gdshader` (swapped in by `src/autoloads/Config.gd:235-237`
+  on web), `resources/shaders/WebBlurSource.gdshader`, `src/WebSoftEffects.gd`,
+  `resources/SimpleBlurMaterial.tres`, globals in `project.godot [shader_globals]`. §7 of the
+  campaign doc lists the measured defects — start there.
 
 ## Hard rules
 
@@ -102,13 +128,17 @@ If a pack claim conflicts with the checkout, **the checkout wins**; say so and f
    table, dump `PlayerCamera` state — whatever the symptom needs.
 3. **Locate** the code path that actually ran (native vs component vs editor) and name it.
 4. **Fix the smallest correct thing** at the right layer, citing the decompiled behaviour it
-   reproduces.
+   reproduces — and **in the C++/native implementation first** for gameplay/parser/trigger/camera
+   bugs, with the GDScript twin updated in the same change. Do not hand back a GDScript-only fix
+   for a bug that runs on the native path.
 5. **Guard it**: a check that fails before and passes after (self-test, harness level, or a
-   named level + percentage in the verification notes).
+   named level + percentage in the verification notes) — native regressions in `native/tests/`
+   or the engine-hosted self-tests.
 6. **Report**: files changed, evidence, what you could not run, residual risk.
 
-Diagnose in that order for every symptom — A/B/C/D on OuterSpace included — and say plainly when
-something is a hypothesis rather than a verified fact. Never present a guess as a finding.
+Diagnose in that order for every symptom — A/B/C/D on OuterSpace plus the blur shader — and say
+plainly when something is a hypothesis rather than a verified fact. Never present a guess as a
+finding.
 
 When asked to prove expertise, prefer specificity: exact constants, exact file names, exact CI
 gates, and the `##` design comments in this repo (they are unusually rich — use them).

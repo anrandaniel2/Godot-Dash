@@ -8,7 +8,12 @@ subsystems carry almost all of the remaining error:
 1. **the level-string parser** (objects, properties, colour channels, header keys),
 2. **triggers that silently do nothing** (unsupported families, wrong key vocabulary, the
    native/component split),
-3. **the camera** (trigger families and the base follow).
+3. **the camera** (trigger families and the base follow),
+4. **the menu frost / blur shader** (`SimpleBlurMaterial`), which is wrong independently of the
+   three above — see §7.
+
+Gameplay, parser, trigger and camera fixes land in **C++/native first**: that is the code that
+runs by default (§4.1).
 
 Everything below was read out of the checkout or the linked decompilations. Where a statement
 is a **hypothesis** rather than a verified fact it is marked `H:` — do not ship a fix on a bare
@@ -21,7 +26,7 @@ is a **hypothesis** rather than a verified fact it is marked `H:` — do not shi
 A change counts as done when **all** of these hold:
 
 - The symptom is reproduced on a named level at a named percentage, with the evidence
-  captured (log line, screenshot pair, or a numeric dump — see §9).
+  captured (log line, screenshot pair, or a numeric dump — see §10).
 - The fix touches the code path that actually ran (native vs component — see §4), and the
   *other* path is either fixed too or explicitly documented as untouched with a reason.
 - The decompiled-source behaviour the fix reproduces is cited by **repo + file + function**
@@ -29,6 +34,8 @@ A change counts as done when **all** of these hold:
 - `python3 -m py_compile tools/*.py` and `node tools/web_relay_worker_selftest.mjs` stay green.
 - Nothing in `docs/agent-briefing/01`–`10` is contradicted; if it is, the pack is updated in
   the same change.
+- Gameplay/parser/trigger/camera fixes exist in the **C++/native** implementation, with the
+  GDScript twin updated in the same change (§4.1) — not the other way round.
 
 ---
 
@@ -196,6 +203,46 @@ Consequences, all verified in code:
 4. The C++ runtime is optional per build (see `docs/agent-briefing/06`); GDScript components are
    the portable fallback and must stay correct on their own.
 
+### 4.1 Placement rule: fix it in C++/native first
+
+Because `use_native_core` is on by default, the code that actually runs for gameplay, parsing
+and triggers is **`native/src/gdash_native.cpp`**. A fix written only in GDScript does not fix the
+reported bug on the default configuration. Therefore:
+
+1. **Implement the fix natively first** — the C++ path is the primary implementation, the
+   GDScript component is the twin that must be updated to match in the same change.
+2. **Wire the family through** if you add or repair one: `NATIVE_EFFECT_TRIGGER_IDS`
+   (`GMDObjects.gd:381`) + a `TriggerEffectKind` arm + the `parse_trigger_effect` switch +
+   execution in `advance`/`tick` + `register_trigger`/`register_packed_trigger` plumbing. Never
+   list a family in `NATIVE_EFFECT_TRIGGER_IDS` without its C++ arm (§4).
+3. **Entry points to look in** (all in `native/src/gdash_native.cpp`):
+   - parser: `parse_gd_pairs`, `decode_level_string`, `extract_object_geometry`,
+     `extract_level_sfx_ids`, `encode_level_string`;
+   - triggers: `parse_trigger_effect` (ID → kind, key vocabulary), `parse_color_source`,
+     `parse_copy_hsv`, the easing table, `TriggerRuntime::advance` / `tick` /
+     `apply` / `activate_touch`, `pulse_envelope` (`45`/`46`/`47`), `finalize`;
+   - colour: `live_special_color`, `resolve_channel_data_color`, `shift_copy_hsv`,
+     `resolve_channel_data_alpha`, `NativeColorChannelIndex::{configure, set_group_members,
+     apply_channel_color, set_channel_blending}`;
+   - camera/level: the camera arms in `parse_trigger_effect` (`CAMERA_ZOOM` / `CAMERA_OFFSET` /
+     `CAMERA_ROTATE` / `SHAKE` / `TIMEWARP`) and the camera reads/writes through
+     `bind_context` (`NativeLevelRuntime`);
+   - culling/build: `NativeFrustumIndex`, `NativeDecorationRenderer`,
+     `NativeLevelBuildJob`, `NativeDecorationCullWorker`.
+4. **Contract rules that still apply in C++**: no new dependencies; C++17; keep GDScript free of
+   static native type references (`ClassDB` lookups only — `src/static/NativeCore.gd`); every
+   native behaviour keeps a working GDScript fallback.
+5. **Size budget**: CI fails if the stripped test-host `.so` exceeds **3,000,000 bytes**
+   (`.github/workflows/main.yml`, "tripwire"). Do not template/bloat your way to a fix.
+6. **Prove it in the native gates**: add the failing case to `native/tests/*.cpp` (pure math —
+   `test_trigger_effect_parse.cpp`, `test_color_channel_math.cpp`, `test_online_parser.cpp`,
+   `test_physics.cpp`, `test_gravity_portal.cpp`, `test_ui_trigger.cpp`; they need a local
+   `native/godot-cpp` to build — see the `g++` line at the top of each file) **and/or** to the
+   engine-hosted self-tests CI runs: `tools/gdr_selftest.tscn`,
+   `tools/native_color_selftest.tscn`, `tools/runtime_visual_smoke_test.tscn`.
+7. **Exception — do not force it**: rendering/shader work (the blur shader, §7) and pure
+   editor/UI glue are GDScript + `.gdshader`. There is no native blur; do not add one.
+
 ---
 
 ## 5. Colour accuracy
@@ -303,7 +350,7 @@ const MAX_DISTANCE   := Vector2(400.0, 300.0)
 (c) where the vertical deadzone comes from (`MAX_DISTANCE.y / zoom.y` here vs GD's view-derived
 threshold), (d) the ground clamp (`±160` on `default_y` here vs GD's floor/ceiling from level
 bounds), (e) camera updates running in `_process` (frame-rate dependent, `delta * 60`) rather
-than in the physics step. **Measure, don't guess** — see §9.
+than in the physics step. **Measure, don't guess** — see §10.
 
 ### Camera trigger families (the table the rest of the work uses)
 
@@ -334,7 +381,61 @@ Known `H:` parity gaps to verify against a 2.2 level and the 2.2 decompiles:
 
 ---
 
-## 7. Broken-trigger taxonomy (use this to triage any "trigger X does nothing")
+## 7. Blur / menu frost (`SimpleBlurMaterial`)
+
+The frosted-glass backdrop behind menus and pause panels. One material is shared by
+`scenes/TitleScreen.tscn`, `GameScene.tscn`, `EditorScene.tscn`, and the `PauseMenu`,
+`RenderModes`, `ReplaysMenu`, `SettingsMenu`, `Toast` components.
+
+| Piece | File |
+| --- | --- |
+| Desktop shader | `resources/shaders/BackgroundBlur.gdshader` |
+| Web shader (swapped in at runtime) | `resources/shaders/BackgroundBlurWeb.gdshader` |
+| Downscale/soften source (web) | `resources/shaders/WebBlurSource.gdshader` |
+| Web pipeline | `src/WebSoftEffects.gd` |
+| Material | `resources/SimpleBlurMaterial.tres` (→ `BackgroundBlur.gdshader`) |
+| Globals | `project.godot` `[shader_globals]` — `menu_blur`, `blur_strength`, `ui_color` |
+| Settings push | `src/SettingsMenu.gd:19-21` (on ready), `:40-49` (on change) |
+
+Measured defects (verified in code; confirm each visually before changing it):
+
+1. **Saved settings are not applied until the settings menu is opened.** `Config` loads
+   `menu_blur`, `blur_strength`, `ui_color` (`Config.gd:233,238,239`; defaults `:60-62`) but the
+   only writers of the shader globals are `SettingsMenu` (above) — nothing pushes them from
+   `Config`. Until the settings menu is instantiated, the shaders run `project.godot`'s values
+   (`menu_blur=true`, `blur_strength=3`, `ui_color=#808080`), so a saved "menu blur off" comes
+   back on after a restart until settings is opened. Reproduce: turn Menu Blur off, restart,
+   look at the title screen. Fix: make `Config` the single owner that pushes the globals when it
+   loads/changes them; the menu handlers then just set `Config`.
+2. **The web shader can sample an unset texture.** `BackgroundBlurWeb.gdshader` reads
+   `blur_tex`, assigned only by `WebSoftEffects._ready()` (`WebSoftEffects.gd:105-107`), while
+   `Config.gd:235-237` swaps the shader on the **shared** `SimpleBlurMaterial.tres` in place. Any
+   panel drawn before that assignment — or any build where `WebSoftEffects` is missing or is
+   created later — samples an undefined sampler, and the shader's dark-panel path paints it over
+   the panel. Fix: give the web variant its own resource instead of mutating the shared one, and
+   make the shader degrade to `COLOR` when `blur_tex` is not set.
+3. **Desktop blur is a mipmap-LOD blur.** `texture(SCREEN_TEXTURE, SCREEN_UV, blur_strength *
+   smoothstep(0, 1, COLOR.a))` with `hint_screen_texture, filter_linear_mipmap`: it only blurs
+   where the renderer generates mipmaps for the back-buffer copy. Forward+/Mobile do; the
+   Compatibility renderer does not. `H:` confirm on the affected renderer(s) before assuming;
+   if mipmaps are absent the LOD argument is ignored and the "blur" is a plain screen sample.
+4. **Bright panels are never blurred.** `step(rgb2hsv(COLOR.xyz).z, 0.3)` yields 1 **only** for
+   colours with value ≤ 0.3, and that 1 selects the blurred sample; a light panel keeps its own
+   colour and discards the frost. The variable name (`use_original_color`) says the opposite of
+   what the code does — decide which is correct from the intended look and fix the other, and say
+   which in the commit message.
+5. **Web must not gain a screen texture.** `WebSoftEffects.gd` and `WebBlurSource.gdshader` say
+   explicitly that `hint_screen_texture` on web is the hitch this pipeline exists to avoid. Do
+   not "fix" blur by copying the framebuffer on web. Strength on web is the downscale divisor
+   (`WebSoftEffects.gd:152`), not a shader uniform — keep it that way.
+
+Acceptance for this workstream: the frost visibly blurs the backdrop on **desktop and web**;
+toggling Menu Blur off persists across a restart without opening settings; no new
+`hint_screen_texture` on the web path; before/after captures plus the guard named in §10.
+
+---
+
+## 8. Broken-trigger taxonomy (use this to triage any "trigger X does nothing")
 
 1. **Not in `GMDObjects.MAP`** → the object is skipped at import (`report.skipped_ids`).
 2. **In `MAP` but its key vocabulary is not read** in `_components_from_properties` → a scene
@@ -350,7 +451,7 @@ Known `H:` parity gaps to verify against a 2.2 level and the 2.2 decompiles:
 
 ---
 
-## 8. Working rules for this campaign
+## 9. Working rules for this campaign
 
 - **One symptom per change.** Reproduce → cite → fix → regression note. Do not bundle a
   camera change with a colour change.
@@ -365,7 +466,7 @@ Known `H:` parity gaps to verify against a 2.2 level and the 2.2 decompiles:
   table.
 - Do not commit downloaded level strings, GD assets or decompiled sources into the repo.
 
-## 9. Evidence pack per fix (what to produce)
+## 10. Evidence pack per fix (what to produce)
 
 1. **Level + percentage + path** (`use_native_core`, editor/runtime, platform).
 2. **The numbers**: for parser/colour, the resolved channel table before/after; for camera, a
