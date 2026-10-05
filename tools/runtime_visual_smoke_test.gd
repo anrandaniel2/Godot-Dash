@@ -1359,6 +1359,26 @@ func _assert_level_end() -> void:
 	assert((platformer.layers[0].objects as Array).all(
 		func(entry: Dictionary) -> bool: return entry.get("name", "") != GMDConverter.LEVEL_END_NAME),
 		"native smoke: platformer levels have no end wall in GD")
+	assert(is_equal_approx(float(classic.gd_level_end_x), 1540.0), "native smoke: the camera end stop must match the end portal X")
+	assert(float(platformer.gd_level_end_x) == 0.0, "native smoke: platformer levels have no camera end stop")
+	# Mode portal bands (gdsolver bands.hpp): floor = max(90, floor30(y - H/2)),
+	# ceiling = floor + H; Free Mode (key 111) and cube/robot write no band.
+	var band_level := GMDConverter.import_online_level_string(
+			"kA2,1;1,13,2,300,3,705;1,13,2,600,3,600,111,1;1,12,2,900,3,105;1,47,2,1200,3,105;",
+			"Portal band smoke", GMDConverter.ImportReport.new())
+	assert(not bool(band_level.start_freefly), "native smoke: a ship-start level must start clamped (GD clears Free Mode on reset)")
+	var band_entries: Array = _imported_entries(band_level)
+	var ship_band: Dictionary = band_entries[0].components.GroundMoverComponent
+	assert(not bool(ship_band.freefly) and bool(ship_band.use_gd_band), "native smoke: a ship portal must clamp to its band")
+	assert(is_equal_approx(float(ship_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(540.0))
+			and is_equal_approx(float(ship_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(840.0)),
+		"native smoke: ship band must be floor30(y - 150) .. +300")
+	assert(bool(band_entries[1].components.GroundMoverComponent.freefly), "native smoke: a Free Mode portal must not clamp")
+	assert(bool(band_entries[2].components.GroundMoverComponent.freefly), "native smoke: a cube portal must not clamp")
+	var ball_band: Dictionary = band_entries[3].components.GroundMoverComponent
+	assert(is_equal_approx(float(ball_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(90.0))
+			and is_equal_approx(float(ball_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(330.0)),
+		"native smoke: ball band must be 240 high with the 90 floor")
 	var twin: Dictionary = GMDConverter._level_bounds("kA2,0;1,1,2,600,3,105;1,8,2,15,3,4000;", true)
 	assert(is_equal_approx(float(twin.level_length), 940.0) and is_equal_approx(float(twin.max_gameplay_y), 4390.0),
 		"native smoke: level bounds twin differs from the C++ helper")

@@ -69,6 +69,8 @@ const START_SPEED: Array[float] = [
 ## Geometry Dash max gameplay Y in GD units (imported levels; 0 = none). See
 ## GMDConverter._level_bounds.
 @export var gd_max_gameplay_y: float = 0.0
+## Geometry Dash end portal X in GD units (imported classic levels; 0 = none).
+@export var gd_level_end_x: float = 0.0
 @export var start_speed_preset: int = EasedSpeedChangerComponent.SpeedPreset.x1
 @export var start_speed: float = START_SPEED[2]
 @export var start_reverse: bool
@@ -296,6 +298,11 @@ func prepare_external_data() -> void:
 
 	LevelManager.ground_up.show()
 	LevelManager.player.max_gameplay_y = GMDConverter.gd_to_godot_y(gd_max_gameplay_y) if gd_max_gameplay_y > 0.0 else -INF
+	if LevelManager.player_camera:
+		LevelManager.player_camera.gd_level_end = Vector2(
+			gd_level_end_x / GMDConverter.GD_CELL_SIZE * Constants.CELL_SIZE,
+			GMDConverter.gd_to_godot_y(GMDConverter.LEVEL_END_GD_Y),
+		) if gd_level_end_x > 0.0 else Vector2.INF
 	if LevelManager.player_camera and get_viewport().get_camera_2d() == LevelManager.player_camera:
 		LevelManager.player_camera.freefly = start_freefly
 	if not start_freefly:
@@ -697,6 +704,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"start_displayed_gamemode": start_displayed_gamemode if isnt_practice else player.displayed_gamemode,
 		"start_freefly": start_freefly if isnt_practice else LevelManager.player_camera.freefly,
 		"gd_max_gameplay_y": gd_max_gameplay_y,
+		"gd_level_end_x": gd_level_end_x,
 		"start_speed": start_speed if isnt_practice else player.speed_multiplier,
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": start_reverse if isnt_practice else player.horizontal_direction < 0,
@@ -773,6 +781,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	start_displayed_gamemode = data.start_displayed_gamemode
 	start_freefly = data.start_freefly
 	gd_max_gameplay_y = float(data.get("gd_max_gameplay_y", 0.0))
+	gd_level_end_x = float(data.get("gd_level_end_x", 0.0))
 	start_speed = data.start_speed
 	start_speed_preset = data.start_speed_preset
 	start_reverse = data.start_reverse

@@ -16,6 +16,9 @@ const GD_TOP_MARGIN_CELLS: float = 3.0
 const GD_BOTTOM_MARGIN_CELLS: float = 4.0
 const GD_FREE_EASE: float = 1.0 / 10.0
 const GD_LOCKED_EASE: float = 1.0 / 30.0
+## GD 1.0 updateCamera: within 50 units of the end clamp the camera moves to
+## the end portal's height.
+const GD_END_APPROACH_PX: float = 50.0 / 30.0 * Constants.CELL_SIZE
 
 @export var position_smoothing: float = 0.1
 @export var offset_smoothing: float = 0.125
@@ -39,6 +42,9 @@ var smoothed_gameplay_rotation: float
 ## GD's lastGroundPos.y == 105 test: the player last landed on the floor
 ## ground itself rather than on a block.
 var _last_ground_was_floor: bool = false
+## Geometry Dash end portal (imported classic levels), INF when none. Set by
+## Level at every attempt start.
+var gd_level_end: Vector2 = Vector2.INF
 
 
 func _ready() -> void:
@@ -100,6 +106,7 @@ func _process(delta: float) -> void:
 		position.y += added_distance.y
 
 	offset = get_offset_target(framerate_compensation).rotated(smoothed_gameplay_rotation if static_factor == Vector2.ZERO else static_offset_rotation)
+	_apply_gd_level_end(framerate_compensation)
 
 	# Clamp bottom edge of the screen to the ground
 	var half_screen_height = get_viewport_rect().size.y / 2
@@ -108,6 +115,22 @@ func _process(delta: float) -> void:
 	# Same thing for the top edge of the screen
 	if position.y - half_screen_height / zoom.y < LevelManager.ground_up.default_y - 160:
 		position.y = LevelManager.ground_up.default_y - 160 + half_screen_height / zoom.y
+
+
+## GD 1.0 PlayLayer::updateCamera (Wyliemaster/Geometry-Dash-1.0): the
+## camera's right edge never passes m_fEndOfLevel, so the player runs on into
+## the end portal; once the clamp is within 50 units the camera moves to the
+## portal's height (moveCameraToPos; eased at GD_FREE_EASE - hypothesis, the
+## action's duration is not decompiled).
+func _apply_gd_level_end(framerate_compensation: float) -> void:
+	if not gd_level_end.is_finite() or LevelManager.platformer:
+		return
+	var half_view_width: float = get_viewport_rect().size.x / 2.0 / zoom.x
+	var max_center_x: float = gd_level_end.x - half_view_width - offset.x
+	if position.x > max_center_x:
+		position.x = max_center_x
+	if max_center_x - position.x < GD_END_APPROACH_PX:
+		position.y += (gd_level_end.y - offset.y - position.y) * GD_FREE_EASE * framerate_compensation
 
 
 func reset() -> void:
