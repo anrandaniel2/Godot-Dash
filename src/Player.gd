@@ -31,7 +31,11 @@ enum PlayerScale {
 const GRAVITY: float = 10600
 const SPEED := Vector2(1250.0, 2395.0)
 # Softer than the blue gravity pad's 0.706 bounce. Enough to leave the floor.
-const GRAVITY_PORTAL_LAUNCH := 0.42
+## Twin of native/src/gravity_portal.h: GD halves vertical speed through a
+## gravity portal (PlayerObject::flipGravity) and a grounded player gets a
+## small nudge into the new fall.
+const GRAVITY_PORTAL_SPEED_KEEP := 0.5
+const GRAVITY_PORTAL_NUDGE := 180.0
 const SPEED_MINI := Vector2(1250.0, 1600.0)
 const SPEED_BIG := Vector2(1250.0, 3000.0)
 ## Testing fly mode ([member Config.fly_mode]): arrow-key speed in px/s, and
@@ -1143,9 +1147,8 @@ func queue_gravity_portal(target_flip: int) -> void:
 	up_direction = Vector2.UP.rotated(gameplay_rotation) * target_flip
 
 
-# Blue gravity pad: jump_boost -0.706 replaces vertical speed with a bounce
-# into the new fall. A portal is that same leave-the-floor, a bit softer, and
-# an airborne cube keeps its speed (reversed) instead of taking the pad bounce.
+# Unlike a gravity pad, a portal adds no bounce: GD keeps half the vertical
+# speed in the same direction and the flipped gravity curves the player round.
 func _apply_gravity_portal_launch(local_velocity: Vector2, jump_state: int) -> Vector2:
 	if gravity_portal_launch_sign == 0:
 		return local_velocity
@@ -1153,10 +1156,11 @@ func _apply_gravity_portal_launch(local_velocity: Vector2, jump_state: int) -> V
 	gravity_portal_launch_sign = 0
 	if jump_state > 0:
 		return local_velocity
-	if absf(local_velocity.y) < 80.0:
-		local_velocity.y = fall_sign * speed.y * GRAVITY_PORTAL_LAUNCH
+	var kept: float = local_velocity.y * GRAVITY_PORTAL_SPEED_KEEP
+	if absf(kept) < 80.0:
+		local_velocity.y = fall_sign * GRAVITY_PORTAL_NUDGE
 	else:
-		local_velocity.y = clampf(-local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
+		local_velocity.y = clampf(kept, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
 	return local_velocity
 
 

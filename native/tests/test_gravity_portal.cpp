@@ -36,7 +36,7 @@ int main() {
 	const GravityPortalResult yellow = compute_gravity_portal(1.0, 900.0, GRAVITY_PORTAL_UP);
 	expect_true("yellow portal flips", yellow.changed);
 	expect_close("yellow portal gravity", yellow.gravity_flip, -1.0);
-	expect_close("yellow portal reverses fall speed", yellow.local_velocity_y, -900.0);
+	expect_close("yellow portal halves fall speed, keeps direction", yellow.local_velocity_y, 450.0);
 
 	const GravityPortalResult grounded = compute_gravity_portal(1.0, 0.0, GRAVITY_PORTAL_UP);
 	expect_true("grounded yellow portal flips", grounded.changed);
@@ -45,10 +45,13 @@ int main() {
 	const GravityPortalResult toggled = compute_gravity_portal(-1.0, -500.0, GRAVITY_PORTAL_TOGGLE);
 	expect_true("green portal toggles back to down", toggled.changed);
 	expect_close("green portal gravity", toggled.gravity_flip, 1.0);
-	expect_close("green portal reverses speed", toggled.local_velocity_y, 500.0);
+	expect_close("green portal halves speed, keeps direction", toggled.local_velocity_y, -250.0);
 
-	const GravityPortalResult capped = compute_gravity_portal(1.0, -4000.0, GRAVITY_PORTAL_UP);
-	expect_close("reversed speed is terminal-clamped", capped.local_velocity_y, 3000.0);
+	const GravityPortalResult capped = compute_gravity_portal(1.0, -8000.0, GRAVITY_PORTAL_UP);
+	expect_close("kept speed is terminal-clamped", capped.local_velocity_y, -3000.0);
+
+	const GravityPortalResult slow = compute_gravity_portal(1.0, 100.0, GRAVITY_PORTAL_UP);
+	expect_close("slow speed gets the nudge into the new fall", slow.local_velocity_y, -180.0);
 
 	if (failures != 0) {
 		std::printf("%d failure(s)\n", failures);
