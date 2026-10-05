@@ -185,6 +185,10 @@ static func build_batches_packed(objects: Array, packed: Dictionary, art_scale_f
 	for object_data: Dictionary in objects:
 		add_object(batches, object_data, art_scale_factor)
 	add_packed(batches, packed, art_scale_factor)
+	# Runtime-only path (editor builds expand the table into objects), so the
+	# sprite items are not needed once the native renderer has them.
+	for batch: DecorationBatch in batches.values():
+		batch.release_items_after_native = true
 	return finish_batches(batches)
 
 

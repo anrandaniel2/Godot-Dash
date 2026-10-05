@@ -75,9 +75,10 @@ func _ready() -> void:
 
 
 func _packed_count(level_data: Dictionary) -> int:
-	var packed: Dictionary = level_data.get("packed_decorations", { })
-	var ids: PackedInt32Array = packed.get("gd_id", PackedInt32Array())
-	return ids.size()
+	var total := 0
+	for layer: Dictionary in level_data.get("layers", []):
+		total += PackedDecorations.size_of(layer.get(PackedDecorations.LAYER_KEY, { }))
+	return total
 
 
 func _mark(stage: String) -> void:

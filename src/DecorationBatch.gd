@@ -131,6 +131,13 @@ class Monster:
 
 ## Every item in this batch.
 var items: Array[Item] = []
+## When set, [member items] is emptied once the native renderer owns the
+## records. Only runtime builds opt in: editor and practice saving read items.
+var release_items_after_native: bool = false
+## Whether [member items] was emptied after the native renderer took over.
+var _items_released: bool = false
+## Lowest item z order, cached for [method sort_key] once items are released.
+var _sort_key: int = 0
 ## Animated monsters in this batch; empty for nearly every batch.
 var monsters: Array[Monster] = []
 
@@ -294,12 +301,25 @@ func build() -> void:
 		# Native channel indices supersede the Item-reference arrays. Retaining
 		# both duplicates one reference for every coloured sprite layer.
 		_by_channel.clear()
+		_release_items()
 	_built = true
 	_last_visible = PackedInt32Array()
 	# Native canvases poll their camera in C++; keep this GDScript callback only
 	# when individual spinning records need transform updates.
 	set_process(not _spinning.is_empty() if _native_canvas != null else _cull or not _spinning.is_empty())
 	_request_redraw()
+
+
+## Drops every [DecorationBatch.Item] once the native renderer holds the same
+## data in packed records. A huge level carries hundreds of thousands of them,
+## each a RefCounted object with its own arrays.
+func _release_items() -> void:
+	if not release_items_after_native or not monsters.is_empty() or items.is_empty():
+		return
+	_sort_key = items[0].z_order
+	items = []
+	_spinning.clear()
+	_items_released = true
 
 
 ## Packs the sorted item records once and hands them to the retained C++
@@ -604,6 +624,8 @@ func get_bounds() -> Rect2:
 ## Used to rank batches that share a Geometry Dash layer, so a batch is never
 ## placed in front of one whose contents all sit behind it.
 func sort_key() -> int:
+	if _items_released:
+		return _sort_key
 	if items.is_empty():
 		return 0
 	# build() has already sorted items by z order, so the first is the lowest.
