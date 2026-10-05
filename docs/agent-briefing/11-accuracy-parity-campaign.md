@@ -315,6 +315,20 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
    899 with no key 23 falls back to channel 1. Do not extend that table from memory: `901` is
    the *Move* trigger (native `case 901: MOVE`), and every ID in it must be verified against the
    2.11 `EffectGameObject::customSetup` before it is treated as a colour family.
+7. ~~**Death left start-block colours on the mid-attempt table.**~~ **Fixed — native snapshot
+   plus in-place `use_data`.** Colour triggers write `ColorChannelData` in place.
+   `NativeTriggerRuntime::reset` used to un-activate triggers and clear fades without putting
+   those resources back, and `Level._use_data_fields` replaced `color_channels` with new
+   objects while watchers and native `ObjectID`s kept the mutated ones. `register_channel`
+   now snapshots the mutable fields, `bind_context` snapshots the bound level's
+   background/ground/line, and `reset()` restores both then `emit_changed`. Restart's
+   `use_data` writes the cached/practice dictionaries onto the live resources by
+   `associated_group` (`ColorChannelData.apply_data`). The GDScript component path has no
+   separate snapshot: restart always re-applies that cache, which is the fallback restore.
+   **Citation missing:** GD's own restart path lives in `GJEffectManager`, which is in no
+   public decompilation; this matches the player-visible "attempt N starts from the imported
+   table" behaviour. Regression: `tools/runtime_visual_smoke_test.gd` native effect-engine
+   `reset()` asserts channel colour/alpha/blending.
 
 ### Known gaps (verified)
 

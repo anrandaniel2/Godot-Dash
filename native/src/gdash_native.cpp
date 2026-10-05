@@ -915,6 +915,34 @@ class NativeTriggerRuntime : public RefCounted {
 	HashMap<String, std::vector<ObjectID>> member_index;
 	// Colour channel table: "c_N" -> ColorChannelData resource.
 	HashMap<String, ObjectID> channel_index;
+	// Start-of-level colour table. Colour triggers mutate ColorChannelData
+	// in place, and a restart must write every channel (and the bound
+	// level's background/ground/line) back to the values captured when the
+	// runtime first saw them. Geometry Dash's own restart path lives in
+	// GJEffectManager, which is in no public decompilation — citation
+	// missing; the player-visible behaviour is "attempt N starts from the
+	// imported table".
+	struct ChannelSnapshot {
+		Color color = Color(1.0f, 1.0f, 1.0f);
+		double alpha = 1.0;
+		double intensity = 1.0;
+		bool blending = false;
+		bool copy = false;
+		int32_t copied_channel = 0;
+		int32_t copied_channel_id = 0;
+		double copy_hue = 0.0;
+		double copy_saturation = 1.0;
+		double copy_value = 1.0;
+		bool copy_saturation_additive = false;
+		bool copy_value_additive = false;
+		bool copy_opacity = false;
+		Array hsv_shift;
+	};
+	HashMap<ObjectID, ChannelSnapshot> channel_start;
+	bool have_level_start_colors = false;
+	Color start_background_color = Color(1.0f, 1.0f, 1.0f);
+	Color start_ground_color = Color(1.0f, 1.0f, 1.0f);
+	Color start_line_color = Color(1.0f, 1.0f, 1.0f);
 	// Level/camera/Config objects for colour resolution and camera effects.
 	ObjectID level_id;
 	ObjectID camera_id;
@@ -2322,7 +2350,9 @@ public:
 		ui_triggers_applied = false;
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
-		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
+		fades.clear(); member_index.clear(); channel_index.clear(); channel_start.clear();
+		have_level_start_colors = false;
+		touch_order.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
@@ -2378,6 +2408,12 @@ public:
 				}
 				n = n->get_parent();
 			}
+		}
+		if (level) {
+			start_background_color = static_cast<Color>(level->get("background_color"));
+			start_ground_color = static_cast<Color>(level->get("ground_color"));
+			start_line_color = static_cast<Color>(level->get("line_color"));
+			have_level_start_colors = true;
 		}
 	}
 	void bind_shader_layer(Object *shader_layer) {
@@ -2590,8 +2626,66 @@ public:
 	}
 
 	bool is_ui_applied() const { return ui_triggers_applied; }
+
+	static ChannelSnapshot capture_channel_snapshot(Object *data) {
+		ChannelSnapshot snap;
+		snap.color = static_cast<Color>(data->get("color"));
+		snap.alpha = static_cast<double>(data->get("alpha"));
+		snap.intensity = static_cast<double>(data->get("intensity"));
+		snap.blending = static_cast<bool>(data->get("blending"));
+		snap.copy = static_cast<bool>(data->get("copy"));
+		snap.copied_channel = static_cast<int32_t>(data->get("copied_channel"));
+		snap.copied_channel_id = static_cast<int32_t>(data->get("copied_channel_id"));
+		snap.copy_hue = static_cast<double>(data->get("copy_hue"));
+		snap.copy_saturation = static_cast<double>(data->get("copy_saturation"));
+		snap.copy_value = static_cast<double>(data->get("copy_value"));
+		snap.copy_saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
+		snap.copy_value_additive = static_cast<bool>(data->get("copy_value_additive"));
+		snap.copy_opacity = static_cast<bool>(data->get("copy_opacity"));
+		const Variant hsv = data->get("hsv_shift");
+		if (hsv.get_type() == Variant::ARRAY) {
+			snap.hsv_shift = Array(hsv).duplicate();
+		}
+		return snap;
+	}
+
+	void restore_channel_snapshots() {
+		for (const KeyValue<ObjectID, ChannelSnapshot> &entry : channel_start) {
+			Object *data = ObjectDB::get_instance(entry.key);
+			if (!data) continue;
+			const ChannelSnapshot &snap = entry.value;
+			data->set("color", snap.color);
+			data->set("alpha", snap.alpha);
+			data->set("intensity", snap.intensity);
+			data->set("blending", snap.blending);
+			data->set("copy", snap.copy);
+			data->set("copied_channel", static_cast<int64_t>(snap.copied_channel));
+			data->set("copied_channel_id", static_cast<int64_t>(snap.copied_channel_id));
+			data->set("copy_hue", snap.copy_hue);
+			data->set("copy_saturation", snap.copy_saturation);
+			data->set("copy_value", snap.copy_value);
+			data->set("copy_saturation_additive", snap.copy_saturation_additive);
+			data->set("copy_value_additive", snap.copy_value_additive);
+			data->set("copy_opacity", snap.copy_opacity);
+			data->set("hsv_shift", snap.hsv_shift.duplicate());
+			data->emit_signal(StringName("changed"));
+		}
+	}
+
+	void restore_level_start_colors() {
+		if (!have_level_start_colors) return;
+		Object *level = ObjectDB::get_instance(level_id);
+		if (!level) return;
+		level->set("background_color", start_background_color);
+		level->set("ground_color", start_ground_color);
+		level->set("line_color", start_line_color);
+	}
+
 	void register_channel(const String &name, Object *data) {
-		if (data && !name.is_empty()) channel_index[name] = data->get_instance_id();
+		if (!data || name.is_empty()) return;
+		const ObjectID id = data->get_instance_id();
+		channel_index[name] = id;
+		channel_start[id] = capture_channel_snapshot(data);
 	}
 	void set_group_members(const String &group, const Array &members) {
 		std::vector<ObjectID> ids;
@@ -2993,6 +3087,11 @@ public:
 		frame_players.clear();
 		previous_positions.clear();
 		reset_shaders();
+		// Colour triggers have been mutating ColorChannelData and the bound
+		// level colours in place. Put them back now that running fades can
+		// no longer re-apply the mid-attempt table.
+		restore_channel_snapshots();
+		restore_level_start_colors();
 	}
 	Dictionary snapshot() const {
 		Dictionary state; PackedByteArray active;

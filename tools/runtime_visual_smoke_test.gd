@@ -972,6 +972,12 @@ func _test_native_core() -> void:
 	# Reset clears activation state and running fades.
 	effect_runtime.call(&"reset")
 	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
+	# Colour triggers mutate ColorChannelData in place. A restart must put
+	# every channel back to the values captured at register_channel, otherwise
+	# the next attempt's start blocks keep the mid-attempt colours.
+	assert(effect_channel.color.is_equal_approx(Color.WHITE), "native smoke: reset did not restore channel colour")
+	assert(is_equal_approx(float(effect_channel.alpha), 1.0), "native smoke: reset did not restore channel opacity")
+	assert(not effect_channel.blending, "native smoke: reset did not restore channel blending")
 	assert(not gray_rect.visible, "native smoke: grayscale not hidden on reset")
 	assert(is_zero_approx(float(gray_mat.get_shader_parameter(&"grayscale_factor"))), "native smoke: grayscale not reset")
 	assert(not sepia_rect.visible, "native smoke: sepia not hidden on reset")

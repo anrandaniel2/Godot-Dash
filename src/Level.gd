@@ -782,7 +782,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	fade_power = data.fade_power
 	move_power = data.move_power
 	scale_power = data.scale_power
-	color_channels.assign(data.color_channels.map(ColorChannelData.from_data))
+	_restore_color_channels(data.color_channels)
 	duration = data.duration
 	native_trigger_records.assign(data.get("native_trigger_records", []))
 	active_layer_idx = data.active_layer_idx
@@ -801,6 +801,39 @@ func _use_data_fields(data: Dictionary) -> void:
 		_apply_practice_data(data.practice_data)
 	else:
 		_elapsed_time = 0.0
+
+
+## Restores the colour-channel table from a [method ColorChannelData.to_data]
+## array. First load constructs new resources; a restart writes the fields
+## back onto the live ones so ColorChannelWatcher and NativeTriggerRuntime
+## keep the same objects. Replacing the array used to leave those holders on
+## the mid-attempt resources while the new copies sat unused.
+func _restore_color_channels(serialized: Array) -> void:
+	if color_channels.is_empty():
+		var constructed: Array[ColorChannelData] = []
+		for item: Variant in serialized:
+			if item is Dictionary:
+				var channel_dict: Dictionary = item
+				constructed.append(ColorChannelData.from_data(channel_dict))
+		color_channels.assign(constructed)
+		return
+	var by_group: Dictionary[String, ColorChannelData] = {}
+	for channel: ColorChannelData in color_channels:
+		if not channel.associated_group.is_empty():
+			by_group[channel.associated_group] = channel
+	var restored: Array[ColorChannelData] = []
+	for item: Variant in serialized:
+		if item is not Dictionary:
+			continue
+		var channel_data: Dictionary = item
+		var group: String = String(channel_data.get("associated_group", ""))
+		if by_group.has(group):
+			var existing: ColorChannelData = by_group[group]
+			existing.apply_data(channel_data)
+			restored.append(existing)
+		else:
+			restored.append(ColorChannelData.from_data(channel_data))
+	color_channels.assign(restored)
 
 
 ## Applies one object pass of a level-data dictionary onto the existing object
