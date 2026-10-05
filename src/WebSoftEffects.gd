@@ -1,35 +1,31 @@
 extends Node
 
-## Web substitute for the screen-copy blur and Compatibility glow.
+## Web substitute for the screen-copy frost. Compatibility glow stays off.
 ##
-## Menu frost is a low-resolution copy of the backdrop sprites, blurred in a
-## small viewport. Panels sample that texture once. They never ask for
+## Menu frost is a half-resolution copy of the backdrop sprites, blurred with a
+## separable Gaussian. Panels sample that texture once. They never ask for
 ## hint_screen_texture, so the menu does not copy the browser framebuffer.
 ##
-## Level glow is a low-resolution render of the same 2D world, masked down to
-## bright pixels and added on top. It does not sample the root framebuffer.
-## Sampling that texture from a child viewport is a torn previous frame, and
-## adding it back on top is the trail. Compatibility's multi-pass glow stays
-## off. While the game is paused, the low-resolution view is left frozen so
-## the pause panel blurs the level instead of blurring itself.
+## A previous in-level "soft glow" re-rendered the whole 2D world into a second
+## SubViewport every play frame. Sharing world_2d means a second full canvas
+## pass; on WebGPU that is what dropped a 14k-object level to ~20 fps. Glow is
+## not drawn while playing. Pause still takes one frozen world snapshot so the
+## pause panel can frost the level instead of itself.
 
 const _BLUR_SHADER := preload("res://resources/shaders/WebBlurSource.gdshader")
-const _EXTRACT_SHADER := preload("res://resources/shaders/WebGlowExtract.gdshader")
-const _OVERLAY_SHADER := preload("res://resources/shaders/WebGlowOverlay.gdshader")
 
-const _GLOW_LAYER := 48
 const _MAX_ACTOR_SPRITES := 12
 
 var _plate: SubViewport
 var _plate_fill: ColorRect
 var _plate_root: Node2D
 var _world: SubViewport
+var _blur_h: SubViewport
+var _blur_h_rect: TextureRect
 var _blur: SubViewport
 var _blur_rect: TextureRect
-var _extract: SubViewport
-var _extract_rect: TextureRect
-var _glow_layer: CanvasLayer
-var _glow_rect: TextureRect
+var _blur_h_mat: ShaderMaterial
+var _blur_v_mat: ShaderMaterial
 
 var _copies: Array[Dictionary] = []
 var _scene: Node
@@ -42,8 +38,8 @@ var _have_world_frame := false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	# After interpolation, immediately before viewports draw, so the glow view
-	# frames the same camera position as the frame it is added onto.
+	# After interpolation, immediately before viewports draw, so a pause
+	# snapshot frames the same camera position as the frozen frame.
 	RenderingServer.frame_pre_draw.connect(_before_draw)
 	_plate = _make_viewport()
 	_plate_fill = ColorRect.new()
@@ -59,53 +55,28 @@ func _ready() -> void:
 	_plate_root.name = "Backdrop"
 	_plate.add_child(_plate_root)
 
-	# Renders the live 2D world itself. No child samples the root texture.
+	# One-shot copy of the live 2D world, used only for the pause frost.
 	_world = _make_viewport()
 	_world.name = "WorldView"
 	_world.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	_world.world_2d = get_viewport().world_2d
-	# Match the root's HDR canvas so the extract sees the same brights the
-	# player sees. A LDR copy of an HDR 2D view crushed the bloom into a
-	# smear on WebGPU.
-	_world.use_hdr_2d = get_viewport().use_hdr_2d
+
+	_blur_h_mat = ShaderMaterial.new()
+	_blur_h_mat.shader = _BLUR_SHADER
+	_blur_h_mat.set_shader_parameter("blur_dir", Vector2(1.0, 0.0))
+	_blur_v_mat = ShaderMaterial.new()
+	_blur_v_mat.shader = _BLUR_SHADER
+	_blur_v_mat.set_shader_parameter("blur_dir", Vector2(0.0, 1.0))
+
+	_blur_h = _make_viewport()
+	_blur_h_rect = _make_stretch_rect()
+	_blur_h_rect.material = _blur_h_mat
+	_blur_h.add_child(_blur_h_rect)
 
 	_blur = _make_viewport()
 	_blur_rect = _make_stretch_rect()
-	var blur_mat := ShaderMaterial.new()
-	blur_mat.shader = _BLUR_SHADER
-	_blur_rect.material = blur_mat
+	_blur_rect.material = _blur_v_mat
+	_blur_rect.texture = _blur_h.get_texture()
 	_blur.add_child(_blur_rect)
-
-	_extract = _make_viewport()
-	_extract_rect = _make_stretch_rect()
-	var extract_mat := ShaderMaterial.new()
-	extract_mat.shader = _EXTRACT_SHADER
-	_extract_rect.material = extract_mat
-	_extract.add_child(_extract_rect)
-	_extract.render_target_update_mode = SubViewport.UPDATE_DISABLED
-
-	_glow_layer = CanvasLayer.new()
-	_glow_layer.name = "WebGlowLayer"
-	_glow_layer.layer = _GLOW_LAYER
-	_glow_rect = TextureRect.new()
-	_glow_rect.name = "WebGlowRect"
-	_glow_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_glow_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_glow_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_glow_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	_glow_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	# Layer 2 is excluded from the world view, so this rect cannot be drawn
-	# back into the texture it displays.
-	_glow_rect.visibility_layer = 2
-	var glow_mat := ShaderMaterial.new()
-	glow_mat.shader = _OVERLAY_SHADER
-	_glow_rect.material = glow_mat
-	_glow_rect.texture = _extract.get_texture()
-	_glow_rect.visible = false
-	_glow_layer.add_child(_glow_rect)
-	add_child(_glow_layer)
-	_glow_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_world.canvas_cull_mask = 1
 
 	var panel_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
 	if panel_mat:
@@ -119,40 +90,32 @@ func _process(_delta: float) -> void:
 	_resize(false)
 	if in_level:
 		_set_update(_plate, false)
-		# Glow re-renders the 2D world at low res (cannot sample the root
-		# framebuffer without trailing). Frost is only on pause/title panels,
-		# so do not also blur that copy every play frame — that was a third
-		# full-scene pass on top of the WebGPU present.
-		var glow := Config.bloom and not paused
+		# Playing: do not touch a second world viewport. Pause: one frozen
+		# snapshot, then only the cheap blur passes.
 		var frost := Config.menu_blur and paused
-		if glow:
-			_capture_world = true
-			_set_update(_world, true)
-			_have_world_frame = true
-		elif frost and not _have_world_frame:
-			_capture_world = true
-			_world.render_target_update_mode = SubViewport.UPDATE_ONCE
-			_have_world_frame = true
+		if frost:
+			if not _have_world_frame:
+				_capture_world = true
+				_world.render_target_update_mode = SubViewport.UPDATE_ONCE
+				_have_world_frame = true
+			else:
+				_capture_world = false
+				_set_update(_world, false)
+			_use_source(_world.get_texture(), true)
 		else:
 			_capture_world = false
+			_have_world_frame = false
 			_set_update(_world, false)
-		_use_source(_world.get_texture(), true)
-		_set_update(_extract, glow)
-		if glow and _extract_rect.texture != _world.get_texture():
-			_extract_rect.texture = _world.get_texture()
-		_glow_rect.visible = glow
-		_set_update(_blur, frost)
+		_set_frost(frost)
 	else:
 		_capture_world = false
 		_have_world_frame = false
 		_set_update(_world, false)
-		_set_update(_extract, false)
-		_glow_rect.visible = false
 		_set_update(_plate, Config.menu_blur)
 		if Config.menu_blur:
 			_sync_plate()
 			_use_source(_plate.get_texture(), false)
-		_set_update(_blur, Config.menu_blur)
+		_set_frost(Config.menu_blur)
 
 
 func _in_level() -> bool:
@@ -168,19 +131,23 @@ func _resize(force: bool) -> void:
 		return
 	_window_size = window
 	_strength = Config.blur_strength
-	var divisor := clampi(int(round(pow(2.0, clampf(Config.blur_strength, 1.0, 4.0)))), 2, 16)
+	# Half-res frost. The old 1/8 cap (max 480×270) stretched into a smear
+	# once the Gaussian ran on a handful of pixels.
 	var size := Vector2i(
-		clampi(int(window.x) / divisor, 96, 480),
-		clampi(int(window.y) / divisor, 54, 270)
+		clampi(int(window.x) / 2, 320, 960),
+		clampi(int(window.y) / 2, 180, 540)
 	)
-	for viewport in [_plate, _world, _blur, _extract]:
+	for viewport in [_plate, _world, _blur_h, _blur]:
 		viewport.size = size
 	_plate_fill.size = Vector2(size)
 	_plate_fill.position = Vector2.ZERO
-	for rect in [_blur_rect, _extract_rect]:
+	for rect in [_blur_h_rect, _blur_rect]:
 		rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		rect.size = Vector2(size)
-	_extract_rect.texture = null
+	if _blur_h_mat:
+		_blur_h_mat.set_shader_parameter("blur_px", Config.blur_strength)
+	if _blur_v_mat:
+		_blur_v_mat.set_shader_parameter("blur_px", Config.blur_strength)
 
 
 func _sync_plate() -> void:
@@ -318,9 +285,9 @@ func _material_is_safe(mat: Material) -> bool:
 func _use_source(texture: Texture2D, is_frame: bool) -> void:
 	if texture == null:
 		return
-	if _source_is_frame == is_frame and _blur_rect.texture == texture:
+	if _source_is_frame == is_frame and _blur_h_rect.texture == texture:
 		return
-	_blur_rect.texture = texture
+	_blur_h_rect.texture = texture
 	_source_is_frame = is_frame
 
 
@@ -353,3 +320,8 @@ func _set_update(viewport: SubViewport, enabled: bool) -> void:
 	var mode := SubViewport.UPDATE_ALWAYS if enabled else SubViewport.UPDATE_DISABLED
 	if viewport.render_target_update_mode != mode:
 		viewport.render_target_update_mode = mode
+
+
+func _set_frost(enabled: bool) -> void:
+	_set_update(_blur_h, enabled)
+	_set_update(_blur, enabled)

@@ -94,15 +94,17 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
 6. **Browser support**: WebGPU browser (Chrome 113+, Edge, Firefox with WebGPU, Safari 18+),
    HTTPS (or localhost). It draws at browser resolution.
 7. **Web-specific runtime behaviour**:
-   - `WorldEnvironment` disables `Environment.glow` on web; `WebSoftEffects` implements a soft
-     bloom with `WebBlurSource`/`WebGlowExtract`/`WebGlowOverlay` shaders and
-     `SimpleBlurMaterial`/`BackgroundBlurWeb`. Frost runs on title/pause only; in-level it does
-     not re-blur every play frame. `BackgroundBlurWeb` Y-flips `SCREEN_UV` because ViewportTexture
-     is inverted on RenderingDevice/WebGPU.
-   - Frame pacing: `Config.apply_frame_pacing()`. Web `Engine.max_fps` sleeps on a ~16 ms timer
-     tick, so a 144 Hz cap became ~60 Hz; values ≥ 90 uncap and let `requestAnimationFrame`
-     match the panel. `DisplayServer.screen_get_refresh_rate()` is -1 on web; `display_refresh_hz()`
-     also reads `screen.refreshRate` when the browser exposes it.
+   - `WorldEnvironment` disables `Environment.glow` on web. Do **not** re-render the 2D world
+     into a second SubViewport for bloom: sharing `world_2d` is a second full canvas pass and
+     dropped OuterSpace to ~20 fps on WebGPU. `WebSoftEffects` is frost-only (title + pause).
+     Frost is a half-res copy plus a separable 9-tap Gaussian (`WebBlurSource` two viewports);
+     panels sample it via `BackgroundBlurWeb` (Y-flips `SCREEN_UV` because ViewportTexture is
+     inverted on RenderingDevice/WebGPU).
+   - Frame pacing: `Config.apply_frame_pacing()` **always** sets `Engine.max_fps = 0` on web.
+     Threaded hogdot (`PROXY_TO_PTHREAD`) calls `OS::add_frame_delay`; any cap sleeps on a
+     ~16 ms timer and cannot follow a 144 Hz rAF. `_init` stored 60 because
+     `DisplayServer.screen_get_refresh_rate()` is -1; `_adopt_web_panel_hz()` upgrades a leftover
+     60 when `screen.refreshRate` reports the panel. rAF is the vsync.
    - `html/head_include` wraps `navigator.gpu.requestAdapter` with `powerPreference:
      'high-performance'`. **Chrome on Windows ignores that hint** and always uses GPU 0
      (usually the iGPU) — crbug 369219127. An AMD CPU + Intel dGPU therefore logs

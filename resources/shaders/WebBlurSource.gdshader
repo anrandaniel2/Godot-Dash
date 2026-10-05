@@ -1,21 +1,20 @@
 shader_type canvas_item;
 
-// Softens a texture that is already a small copy of the view. A handful of
-// taps here is cheap because the viewport is a few hundred pixels across, not
-// the browser window. Do not add hint_screen_texture.
+// One axis of a separable Gaussian. The source is already a half-resolution
+// copy, so nine taps here is cheap. Do not add hint_screen_texture.
+uniform vec2 blur_dir = vec2(1.0, 0.0);
+uniform float blur_px = 2.5;
 
 void fragment() {
-	// 3x3 Gaussian on the already-small copy. Five axis taps left a
-	// cross-shaped smear once WebGPU stretched the result to the window.
-	vec2 px = TEXTURE_PIXEL_SIZE * 1.25;
-	vec4 c = texture(TEXTURE, UV) * 0.25;
-	c += texture(TEXTURE, UV + vec2(px.x, 0.0)) * 0.12;
-	c += texture(TEXTURE, UV - vec2(px.x, 0.0)) * 0.12;
-	c += texture(TEXTURE, UV + vec2(0.0, px.y)) * 0.12;
-	c += texture(TEXTURE, UV - vec2(0.0, px.y)) * 0.12;
-	c += texture(TEXTURE, UV + px) * 0.07;
-	c += texture(TEXTURE, UV - px) * 0.07;
-	c += texture(TEXTURE, UV + vec2(px.x, -px.y)) * 0.07;
-	c += texture(TEXTURE, UV + vec2(-px.x, px.y)) * 0.07;
+	vec2 step_uv = TEXTURE_PIXEL_SIZE * blur_dir * blur_px;
+	vec4 c = texture(TEXTURE, UV) * 0.227027;
+	c += texture(TEXTURE, UV + step_uv) * 0.1945946;
+	c += texture(TEXTURE, UV - step_uv) * 0.1945946;
+	c += texture(TEXTURE, UV + step_uv * 2.0) * 0.1216216;
+	c += texture(TEXTURE, UV - step_uv * 2.0) * 0.1216216;
+	c += texture(TEXTURE, UV + step_uv * 3.0) * 0.054054;
+	c += texture(TEXTURE, UV - step_uv * 3.0) * 0.054054;
+	c += texture(TEXTURE, UV + step_uv * 4.0) * 0.016216;
+	c += texture(TEXTURE, UV - step_uv * 4.0) * 0.016216;
 	COLOR = c;
 }

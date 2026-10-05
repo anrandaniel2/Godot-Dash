@@ -75,8 +75,9 @@ Notable behaviours:
 
 - A **`defaults_version` migration** exists under `Performance` (version 1 rewrites `max_fps`,
   `anti_aliasing`, `culling_buffer_cells` on upgrade).
-- A **one-time web bloom migration** (`Graphics/web_soft_glow`) re-enables bloom because the old
-  web build disabled Compatibility glow.
+- A **one-time web bloom migration** (`Graphics/web_soft_glow`) re-enabled the Graphics bloom
+  toggle after Compatibility glow was turned off. In-level web bloom stays off: a second
+  world SubViewport is a full extra canvas pass on WebGPU. `WebSoftEffects` is frost-only.
 - Enums live in `Config`: `WindowMode`, `TextureFilteringMode`, `TouchScreenMode`,
   `ParticleVisibility`/`ParticlePreprocessing` (bitflags), `RenderMode.Mode`.
 - New settings must follow `CONTRIBUTING.md`: same order in menu and `Config`, add load in

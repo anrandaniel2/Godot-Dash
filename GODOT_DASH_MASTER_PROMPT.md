@@ -408,8 +408,8 @@ toggle, spawn, teleport, fire dash…), `private_components/*` (sprites/visuals)
 - `Config.ldm` drops `LDMAttribute` objects at runtime; `GDObject` also drops high-detail
   (key 103) sprites when LDM. Particles are gated by bitflags
   (`ParticleVisibility`/`ParticlePreprocessing`) and by `show_particles_in_editor`.
-- Web: `WorldEnvironment` disables `Environment.glow` on web; `WebSoftEffects` implements the
-  bloom substitute with the `Web*.gdshader` passes; blur strength lives in `[shader_globals]`.
+- Web: `WorldEnvironment` disables `Environment.glow` on web; `WebSoftEffects` is frost-only
+  (title/pause). Do not re-render the 2D world for bloom. Blur strength lives in `[shader_globals]`.
 - Shaders in `resources/shaders/`: ground, player trail, sawblade, checkpoint, icon, lens
   circle, grayscale/sepia, background blur + web variants.
 - Modal UI smoothing: vendored SmoothScroll, StyleboxFancy, ReorderableContainer, at-icons.

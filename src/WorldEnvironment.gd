@@ -1,6 +1,8 @@
 extends WorldEnvironment
 
 func _ready() -> void:
-	# Web uses WebSoftEffects for bloom. Compatibility glow is several
-	# fullscreen passes and is what made the HTML build hitch.
+	# Compatibility glow is several fullscreen passes and hitches the HTML
+	# build. A second world SubViewport for "soft bloom" was worse (a full
+	# extra canvas pass on WebGPU). WebSoftEffects is frost-only; bloom is
+	# desktop/Android.
 	environment.glow_enabled = Config.bloom and not OS.has_feature("web")

@@ -324,20 +324,21 @@ func _init():
 func _apply_bloom_to_world(value: bool) -> void:
 	var world := get_tree().root.find_child("WorldEnvironment", true, false) as WorldEnvironment
 	if world != null and world.environment != null:
-		# On web the toggle drives WebSoftEffects. Compatibility glow stays off
-		# so the Graphics setting cannot turn the multi-pass hitch back on.
+		# Compatibility glow stays off on web so the Graphics setting cannot
+		# turn the multi-pass hitch back on. WebSoftEffects is frost-only.
 		world.environment.glow_enabled = value and not OS.has_feature("web")
 
 
 func _ready() -> void:
+	if OS.has_feature("web"):
+		_adopt_web_panel_hz()
+		var effects := preload("res://src/WebSoftEffects.gd").new()
+		effects.name = "WebSoftEffects"
+		add_child(effects)
 	apply_frame_pacing()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
 			get_tree().root.set_size(saved_window_size)
-	if OS.has_feature("web"):
-		var effects := preload("res://src/WebSoftEffects.gd").new()
-		effects.name = "WebSoftEffects"
-		add_child(effects)
 
 
 ## Monitor refresh in Hz. Web's DisplayServer always reports -1, so we also
@@ -355,17 +356,23 @@ func display_refresh_hz() -> int:
 	return rate
 
 
-## Apply Max FPS / V-Sync. On web, `Engine.max_fps` sleeps with a ~16 ms timer
-## tick after every frame, so a 144 Hz cap becomes ~60 Hz and beats against a
-## 144 Hz panel. requestAnimationFrame already vsyncs to the display; uncap
-## when the user asked for the panel rate.
+## First-launch and the defaults_version migration stored 60 on web because
+## DisplayServer.screen_get_refresh_rate() is -1 during [method _init]. A leftover
+## 60 became Engine.max_fps on hogdot's proxy pthread (16 ms sleep → hard 60).
+func _adopt_web_panel_hz() -> void:
+	var hz: int = display_refresh_hz()
+	if max_fps == 60 and hz > 60:
+		max_fps = hz
+
+
+## Apply Max FPS / V-Sync. Threaded hogdot runs OS::add_frame_delay on the
+## proxy pthread; any Engine.max_fps > 0 sleeps with a ~16 ms timer and cannot
+## follow a 90/120/144 Hz requestAnimationFrame. rAF is the vsync — always
+## uncap on web.
 func apply_frame_pacing() -> void:
 	DisplayServer.window_set_vsync_mode(vsync)
 	if OS.has_feature("web"):
-		if max_fps == 0 or max_fps >= 90:
-			Engine.max_fps = 0
-		else:
-			Engine.max_fps = int(max_fps)
+		Engine.max_fps = 0
 	else:
 		Engine.max_fps = int(max_fps)
 
