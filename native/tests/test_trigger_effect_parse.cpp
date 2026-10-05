@@ -178,6 +178,49 @@ int main() {
 	expect_close("zoom 371=2 doubles", gd_camera_zoom_factor(2.0), 2.0);
 	expect_close("zoom 371<=0 clamps", gd_camera_zoom_factor(0.0), 0.01);
 
+	// Teleports (GJBaseGameLayer::teleportPlayer, CBFExtrapolate transcription).
+	{
+		const Vector2 player(100.0f, 50.0f);
+		const Vector2 portal(110.0f, 60.0f);
+		const Vector2 exit(500.0f, -200.0f);
+		// 747: the exit keeps the player's X.
+		Vector2 d = gd_teleport_destination(player, portal, exit, true, false, false, false);
+		expect_close("tp 747 x", d.x, 100.0);
+		expect_close("tp 747 y", d.y, -200.0);
+		// 747 + Save Offset: GD subtracts (portal - player) after pinning X.
+		d = gd_teleport_destination(player, portal, exit, true, true, false, false);
+		expect_close("tp 747 save x", d.x, 90.0);
+		expect_close("tp 747 save y", d.y, -210.0);
+		// Unlinked/trigger: full target position, ignore flags override axes.
+		d = gd_teleport_destination(player, portal, exit, false, false, false, false);
+		expect_close("tp full x", d.x, 500.0);
+		d = gd_teleport_destination(player, portal, exit, false, false, true, false);
+		expect_close("tp ignoreX x", d.x, 100.0);
+		expect_close("tp ignoreX y", d.y, -200.0);
+		d = gd_teleport_destination(player, portal, exit, false, false, false, true);
+		expect_close("tp ignoreY y", d.y, 50.0);
+		expect_true("tp gravity none", gd_teleport_gravity_portal_mode(0) == -1);
+		expect_true("tp gravity normal", gd_teleport_gravity_portal_mode(1) == GRAVITY_PORTAL_DOWN);
+		expect_true("tp gravity flipped", gd_teleport_gravity_portal_mode(2) == GRAVITY_PORTAL_UP);
+		expect_true("tp gravity toggle", gd_teleport_gravity_portal_mode(3) == GRAVITY_PORTAL_TOGGLE);
+		expect_close("tp angle portal", gd_teleport_force_angle(true, 747, 0.0, 0.0, false), 180.0);
+		expect_close("tp angle trigger", gd_teleport_force_angle(true, 3022, 30.0, 0.0, false), 60.0);
+		expect_close("tp angle none", gd_teleport_force_angle(false, 3022, 0.0, 45.0, true), 135.0);
+		// Static force 0, not additive: stops vertical motion.
+		Vector2 v = gd_teleport_static_velocity(90.0, 0.0, false, Vector2(3.0f, 5.0f), false);
+		expect_close("tp static stop y", v.y, 0.0);
+		expect_close("tp static stop keeps x", v.x, 3.0);
+		v = gd_teleport_static_velocity(90.0, 10.0, false, Vector2(3.0f, 5.0f), false);
+		expect_close("tp static up", v.y, 10.0);
+		v = gd_teleport_static_velocity(90.0, 10.0, true, Vector2(3.0f, 5.0f), false);
+		expect_close("tp static additive", v.y, 15.0);
+		// Redirect keeps speed (|v| = 5) and Max clamps it.
+		v = gd_teleport_redirect_velocity(90.0, 1.0, 0.0, 0.0, Vector2(3.0f, 4.0f), true);
+		expect_close("tp redirect speed", v.length(), 5.0);
+		v = gd_teleport_redirect_velocity(90.0, 2.0, 0.0, 6.0, Vector2(3.0f, 4.0f), true);
+		expect_close("tp redirect max", v.length(), 6.0);
+	}
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

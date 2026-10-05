@@ -233,6 +233,95 @@ static double gd_camera_zoom_factor(double key_371) {
 	return Math::max(0.01, key_371);
 }
 
+// Geometry Dash 2.2 teleports (GJBaseGameLayer::teleportPlayer, shared by the
+// 747 portal pair, the unlinked 2902 portal, the 3027 orb and the 3022
+// trigger). Transcribed from the reimplementation in square3ang/CBFExtrapolate
+// src/physics/gjbasegamelayer.cpp teleportPlayer, cross-checked against
+// gdsolver/gdsolver src/solver/solver.hpp (tpy/tpex notes, addresses
+// 0x20fe44/0x20ff5e/0x20ff6a). Defaults from geode-sdk/bindings 2.2081
+// inline/TeleportPortalObject.cpp (m_teleportYOffset 0, m_redirectForceMod 1).
+//
+// Positions are Godot space. `keep_player_x` is the 747 rule: the exit is
+// (player.x, portal.y + yOffset), applied before Save Offset exactly as GD does.
+static Vector2 gd_teleport_destination(Vector2 player, Vector2 portal, Vector2 target,
+		bool keep_player_x, bool save_offset, bool ignore_x, bool ignore_y) {
+	Vector2 destination = target;
+	if (keep_player_x) destination.x = player.x;
+	if (save_offset) destination -= portal - player;
+	if (ignore_x) destination.x = player.x;
+	if (ignore_y) destination.y = player.y;
+	return destination;
+}
+
+// m_gravityMode (key 354): 0 unchanged, 1 force normal, 2 force flipped,
+// 3 toggle. GD applies it through flipGravity, the gravity portal's own flip,
+// so it maps onto the gravity portal modes (-1 = leave gravity alone).
+static int gd_teleport_gravity_portal_mode(int64_t mode) {
+	switch (mode) {
+		case 1: return GRAVITY_PORTAL_DOWN;
+		case 2: return GRAVITY_PORTAL_UP;
+		case 3: return GRAVITY_PORTAL_TOGGLE;
+		default: return -1;
+	}
+}
+
+// Exit force angle in GD degrees (counter-clockwise, y up). GD rotations are
+// clockwise, like Godot's rotation_degrees. The decompiled flip term reads
+// "isFlipX() ? 180 : 1"; the 1 is taken as 0 (hypothesis: decompiler artefact).
+static double gd_teleport_force_angle(bool has_destination, int64_t object_id,
+		double destination_rotation, double portal_rotation, bool flip_x) {
+	const double flip = flip_x ? 180.0 : 0.0;
+	if (!has_destination) return flip - portal_rotation;
+	const bool portal_kind = object_id == 38 || object_id == 747 || object_id == 749
+			|| object_id == 2064 || object_id == 2902;
+	return flip + (portal_kind ? 180.0 : 90.0) - destination_rotation;
+}
+
+// GD velocity (x = platformer X, y = m_yVelocity, y up) -> px/s. Calibrated
+// from the cube jump: GD 11.180032 vs Player.SPEED.y 2395 (hypothesis: the
+// project's tuning is linear in GD's units).
+static constexpr double GD_VELOCITY_TO_PX = 2395.0 / 11.180032;
+
+// Static force (keys 345/346/443). Returns the new GD velocity; X changes only
+// for platformer players, as in GD.
+static Vector2 gd_teleport_static_velocity(double angle_degrees, double force, bool additive,
+		Vector2 velocity, bool platformer) {
+	if (force == 0.0 && !additive) {
+		return Vector2(platformer ? 0.0f : velocity.x, 0.0f);
+	}
+	const double radians = Math::deg_to_rad(angle_degrees);
+	const double fx = std::cos(radians) * force;
+	const double fy = std::sin(radians) * force;
+	Vector2 result = velocity;
+	result.y = static_cast<real_t>(additive ? fy + velocity.y : fy);
+	if (platformer) result.x = static_cast<real_t>(additive ? fx + velocity.x : fx);
+	return result;
+}
+
+// Redirect force (keys 347-350): turns the current velocity onto the exit
+// angle (CBFExtrapolate redirectPlayerForce), then scales by Mod and clamps
+// the speed to Min/Max when they are non-zero. CBFExtrapolate leaves
+// Mod/Min/Max unimplemented; their meaning is the creator-documented one
+// (gdcreatorschool teleport guide) - hypothesis on exact order.
+static Vector2 gd_teleport_redirect_velocity(double angle_degrees, double mod, double min_speed,
+		double max_speed, Vector2 velocity, bool platformer) {
+	const double turn = Math::deg_to_rad(angle_degrees) - std::atan2(velocity.y, velocity.x);
+	Vector2 turned = velocity;
+	if (turn != 0.0) {
+		const double s = std::sin(turn);
+		const double c = std::cos(turn);
+		turned = Vector2(static_cast<real_t>(velocity.x * s - velocity.y * c),
+				static_cast<real_t>(velocity.x * c + velocity.y * s));
+	}
+	turned *= static_cast<real_t>(mod);
+	const double speed = turned.length();
+	if (speed > 0.0) {
+		if (max_speed > 0.0 && speed > max_speed) turned *= static_cast<real_t>(max_speed / speed);
+		else if (min_speed > 0.0 && speed < min_speed) turned *= static_cast<real_t>(min_speed / speed);
+	}
+	return Vector2(platformer ? turned.x : velocity.x, turned.y);
+}
+
 static double prop_float(const Dictionary &properties, const char *key, double fallback) {
 	const Variant value = properties.get(key, Variant());
 	switch (value.get_type()) {
@@ -284,6 +373,21 @@ struct TriggerEffect {
 	double fade_out = 0.0;       // key 47
 	std::vector<String> target_groups; // key 51, "g_N" names (dot/comma lists)
 	String center_group;               // key 71, "g_N" (rotate/scale/teleport centre)
+	// 3022 Teleport (TeleportPortalObject options; defaults per geode bindings).
+	bool teleport_save_offset = false;    // 351
+	bool teleport_ignore_x = false;       // 352
+	bool teleport_ignore_y = false;       // 353
+	int32_t teleport_gravity_mode = 0;    // 354
+	bool teleport_static_force = false;   // 345
+	double teleport_force = 0.0;          // 346
+	bool teleport_force_additive = false; // 443
+	bool teleport_redirect = false;       // 347
+	double teleport_redirect_mod = 1.0;   // 350
+	double teleport_redirect_min = 0.0;   // 348
+	double teleport_redirect_max = 0.0;   // 349
+	bool teleport_instant_camera = false; // 464
+	bool teleport_flip_x = false;         // 4
+	double teleport_rotation = 0.0;       // 6
 	Vector2 move_px;             // 901: keys 28/29 in pixels
 	Vector2 follow_mod = Vector2(1.0, 1.0); // 1347: keys 72/73 (X/Y multipliers)
 	int32_t item_id = 0;         // 1611/1811/1817: key 80
@@ -822,6 +926,22 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.sfx_volume = Math::clamp(prop_float(properties, "406", 1.0), 0.0, 2.0);
 			effect.sfx_pitch = Math::clamp(prop_float(properties, "407", 1.0), 0.01, 5.0);
 			effect.sfx_loop = prop_bool(properties, "404", false);
+			break;
+		case TriggerEffectKind::TELEPORT:
+			effect.teleport_save_offset = prop_bool(properties, "351");
+			effect.teleport_ignore_x = prop_bool(properties, "352");
+			effect.teleport_ignore_y = prop_bool(properties, "353");
+			effect.teleport_gravity_mode = static_cast<int32_t>(prop_int(properties, "354", 0));
+			effect.teleport_static_force = prop_bool(properties, "345");
+			effect.teleport_force = prop_float(properties, "346", 0.0);
+			effect.teleport_force_additive = prop_bool(properties, "443");
+			effect.teleport_redirect = prop_bool(properties, "347");
+			effect.teleport_redirect_mod = prop_float(properties, "350", 1.0);
+			effect.teleport_redirect_min = prop_float(properties, "348", 0.0);
+			effect.teleport_redirect_max = prop_float(properties, "349", 0.0);
+			effect.teleport_instant_camera = prop_bool(properties, "464");
+			effect.teleport_flip_x = prop_bool(properties, "4");
+			effect.teleport_rotation = prop_float(properties, "6", 0.0);
 			break;
 		case TriggerEffectKind::GRAVITY_PORTAL:
 			effect.gravity_mode = static_cast<int32_t>(gravity_portal_mode_from_id(
@@ -1626,10 +1746,14 @@ class NativeTriggerRuntime : public RefCounted {
 	}
 
 	void apply_teleport(size_t index, const Record &record, Object *player) {
-		Node2D *target = resolve_first_member(record.effect.center_group);
-		if (!target && !record.effect.target_groups.empty()) {
+		// GD 2.2 3022 is a TeleportPortalObject without a partner: teleportPlayer
+		// takes a member of m_targetGroupID (key 51). Key 71 is kept as a
+		// fallback for levels written against the old importer.
+		Node2D *target = nullptr;
+		if (!record.effect.target_groups.empty()) {
 			target = resolve_first_member(record.effect.target_groups[0]);
 		}
+		if (!target) target = resolve_first_member(record.effect.center_group);
 		Node2D *player_node = Object::cast_to<Node2D>(player);
 		// Device forensics 2026-09-13: the user sees a teleport interaction with
 		// an unresolved target at the exact moment the process dies at Amethyst
@@ -1644,9 +1768,66 @@ class NativeTriggerRuntime : public RefCounted {
 			+ ", epoch=" + String::num_uint64(structure_epoch)
 			+ ", frame=" + String::num_uint64(static_cast<uint64_t>(
 				Engine::get_singleton()->get_process_frames())));
-		if (target && player_node) {
-			player_node->set_global_position(target->get_global_position());
+		if (!player_node) return;
+		const TriggerEffect &e = record.effect;
+		if (target) {
+			const Vector2 destination = gd_teleport_destination(
+				player_node->get_global_position(), Vector2(static_cast<real_t>(record.x), static_cast<real_t>(record.y)),
+				teleport_target_point(target),
+				false, e.teleport_save_offset, e.teleport_ignore_x, e.teleport_ignore_y);
+			player_node->set_global_position(destination);
 		}
+		const int gravity_mode = gd_teleport_gravity_portal_mode(e.teleport_gravity_mode);
+		if (gravity_mode >= 0) apply_gravity_portal_player(player, gravity_mode);
+		if (e.teleport_redirect || e.teleport_static_force) {
+			const double destination_rotation = target ? Math::rad_to_deg(static_cast<double>(target->get_global_rotation())) : 0.0;
+			const double angle = gd_teleport_force_angle(target != nullptr, 3022,
+				destination_rotation, e.teleport_rotation, e.teleport_flip_x);
+			Node *manager = level_manager();
+			const bool platformer = manager && static_cast<bool>(manager->get("platformer"));
+			apply_teleport_force(player, angle, e, platformer);
+		}
+		if (e.teleport_instant_camera) snap_camera();
+	}
+
+	// A decoration batch is one node for many objects: its own position is the
+	// batch origin, so a teleport aims at the centre of its drawn bounds (exact
+	// for the usual one-object target group; hypothesis for larger batches).
+	static Vector2 teleport_target_point(Node2D *target) {
+		if (is_decoration_batch(target)) {
+			const Rect2 bounds = target->call("get_bounds");
+			if (bounds.has_area()) {
+				return target->get_global_transform().xform(bounds.get_center());
+			}
+		}
+		return target->get_global_position();
+	}
+
+	static void apply_teleport_force(Object *player, double angle, const TriggerEffect &e, bool platformer) {
+		const double rotation = player->get("gameplay_rotation");
+		const Vector2 velocity = player->get("velocity");
+		const Vector2 local = velocity.rotated(static_cast<real_t>(-rotation));
+		const Vector2 gd_velocity(static_cast<real_t>(local.x / GD_VELOCITY_TO_PX),
+			static_cast<real_t>(-local.y / GD_VELOCITY_TO_PX));
+		const Vector2 result = e.teleport_redirect
+			? gd_teleport_redirect_velocity(angle, e.teleport_redirect_mod, e.teleport_redirect_min,
+				e.teleport_redirect_max, gd_velocity, platformer)
+			: gd_teleport_static_velocity(angle, e.teleport_force, e.teleport_force_additive,
+				gd_velocity, platformer);
+		const Vector2 new_local(platformer ? static_cast<real_t>(result.x * GD_VELOCITY_TO_PX) : local.x,
+			static_cast<real_t>(-result.y * GD_VELOCITY_TO_PX));
+		player->set("velocity", new_local.rotated(static_cast<real_t>(rotation)));
+	}
+
+	Node *level_manager() const {
+		Node *level = level_id.is_valid() ? Object::cast_to<Node>(ObjectDB::get_instance(level_id)) : nullptr;
+		if (!level || !level->is_inside_tree()) return nullptr;
+		return level->get_tree()->get_root()->get_node_or_null(NodePath("LevelManager"));
+	}
+
+	void snap_camera() {
+		Object *camera = camera_id.is_valid() ? ObjectDB::get_instance(camera_id) : nullptr;
+		if (camera && camera->has_method("snap_view")) camera->call("snap_view");
 	}
 
 public:

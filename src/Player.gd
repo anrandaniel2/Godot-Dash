@@ -1222,7 +1222,7 @@ func _ensure_velocity_redirect(delta: float, new_velocity: Vector2) -> bool:
 		if not collided_area is Interactable:
 			return false
 		for component in collided_area.components:
-			return (component is ReboundComponent and not is_on_floor()) or (component is TeleportComponent and component.redirect_velocity)
+			return (component is ReboundComponent and not is_on_floor()) or (component is TeleportComponent and (component as TeleportComponent).velocity_modification == TeleportComponent.VelocityModification.REDIRECT)
 	return false
 
 

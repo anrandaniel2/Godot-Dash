@@ -725,7 +725,7 @@ func _test_native_core() -> void:
 	assert(is_equal_approx((portal_data.transform as Transform2D).origin.x, (exit_data.transform as Transform2D).origin.x),
 		"native smoke: teleport exit left the portal's X")
 	var portal_target: NodePath = portal_data.components.TargetObjectComponent.target
-	assert(int(portal_data.components.TeleportComponent.axis) == Constants.Axis.Y, "native smoke: teleport portal must move the player on Y only")
+	assert(bool(portal_data.components.TeleportComponent.keep_player_x), "native smoke: teleport portal must keep the player's X (GD 747 rule)")
 	var portal_holder := Level.new()
 	var portal_layer := Layer.new()
 	portal_layer.name = GMDConverter.IMPORTED_LAYER_NAME
@@ -735,6 +735,29 @@ func _test_native_core() -> void:
 	portal_layer.add_child(exit_node)
 	assert(portal_holder.get_node_or_null(portal_target) == exit_node, "native smoke: teleport target does not resolve to the exit")
 	portal_holder.free()
+	# Missing key 54 is m_teleportYOffset = 0 (TeleportPortalObject ctor), and
+	# the 2.2 options and unlinked 2902 / orb 3027 targets reach the component.
+	var options_level := GMDConverter.import_online_level_string(
+			"kA2,0;1,747,2,300,3,105,351,1,352,1,354,2,345,1,346,8,464,1;1,2902,2,600,3,105,51,7,353,1;1,3027,2,900,3,105,51,9;",
+			"Teleport options smoke",
+			GMDConverter.ImportReport.new(),
+		)
+	var options_entries: Array = _imported_entries(options_level)
+	assert(options_entries.size() == 4, "native smoke: teleport options import produced the wrong objects")
+	var default_portal: Dictionary = options_entries[0]
+	assert(is_equal_approx((default_portal.transform as Transform2D).origin.y, (options_entries[1].transform as Transform2D).origin.y),
+		"native smoke: a 747 without key 54 must exit at offset 0")
+	var portal_options: Dictionary = default_portal.components.TeleportComponent
+	assert(bool(portal_options.save_offset) and bool(portal_options.ignore_x) and int(portal_options.gravity_mode) == 2,
+		"native smoke: teleport keys 351/352/354 were dropped")
+	assert(bool(portal_options.static_force_enabled) and is_equal_approx(float(portal_options.static_force), 8.0) and bool(portal_options.instant_camera),
+		"native smoke: teleport keys 345/346/464 were dropped")
+	assert(not portal_options.has("target_group"), "native smoke: a linked 747 must not target a group")
+	var unlinked: Dictionary = options_entries[2].components.TeleportComponent
+	assert(str(unlinked.target_group) == Constants.GROUP_PREFIX + "7" and bool(unlinked.ignore_y), "native smoke: unlinked 2902 lost its key 51 target")
+	assert(str(options_entries[3].components.TeleportComponent.target_group) == Constants.GROUP_PREFIX + "9", "native smoke: teleport orb lost its key 51 target")
+	var landed := GDTeleport.destination(Vector2(100, 50), Vector2(110, 60), Vector2(500, -200), true, true, false, false)
+	assert(landed.is_equal_approx(Vector2(90, -210)), "native smoke: GDTeleport save-offset twin differs from the C++ helper")
 	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
 	assert(ClassDB.class_exists(&"NativeDecorationCullWorker"), "native smoke: worker-pool culler missing")
 	assert(ClassDB.class_exists(&"NativeLevelRuntime"), "native smoke: level runtime missing")

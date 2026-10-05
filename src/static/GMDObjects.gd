@@ -90,7 +90,7 @@ const MAP: Dictionary[int, Dictionary] = {
 	1704: { "scene": ORBS + "RedOrb.tscn", "name": "RedOrb" },
 	1751: { "scene": ORBS + "DashOrbMagenta.tscn", "name": "DashOrbMagenta" },
 	3004: { "scene": ORBS + "SpiderOrb.tscn", "name": "SpiderOrb" },
-	3027: { "scene": ORBS + "TeleportOrb.tscn", "name": "TeleportOrb" },
+	3027: { "scene": ORBS + "TeleportOrb.tscn", "name": "TeleportOrb", "components": ["TeleportComponent"] },
 	# The toggle orb's ToggleComponent stores an array of ToggledGroup
 	# resources, which has no direct Geometry Dash equivalent, so it is
 	# imported with its scene defaults and left for the creator to configure.
@@ -127,7 +127,9 @@ const MAP: Dictionary[int, Dictionary] = {
 	101: { "scene": OTHER_PORTALS + "ScalePortalSmall.tscn", "name": "ScalePortalSmall" },
 	286: { "scene": OTHER_PORTALS + "CountPortalDual.tscn", "name": "CountPortalDual" },
 	287: { "scene": OTHER_PORTALS + "CountPortalSingle.tscn", "name": "CountPortalSingle" },
-	747: { "scene": OTHER_PORTALS + "TeleportalIn.tscn", "name": "TeleportalIn" },
+	747: { "scene": OTHER_PORTALS + "TeleportalIn.tscn", "name": "TeleportalIn", "components": ["TeleportComponent"] },
+	# 2.2 unlinked blue portal: exits at a member of its target group (key 51).
+	2902: { "scene": OTHER_PORTALS + "TeleportalIn.tscn", "name": "TeleportalUnlinked", "components": ["TeleportComponent"] },
 	#endregion
 
 	#region Speed portals

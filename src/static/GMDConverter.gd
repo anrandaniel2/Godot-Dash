@@ -178,9 +178,10 @@ const IMPORTED_LAYER_NAME: String = "Imported Layer"
 ## m_teleportYOffset (key 54), the exit's vertical offset in GD units.
 const TELEPORT_PORTAL_ID: int = 747
 const TELEPORT_EXIT_SCENE: String = GMDObjects.OTHER_PORTALS + "TeleportalOut.tscn"
-## Exit offset when key 54 is absent. Hypothesis: GD's default yellow
-## teleport distance of 100 units; levels normally save the key.
-const TELEPORT_DEFAULT_Y_OFFSET: float = 100.0
+## Exit offset when key 54 is absent: the TeleportPortalObject constructor
+## sets m_teleportYOffset to 0 (geode-sdk/bindings 2.2081
+## inline/TeleportPortalObject.cpp).
+const TELEPORT_DEFAULT_Y_OFFSET: float = 0.0
 
 ## How a Pulse trigger sources its colour - the twin of the native
 ## [code]classify_pulse[/code] (native/src/gdash_native.cpp); keep both equal.
@@ -796,7 +797,8 @@ static func _link_teleport_exit(portal: Dictionary, properties: Dictionary) -> D
 	var components: Dictionary = portal.get("components", { })
 	components["TargetObjectComponent"] = { "target": NodePath("%s/%s" % [IMPORTED_LAYER_NAME, exit_name]) }
 	var teleport: Dictionary = components.get("TeleportComponent", { })
-	teleport["axis"] = Constants.Axis.Y
+	teleport["keep_player_x"] = true
+	teleport.erase("target_group")
 	components["TeleportComponent"] = teleport
 	portal["components"] = components
 	if not portal.has("markers"):
@@ -1401,6 +1403,30 @@ static func _group_list_from_property(raw: Variant) -> PackedStringArray:
 ## [member GMDObjects.MAP]), because [method Interactable.use_component_data]
 ## looks each one up by node name. Properties with no clear Geometry Dash
 ## equivalent keep their scene defaults.
+## TeleportPortalObject options shared by the 747/2902 portals, the 3027 orb
+## and the 3022 trigger (keys per geode-sdk/bindings 2.2081
+## GeometryDash.bro; semantics per GJBaseGameLayer::teleportPlayer, see
+## GDTeleport). The 747 exit link replaces target_group with its orange half.
+static func _teleport_options(properties: Dictionary, target_groups: PackedStringArray) -> Dictionary:
+	var options: Dictionary = {
+		"save_offset": properties.get("351", "0") == "1",
+		"ignore_x": properties.get("352", "0") == "1",
+		"ignore_y": properties.get("353", "0") == "1",
+		"gravity_mode": clampi(int(properties.get("354", "0")), 0, 3),
+		"static_force_enabled": properties.get("345", "0") == "1",
+		"static_force": float(properties.get("346", "0")),
+		"static_force_additive": properties.get("443", "0") == "1",
+		"redirect_force_enabled": properties.get("347", "0") == "1",
+		"redirect_force_mod": float(properties.get("350", "1")),
+		"redirect_force_min": float(properties.get("348", "0")),
+		"redirect_force_max": float(properties.get("349", "0")),
+		"instant_camera": properties.get("464", "0") == "1",
+	}
+	if not target_groups.is_empty():
+		options["target_group"] = Constants.GROUP_PREFIX + target_groups[0]
+	return options
+
+
 static func _components_from_properties(
 		gd_id: int,
 		properties: Dictionary,
@@ -1426,6 +1452,9 @@ static func _components_from_properties(
 				extra_groups.append(Constants.GROUP_PREFIX + target_groups[group_idx])
 			target_group_data["extra_target_groups"] = extra_groups
 		components["TargetGroupComponent"] = target_group_data
+
+	if "TeleportComponent" in supported:
+		components["TeleportComponent"] = _teleport_options(properties, target_groups)
 
 	# Easing, shared by every timed trigger.
 	if "EasingComponent" in supported:
