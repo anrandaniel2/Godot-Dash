@@ -424,6 +424,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# Compact side index consumed directly by NativeTriggerBridge, avoiding a
 	# second GDScript scan across every decoration in large downloaded levels.
 	var native_trigger_records: Array[Dictionary] = []
+	# Runtime imports keep native-only triggers solely as packed columns; the
+	# editor and fallback builds expand them (LevelBuildJob).
+	var packed_triggers := PackedTriggers.new()
+	var pack_triggers: bool = NativeCore.available() and not Editor.in_editor
 	# Which groups actually ended up with a member object, and which groups
 	# triggers point at, so the report can explain empty triggers.
 	var populated_groups: Dictionary[String, int] = { }
@@ -570,9 +574,12 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		if kind == 1 and not native_packed and packed_decorations.append_entry(object_data, chunk_idx):
 			report.imported += 1
 			continue
-		objects.append(object_data)
 		if object_data.get("native_only_trigger", false):
+			if pack_triggers and packed_triggers.append_entry(object_data):
+				report.imported += 1
+				continue
 			native_trigger_records.append(object_data)
+		objects.append(object_data)
 		report.imported += 1
 
 	# A trigger whose whole target group was made of unsupported objects will
@@ -628,6 +635,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"color_channels": color_channels.map(ColorChannelData.to_data),
 		"duration": 0.0,
 		"native_trigger_records": native_trigger_records,
+		PackedTriggers.DATA_KEY: packed_triggers.to_data(),
 		"layers": [{
 			"name": "Imported Layer",
 			"objects": objects,

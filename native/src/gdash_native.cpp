@@ -888,7 +888,10 @@ class NativeTriggerRuntime : public RefCounted {
 		int64_t source_order = 0;
 		int32_t flags = 0;
 		int64_t gd_id = 0;
-		Dictionary properties;
+		// Spawn delay (keys 63/556), the only raw properties read after
+		// parsing; the full property Dictionary is no longer retained.
+		double spawn_delay = 0.0;
+		double spawn_delay_pm = 0.0;
 		TriggerEffect effect;
 		bool activated = false;
 	};
@@ -1477,8 +1480,8 @@ class NativeTriggerRuntime : public RefCounted {
 		const TriggerEffect &effect = record.effect;
 		switch (effect.kind) {
 			case TriggerEffectKind::SPAWN: {
-				double delay = Math::max(0.0, prop_float(record.properties, "63", 0.0));
-				const double delay_pm = Math::max(0.0, prop_float(record.properties, "556", 0.0));
+				double delay = Math::max(0.0, record.spawn_delay);
+				const double delay_pm = Math::max(0.0, record.spawn_delay_pm);
 				if (delay_pm > 0.0) {
 					delay += delay_pm * (2.0 * (static_cast<double>(std::rand() % 10000) / 9999.0) - 1.0);
 					delay = Math::max(0.0, delay);
@@ -2407,6 +2410,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("clear"), &NativeTriggerRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("register_packed_table", "table"), &NativeTriggerRuntime::register_packed_table);
 		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeTriggerRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
 		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeTriggerRuntime::bind_shader_layer);
 		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeTriggerRuntime::bind_ui_layer);
@@ -2472,7 +2476,9 @@ public:
 		record.y = y;
 		if (trigger) record.object = trigger->get_instance_id();
 		record.flags = static_cast<int32_t>(flags); record.source_order = source_order;
-		record.gd_id = gd_id; record.properties = properties;
+		record.gd_id = gd_id;
+		record.spawn_delay = prop_float(properties, "63", 0.0);
+		record.spawn_delay_pm = prop_float(properties, "556", 0.0);
 		record.effect = parse_trigger_effect(gd_id, properties);
 		const size_t index = records.size();
 		for (int64_t i = 0; i < groups.size(); ++i)
@@ -2482,6 +2488,49 @@ public:
 	}
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return register_trigger(nullptr, x, y, flags, source_order, groups, gd_id, properties);
+	}
+	// Registers every row of a PackedTriggers table straight from its columns
+	// (see src/static/PackedTriggers.gd). Only the effect parser still takes a
+	// Dictionary; one short-lived Dictionary is built per row and dropped as
+	// soon as the effect is parsed. Returns the number of rows registered.
+	int64_t register_packed_table(const Dictionary &table) {
+		const PackedInt32Array gd_id = table.get("gd_id", PackedInt32Array());
+		const PackedInt32Array source_order = table.get("source_order", PackedInt32Array());
+		const PackedByteArray flags = table.get("flags", PackedByteArray());
+		const PackedFloat32Array xform = table.get("xform", PackedFloat32Array());
+		const PackedInt32Array group_offsets = table.get("group_offsets", PackedInt32Array());
+		const PackedInt32Array group_ids = table.get("group_ids", PackedInt32Array());
+		const PackedInt32Array prop_offsets = table.get("prop_offsets", PackedInt32Array());
+		const PackedInt32Array prop_keys = table.get("prop_keys", PackedInt32Array());
+		const PackedInt32Array value_offsets = table.get("value_offsets", PackedInt32Array());
+		const PackedByteArray value_bytes = table.get("value_bytes", PackedByteArray());
+		const int64_t rows = gd_id.size();
+		if (source_order.size() < rows || flags.size() < rows || xform.size() < rows * 6 ||
+				group_offsets.size() < rows + 1 || prop_offsets.size() < rows + 1 ||
+				value_offsets.size() < prop_keys.size() + 1) {
+			ERR_PRINT("NativeTriggerRuntime: packed trigger table columns are inconsistent");
+			return 0;
+		}
+		const char *text = reinterpret_cast<const char *>(value_bytes.ptr());
+		const int64_t text_size = value_bytes.size();
+		records.reserve(records.size() + static_cast<size_t>(rows));
+		for (int64_t row = 0; row < rows; ++row) {
+			PackedStringArray groups;
+			const int32_t g0 = std::clamp<int32_t>(group_offsets[row], 0, static_cast<int32_t>(group_ids.size()));
+			const int32_t g1 = std::clamp<int32_t>(group_offsets[row + 1], g0, static_cast<int32_t>(group_ids.size()));
+			for (int32_t g = g0; g < g1; ++g) groups.push_back(String("g_") + String::num_int64(group_ids[g]));
+			Dictionary properties;
+			const int32_t p0 = std::clamp<int32_t>(prop_offsets[row], 0, static_cast<int32_t>(prop_keys.size()));
+			const int32_t p1 = std::clamp<int32_t>(prop_offsets[row + 1], p0, static_cast<int32_t>(prop_keys.size()));
+			for (int32_t k = p0; k < p1; ++k) {
+				const int64_t begin = std::clamp<int64_t>(value_offsets[k], 0, text_size);
+				const int64_t end = std::clamp<int64_t>(value_offsets[k + 1], begin, text_size);
+				properties[String::num_int64(prop_keys[k])] = String::utf8(text + begin, end - begin);
+			}
+			register_trigger(nullptr, xform[row * 6 + 4], xform[row * 6 + 5], flags[row], source_order[row], groups,
+					gd_id[row], properties);
+		}
+		return rows;
 	}
 	// Level, camera, Config, ShaderLayer and UILayer objects the effects read/write.
 	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
@@ -3262,6 +3311,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("clear"), &NativeLevelRuntime::clear);
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger, DEFVAL(0.0));
+		ClassDB::bind_method(D_METHOD("register_packed_table", "table"), &NativeLevelRuntime::register_packed_table);
 		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeLevelRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
 		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeLevelRuntime::bind_shader_layer);
 		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeLevelRuntime::bind_ui_layer);
@@ -3346,6 +3396,7 @@ public:
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return triggers->register_packed_trigger(x, y, flags, source_order, groups, gd_id, properties);
 	}
+	int64_t register_packed_table(const Dictionary &table) { return triggers->register_packed_table(table); }
 	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
 		Node *level_node = Object::cast_to<Node>(level);
 		if (level_node) context_level = level_node;

@@ -42,9 +42,12 @@ var _native_job: Object
 func _init(data: Dictionary) -> void:
 	_data = data
 	_drop_decoration = Config.ldm and not Editor.in_editor
+	var native_build: bool = not Editor.in_editor and NativeCore.available() and ClassDB.class_exists(&"NativeLevelBuildJob")
 	if Editor.in_editor:
 		_expand_packed_decorations(_data)
-	if not Editor.in_editor and NativeCore.available() and ClassDB.class_exists(&"NativeLevelBuildJob"):
+	if not native_build:
+		_expand_packed_triggers(_data)
+	if native_build:
 		_native_job = ClassDB.instantiate(&"NativeLevelBuildJob")
 		_native_job.call(&"initialize", data, _drop_decoration)
 		level = _native_job.call(&"get_level") as Level
@@ -155,6 +158,18 @@ func _finish() -> void:
 
 ## The editor needs one node per decoration, so packed tables are turned back
 ## into ordinary entries before an editor build.
+## Builds without the native trigger runtime need a node per trigger: turn the
+## packed native-only trigger rows back into first-layer entries.
+static func _expand_packed_triggers(data: Dictionary) -> void:
+	var packed: Dictionary = data.get(PackedTriggers.DATA_KEY, { })
+	if packed.is_empty():
+		return
+	var layers: Array = data.get("layers", [])
+	if not layers.is_empty():
+		(layers[0].objects as Array).append_array(PackedTriggers.rows(packed))
+	data.erase(PackedTriggers.DATA_KEY)
+
+
 static func _expand_packed_decorations(data: Dictionary) -> void:
 	for layer_data: Dictionary in data.get("layers", []):
 		var packed: Dictionary = layer_data.get(PackedDecorations.LAYER_KEY, { })

@@ -115,6 +115,8 @@ var layers: Array[Layer]
 ## Generic 2.2 triggers elided from the runtime SceneTree, retained for saves,
 ## practice rebuilds, and NativeTriggerRuntime registration.
 var native_trigger_records: Array[Dictionary] = []
+## Native-only triggers in PackedTriggers column form (runtime imports).
+var packed_trigger_records: Dictionary = { }
 var active_layer_idx: int
 var music_scale: float = 1.0
 var required_songs: Dictionary[String, int] # HashMap<SongPath, SongUsers>
@@ -706,6 +708,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"color_channels": color_channels.map(ColorChannelData.to_data),
 		"duration": duration,
 		"native_trigger_records": native_trigger_records,
+		PackedTriggers.DATA_KEY: packed_trigger_records,
 		"layers": [],
 		"active_layer_idx": active_layer_idx,
 		"player_data": {
@@ -780,6 +783,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	color_channels.assign(data.color_channels.map(ColorChannelData.from_data))
 	duration = data.duration
 	native_trigger_records.assign(data.get("native_trigger_records", []))
+	packed_trigger_records = data.get(PackedTriggers.DATA_KEY, { })
 	active_layer_idx = data.active_layer_idx
 
 	# Player updates only apply once the manager holds the live player from

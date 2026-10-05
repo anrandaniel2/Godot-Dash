@@ -77,6 +77,13 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	return true
 
 
+## Colour-family trigger ids the key diagnostics report on.
+const COLOR_FAMILY := {
+	29: true, 30: true, 104: true, 105: true, 221: true, 717: true, 718: true,
+	743: true, 744: true, 899: true, 900: true, 915: true, 1006: true,
+}
+
+
 func _register_packed_triggers(level_data: Dictionary) -> void:
 	var packed_records: Array = level_data.get("native_trigger_records", [])
 	# Compatibility for levels imported before the side index existed.
@@ -98,7 +105,21 @@ func _register_packed_triggers(level_data: Dictionary) -> void:
 			int(object_data.get("gd_object_id", 0)),
 			object_data.get("gd_properties", {}),
 		)
-	_print_trigger_key_diagnostics(packed_records)
+	var table: Dictionary = level_data.get(PackedTriggers.DATA_KEY, { })
+	if not table.is_empty():
+		_runtime.call(&"register_packed_table", table)
+	_print_trigger_key_diagnostics(packed_records + _color_family_rows(table))
+
+
+## The colour-family rows of a packed trigger table as entries, for the key
+## diagnostics below (the other families are never expanded).
+func _color_family_rows(table: Dictionary) -> Array:
+	var rows: Array = []
+	var ids: PackedInt32Array = table.get("gd_id", PackedInt32Array())
+	for i: int in ids.size():
+		if COLOR_FAMILY.has(ids[i]):
+			rows.append(PackedTriggers.row(table, i))
+	return rows
 
 
 ## One-shot diagnostic for the white-beams investigation: which property keys
@@ -114,10 +135,6 @@ func _register_packed_triggers(level_data: Dictionary) -> void:
 func _print_trigger_key_diagnostics(packed_records: Array) -> void:
 	if packed_records.is_empty():
 		return
-	const COLOR_FAMILY := {
-		29: true, 30: true, 104: true, 105: true, 221: true, 717: true, 718: true,
-		743: true, 744: true, 899: true, 900: true, 915: true, 1006: true,
-	}
 	var family_counts: Dictionary = {}
 	var key_counts: Dictionary = {}
 	var flag_counts: Dictionary = {}

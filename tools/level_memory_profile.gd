@@ -139,6 +139,7 @@ func _import_signature_of(data: Dictionary, report: GMDConverter.ImportReport) -
 		"summary": report.summary(),
 		"channels": (data.color_channels as Array).size(),
 		"trigger_records": (data.native_trigger_records as Array).size(),
+		"packed_triggers": PackedTriggers.size_of(data.get(PackedTriggers.DATA_KEY, { })),
 	}
 	for column: String in table:
 		var total := 0.0
@@ -167,8 +168,10 @@ func _breakdown(data: Dictionary) -> void:
 			triggers_in_objects += 1
 		elif not object_data.get("decoration", false):
 			others.append(object_data)
-	print("LEVEL_PROFILE breakdown records=%d (%d bytes) triggers_in_objects=%d other_objects=%d (%d bytes)" % [
-		records.size(), var_to_bytes(records).size(), triggers_in_objects, others.size(), var_to_bytes(others).size()])
+	var table: Dictionary = data.get(PackedTriggers.DATA_KEY, { })
+	print("LEVEL_PROFILE breakdown records=%d (%d bytes) packed_triggers=%d (%d bytes) triggers_in_objects=%d other_objects=%d (%d bytes)" % [
+		records.size(), var_to_bytes(records).size(), PackedTriggers.size_of(table), var_to_bytes(table).size(),
+		triggers_in_objects, others.size(), var_to_bytes(others).size()])
 	var by_scene: Dictionary = { }
 	var level := Level.new()
 	for object_data: Dictionary in others:

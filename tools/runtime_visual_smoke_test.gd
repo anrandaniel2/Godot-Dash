@@ -499,9 +499,10 @@ func _test_native_core() -> void:
 		trigger_chunks.append("1,%d,2,%d,3,30,62,1,57,7" % [trigger_id, 30 + trigger_chunks.size() * 30])
 	var trigger_report := GMDConverter.ImportReport.new()
 	var trigger_level := GMDConverter.import_online_level_string(";".join(trigger_chunks) + ";", "2.2 trigger inventory", trigger_report)
-	var trigger_entries: Array = trigger_level.get("layers", [{}])[0].get("objects", [])
+	var trigger_entries: Array = _imported_entries(trigger_level)
 	assert(trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(), "native smoke: one or more 2.2 trigger IDs were dropped")
 	var native_import := NativeCore.available() and not Editor.in_editor
+	_assert_packed_trigger_table(trigger_level, native_import)
 	for trigger_data: Dictionary in trigger_entries:
 		# Packed records carry the raw activation metadata; every other
 		# family keeps a scene to instantiate (dedicated scenes like the
@@ -528,7 +529,7 @@ func _test_native_core() -> void:
 		+ "1,1006,2,60,3,30,51,6,52,1,45,0.1,47,0.1;"
 		+ "1,1347,2,90,3,30,51,7,71,8,72,0.5,73,1,10,2;",
 		"pulse/follow modes", mode_report)
-	var mode_entries: Array = mode_level.get("layers", [{}])[0].get("objects", [])
+	var mode_entries: Array = _imported_entries(mode_level)
 	assert(mode_entries.size() == 3, "native smoke: online pulse/follow triggers were dropped")
 	assert(not mode_report.inert_trigger_ids.has(1006), "native smoke: no pulse mode may be inert")
 	var pulse_tint := Color(0.5, 0.25, 1.0)
@@ -551,7 +552,7 @@ func _test_native_core() -> void:
 		+ "1,1611,2,60,3,30,51,9,80,4,77,2,56,1,104,1;"
 		+ "1,1811,2,90,3,30,51,9,80,4,77,1,88,1;",
 		"item triggers", item_report)
-	var item_entries: Array = item_level.get("layers", [{}])[0].get("objects", [])
+	var item_entries: Array = _imported_entries(item_level)
 	assert(item_entries.size() == 3, "native smoke: online item triggers were dropped")
 	for item_id: int in [1611, 1811, 1817]:
 		assert(not item_report.inert_trigger_ids.has(item_id), "native smoke: item trigger %d reported inert" % item_id)
@@ -572,7 +573,7 @@ func _test_native_core() -> void:
 	var animate_report := GMDConverter.ImportReport.new()
 	var animate_level := GMDConverter.import_online_level_string(
 		"kA2,0,kA4,0;1,1585,2,30,3,30,51,5,76,1;", "animate trigger", animate_report)
-	var animate_entries: Array = animate_level.get("layers", [{}])[0].get("objects", [])
+	var animate_entries: Array = _imported_entries(animate_level)
 	assert(animate_entries.size() == 1 and not animate_report.inert_trigger_ids.has(1585), "native smoke: Animate must not be inert")
 	assert(str(animate_entries[0].get("gd_properties", {}).get("76", "")) == "1", "native smoke: online parse lost Animate key 76")
 	assert(MonsterAnimations.monster_for(918) == "GJBeast01" and MonsterAnimations.monster_for(1584) == "GJBeast04", "monsters: object table missing")
@@ -611,7 +612,7 @@ func _test_native_core() -> void:
 		"Color trigger sources",
 		color_report,
 	)
-	var color_entries: Array = color_level.get("layers", [{}])[0].get("objects", [])
+	var color_entries: Array = _imported_entries(color_level)
 	assert(color_entries.size() == 5, "native smoke: colour triggers were dropped")
 	if native_import:
 		for entry: Dictionary in color_entries:
@@ -667,7 +668,7 @@ func _test_native_core() -> void:
 			"native smoke: copy chain link was not kept on the runtime channel")
 	assert(bool(channel_data_by_group.get("c_12", {}).get("copy_opacity", false)),
 			"native smoke: kS38 opacity-copy flag was not kept on the runtime channel")
-	var link_entries: Array = link_level.get("layers", [{}])[0].get("objects", [])
+	var link_entries: Array = _imported_entries(link_level)
 	assert(link_entries.size() == 6, "native smoke: copy import dropped objects or triggers")
 	var legacy_trigger: Dictionary = {}
 	var bare_trigger: Dictionary = {}
@@ -697,7 +698,7 @@ func _test_native_core() -> void:
 			"Native pad smoke",
 			pad_report,
 	)
-	var pad_entries: Array = pad_level.get("layers", [{}])[0].get("objects", [])
+	var pad_entries: Array = _imported_entries(pad_level)
 	assert(pad_entries.size() == 2, "native smoke: jump/gravity pads were not converted")
 	for pad_data: Dictionary in pad_entries:
 		var pad := Level.instantiate_object_from_data(pad_data) as PadInteractable
@@ -1241,3 +1242,35 @@ func _object_data(position: Vector2) -> Dictionary:
 		"color_channels": {},
 		"hsv": {"hsv_shift": [0.0, 0.0, 0.0], "intensity": 1.0, "alpha": 1.0},
 	}
+
+
+## Every entry an import produced: layer objects plus the native-only trigger
+## rows a runtime import keeps in its PackedTriggers table.
+func _imported_entries(level_data: Dictionary) -> Array:
+	var entries: Array = level_data.get("layers", [{}])[0].get("objects", []).duplicate()
+	entries.append_array(PackedTriggers.rows(level_data.get(PackedTriggers.DATA_KEY, { })))
+	return entries
+
+
+## Runtime imports keep native-only triggers once, as packed columns, and each
+## row rebuilds exactly into the entry the importer made.
+func _assert_packed_trigger_table(level_data: Dictionary, native_import: bool) -> void:
+	var table: Dictionary = level_data.get(PackedTriggers.DATA_KEY, { })
+	var objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
+	if not native_import:
+		assert(PackedTriggers.size_of(table) == 0, "native smoke: fallback import must not pack triggers")
+		return
+	assert(PackedTriggers.size_of(table) > 0, "native smoke: runtime import did not pack its triggers into columns")
+	for object_data: Dictionary in objects:
+		assert(not bool(object_data.get("native_only_trigger", false)) or (level_data.native_trigger_records as Array).has(object_data),
+			"native smoke: a packed trigger is duplicated into the layer objects")
+	var repacked := PackedTriggers.new()
+	for i: int in PackedTriggers.size_of(table):
+		var entry: Dictionary = PackedTriggers.row(table, i)
+		assert(repacked.append_entry(entry.duplicate(true)), "native smoke: a rebuilt trigger row cannot be packed again")
+		assert(PackedTriggers.row(repacked.to_data(), i) == entry, "native smoke: trigger row did not round-trip")
+	var expanded: Dictionary = level_data.duplicate(true)
+	LevelBuildJob._expand_packed_triggers(expanded)
+	assert(not expanded.has(PackedTriggers.DATA_KEY), "native smoke: expanded level data kept its trigger table")
+	assert((expanded.layers[0].objects as Array).size() == objects.size() + PackedTriggers.size_of(table),
+		"native smoke: fallback expansion lost trigger rows")
