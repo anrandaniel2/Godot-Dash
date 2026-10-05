@@ -425,6 +425,8 @@ Missing or unreadable level string (k4).""" % extension
 			push_warning("GMD import skipped unsupported objects:\n%s" % report.skipped_breakdown())
 	else:
 		Toasts.new_toast(message)
+	if not report.inert_trigger_ids.is_empty():
+		push_warning("GMD import kept triggers whose mode does nothing yet:\n%s" % report.inert_trigger_breakdown())
 	return level_path
 
 

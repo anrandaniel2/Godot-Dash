@@ -60,6 +60,8 @@ const Prop := {
 	FADE_IN = "45",
 	HOLD = "46",
 	FADE_OUT = "47",
+	PULSE_MODE = "48", # Pulse: 0 = RGB (keys 7/8/9), non-zero = HSV of the copied channel (keys 49/50)
+	PULSE_TARGET_TYPE = "52", # Pulse: 0 = colour channel in key 51, 1 = object group
 	TIMES_360 = "69",
 	LOCK_OBJECT_ROTATION = "70",
 	STRENGTH = "75",
@@ -163,6 +165,21 @@ const LEGACY_COLOR_TRIGGER_CHANNELS: Dictionary[int, int] = {
 	915: CHANNEL_LINE,
 }
 
+## Geometry Dash's Pulse trigger.
+const PULSE_TRIGGER_ID: int = 1006
+
+## How a Pulse trigger sources its colour - the twin of the native
+## [code]classify_pulse[/code] (native/src/gdash_native.cpp); keep both equal.
+## parity: GD 2.11 EffectGameObject::customObjectSetup case 1006
+## (Wyliemaster/GD-Decompiled, GD/code/src/EffectGameObject.cpp): key 48 (pulse
+## mode, atoi-truthy) selects HSV mode, which reads only keys 49/50; RGB mode
+## reads only keys 7/8/9. Key 52 = 1 targets an object group.
+enum PulseSource {
+	INERT, ## no target, an unmodelled group pulse, or HSV mode without a source
+	RGB,
+	HSV_COPY,
+}
+
 ## Geometry Dash uses a 30x30 pixel grid, Godot Dash uses [member
 ## Constants.CELL_SIZE] (128) pixels.
 const GD_CELL_SIZE: float = 30.0
@@ -222,6 +239,10 @@ class ImportReport:
 	## object was skipped. Those triggers will warn "target group doesn't
 	## contain any objects" when they run.
 	var empty_target_groups: Dictionary[String, int] = { }
+	## Triggers that import but whose configured mode neither runtime executes
+	## yet (e.g. group-target pulses), by Geometry Dash object ID - the
+	## "fires, nothing happens" cases that would otherwise be silent.
+	var inert_trigger_ids: Dictionary[int, int] = { }
 
 	var skipped: int:
 		get:
@@ -260,6 +281,9 @@ class ImportReport:
 	func note_skipped(gd_id: int) -> void:
 		skipped_ids[gd_id] = skipped_ids.get(gd_id, 0) + 1
 
+	func note_inert_trigger(gd_id: int) -> void:
+		inert_trigger_ids[gd_id] = inert_trigger_ids.get(gd_id, 0) + 1
+
 	func note_failed(gd_id: int) -> void:
 		failed_ids[gd_id] = failed_ids.get(gd_id, 0) + 1
 
@@ -276,7 +300,24 @@ class ImportReport:
 			parts.append("%d failed" % failed)
 		if not empty_target_groups.is_empty():
 			parts.append("%d trigger target groups left empty" % empty_target_groups.size())
+		if not inert_trigger_ids.is_empty():
+			var inert_total: int = 0
+			for count: int in inert_trigger_ids.values():
+				inert_total += count
+			parts.append("%d triggers use an unsupported mode" % inert_total)
 		return ", ".join(parts)
+
+	## The inert trigger IDs, most common first, in the same format as
+	## [method skipped_breakdown].
+	func inert_trigger_breakdown(limit: int = 12) -> String:
+		var ids: Array = inert_trigger_ids.keys()
+		ids.sort_custom(func(a: int, b: int): return inert_trigger_ids[a] > inert_trigger_ids[b])
+		var lines := PackedStringArray()
+		for gd_id: int in ids.slice(0, limit):
+			lines.append("  • trigger %d  ×%d" % [gd_id, inert_trigger_ids[gd_id]])
+		if ids.size() > limit:
+			lines.append("  • …and %d more trigger types" % (ids.size() - limit))
+		return "\n".join(lines)
 
 	## The unsupported object IDs, most common first, for the details dialog.
 	func skipped_breakdown(limit: int = 12) -> String:
@@ -449,6 +490,28 @@ static func _import_level_string(level_string: String, level_name: String, repor
 					and not SPECIAL_CHANNELS.has(int(copy_source)) \
 					and _is_colorable_channel(channel_style, int(copy_source)):
 				used_channels[int(copy_source)] = true
+
+		# A trigger on the inert generic shell that the native runtime does not
+		# execute on this path (Follow 1347, Count 1611, Touch 1595, ...)
+		# fires and changes nothing; report it instead of staying silent.
+		if GMDObjects.get_object(gd_id).get("scene", "") == GMDObjects.GENERIC_TRIGGER.scene \
+				and not _native_trigger_execution(gd_id):
+			report.note_inert_trigger(gd_id)
+		# A pulse reads its target channel (key 51) and, in HSV mode, its
+		# source channel (key 50) when it fires; both runtimes resolve them
+		# through the channel table, so they must exist like a colour
+		# trigger's.
+		if gd_id == PULSE_TRIGGER_ID:
+			var pulse_source: PulseSource = _classify_pulse(properties)
+			if pulse_source == PulseSource.INERT:
+				report.note_inert_trigger(gd_id)
+			else:
+				var pulse_channels: Array[int] = [int(properties.get(Prop.TARGET_GROUP, "0"))]
+				if pulse_source == PulseSource.HSV_COPY:
+					pulse_channels.append(int(properties.get(Prop.COPIED_COLOR_ID, "0")))
+				for pulse_channel: int in pulse_channels:
+					if not SPECIAL_CHANNELS.has(pulse_channel) and _is_colorable_channel(channel_style, pulse_channel):
+						used_channels[pulse_channel] = true
 
 		match kind:
 			1:
@@ -848,6 +911,20 @@ static func _detail_channel_id(gd_id: int, properties: Dictionary, base_id: int)
 const DEFAULT_STYLE: Dictionary = { "color": Color.WHITE, "alpha": 1.0, "blending": false }
 
 
+static func _classify_pulse(properties: Dictionary) -> PulseSource:
+	if int(properties.get(Prop.TARGET_GROUP, "0")) <= 0:
+		return PulseSource.INERT
+	# Group pulses tint every member object, which needs a per-object colour
+	# override the channel-batched renderer does not have yet.
+	if int(properties.get(Prop.PULSE_TARGET_TYPE, "0")) == 1:
+		return PulseSource.INERT
+	if int(properties.get(Prop.PULSE_MODE, "0")) != 0:
+		if int(properties.get(Prop.COPIED_COLOR_ID, "0")) > 0:
+			return PulseSource.HSV_COPY
+		return PulseSource.INERT
+	return PulseSource.RGB
+
+
 ## [code]true[/code] when a layer on [param channel_id] should be bound to a
 ## colour channel group. Custom channels the header never defined are created
 ## on first use, in their default white, so a colour trigger can still reach
@@ -1241,6 +1318,49 @@ static func _components_from_properties(
 							"channel_type": TargetColorChannelComponent.Type.CUSTOM,
 							"target_color_channel": Constants.COLOR_CHANNEL_GROUP_PREFIX + target_color,
 						}
+		PULSE_TRIGGER_ID:
+			# Mirrors the native PULSE arm: only the colour is pulsed; the
+			# channel's opacity, HSV, blending and copy link are untouched.
+			var pulse_source: PulseSource = _classify_pulse(properties)
+			var pulse_target: int = int(properties.get(Prop.TARGET_GROUP, "0"))
+			if "ColorChannelChangerComponent" in supported:
+				var pulse: Dictionary = {
+					"pulse": true,
+					"color_space": ColorChannelChangerComponent.ColorSpace.SRGB,
+				}
+				match pulse_source:
+					PulseSource.HSV_COPY:
+						pulse["source"] = ColorChannelChangerComponent.ColorSource.COPY_CHANNEL
+						pulse["copied_channel_id"] = int(properties.get(Prop.COPIED_COLOR_ID, "0"))
+						var pulse_hsv: PackedFloat32Array = _hsv_values(properties.get(Prop.COPIED_COLOR_HSV, ""))
+						if not pulse_hsv.is_empty():
+							pulse["copy_hue"] = pulse_hsv[0]
+							pulse["copy_saturation"] = pulse_hsv[1]
+							pulse["copy_value"] = pulse_hsv[2]
+							pulse["copy_saturation_additive"] = pulse_hsv[3] > 0.5
+							pulse["copy_value_additive"] = pulse_hsv[4] > 0.5
+					PulseSource.RGB:
+						pulse["color"] = Color8(
+							int(properties.get(Prop.RED, "255")),
+							int(properties.get(Prop.GREEN, "255")),
+							int(properties.get(Prop.BLUE, "255")),
+						)
+					_:
+						# Inert (reported via ImportReport.inert_trigger_ids).
+						pulse["source"] = ColorChannelChangerComponent.ColorSource.KEEP
+				components["ColorChannelChangerComponent"] = pulse
+			if "TargetColorChannelComponent" in supported and pulse_source != PulseSource.INERT:
+				var pulse_special: int = SPECIAL_CHANNELS.get(pulse_target, -1)
+				if pulse_special != -1:
+					components["TargetColorChannelComponent"] = {
+						"channel_type": TargetColorChannelComponent.Type.LEVEL,
+						"target_level_channel": pulse_special,
+					}
+				else:
+					components["TargetColorChannelComponent"] = {
+						"channel_type": TargetColorChannelComponent.Type.CUSTOM,
+						"target_color_channel": Constants.COLOR_CHANNEL_GROUP_PREFIX + str(pulse_target),
+					}
 		901: # Move trigger
 			if "PositionChangerComponent" in supported:
 				components["PositionChangerComponent"] = {

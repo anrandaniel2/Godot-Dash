@@ -317,6 +317,8 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
 	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
 	print("[RobTop] native conversion: %s" % report.summary())
+	if not report.inert_trigger_ids.is_empty():
+		print("[RobTop] inert triggers:\n%s" % report.inert_trigger_breakdown())
 	if imported_objects.is_empty():
 		return _error("Level %d contains no objects supported by the online parser (%s)" % [level_id, report.summary()])
 

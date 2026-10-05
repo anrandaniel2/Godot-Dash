@@ -17,13 +17,17 @@ vec3 rgb2hsv(vec3 c) {
 }
 
 void fragment() {
-	float use_original_color = step(rgb2hsv(COLOR.xyz).z, 0.3);
+	// 1 on the frost fill: the theme's panel styleboxes are near-black (value
+	// <= 0.3), and those pixels are replaced by the blurred, ui_color-tinted
+	// backdrop. Brighter pixels - borders, and text/icons that inherit this
+	// material via use_parent_material - keep their own colour.
+	float is_frost_fill = step(rgb2hsv(COLOR.xyz).z, 0.3);
 	if (menu_blur) {
 		vec4 blurred = texture(SCREEN_TEXTURE, SCREEN_UV, blur_strength * smoothstep(0, 1, COLOR.a)) * mix(vec4(1), ui_color, COLOR.a);
-		COLOR.rgb = mix(COLOR.rgb, blurred.rgb, use_original_color);
-		COLOR.a = mix(COLOR.a, 1.0, use_original_color);
+		COLOR.rgb = mix(COLOR.rgb, blurred.rgb, is_frost_fill);
+		COLOR.a = mix(COLOR.a, 1.0, is_frost_fill);
 	} else {
-		if (use_original_color != 0.0) {
+		if (is_frost_fill != 0.0) {
 			COLOR.rgb = ui_color.rgb;
 			COLOR.a *= ui_color.a;
 		}

@@ -77,7 +77,7 @@ Camera-*trigger* parity is still in scope — 2.2 levels depend on it — but it
 
 | Symptom (user's words) | First suspects, in order |
 | --- | --- |
-| "Colours look slightly off" in the multicolour section | channel resolution (§5): copy chains, HSV shifts, LBG (1007), `Color8` vs `Color/255` linear mismatch, native-vs-GDScript divergence |
+| "Colours look slightly off" in the multicolour section | channel resolution (§5): copy chains, HSV shifts, LBG (1007), inert pulse modes (§5 Known gaps), native-vs-GDScript divergence |
 | "We just don't see the boss" | objects were **skipped at import** (unsupported ID, missing scene/atlas frame), hidden by an imported alpha/toggle, wrong z-layer/order, or culled — start from `ImportReport.skipped_ids` (§3) |
 | "Cinematic black bars don't work" | geometry/layering, not camera triggers: giant scaled sprites, z-layer/order, `HIDE`/`TOGGLE` handling, `FrustumCuller` (`OVERSIZE_CELLS = 64`, `src/FrustumCuller.gd`), alpha/pulse state left at import default |
 | "Camera follows differently than GD" | `PlayerCamera` constants and catch-up math vs GD's lead and per-step update (§6) |
@@ -267,15 +267,11 @@ Verified key vocabulary:
 
 These are real, in-tree, and each is a plausible "colours look slightly off" root cause:
 
-1. **sRGB vs linear.** The GDScript parser builds colours with `Color8(...)` (`_entry_color`,
-   `:1566`; colour-trigger arm `:1211`). The native parser builds them with
-   `Color(r / 255.0, g / 255.0, b / 255.0)` (`gdash_native.cpp:511`). These are **not** the same
-   colour: `Color(0.5,0.5,0.5)` is a linear value that displays near sRGB 188, while
-   `Color8(128,…)` displays as 128. Any channel recoloured by a trigger on the native path will
-   be visibly lighter/washed compared to the editor path and to GD.
-   **Fix direction:** decode bytes in the native path the way `Color8` does
-   (`Color::from_rgba8` / `Color::from_string("…")`), and add a unit test asserting
-   `native(RGB) == Color8(RGB)` for a few mid-tone values.
+1. ~~sRGB vs linear~~ — **retracted, verified false.** `Color8(r, g, b)` and
+   `Color(r / 255.0, …)` are the same constructor in Godot 4: godot-cpp's
+   `Color::from_rgba8` is literally `Color(p_r8 / 255.0f, …)`
+   (`native/godot-cpp/src/variant/color.cpp`), and neither applies a linear conversion. The
+   native and GDScript byte decodes are bit-identical; do not "fix" this.
 2. **LBG (1007) is implemented twice, differently.** GDScript `_lighter_background()` (`:1581`)
    desaturates 0.2 and lerps toward the player colour by `background.v`; native
    `live_special_color(1007)` uses `bg.lightened(0.2f)`. Channels copying LBG will not match
@@ -293,9 +289,18 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
 
 ### Known gaps (verified)
 
-- `PULSE` (1006/1007) is inert when `key 52 == 1` (object-group target) or `key 48 == 1` (HSV
-  mode) — `gdash_native.cpp`, `case TriggerEffectKind::PULSE`. Group pulses and HSV pulses
-  simply do not happen. On 2.0/2.1 effect levels this alone changes the look.
+- `PULSE` (1006): **HSV-mode** channel pulses (`48` non-zero → colour = copied channel `50`
+  shifted by `49`) are implemented on both paths (native `classify_pulse` + the PULSE arm;
+  component `ColorChannelChangerComponent.pulse` via `GMDObjects.MAP[1006]`), cited to GD 2.11
+  `EffectGameObject::customObjectSetup` case 1006. RGB mode reads only `7/8/9` (keys `15/16/50`
+  are not pulse vocabulary). Still inert: **group pulses** (`52 == 1`, need a per-object tint
+  the batched renderer lacks) and HSV pulses with no `50`; both are counted in
+  `ImportReport.inert_trigger_ids`. Regression: `native/tests/test_trigger_effect_parse.cpp`.
+- Every trigger on the inert `NativeGenericTrigger` shell that the native runtime does not
+  execute on the current path — notably the 2.1 tools Follow 1347, Animate 1585, Touch 1595,
+  Count 1611, Instant Count 1811, Collision 1815, Pickup 1817 — is a silent no-op on **both**
+  paths; it is now counted in `ImportReport.inert_trigger_ids` (printed by
+  `RobTopLevels` / `LevelOperationsHandler`).
 - Player channels P1/P2 (1005/1006) are intentional no-ops in the trigger arms in both paths
   (matching the component). If a level recolours P1/P2 via a trigger, GD *does* apply it —
   decide deliberately which is right.
@@ -397,33 +402,27 @@ The frosted-glass backdrop behind menus and pause panels. One material is shared
 | Globals | `project.godot` `[shader_globals]` — `menu_blur`, `blur_strength`, `ui_color` |
 | Settings push | `src/SettingsMenu.gd:19-21` (on ready), `:40-49` (on change) |
 
-Measured defects (verified in code; confirm each visually before changing it):
+Status of the defects first listed here, re-checked against the checkout and the Godot
+4.7.2 source (no Godot binary was available, so none is visually confirmed):
 
-1. **Saved settings are not applied until the settings menu is opened.** `Config` loads
-   `menu_blur`, `blur_strength`, `ui_color` (`Config.gd:233,238,239`; defaults `:60-62`) but the
-   only writers of the shader globals are `SettingsMenu` (above) — nothing pushes them from
-   `Config`. Until the settings menu is instantiated, the shaders run `project.godot`'s values
-   (`menu_blur=true`, `blur_strength=3`, `ui_color=#808080`), so a saved "menu blur off" comes
-   back on after a restart until settings is opened. Reproduce: turn Menu Blur off, restart,
-   look at the title screen. Fix: make `Config` the single owner that pushes the globals when it
-   loads/changes them; the menu handlers then just set `Config`.
-2. **The web shader can sample an unset texture.** `BackgroundBlurWeb.gdshader` reads
-   `blur_tex`, assigned only by `WebSoftEffects._ready()` (`WebSoftEffects.gd:105-107`), while
-   `Config.gd:235-237` swaps the shader on the **shared** `SimpleBlurMaterial.tres` in place. Any
-   panel drawn before that assignment — or any build where `WebSoftEffects` is missing or is
-   created later — samples an undefined sampler, and the shader's dark-panel path paints it over
-   the panel. Fix: give the web variant its own resource instead of mutating the shared one, and
-   make the shader degrade to `COLOR` when `blur_tex` is not set.
-3. **Desktop blur is a mipmap-LOD blur.** `texture(SCREEN_TEXTURE, SCREEN_UV, blur_strength *
-   smoothstep(0, 1, COLOR.a))` with `hint_screen_texture, filter_linear_mipmap`: it only blurs
-   where the renderer generates mipmaps for the back-buffer copy. Forward+/Mobile do; the
-   Compatibility renderer does not. `H:` confirm on the affected renderer(s) before assuming;
-   if mipmaps are absent the LOD argument is ignored and the "blur" is a plain screen sample.
-4. **Bright panels are never blurred.** `step(rgb2hsv(COLOR.xyz).z, 0.3)` yields 1 **only** for
-   colours with value ≤ 0.3, and that 1 selects the blurred sample; a light panel keeps its own
-   colour and discards the frost. The variable name (`use_original_color`) says the opposite of
-   what the code does — decide which is correct from the intended look and fix the other, and say
-   which in the commit message.
+1. *Saved settings not applied until settings is opened* — **does not reproduce from code.**
+   `SettingsMenu` is a static child of the main scene (`TitleScreen.tscn`, node
+   `TitleScreen/Settings/MarginContainer/SettingsMenu`), and its `_ready()` pushes
+   `menu_blur` / `blur_strength` / `ui_color` unconditionally at boot (Godot readies hidden
+   nodes). Only a boot path that skips the title scene could show stale globals; none exists.
+2. *Web shader samples an unset texture* — **does not reproduce on the normal flow.**
+   `WebSoftEffects` is created in `Config._ready()` (an autoload), so `blur_tex` is assigned
+   before the main scene draws. Only bites if that node is removed or deferred.
+3. *Mipmap-LOD blur absent on Compatibility* — **false for 4.7.** Desktop runs `mobile`
+   (RD); RD generates back-buffer mipmaps when a shader samples the screen texture with a
+   mipmap filter (`servers/rendering/renderer_rd/renderer_canvas_render_rd.cpp`), and so does
+   GLES3 (`drivers/gles3/rasterizer_canvas_gles3.cpp`, `render_target_gen_back_buffer_mipmaps`),
+   which `rendering_device/fallback_to_gl_compatibility=true` can select. `smoothstep(0, 1, …)`
+   compiles: int constants convert for builtin args (`shader_language.cpp`, `convert_constant`).
+4. *Bright panels never blurred* — **intended behaviour, misnamed.** The theme's panel
+   styleboxes are black (`resources/Theme.tres`), and on the title screen text/icons inherit
+   the material via `use_parent_material`; the `V <= 0.3` mask selects the frost fill and keeps
+   bright foreground pixels. The variable is now `is_frost_fill` in both shaders.
 5. **Web must not gain a screen texture.** `WebSoftEffects.gd` and `WebBlurSource.gdshader` say
    explicitly that `hint_screen_texture` on web is the hitch this pipeline exists to avoid. Do
    not "fix" blur by copying the framebuffer on web. Strength on web is the downscale divisor
@@ -443,7 +442,8 @@ toggling Menu Blur off persists across a restart without opening settings; no ne
 3. **In `NATIVE_EFFECT_TRIGGER_IDS` without a C++ arm** → Area2D removed *and* no effect.
    (#1 silent-failure cause on the default config.)
 4. **Target group is empty** because every member was skipped → `report.empty_target_groups`;
-   the runtime warns "target group doesn't contain any objects".
+   the runtime warns "target group doesn't contain any objects". A trigger on the inert generic
+   shell, or in an unsupported mode (group pulse), → `report.inert_trigger_ids`.
 5. **Correct effect, wrong state model** — e.g. blending tri-state, copy-opacity, spawn vs touch
    flags, `multi_trigger`, target-group vs centre-group (`71` vs `51`), `HIDE`/`TOGGLE`.
 6. **Correct effect, wrong timing** — easing table (`_easing_to_tween`),

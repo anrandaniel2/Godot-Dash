@@ -526,6 +526,27 @@ static String level_color_property_for_channel(int32_t channel) {
 	return String();
 }
 
+// How a Pulse trigger (1006) sources its colour. parity: GD 2.11
+// EffectGameObject::customObjectSetup case 1006 (Wyliemaster/GD-Decompiled,
+// GD/code/src/EffectGameObject.cpp): key 48 (pulse mode, atoi-truthy) selects
+// HSV mode, which reads ONLY the copied channel (key 50) and its HSV shift
+// (key 49); RGB mode reads ONLY keys 7/8/9 - keys 15/16/50 are not part of a
+// pulse's vocabulary. Key 52 selects the target type (1 = object group).
+enum class PulseSource : int32_t {
+	INERT = 0, // no target, an unmodelled group pulse, or HSV mode without a source channel
+	RGB,
+	HSV_COPY,
+};
+
+static PulseSource classify_pulse(int64_t target_channel, int64_t target_type, int64_t pulse_mode, int64_t copied_channel) {
+	if (target_channel <= 0) return PulseSource::INERT;
+	// Group pulses tint every member object, which needs a per-object colour
+	// override the channel-batched renderer does not have yet.
+	if (target_type == 1) return PulseSource::INERT;
+	if (pulse_mode != 0) return copied_channel > 0 ? PulseSource::HSV_COPY : PulseSource::INERT;
+	return PulseSource::RGB;
+}
+
 static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &properties) {
 	TriggerEffect effect;
 	switch (gd_id) {
@@ -633,18 +654,14 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		}
 		case TriggerEffectKind::PULSE: {
-			// Key 52 selects the target type: 0 = colour channel in key 51,
-			// 1 = object group. Group pulses and HSV pulses need per-object
-			// colour overrides this engine models differently, so they stay
-			// inert until that changes.
-			const String target_type = String(properties.get("52", String("0"))).strip_edges();
-			const String hsv_mode = String(properties.get("48", String("0"))).strip_edges();
-			const String target = String(properties.get("51", String())).strip_edges();
-			if (target_type == "1" || hsv_mode == "1" || !target.is_valid_int() || target.to_int() <= 0) {
+			const PulseSource source = classify_pulse(
+				prop_int(properties, "51", 0), prop_int(properties, "52", 0),
+				prop_int(properties, "48", 0), prop_int(properties, "50", 0));
+			if (source == PulseSource::INERT) {
 				effect.kind = TriggerEffectKind::NONE;
 				break;
 			}
-			const int32_t channel = static_cast<int32_t>(target.to_int());
+			const int32_t channel = static_cast<int32_t>(prop_int(properties, "51", 0));
 			const String level_property = level_color_property_for_channel(channel);
 			if (!level_property.is_empty()) {
 				effect.channel_is_level_color = true;
@@ -655,7 +672,20 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			} else {
 				effect.target_channel = channel;
 			}
-			parse_color_source(properties, effect);
+			if (source == PulseSource::HSV_COPY) {
+				// The pulse colour is the copied channel's live colour shifted
+				// by key 49; resolve_source_color applies both. The copy link
+				// and opacity are COLOR-only in apply_color, so a pulse never
+				// re-points or re-alphas its target channel.
+				effect.copy_channel = static_cast<int32_t>(prop_int(properties, "50", 0));
+				parse_copy_hsv(properties, effect);
+			} else {
+				effect.color = Color(
+					static_cast<real_t>(prop_float(properties, "7", 255.0) / 255.0),
+					static_cast<real_t>(prop_float(properties, "8", 255.0) / 255.0),
+					static_cast<real_t>(prop_float(properties, "9", 255.0) / 255.0));
+				effect.has_color = true;
+			}
 			break;
 		}
 		case TriggerEffectKind::SHAKE:

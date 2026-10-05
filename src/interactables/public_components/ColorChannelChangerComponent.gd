@@ -58,6 +58,11 @@ const CHANNEL_GROUND_2 := 1009
 ## intact instead of reverting the channel to normal.
 @export var blending: bool = false
 @export var has_blending: bool = false
+## Pulse trigger (1006) semantics: only the colour is driven, along the
+## easing's fade-in/hold/fade-out envelope back to the colour at fire time;
+## opacity, HSV, intensity, blending and the copy link are left alone. Mirrors
+## the native runtime, where those writes are COLOR-only.
+@export var pulse: bool = false
 @export_group("Copied channel")
 @export var copied_channel_id: int = 0
 @export var copy_opacity: bool = false
@@ -127,6 +132,9 @@ func _field_from_data(field_name: String, field_data: Variant) -> void:
 
 
 func start(_player: Player) -> void:
+	# An inert pulse (unsupported mode, reported at import) changes nothing.
+	if pulse and source == ColorSource.KEEP:
+		return
 	match color_space:
 		ColorSpace.SRGB:
 			gradient.interpolation_color_space = Gradient.GRADIENT_COLOR_SPACE_SRGB
@@ -145,6 +153,8 @@ func start(_player: Player) -> void:
 			color_channel = LevelManager.current_level.color_channels[idx]
 			initial_color_channel = color_channel.duplicate()
 			gradient.colors = PackedColorArray([initial_color_channel.color, _resolved_color(initial_color_channel.color)])
+			if pulse:
+				return
 			# Blending is target state applied at fire time, not faded:
 			# the checkbox itself is the channel's new blend mode - but only
 			# for triggers that carry the checkbox (tri-state), so a plain
@@ -277,6 +287,9 @@ func _on_easing_progressed(player: Player, weight_delta: float) -> void:
 			if not color_channel:
 				return
 			color_channel.color = gradient.sample(weight)
+			if pulse:
+				color_channel.emit_changed()
+				return
 			color_channel.hsv_shift[0] += (hue - initial_color_channel.hsv_shift[0]) * weight_delta
 			color_channel.hsv_shift[1] += (saturation - initial_color_channel.hsv_shift[1]) * weight_delta
 			color_channel.hsv_shift[2] += (value - initial_color_channel.hsv_shift[2]) * weight_delta

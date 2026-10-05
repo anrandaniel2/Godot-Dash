@@ -144,6 +144,13 @@ const MAP: Dictionary[int, Dictionary] = {
 		"name": "ColorTrigger",
 		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
 	},
+	# Pulse: the Color trigger scene with ColorChannelChangerComponent.pulse
+	# set by the converter (colour-only, fade-in/hold/fade-out envelope).
+	1006: {
+		"scene": TRIGGERS + "ColorTrigger.tscn",
+		"name": "PulseTrigger",
+		"components": ["TargetColorChannelComponent", "ColorChannelChangerComponent", "EasingComponent"],
+	},
 	# Legacy colour triggers from the pre-2.1 editors: each family targeted a
 	# fixed channel (GMDConverter.LEGACY_COLOR_TRIGGER_CHANNELS) since key 23
 	# did not exist yet. They convert through the same Color trigger arm.

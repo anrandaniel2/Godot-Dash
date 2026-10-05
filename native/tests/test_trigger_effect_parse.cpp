@@ -68,6 +68,18 @@ int main() {
 	expect_true("family of easing 5 is elastic", 5 >= 4 && 5 <= 6);
 	expect_true("mode of easing 5 is in", (5 - 1) % 3 == 1);
 
+	// Pulse (1006) source classification - parity: GD 2.11
+	// EffectGameObject::customObjectSetup case 1006 (Wyliemaster/GD-Decompiled).
+	// HSV-mode channel pulses used to classify as inert: a silent no-op on the
+	// default native path.
+	expect_true("rgb channel pulse", classify_pulse(5, 0, 0, 0) == PulseSource::RGB);
+	expect_true("hsv channel pulse copies key 50", classify_pulse(5, 0, 1, 3) == PulseSource::HSV_COPY);
+	expect_true("hsv mode is atoi-truthy", classify_pulse(5, 0, 2, 3) == PulseSource::HSV_COPY);
+	expect_true("rgb mode ignores key 50", classify_pulse(5, 0, 0, 3) == PulseSource::RGB);
+	expect_true("hsv pulse without source is inert", classify_pulse(5, 0, 1, 0) == PulseSource::INERT);
+	expect_true("group pulse still inert", classify_pulse(5, 1, 0, 0) == PulseSource::INERT);
+	expect_true("missing target is inert", classify_pulse(0, 0, 0, 0) == PulseSource::INERT);
+
 	// is_shader_kind helper test
 	expect_true("gray is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_GRAYSCALE));
 	expect_true("sepia is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_SEPIA));
