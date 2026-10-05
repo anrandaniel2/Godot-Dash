@@ -10,6 +10,7 @@ extends Node
 const _SAVE_PATH := "user://level_memory_profile.bin"
 
 var _started_ms: int = 0
+var _frame_origin: int = 0
 
 
 func _ready() -> void:
@@ -85,6 +86,12 @@ func _ready() -> void:
 	var tree_started := Time.get_ticks_msec()
 	add_child(level)
 	print("LEVEL_PROFILE breakdown add_child (enter tree + _ready): %d ms" % (Time.get_ticks_msec() - tree_started))
+	_frame_origin = Time.get_ticks_msec()
+	_stamp.call_deferred("deferred queue drained")
+	get_tree().physics_frame.connect(_stamp.bind("physics_frame signal"), CONNECT_ONE_SHOT)
+	get_tree().process_frame.connect(_stamp.bind("process_frame signal"), CONNECT_ONE_SHOT)
+	print("LEVEL_PROFILE breakdown nodes in level: %d, deferred component loads queued: %d" % [
+		_count_nodes(level), _deferred_component_objects(loaded)])
 	await get_tree().process_frame
 	print("LEVEL_PROFILE breakdown first frame: %d ms" % (Time.get_ticks_msec() - tree_started))
 	await get_tree().process_frame
@@ -185,6 +192,25 @@ func _breakdown(data: Dictionary) -> void:
 	for key: String in keys.slice(0, 8):
 		lines.append("%s x%d %d ms" % [key, by_scene[key][0], by_scene[key][1] / 1000])
 	print("LEVEL_PROFILE breakdown instantiate total %d ms: %s" % [total / 1000, ", ".join(lines)])
+
+
+func _stamp(label: String) -> void:
+	print("LEVEL_PROFILE breakdown %s at +%d ms" % [label, Time.get_ticks_msec() - _frame_origin])
+
+
+func _count_nodes(node: Node) -> int:
+	var total := 1
+	for child: Node in node.get_children():
+		total += _count_nodes(child)
+	return total
+
+
+func _deferred_component_objects(data: Dictionary) -> int:
+	var total := 0
+	for object_data: Dictionary in data.layers[0].objects:
+		if not (object_data.get("components", { }) as Dictionary).is_empty():
+			total += 1
+	return total
 
 
 func _sprite_count(batch: DecorationBatch) -> int:
