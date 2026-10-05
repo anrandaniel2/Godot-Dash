@@ -6,9 +6,9 @@ signal closed
 
 func _ready() -> void:
 	# The reset/default value follows the current monitor instead of hard-coding
-	# 60, matching Config's first-launch choice on 90/120/144 Hz displays.
-	var refresh_rate := roundi(DisplayServer.screen_get_refresh_rate())
-	%"Max FPS".default = refresh_rate if refresh_rate > 0 else 60
+	# 60, matching Config's first-launch choice: the refresh rate, or 0
+	# (uncapped, paced by the display) when it cannot be read.
+	%"Max FPS".default = maxi(0, roundi(DisplayServer.screen_get_refresh_rate()))
 	Engine.max_fps = int(Config.max_fps)
 	DisplayServer.window_set_vsync_mode(Config.vsync)
 	var saved_bus_layout: AudioBusLayout

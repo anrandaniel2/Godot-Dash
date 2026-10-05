@@ -211,11 +211,11 @@ func _init():
 	config_file.load("user://config.cfg")
 
 	# Graphics. On a fresh install, cap to the actual panel refresh rate rather
-	# than an arbitrary 60 FPS. Keep 60 as the platform fallback for displays
-	# that do not report a usable refresh value.
-	var refresh_rate := roundi(DisplayServer.screen_get_refresh_rate())
-	if refresh_rate <= 0:
-		refresh_rate = 60
+	# than an arbitrary 60 FPS. When the display reports no refresh rate (always
+	# on Web, where the browser already paces frames to the display with
+	# requestAnimationFrame) leave the frame rate uncapped (0): a 60 fallback
+	# held 120/144 Hz screens at 60.
+	var refresh_rate := maxi(0, roundi(DisplayServer.screen_get_refresh_rate()))
 	max_fps = config_file.get_value("Graphics", "max_fps", refresh_rate)
 	vsync = config_file.get_value("Graphics", "vsync", vsync)
 	window_mode = config_file.get_value("Graphics", "window_mode", WindowMode.WINDOWED if OS.has_feature("web") else window_mode)
@@ -258,6 +258,13 @@ func _init():
 		config_file.set_value("Graphics", "anti_aliasing", anti_aliasing)
 		config_file.set_value("Performance", "culling_buffer_cells", culling_buffer_cells)
 		config_file.set_value("Performance", "defaults_version", 1)
+	# Version 2: installs on displays without a readable refresh rate saved the
+	# old 60 fallback as their cap; clear it so the display paces frames.
+	if int(config_file.get_value("Performance", "defaults_version", 0)) < 2:
+		if refresh_rate == 0 and max_fps == 60:
+			max_fps = 0
+		config_file.set_value("Graphics", "max_fps", max_fps)
+		config_file.set_value("Performance", "defaults_version", 2)
 		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
