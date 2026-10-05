@@ -397,6 +397,9 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# converted, so ColorChannelData is only created for channels with a user.
 	var used_channels: Dictionary[int, bool] = { }
 	var objects: Array[Dictionary] = []
+	# Decorations go into packed columns instead of one Dictionary each; see
+	# PackedDecorations for why (memory on 300k-object levels).
+	var packed_decorations := PackedDecorations.new()
 	# Compact side index consumed directly by NativeTriggerBridge, avoiding a
 	# second GDScript scan across every decoration in large downloaded levels.
 	var native_trigger_records: Array[Dictionary] = []
@@ -534,6 +537,9 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			var group_id: String = group.trim_prefix(Constants.GROUP_PREFIX)
 			populated_groups[group_id] = populated_groups.get(group_id, 0) + 1
 
+		if kind == 1 and packed_decorations.append_entry(object_data, chunk_idx):
+			report.imported += 1
+			continue
 		objects.append(object_data)
 		if object_data.get("native_only_trigger", false):
 			native_trigger_records.append(object_data)
@@ -595,6 +601,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"layers": [{
 			"name": "Imported Layer",
 			"objects": objects,
+			PackedDecorations.LAYER_KEY: packed_decorations.to_data(),
 			"locked": false,
 		}],
 		"active_layer_idx": 0,

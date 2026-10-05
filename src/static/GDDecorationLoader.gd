@@ -179,6 +179,22 @@ static func build_batches(objects: Array, art_scale_factor: float) -> Array[Deco
 	return finish_batches(batches)
 
 
+## [method build_batches] plus every row of a [PackedDecorations] table.
+static func build_batches_packed(objects: Array, packed: Dictionary, art_scale_factor: float) -> Array[DecorationBatch]:
+	var batches := new_batches()
+	for object_data: Dictionary in objects:
+		add_object(batches, object_data, art_scale_factor)
+	add_packed(batches, packed, art_scale_factor)
+	return finish_batches(batches)
+
+
+## Feeds every row of a [PackedDecorations] table into [param batches]. Each
+## row is expanded to a short-lived entry, so only one exists at a time.
+static func add_packed(batches: Dictionary, packed: Dictionary, art_scale_factor: float) -> void:
+	for i: int in PackedDecorations.size_of(packed):
+		add_object(batches, PackedDecorations.row(packed, i), art_scale_factor)
+
+
 ## An empty batch accumulator for [method add_object].
 static func new_batches() -> Dictionary[String, DecorationBatch]:
 	# Preserve the typed Dictionary at runtime. Godot 4.7 rejects an untyped

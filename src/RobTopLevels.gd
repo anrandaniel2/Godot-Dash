@@ -319,7 +319,7 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	print("[RobTop] native conversion: %s" % report.summary())
 	if not report.inert_trigger_ids.is_empty():
 		print("[RobTop] inert triggers:\n%s" % report.inert_trigger_breakdown())
-	if imported_objects.is_empty():
+	if imported_objects.is_empty() and PackedDecorations.size_of(level_data.layers[0].get(PackedDecorations.LAYER_KEY, {})) == 0:
 		return _error("Level %d contains no objects supported by the online parser (%s)" % [level_id, report.summary()])
 
 	level_data.name = level_name
@@ -435,7 +435,7 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	print("[RobTop] GDHistory conversion: %s" % report.summary())
 	if not report.inert_trigger_ids.is_empty():
 		print("[RobTop] inert triggers:\n%s" % report.inert_trigger_breakdown())
-	if imported_objects.is_empty():
+	if imported_objects.is_empty() and PackedDecorations.size_of(level_data.layers[0].get(PackedDecorations.LAYER_KEY, {})) == 0:
 		return _error("Level %d contains no objects supported by parser" % level_id)
 
 	level_data.name = level_name

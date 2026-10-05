@@ -31,6 +31,8 @@ var _object_index: int = 0
 var _layer: Layer
 var _layer_initialised: bool = false
 var _decoration_data: Array = []
+## The current layer's [PackedDecorations] table (runtime builds only).
+var _packed: Dictionary = { }
 ## Runtime construction state lives here when the platform extension is
 ## available. Untyped because source/editor builds intentionally have no native
 ## class and retain the implementation below.
@@ -40,6 +42,8 @@ var _native_job: Object
 func _init(data: Dictionary) -> void:
 	_data = data
 	_drop_decoration = Config.ldm and not Editor.in_editor
+	if Editor.in_editor:
+		_expand_packed_decorations(_data)
 	if not Editor.in_editor and NativeCore.available() and ClassDB.class_exists(&"NativeLevelBuildJob"):
 		_native_job = ClassDB.instantiate(&"NativeLevelBuildJob")
 		_native_job.call(&"initialize", data, _drop_decoration)
@@ -91,6 +95,7 @@ func _start_next_layer() -> void:
 	layer.locked = layer_data.locked
 	_layer = layer
 	_layer_initialised = true
+	_packed = layer_data.get(PackedDecorations.LAYER_KEY, { })
 	_object_index = 0
 
 
@@ -126,13 +131,16 @@ func _place(object_data: Dictionary) -> void:
 ## Finishes the current layer (appends its fallback decoration batches) and
 ## adds it to the level, matching the synchronous builder's order.
 func _seal_layer() -> void:
-	if not _decoration_data.is_empty():
-		for batch: DecorationBatch in GDDecorationLoader.build_batches(
-				_decoration_data, GDDecorationLoader.art_scale()
+	if _drop_decoration:
+		_packed = { }
+	if not _decoration_data.is_empty() or PackedDecorations.size_of(_packed) > 0:
+		for batch: DecorationBatch in GDDecorationLoader.build_batches_packed(
+				_decoration_data, _packed, GDDecorationLoader.art_scale()
 		):
 			batch.set_meta(Constants.LAYER_META, _layer)
 			_layer.add_child(batch)
 		_decoration_data.clear()
+	_packed = { }
 	level.layers.append(_layer)
 	level.add_child(_layer)
 	_layer_initialised = false
@@ -143,3 +151,16 @@ func _finish() -> void:
 	level.use_data(_data, true)
 	level.ready.connect(level.setup_color_channel_watchers, CONNECT_ONE_SHOT)
 	finished = true
+
+
+## The editor needs one node per decoration, so packed tables are turned back
+## into ordinary entries before an editor build.
+static func _expand_packed_decorations(data: Dictionary) -> void:
+	for layer_data: Dictionary in data.get("layers", []):
+		var packed: Dictionary = layer_data.get(PackedDecorations.LAYER_KEY, { })
+		if packed.is_empty():
+			continue
+		var objects: Array = layer_data.objects
+		for i: int in PackedDecorations.size_of(packed):
+			objects.append(PackedDecorations.row(packed, i))
+		layer_data.erase(PackedDecorations.LAYER_KEY)

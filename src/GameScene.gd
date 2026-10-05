@@ -125,6 +125,7 @@ func _open_level_paced() -> void:
 		var object_count := 0
 		for layer_data: Dictionary in level_data.layers:
 			object_count += layer_data.objects.size()
+			object_count += PackedDecorations.size_of(layer_data.get(PackedDecorations.LAYER_KEY, { }))
 		var node_count := 0
 		for layer: Layer in level.layers:
 			node_count += layer.get_child_count()

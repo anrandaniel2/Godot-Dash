@@ -1,6 +1,7 @@
 extends Node
 ## Measures memory and time for every stage of opening a downloaded level,
 ## following the game's own path: decode -> import -> save -> load -> build.
+## Decorations count as "packed" when they live in a PackedDecorations table.
 ##
 ## Run by .github/workflows/level-profile.yml against a real level file (for
 ## example ORBIT, 310k objects). Reads the GDHistory download from the path in

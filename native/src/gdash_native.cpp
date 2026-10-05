@@ -5097,6 +5097,8 @@ class NativeLevelBuildJob : public RefCounted {
 	Dictionary data;
 	Array layers_data;
 	Array decoration_data;
+	// The current layer's PackedDecorations table (column arrays).
+	Dictionary packed_decorations;
 	Ref<Script> level_script;
 	Ref<Script> layer_script;
 	Ref<Script> decoration_loader_script;
@@ -5132,6 +5134,7 @@ class NativeLevelBuildJob : public RefCounted {
 		}
 		layer->set_name(layer_data.get("name", String("Layer")));
 		layer->set("locked", layer_data.get("locked", false));
+		packed_decorations = drop_decoration ? Dictionary() : Dictionary(layer_data.get("packed_decorations", Dictionary()));
 		layer_initialized = true;
 		object_index = 0;
 	}
@@ -5171,9 +5174,9 @@ class NativeLevelBuildJob : public RefCounted {
 	}
 
 	void seal_layer() {
-		if (!decoration_data.is_empty()) {
+		if (!decoration_data.is_empty() || !packed_decorations.is_empty()) {
 			const double scale = decoration_loader_script->call("art_scale");
-			const Array batches = decoration_loader_script->call("build_batches", decoration_data, scale);
+			const Array batches = decoration_loader_script->call("build_batches_packed", decoration_data, packed_decorations, scale);
 			for (int64_t i = 0; i < batches.size(); ++i) {
 				Object *object = batches[i];
 				Node *batch = Object::cast_to<Node>(object);
@@ -5183,6 +5186,7 @@ class NativeLevelBuildJob : public RefCounted {
 			}
 			decoration_data.clear();
 		}
+		packed_decorations = Dictionary();
 		Array layers = level->get("layers");
 		layers.append(layer);
 		level->set("layers", layers);
