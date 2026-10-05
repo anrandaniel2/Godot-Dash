@@ -143,7 +143,7 @@ jobs:
         id: cache-webgpu-template
         with:
           path: hogdot-templates/web_dlink_release.zip
-          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-threads-dlink-release
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-threads-dlink-release-maxmem4g
 
       - name: Build unstripped WebGPU template
         if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
@@ -170,7 +170,7 @@ jobs:
           scons platform=web target=template_release arch=wasm32 \
             webgpu=yes vulkan=no opengl3=no \
             production=yes optimize=speed threads=yes dlink_enabled=yes \
-            initial_memory=256 -j"$(nproc)"
+            initial_memory=256 linkflags="-sMAXIMUM_MEMORY=4GB" -j"$(nproc)"
           test -f bin/godot.web.template_release.wasm32.dlink.zip
           unzip -l bin/godot.web.template_release.wasm32.dlink.zip
           # ClassDB strings live in the engine module. dlink puts that in the
@@ -292,6 +292,12 @@ jobs:
           test -f "$WEB_DIR/index.wasm"
           test -f "$WEB_DIR/index.side.wasm"
           test -f "$WEB_DIR/libgdash_native.web.template_release.wasm32.wasm"
+          # Emscripten writes the heap cap into the JS glue. 2 GB was not enough
+          # for 300k-object levels (alloc_static "mem is null").
+          if ! grep -Eq '4294901760|4294967296' "$WEB_DIR/index.js"; then
+            echo "::error::Web template is not built with MAXIMUM_MEMORY=4GB"
+            exit 1
+          fi
           if ! grep -q 'webgpu' "$WEB_DIR/index.html"; then
             echo "::error::Export did not select the WebGPU driver. Refusing to publish a WebGL build."
             exit 1

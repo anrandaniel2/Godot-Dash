@@ -418,6 +418,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			if source_idx < native_validity.size() and native_validity[source_idx] == 0:
 				continue
 			properties = native_objects[source_idx]
+			# Drop the parsed copy as soon as it is read. Holding every
+			# source dictionary alongside the converted objects doubled peak
+			# memory and pushed 300k-object levels past the web heap limit.
+			native_objects[source_idx] = null
 		else:
 			var chunk: String = chunks[chunk_idx]
 			if chunk.strip_edges().is_empty():
