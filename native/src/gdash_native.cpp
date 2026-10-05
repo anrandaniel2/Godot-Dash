@@ -2633,7 +2633,7 @@ public:
 
 	static ChannelSnapshot capture_channel_snapshot(Object *data) {
 		ChannelSnapshot snap;
-		snap.id = data->get_instance_id();
+		snap.id = ObjectID(data->get_instance_id());
 		snap.color = static_cast<Color>(data->get("color"));
 		snap.alpha = static_cast<double>(data->get("alpha"));
 		snap.intensity = static_cast<double>(data->get("intensity"));
@@ -2697,8 +2697,8 @@ public:
 
 	void register_channel(const String &name, Object *data) {
 		if (!data || name.is_empty()) return;
-		const ObjectID id = data->get_instance_id();
-		channel_index[name] = id;
+		channel_index[name] = data->get_instance_id();
+		const ObjectID id(data->get_instance_id());
 		for (ChannelSnapshot &existing : channel_start) {
 			if (existing.id == id) {
 				existing = capture_channel_snapshot(data);
