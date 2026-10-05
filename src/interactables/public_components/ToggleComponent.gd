@@ -10,9 +10,83 @@ signal send_to_group_display(group_name: String)
 
 @export_storage var used_times: int = 0
 
+## GD 2.1 item triggers share this component (twin of the native PICKUP /
+## COUNT / INSTANT_COUNT arms). NONE is the plain Toggle trigger.
+enum ItemMode { NONE, PICKUP, COUNT, INSTANT_COUNT }
+
+## Key 88 of Instant Count.
+enum CompareMode { EQUALS, LARGER, SMALLER }
+
+@export var item_mode: ItemMode = ItemMode.NONE
+@export var item_id: int = 0
+## Pickup: amount added. Count / Instant Count: target value (key 77).
+@export var item_count: int = 0
+@export var compare_mode: CompareMode = CompareMode.EQUALS
+@export var multi_activate: bool = false
+## Key 56 checked: spawn the target groups instead of toggling them off.
+@export var spawn_group: bool = false
+
+## Level-wide item counters, cleared on restart by reset_items().
+static var item_counts: Dictionary[int, int] = {}
+static var _armed_counts: Array[ToggleComponent] = []
+
+
+static func reset_items() -> void:
+	item_counts.clear()
+	_armed_counts.clear()
+
+
+static func change_item(changed_id: int, delta: int, player: Player) -> void:
+	var previous: int = item_counts.get(changed_id, 0)
+	var current: int = previous + delta
+	item_counts[changed_id] = current
+	for counter: ToggleComponent in _armed_counts.duplicate():
+		if not is_instance_valid(counter):
+			_armed_counts.erase(counter)
+			continue
+		if counter.item_id != changed_id or current != counter.item_count or previous == counter.item_count:
+			continue
+		if not counter.multi_activate:
+			_armed_counts.erase(counter)
+		counter.fire_item_action(player)
+
 
 func _ready() -> void:
-	parent.interacted.connect(toggle)
+	parent.interacted.connect(_on_interacted)
+
+
+func _on_interacted(player: Player = null) -> void:
+	match item_mode:
+		ItemMode.NONE:
+			toggle(player)
+		ItemMode.PICKUP:
+			change_item(item_id, item_count, player)
+		ItemMode.COUNT:
+			if not _armed_counts.has(self):
+				_armed_counts.append(self)
+		ItemMode.INSTANT_COUNT:
+			if _compare(item_counts.get(item_id, 0)):
+				fire_item_action(player)
+
+
+func _compare(value: int) -> bool:
+	match compare_mode:
+		CompareMode.LARGER:
+			return value > item_count
+		CompareMode.SMALLER:
+			return value < item_count
+		_:
+			return value == item_count
+
+
+func fire_item_action(player: Player) -> void:
+	if not spawn_group:
+		toggle(player)
+		return
+	for toggled_group: ToggledGroup in toggled_groups:
+		for node: Node in get_tree().get_nodes_in_group(Constants.GROUP_PREFIX + toggled_group.group):
+			if node.has_signal(&"interacted"):
+				node.interacted.emit(player)
 
 
 func toggle(_player: Player = null) -> void:

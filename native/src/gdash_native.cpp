@@ -118,6 +118,9 @@ enum class TriggerEffectKind : int32_t {
 	SFX,                // 3602 SFX Trigger
 	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
 	FOLLOW,             // 1347 Follow (target group tracks the follow group's movement)
+	PICKUP,             // 1817 Pickup (adds key 77 to item key 80)
+	COUNT,              // 1611 Count (armed when passed; fires when the item reaches key 77)
+	INSTANT_COUNT,      // 1811 Instant Count (compares the item once, when passed)
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -267,6 +270,10 @@ struct TriggerEffect {
 	String center_group;               // key 71, "g_N" (rotate/scale/teleport centre)
 	Vector2 move_px;             // 901: keys 28/29 in pixels
 	Vector2 follow_mod = Vector2(1.0, 1.0); // 1347: keys 72/73 (X/Y multipliers)
+	int32_t item_id = 0;         // 1611/1811/1817: key 80
+	int64_t item_count = 0;      // 1611/1811: target, 1817: amount (key 77)
+	int32_t item_compare_mode = 0; // 1811: key 88 (0 equals, 1 larger, 2 smaller)
+	bool item_multi = false;     // 1611: key 104 (multi activate)
 	double degrees = 0.0;        // 1346: keys 68 + 69*360
 	bool allow_self_rotation = true; // 1346: key 70 != "1"
 	Vector2 scale_factor = Vector2(1.0, 1.0); // 2067: keys 150/151 (multiplied)
@@ -540,6 +547,25 @@ static Vector2 follow_step(const Vector2 &previous, const Vector2 &current, cons
 	return (current - previous) * mod;
 }
 
+// Item counters (2.1 Pickup 1817 / Count 1611 / Instant Count 1811).
+// parity (vocabulary): GD 2.11 EffectGameObject::customObjectSetup cases
+// 1611/1811/1817 (Wyliemaster/GD-Decompiled) - keys 80 item, 77 count, 51
+// target, 56 activate group, 104 multi. The decompilation has no execution
+// bodies; behaviour follows the 2.1 editor documentation: items start at 0;
+// Pickup adds its count; Instant Count compares once when passed (key 88:
+// Equals / Larger / Smaller - an editor field the 2.11 dump does not list);
+// Count arms when passed and fires when the item reaches its target. Firing
+// with Activate Group checked spawns the target group, unchecked toggles it off.
+static bool item_compare(int64_t value, int64_t target, int64_t mode) {
+	if (mode == 1) return value > target;
+	if (mode == 2) return value < target;
+	return value == target;
+}
+
+static bool item_count_reached(int64_t previous, int64_t current, int64_t target) {
+	return current == target && previous != target;
+}
+
 // How a Pulse trigger (1006) sources its colour. parity: GD 2.11
 // EffectGameObject::customObjectSetup case 1006 (Wyliemaster/GD-Decompiled,
 // GD/code/src/EffectGameObject.cpp): key 48 (pulse mode, atoi-truthy) selects
@@ -577,6 +603,9 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.kind = TriggerEffectKind::COLOR; break;
 		case 1006: effect.kind = TriggerEffectKind::PULSE; break;
 		case 1347: effect.kind = TriggerEffectKind::FOLLOW; break;
+		case 1817: effect.kind = TriggerEffectKind::PICKUP; break;
+		case 1611: effect.kind = TriggerEffectKind::COUNT; break;
+		case 1811: effect.kind = TriggerEffectKind::INSTANT_COUNT; break;
 		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
 		case 1616: effect.kind = TriggerEffectKind::STOP; break;
 		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
@@ -703,6 +732,15 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			break;
 		}
+		case TriggerEffectKind::PICKUP:
+		case TriggerEffectKind::COUNT:
+		case TriggerEffectKind::INSTANT_COUNT:
+			effect.item_id = static_cast<int32_t>(prop_int(properties, "80", 0));
+			effect.item_count = prop_int(properties, "77", 0);
+			effect.toggle_on = prop_int(properties, "56", 0) != 0;
+			effect.item_compare_mode = static_cast<int32_t>(prop_int(properties, "88", 0));
+			effect.item_multi = prop_int(properties, "104", 0) != 0;
+			break;
 		case TriggerEffectKind::FOLLOW:
 			// GD always serialises both mods; a missing key keeps the editor
 			// default of 1 rather than freezing that axis.
@@ -1429,6 +1467,19 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::TOGGLE:
 				apply_toggle(effect);
 				break;
+			case TriggerEffectKind::PICKUP:
+				change_item(effect.item_id, effect.item_count, player);
+				break;
+			case TriggerEffectKind::COUNT:
+				if (std::find(armed_counts.begin(), armed_counts.end(), index) == armed_counts.end()) {
+					armed_counts.push_back(index);
+				}
+				break;
+			case TriggerEffectKind::INSTANT_COUNT:
+				if (item_compare(item_value(effect.item_id), effect.item_count, effect.item_compare_mode)) {
+					apply_item_action(effect, player);
+				}
+				break;
 			case TriggerEffectKind::TELEPORT:
 				apply_teleport(index, record, player);
 				break;
@@ -1471,6 +1522,40 @@ class NativeTriggerRuntime : public RefCounted {
 	static void set_player_visible(Object *player, bool visible) {
 		CanvasItem *item = Object::cast_to<CanvasItem>(player);
 		if (item) item->set_visible(visible);
+	}
+
+	// Item state: level state like group opacity, cleared on restart.
+	std::map<int32_t, int64_t> item_counts;
+	std::vector<size_t> armed_counts; // Count records passed so far
+
+	int64_t item_value(int32_t item_id) const {
+		const auto it = item_counts.find(item_id);
+		return it == item_counts.end() ? 0 : it->second;
+	}
+
+	// Activate Group checked: spawn the target group; unchecked: toggle it off.
+	void apply_item_action(const TriggerEffect &effect, Object *player) {
+		if (effect.toggle_on) {
+			for (const String &group : effect.target_groups) schedule_group(StringName(group), 0.0, player);
+		} else {
+			apply_toggle(effect);
+		}
+	}
+
+	void change_item(int32_t item_id, int64_t delta, Object *player) {
+		const int64_t previous = item_value(item_id);
+		const int64_t current = previous + delta;
+		item_counts[item_id] = current;
+		const std::vector<size_t> armed = armed_counts;
+		for (size_t record_index : armed) {
+			if (record_index >= records.size()) continue;
+			const TriggerEffect effect = records[record_index].effect;
+			if (effect.item_id != item_id || !item_count_reached(previous, current, effect.item_count)) continue;
+			if (!effect.item_multi) {
+				armed_counts.erase(std::remove(armed_counts.begin(), armed_counts.end(), record_index), armed_counts.end());
+			}
+			apply_item_action(effect, player);
+		}
 	}
 
 	void apply_toggle(const TriggerEffect &effect) {
@@ -2288,6 +2373,7 @@ public:
 		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
+		item_counts.clear(); armed_counts.clear();
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
 		frame_players.clear(); previous_positions.clear();
@@ -2949,6 +3035,8 @@ public:
 		// it (the same fades re-fire as the player crosses them again), and
 		// every member re-renders from its own alpha until they do.
 		group_opacity.clear();
+		item_counts.clear();
+		armed_counts.clear();
 		for (const KeyValue<ObjectID, std::vector<String>> &entry : member_groups) {
 			refresh_member_alpha(entry.key);
 		}
@@ -2963,6 +3051,12 @@ public:
 		active.resize(records.size());
 		for (size_t i = 0; i < records.size(); ++i) active.set(i, records[i].activated ? 1 : 0);
 		state["active"] = active; state["clock"] = clock;
+		// Practice checkpoints keep item counters and armed Count triggers.
+		Dictionary items;
+		for (const auto &entry : item_counts) items[entry.first] = entry.second;
+		PackedInt64Array armed;
+		for (size_t record_index : armed_counts) armed.push_back(static_cast<int64_t>(record_index));
+		state["items"] = items; state["armed_counts"] = armed;
 		return state;
 	}
 	void restore(const Dictionary &state) {
@@ -2970,6 +3064,16 @@ public:
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
 		clock = state.get("clock", 0.0); events.clear(); fades.clear();
+		item_counts.clear(); armed_counts.clear();
+		const Dictionary items = state.get("items", Dictionary());
+		const Array item_keys = items.keys();
+		for (int64_t k = 0; k < item_keys.size(); ++k) {
+			item_counts[static_cast<int32_t>(static_cast<int64_t>(item_keys[k]))] = static_cast<int64_t>(items[item_keys[k]]);
+		}
+		const PackedInt64Array armed = state.get("armed_counts", PackedInt64Array());
+		for (int64_t k = 0; k < armed.size(); ++k) {
+			if (armed[k] >= 0 && static_cast<size_t>(armed[k]) < records.size()) armed_counts.push_back(static_cast<size_t>(armed[k]));
+		}
 		frame_players.clear(); previous_positions.clear(); gravity_inside_players.clear();
 	}
 	int64_t trigger_count() const { return static_cast<int64_t>(records.size()); }

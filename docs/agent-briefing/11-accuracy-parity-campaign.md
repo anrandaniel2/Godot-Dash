@@ -168,7 +168,7 @@ of scenes**:
 ```
 GMDObjects.NATIVE_EFFECT_TRIGGER_IDS (src/static/GMDObjects.gd:381):
   29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006, 1007, 1049, 1268,
-  1346, 1347, 1520, 1612, 1613, 1616, 1913, 1916, 1935, 2015, 2067, 3022, 2913, 2919, 2920, 2921, 3613
+  1346, 1347, 1520, 1611, 1612, 1613, 1616, 1811, 1817, 1913, 1916, 1935, 2015, 2067, 3022, 2913, 2919, 2920, 2921, 3613
 ```
 
 Consequences, all verified in code:
@@ -297,8 +297,8 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   the batched renderer lacks) and HSV pulses with no `50`; both are counted in
   `ImportReport.inert_trigger_ids`. Regression: `native/tests/test_trigger_effect_parse.cpp`.
 - Every trigger on the inert `NativeGenericTrigger` shell that the native runtime does not
-  execute on the current path — notably the 2.1 tools Animate 1585, Touch 1595,
-  Count 1611, Instant Count 1811, Collision 1815, Pickup 1817 — is a silent no-op on **both**
+  execute on the current path — notably the 2.1 tools Animate 1585, Touch 1595 and
+  Collision 1815 — is a silent no-op on **both**
   paths; it is now counted in `ImportReport.inert_trigger_ids` (printed by
   `RobTopLevels` (both online paths), `LevelOperationsHandler` and `SubsceneManager`).
 - **Follow (1347)** is implemented on both paths: native `TriggerEffectKind::FOLLOW`
@@ -306,6 +306,14 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   72/73, for key 10 seconds) and `PositionChangerComponent.Mode.FOLLOW` via
   `GMDObjects.MAP[1347]`. Vocabulary cited to GD 2.11 `customObjectSetup` case 1347; the
   per-tick law itself is not in any decompilation (editor-documented behaviour).
+- **Item triggers (Pickup 1817, Count 1611, Instant Count 1811)** are implemented on both
+  paths: native `PICKUP`/`COUNT`/`INSTANT_COUNT` (`item_counts`, armed Count list, kept in
+  practice snapshots; helpers `item_compare` / `item_count_reached`) and `ToggleComponent`
+  item modes via `GMDObjects.MAP`. Keys 80/77/51/56/104 are cited to GD 2.11
+  `customObjectSetup`; key 88 (compare mode) and the firing rules (Count fires on arrival at
+  the target; key 56 spawns the group, otherwise toggles it off) are editor-documented,
+  i.e. a hypothesis until checked in GD. Not done: collectible items that change item IDs,
+  and on the GDScript path, item counts are not saved in practice snapshots.
 - Online downloads (`import_online_level_string`: C++ `parse_online_level` normalisation, then
   the shared GDScript conversion loop) get every converter change above; guarded in
   `tools/runtime_visual_smoke_test.gd` ("pulse/follow modes").

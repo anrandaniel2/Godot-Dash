@@ -195,6 +195,7 @@ func free_current_level() -> void:
 
 func reset() -> void:
 	Engine.time_scale = 1.0
+	ToggleComponent.reset_items()
 	if native_trigger_bridge != null:
 		native_trigger_bridge.reset_runtime()
 	if LevelManager.current_level:

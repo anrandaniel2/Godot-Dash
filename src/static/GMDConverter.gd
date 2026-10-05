@@ -494,7 +494,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 				used_channels[int(copy_source)] = true
 
 		# A trigger on the inert generic shell that the native runtime does not
-		# execute on this path (Follow 1347, Count 1611, Touch 1595, ...)
+		# execute on this path (Touch 1595, Animate 1585, Collision 1815, ...)
 		# fires and changes nothing; report it instead of staying silent.
 		if GMDObjects.get_object(gd_id).get("scene", "") == GMDObjects.GENERIC_TRIGGER.scene \
 				and not _native_trigger_execution(gd_id):
@@ -1403,6 +1403,25 @@ static func _components_from_properties(
 						"state": toggle_state,
 					})
 				components["ToggleComponent"] = { "toggled_groups": toggled_groups }
+		1611, 1811, 1817: # Count / Instant Count / Pickup (twin of the native item arms)
+			if "ToggleComponent" in supported:
+				var item_modes: Dictionary[int, int] = {
+					1611: ToggleComponent.ItemMode.COUNT,
+					1811: ToggleComponent.ItemMode.INSTANT_COUNT,
+					1817: ToggleComponent.ItemMode.PICKUP,
+				}
+				var item_groups: Array = []
+				for group: String in target_groups:
+					item_groups.append({ "group": StringName(group), "state": ToggledGroup.ToggleState.OFF })
+				components["ToggleComponent"] = {
+					"toggled_groups": item_groups,
+					"item_mode": item_modes[gd_id],
+					"item_id": int(properties.get("80", "0")),
+					"item_count": int(properties.get("77", "0")),
+					"compare_mode": clampi(int(properties.get("88", "0")), 0, 2),
+					"multi_activate": properties.get("104", "0") == "1",
+					"spawn_group": properties.get(Prop.ACTIVATE_GROUP, "0") == "1",
+				}
 		1346: # Rotate trigger
 			if "RotationChangerComponent" in supported:
 				# Full turns (key 69) are stored separately from the remainder.

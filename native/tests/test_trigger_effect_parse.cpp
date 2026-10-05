@@ -88,6 +88,16 @@ int main() {
 	expect_true("no movement, no follow", still == Vector2());
 	expect_true("follow is a distinct effect kind", TriggerEffectKind::FOLLOW != TriggerEffectKind::MOVE);
 
+	// Item triggers (1611/1811/1817): Instant Count key 88 compare modes and
+	// the Count edge (fires only on arrival at the target).
+	expect_true("instant equals", item_compare(3, 3, 0) && !item_compare(4, 3, 0));
+	expect_true("instant larger", item_compare(4, 3, 1) && !item_compare(3, 3, 1));
+	expect_true("instant smaller", item_compare(2, 3, 2) && !item_compare(3, 3, 2));
+	expect_true("count fires on arrival", item_count_reached(2, 3, 3));
+	expect_true("count ignores staying at target", !item_count_reached(3, 3, 3));
+	expect_true("count ignores passing by", !item_count_reached(2, 4, 3));
+	expect_true("count fires arriving from above", item_count_reached(4, 3, 3));
+
 	// is_shader_kind helper test
 	expect_true("gray is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_GRAYSCALE));
 	expect_true("sepia is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_SEPIA));
