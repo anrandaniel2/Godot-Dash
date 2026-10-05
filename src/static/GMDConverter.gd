@@ -525,6 +525,8 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		var teleport_exit: Dictionary = { }
 		if gd_id == TELEPORT_PORTAL_ID and kind == 0:
 			teleport_exit = _link_teleport_exit(object_data, properties)
+		if GD_MODE_PORTAL_BANDS.has(gd_id) and kind == 0:
+			_apply_gd_portal_band(object_data, gd_id, properties)
 
 		# A hidden decoration (key 135) contributes nothing visible and has
 		# no collision: skip it rather than building an invisible batch item.
@@ -645,7 +647,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"start_position": Constants.DEFAULT_PLAYER_POSITION,
 		"start_internal_gamemode": gamemode,
 		"start_displayed_gamemode": gamemode,
-		"start_freefly": true,
+		# GD clears the Free Mode byte on reset, so a level that starts in a
+		# clamped mode starts inside its band (gdsolver bands.hpp).
+		"start_freefly": gamemode not in GD_CLAMPED_GAMEMODES,
+		"gd_level_end_x": float(bounds.level_length) if not is_platformer else 0.0,
 		"gd_max_gameplay_y": float(bounds.max_gameplay_y),
 		"start_speed": Level.START_SPEED[clampi(start_speed_preset, 0, Level.START_SPEED.size() - 1)],
 		"start_speed_preset": start_speed_preset,
@@ -1413,6 +1418,47 @@ static func _group_list_from_property(raw: Variant) -> PackedStringArray:
 ## [member GMDObjects.MAP]), because [method Interactable.use_component_data]
 ## looks each one up by node name. Properties with no clear Geometry Dash
 ## equivalent keep their scene defaults.
+## Mode portal band height H in GD units (getGroundHeightForMode), from
+## gdsolver dp/src/dp/bands.hpp (read from the exe, checked on 18 portals):
+## ship/UFO/wave/swing 300, ball 240, spider 270; cube and robot (0) leave the
+## band alone and are never clamped to it.
+const GD_MODE_PORTAL_BANDS: Dictionary[int, float] = {
+	12: 0.0, 13: 300.0, 47: 240.0, 111: 300.0, 660: 300.0, 745: 0.0, 1331: 270.0, 1933: 300.0,
+}
+## The six modes GD clamps to the portal band (checkCollisions).
+const GD_CLAMPED_GAMEMODES: Array[int] = [
+	Player.Gamemode.SHIP, Player.Gamemode.UFO, Player.Gamemode.WAVE,
+	Player.Gamemode.SWING, Player.Gamemode.BALL, Player.Gamemode.SPIDER,
+]
+## Portal Free Mode (EffectGameObject::m_cameraIsFreeMode, gmdkit member_table).
+const PORTAL_FREE_MODE_KEY: String = "111"
+
+
+## GD band: floor = max(90, floor30(portal y - H/2)), ceiling = floor + H; a
+## Free Mode portal writes no band and leaves every mode unclamped
+## (updateDualGround / checkCollisions, gdsolver bands.hpp).
+static func gd_portal_band(portal_gd_y: float, band_height: float) -> Vector2:
+	var band_floor: float = maxf(90.0, floorf((portal_gd_y - band_height * 0.5) / GD_CELL_SIZE) * GD_CELL_SIZE)
+	return Vector2(band_floor, band_floor + band_height)
+
+
+static func _apply_gd_portal_band(object_data: Dictionary, gd_id: int, properties: Dictionary) -> void:
+	var band_height: float = GD_MODE_PORTAL_BANDS[gd_id]
+	var free_mode: bool = properties.get(PORTAL_FREE_MODE_KEY, "0") == "1"
+	var mover: Dictionary = { "freefly": true }
+	if band_height > 0.0 and not free_mode:
+		var band := gd_portal_band(float(properties.get(Prop.Y, "0")), band_height)
+		mover = {
+			"freefly": false,
+			"use_gd_band": true,
+			"gd_band_floor_y": gd_to_godot_y(band.x),
+			"gd_band_ceiling_y": gd_to_godot_y(band.y),
+		}
+	var components: Dictionary = object_data.get("components", { })
+	components["GroundMoverComponent"] = mover
+	object_data["components"] = components
+
+
 ## Converts a GD world Y (GD units, up) to Godot world Y.
 static func gd_to_godot_y(gd_y: float) -> float:
 	return GROUND_Y - gd_y / GD_CELL_SIZE * Constants.CELL_SIZE

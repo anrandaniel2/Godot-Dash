@@ -17,6 +17,12 @@ const LOCKEDFLY_GAMEMODE_GRID_HEIGHTS: Dictionary = {
 }
 
 @export var freefly: bool = true
+## Imported Geometry Dash portals: the exact band GD writes
+## (animateInDualGroundNew), as Godot Y of the floor and ceiling lines. Used
+## instead of the portal-centred grid height when [member use_gd_band] is set.
+@export var use_gd_band: bool = false
+@export var gd_band_floor_y: float = 0.0
+@export var gd_band_ceiling_y: float = 0.0
 
 
 func _ready() -> void:
@@ -26,6 +32,9 @@ func _ready() -> void:
 func _get_property_default_value(property: String) -> Variant:
 	const DEFAULT_VALUES: Dictionary[String, Variant] = {
 		"freefly": true,
+		"use_gd_band": false,
+		"gd_band_floor_y": 0.0,
+		"gd_band_ceiling_y": 0.0,
 	}
 	return DEFAULT_VALUES.get(property)
 
@@ -41,6 +50,11 @@ func _move_grounds(_player: Player) -> void:
 	if LevelManager.player_camera and get_viewport().get_camera_2d() == LevelManager.player_camera:
 		LevelManager.player_camera.freefly = freefly
 	if freefly:
+		return
+	if use_gd_band:
+		GroundData.center = Vector2(parent.global_position.x, (gd_band_floor_y + gd_band_ceiling_y) * 0.5)
+		GroundData.distance = absf(gd_band_floor_y - gd_band_ceiling_y) * 0.5
+		GroundData.offset = 0
 		return
 	GroundData.center = parent.global_position
 	GroundData.distance = LOCKEDFLY_GAMEMODE_GRID_HEIGHTS[parent.get_node("GamemodeChangerComponent")._gamemode] * Constants.CELL_SIZE * 0.5
