@@ -221,6 +221,22 @@ int main() {
 		expect_close("tp redirect max", v.length(), 6.0);
 	}
 
+	// Level end and kill height (BetterLoading PlayLayer setup; gdsolver
+	// updateMaxGameplayY notes).
+	{
+		const GDLevelExtents e = gd_scan_level_extents("kA2,0,kA37,1;1,1,2,600,3,105;1,8,2,15,3,4000;;1,3,2,1200.5,3,15");
+		expect_true("extents objects", e.objects == 3);
+		expect_close("extents max x", e.max_x, 1200.5);
+		expect_close("extents max y", e.max_y, 4000.0);
+		const GDLevelExtents none = gd_scan_level_extents("kA2,0");
+		expect_true("extents header only", none.objects == 0);
+		expect_close("level length short", gd_level_length(15.0), 869.0);
+		expect_close("level length", gd_level_length(1200.5), 1540.5);
+		expect_close("max y fixed", gd_max_gameplay_y(false, 4000.0), 2790.0);
+		expect_close("max y dynamic", gd_max_gameplay_y(true, 4000.0), 4390.0);
+		expect_close("max y dynamic floor", gd_max_gameplay_y(true, 100.0), 1590.0);
+	}
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

@@ -103,6 +103,10 @@ var gameplay_rotation: float:
 		gameplay_rotation_degrees = rad_to_deg(value)
 var player_scale: PlayerScale = PlayerScale.NORMAL
 var can_hit_ceiling: bool
+## Geometry Dash kill height in world Y (Godot space; the player dies above it,
+## i.e. at smaller y). -INF when the level has none. Set by Level.
+var max_gameplay_y: float = -INF
+var _ticks_above_max_gameplay_y: int = 0
 var jump_hold_disabled: bool
 var speed_multiplier: float = 1.0
 var gravity_flip: int = 1
@@ -311,6 +315,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	if gravity_portal_grace > 0:
 		gravity_portal_grace -= 1
+	_check_max_gameplay_y()
 
 	# Sprite updates
 	_update_sprites_rotation(delta, jump_state)
@@ -443,6 +448,7 @@ func reset() -> void:
 	velocity = Vector2.ZERO
 	player_scale = PlayerScale.NORMAL
 	can_hit_ceiling = false
+	_ticks_above_max_gameplay_y = 0
 	jump_hold_disabled = false
 	speed_multiplier = 1.0
 	gravity_flip = 1
@@ -1535,6 +1541,19 @@ func _update_robot_state_machine(jump_state: int) -> void:
 	else:
 		robot_animation_tree["parameters/walk/PlayerSpeed/scale"] = speed_multiplier
 		_robot_state_machine.travel(&"walk")
+
+
+## GJBaseGameLayer::checkCollisions: a player above the level's max gameplay
+## Y for two consecutive ticks is destroyed (gdsolver dp/src/dp/speed.hpp,
+## g_maxPlayY notes). This replaces a solid ceiling in free-fly modes.
+func _check_max_gameplay_y() -> void:
+	if dead or Config.noclip or global_position.y >= max_gameplay_y:
+		_ticks_above_max_gameplay_y = 0
+		return
+	_ticks_above_max_gameplay_y += 1
+	if _ticks_above_max_gameplay_y >= 2:
+		_ticks_above_max_gameplay_y = 0
+		_death_animator.play("DeathAnimation")
 
 
 func _player_death() -> void:

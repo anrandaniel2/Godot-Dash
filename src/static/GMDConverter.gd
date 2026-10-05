@@ -141,6 +141,8 @@ const HeaderKey := {
 	LINE_COLOR = "kA17",
 	REVERSE = "kA20",
 	PLATFORMER = "kA22",
+	## LevelSettingsObject::m_dynamicLevelHeight (2.2 legacy option).
+	DYNAMIC_LEVEL_HEIGHT = "kA37",
 	FLIP_GRAVITY = "kA11",
 }
 
@@ -612,6 +614,13 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# object uses are left out, as Geometry Dash's own renderer does.
 	var color_channels: Array = _build_color_channels(channel_style, used_channels)
 
+	var is_platformer: bool = header.get(HeaderKey.PLATFORMER, "0") == "1"
+	var bounds: Dictionary = _level_bounds(level_string, header.get(HeaderKey.DYNAMIC_LEVEL_HEIGHT, "0") == "1")
+	# Classic levels end at GD's end portal; platformer levels end only by
+	# their own End trigger (GD shows no end wall there).
+	if not is_platformer:
+		objects.append(_level_end_entry(float(bounds.level_length)))
+
 	var start_speed_index: int = int(header.get(HeaderKey.SPEED, "0"))
 	var start_speed_preset: int = SPEED_PRESETS[start_speed_index] if start_speed_index < SPEED_PRESETS.size() else EasedSpeedChangerComponent.SpeedPreset.x1
 	var gamemode_index: int = int(header.get(HeaderKey.GAMEMODE, "0"))
@@ -637,6 +646,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"start_internal_gamemode": gamemode,
 		"start_displayed_gamemode": gamemode,
 		"start_freefly": true,
+		"gd_max_gameplay_y": float(bounds.max_gameplay_y),
 		"start_speed": Level.START_SPEED[clampi(start_speed_preset, 0, Level.START_SPEED.size() - 1)],
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": header.get(HeaderKey.REVERSE, "0") == "1",
@@ -1403,6 +1413,87 @@ static func _group_list_from_property(raw: Variant) -> PackedStringArray:
 ## [member GMDObjects.MAP]), because [method Interactable.use_component_data]
 ## looks each one up by node name. Properties with no clear Geometry Dash
 ## equivalent keep their scene defaults.
+## Converts a GD world Y (GD units, up) to Godot world Y.
+static func gd_to_godot_y(gd_y: float) -> float:
+	return GROUND_Y - gd_y / GD_CELL_SIZE * Constants.CELL_SIZE
+
+
+const LEVEL_END_SCENE: String = GMDObjects.TRIGGERS + "EndLevelTrigger.tscn"
+const LEVEL_END_NAME: String = "GDLevelEnd"
+## GD's end portal stands at y 225 (camila314/BetterLoading src/main.cpp).
+const LEVEL_END_GD_Y: float = 225.0
+## Trigger line half-height in cells, so the end fires at any player height
+## below the kill line.
+const LEVEL_END_LINE_CELLS: float = 1024.0
+
+
+## GD level end and kill height (GD units). Twin of GdashNative.level_bounds
+## (gd_level_length / gd_max_gameplay_y in native/src/gdash_native.cpp).
+static func _level_bounds(level_string: String, dynamic_level_height: bool) -> Dictionary:
+	var native := NativeCore.backend()
+	if native != null and native.has_method(&"level_bounds"):
+		return native.call(&"level_bounds", level_string, dynamic_level_height)
+	var max_x: float = 0.0
+	var max_y: float = 0.0
+	var seen: bool = false
+	var chunks: PackedStringArray = level_string.split(";", false)
+	for chunk_idx: int in range(1, chunks.size()):
+		var pairs: PackedStringArray = chunks[chunk_idx].split(",")
+		var has_x: bool = false
+		var x: float = 0.0
+		var y: float = 0.0
+		for pair_idx: int in range(0, pairs.size() - 1, 2):
+			if pairs[pair_idx] == Prop.X:
+				x = pairs[pair_idx + 1].to_float()
+				has_x = true
+			elif pairs[pair_idx] == Prop.Y:
+				y = pairs[pair_idx + 1].to_float()
+		if not has_x:
+			continue
+		max_x = x if not seen else maxf(max_x, x)
+		max_y = y if not seen else maxf(max_y, y)
+		seen = true
+	return {
+		"max_object_x": max_x,
+		"max_object_y": max_y,
+		"level_length": gd_level_length(max_x),
+		"max_gameplay_y": gd_max_gameplay_y(dynamic_level_height, max_y),
+	}
+
+
+## PlayLayer: m_levelLength = max(screenRight + 300, m_realLevelLength + 340)
+## (camila314/BetterLoading src/main.cpp). screenRight 569 = GD's 16:9 design
+## width (hypothesis: aspect fixed).
+static func gd_level_length(max_object_x: float) -> float:
+	return maxf(569.0 + 300.0, max_object_x + 340.0)
+
+
+## GJBaseGameLayer::updateMaxGameplayY (gdsolver dp/src/dp/speed.hpp).
+static func gd_max_gameplay_y(dynamic_level_height: bool, max_object_y: float) -> float:
+	return maxf(1200.0, max_object_y) + 390.0 if dynamic_level_height else 2790.0
+
+
+## The end of a classic level: an End Level trigger at GD's end portal that
+## targets itself, so the existing end animation runs into the portal spot.
+static func _level_end_entry(level_length: float) -> Dictionary:
+	return {
+		"name": LEVEL_END_NAME,
+		"scene_file_path": LEVEL_END_SCENE,
+		"transform": Transform2D(0.0, Vector2(level_length / GD_CELL_SIZE * Constants.CELL_SIZE, gd_to_godot_y(LEVEL_END_GD_Y))),
+		"groups": [],
+		"color_channels": { },
+		"z_order": 0,
+		"z_layer": 0,
+		"hsv": { "hsv_shift": [0.0, 0.0, 0.0], "intensity": 1.0, "alpha": 1.0 },
+		"hidden": false,
+		"components": {
+			"TargetObjectComponent": { "target": NodePath("%s/%s" % [IMPORTED_LAYER_NAME, LEVEL_END_NAME]) },
+			"TriggerHitboxComponent": { "line_height": LEVEL_END_LINE_CELLS },
+		},
+		"markers": [],
+	}
+
+
 ## TeleportPortalObject options shared by the 747/2902 portals, the 3027 orb
 ## and the 3022 trigger (keys per geode-sdk/bindings 2.2081
 ## GeometryDash.bro; semantics per GJBaseGameLayer::teleportPlayer, see

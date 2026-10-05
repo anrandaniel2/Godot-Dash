@@ -466,7 +466,7 @@ func _test_native_core() -> void:
 			conversion_report,
 	)
 	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
-	var converted_objects: Array = converted.get("layers", [{}])[0].get("objects", [])
+	var converted_objects: Array = _imported_entries(converted)
 	assert(converted_objects.size() == 2, "native smoke: online conversion produced an empty level")
 	for static_data: Dictionary in converted_objects:
 		assert(not static_data.get("native_static_art", {}).is_empty(), "native smoke: static gameplay art was not packed")
@@ -758,6 +758,7 @@ func _test_native_core() -> void:
 	assert(str(options_entries[3].components.TeleportComponent.target_group) == Constants.GROUP_PREFIX + "9", "native smoke: teleport orb lost its key 51 target")
 	var landed := GDTeleport.destination(Vector2(100, 50), Vector2(110, 60), Vector2(500, -200), true, true, false, false)
 	assert(landed.is_equal_approx(Vector2(90, -210)), "native smoke: GDTeleport save-offset twin differs from the C++ helper")
+	_assert_level_end()
 	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
 	assert(ClassDB.class_exists(&"NativeDecorationCullWorker"), "native smoke: worker-pool culler missing")
 	assert(ClassDB.class_exists(&"NativeLevelRuntime"), "native smoke: level runtime missing")
@@ -1298,8 +1299,12 @@ func _object_data(position: Vector2) -> Dictionary:
 
 ## Every entry an import produced: layer objects plus the native-only trigger
 ## rows a runtime import keeps in its PackedTriggers table.
+## The importer's entries without the synthetic GD level end (checked on its
+## own by _assert_level_end).
 func _imported_entries(level_data: Dictionary) -> Array:
-	var entries: Array = level_data.get("layers", [{}])[0].get("objects", []).duplicate()
+	var entries: Array = level_data.get("layers", [{}])[0].get("objects", []).filter(
+		func(entry: Dictionary) -> bool: return entry.get("name", "") != GMDConverter.LEVEL_END_NAME
+	)
 	entries.append_array(PackedTriggers.rows(level_data.get(PackedTriggers.DATA_KEY, { })))
 	return entries
 
@@ -1326,3 +1331,34 @@ func _assert_packed_trigger_table(level_data: Dictionary, native_import: bool) -
 	assert(not expanded.has(PackedTriggers.DATA_KEY), "native smoke: expanded level data kept its trigger table")
 	assert((expanded.layers[0].objects as Array).size() == objects.size() + PackedTriggers.size_of(table),
 		"native smoke: fallback expansion lost trigger rows")
+
+
+## GD level end (m_levelLength = max(869, last X + 340), end portal at y 225)
+## and kill height (kA37 dynamic: max(1200, top Y) + 390, else 2790). Before
+## this, imported levels had no end and a solid ceiling.
+func _assert_level_end() -> void:
+	var classic := GMDConverter.import_online_level_string(
+			"kA2,0;1,1,2,1200,3,105;1,1,2,30,3,4000;", "Level end smoke", GMDConverter.ImportReport.new())
+	var ends: Array = (classic.layers[0].objects as Array).filter(
+		func(entry: Dictionary) -> bool: return entry.get("name", "") == GMDConverter.LEVEL_END_NAME)
+	assert(ends.size() == 1, "native smoke: a classic import must end at GD's end portal")
+	var end_entry: Dictionary = ends[0]
+	assert(str(end_entry.scene_file_path) == GMDConverter.LEVEL_END_SCENE, "native smoke: level end has the wrong scene")
+	assert(is_equal_approx((end_entry.transform as Transform2D).origin.x, (1200.0 + 340.0) / 30.0 * Constants.CELL_SIZE),
+		"native smoke: level end is not 340 units past the last object")
+	assert(is_equal_approx(float(classic.gd_max_gameplay_y), 2790.0), "native smoke: fixed-height level must use GD's 2790 kill height")
+	var dynamic := GMDConverter.import_online_level_string(
+			"kA2,0,kA37,1;1,1,2,30,3,4000;", "Dynamic height smoke", GMDConverter.ImportReport.new())
+	assert(is_equal_approx(float(dynamic.gd_max_gameplay_y), 4390.0), "native smoke: kA37 kill height must follow the top object")
+	var short_end: Dictionary = (dynamic.layers[0].objects as Array).filter(
+		func(entry: Dictionary) -> bool: return entry.get("name", "") == GMDConverter.LEVEL_END_NAME)[0]
+	assert(is_equal_approx((short_end.transform as Transform2D).origin.x, 869.0 / 30.0 * Constants.CELL_SIZE),
+		"native smoke: a short level must end at screenRight + 300")
+	var platformer := GMDConverter.import_online_level_string(
+			"kA2,0,kA22,1;1,1,2,30,3,105;", "Platformer end smoke", GMDConverter.ImportReport.new())
+	assert((platformer.layers[0].objects as Array).all(
+		func(entry: Dictionary) -> bool: return entry.get("name", "") != GMDConverter.LEVEL_END_NAME),
+		"native smoke: platformer levels have no end wall in GD")
+	var twin: Dictionary = GMDConverter._level_bounds("kA2,0;1,1,2,600,3,105;1,8,2,15,3,4000;", true)
+	assert(is_equal_approx(float(twin.level_length), 940.0) and is_equal_approx(float(twin.max_gameplay_y), 4390.0),
+		"native smoke: level bounds twin differs from the C++ helper")

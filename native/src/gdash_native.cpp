@@ -56,6 +56,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
+#include <string_view>
 #include <initializer_list>
 #include <iterator>
 #include <map>
@@ -320,6 +322,70 @@ static Vector2 gd_teleport_redirect_velocity(double angle_degrees, double mod, d
 		else if (min_speed > 0.0 && speed < min_speed) turned *= static_cast<real_t>(min_speed / speed);
 	}
 	return Vector2(platformer ? turned.x : velocity.x, turned.y);
+}
+
+// Level extents in GD units: the largest object X (key 2) and Y (key 3) over
+// every object chunk (the first chunk is the header). Pure, so the
+// standalone tests can drive it; std::string_view keeps a 300k-object level a
+// single allocation-free pass.
+struct GDLevelExtents {
+	double max_x = 0.0;
+	double max_y = 0.0;
+	int64_t objects = 0;
+};
+
+static GDLevelExtents gd_scan_level_extents(std::string_view level) {
+	GDLevelExtents extents;
+	bool header = true;
+	size_t start = 0;
+	while (start <= level.size()) {
+		size_t end = level.find(';', start);
+		if (end == std::string_view::npos) end = level.size();
+		const std::string_view chunk = level.substr(start, end - start);
+		start = end + 1;
+		if (header) { header = false; continue; }
+		if (chunk.empty()) continue;
+		bool have_x = false;
+		double x = 0.0, y = 0.0;
+		size_t cursor = 0;
+		bool is_key = true;
+		std::string_view key;
+		while (cursor <= chunk.size()) {
+			size_t comma = chunk.find(',', cursor);
+			if (comma == std::string_view::npos) comma = chunk.size();
+			const std::string_view token = chunk.substr(cursor, comma - cursor);
+			cursor = comma + 1;
+			if (is_key) {
+				key = token;
+			} else if (key == "2" || key == "3") {
+				const double value = std::strtod(std::string(token).c_str(), nullptr);
+				if (key == "2") { x = value; have_x = true; } else { y = value; }
+			}
+			is_key = !is_key;
+		}
+		if (!have_x) continue;
+		if (extents.objects == 0 || x > extents.max_x) extents.max_x = x;
+		if (extents.objects == 0 || y > extents.max_y) extents.max_y = y;
+		++extents.objects;
+	}
+	return extents;
+}
+
+// PlayLayer level length, as reimplemented in camila314/BetterLoading
+// src/main.cpp (PlayLayer setup): m_levelLength = max(screenRight + 300,
+// m_realLevelLength + 340), the end portal at (m_levelLength, 225).
+// screenRight is GD's design width, 569 for 16:9 (hypothesis: aspect fixed).
+static constexpr double GD_SCREEN_RIGHT = 569.0;
+static double gd_level_length(double max_object_x) {
+	return std::max(GD_SCREEN_RIGHT + 300.0, max_object_x + 340.0);
+}
+
+// GJBaseGameLayer::updateMaxGameplayY, as measured in gdsolver/gdsolver
+// dp/src/dp/speed.hpp (g_maxPlayY notes): Dynamic Level Height (kA37) levels
+// use max(1200, highest object y) + 90 + 300, every other level 2790. Above
+// it for two consecutive ticks, checkCollisions destroys the player.
+static double gd_max_gameplay_y(bool dynamic_level_height, double max_object_y) {
+	return dynamic_level_height ? std::max(1200.0, max_object_y) + 390.0 : 2790.0;
 }
 
 static double prop_float(const Dictionary &properties, const char *key, double fallback) {
@@ -3687,6 +3753,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("parse_channel_styles", "color_string"), &GdashNative::parse_channel_styles);
 		ClassDB::bind_method(D_METHOD("parse_online_level", "level_string"), &GdashNative::parse_online_level);
 		ClassDB::bind_method(D_METHOD("parse_online_header", "level_string"), &GdashNative::parse_online_header);
+		ClassDB::bind_method(D_METHOD("level_bounds", "level_string", "dynamic_level_height"), &GdashNative::level_bounds);
 		ClassDB::bind_method(D_METHOD("import_online_level_packed", "level_string", "tables"), &GdashNative::import_online_level_packed);
 		ClassDB::bind_method(D_METHOD("decode_level_string", "encoded"), &GdashNative::decode_level_string);
 		ClassDB::bind_method(D_METHOD("encode_level_string", "plain"), &GdashNative::encode_level_string);
@@ -4214,6 +4281,18 @@ public:
 
 	// The header alone, so GDScript can resolve channel styles before the
 	// streaming import (import_online_level_packed) needs them.
+	// GD level end and kill height for an imported level, in GD units.
+	Dictionary level_bounds(const String &level_string, bool dynamic_level_height) const {
+		const CharString utf8 = level_string.utf8();
+		const GDLevelExtents extents = gd_scan_level_extents(std::string_view(utf8.get_data(), static_cast<size_t>(utf8.length())));
+		Dictionary result;
+		result["max_object_x"] = extents.max_x;
+		result["max_object_y"] = extents.max_y;
+		result["level_length"] = gd_level_length(extents.max_x);
+		result["max_gameplay_y"] = gd_max_gameplay_y(dynamic_level_height, extents.max_y);
+		return result;
+	}
+
 	Dictionary parse_online_header(const String &level_string) const {
 		Dictionary result;
 		const int64_t length = level_string.length();
