@@ -36,6 +36,9 @@ var _debug_overlays_were_on: bool = false
 var player_speed_sign: int
 var static_offset_rotation: float ## Rotation used by the offset when static gets enabled.
 var smoothed_gameplay_rotation: float
+## GD's lastGroundPos.y == 105 test: the player last landed on the floor
+## ground itself rather than on a block.
+var _last_ground_was_floor: bool = false
 
 
 func _ready() -> void:
@@ -65,13 +68,23 @@ func _process(delta: float) -> void:
 	var local_player_distance = player_distance.rotated(-player.gameplay_rotation)
 	var local_ground_distance = ground_distance.rotated(-player.gameplay_rotation)
 	var local_added_distance = local_player_distance
+	var half_view_height: float = get_viewport_rect().size.y / 2.0 / zoom.y
+	if player.is_on_floor():
+		_last_ground_was_floor = player.gravity_flip > 0 \
+				and absf(player.global_position.y - LevelManager.ground_down.global_position.y) < Constants.CELL_SIZE
 	local_added_distance.y = gd_vertical_step(
 		local_player_distance.y if freefly else local_ground_distance.y,
-		get_viewport_rect().size.y / 2.0 / zoom.y,
+		half_view_height,
 		freefly,
 		player.gravity_flip < 0,
 		framerate_compensation,
 	)
+	# GD 1.0 updateCamera: after landing on the floor, a cube-style camera
+	# whose player is not past the top margin settles back onto the floor.
+	if freefly and _last_ground_was_floor and is_zero_approx(player.gameplay_rotation) \
+			and local_player_distance.y >= GD_TOP_MARGIN_CELLS * Constants.CELL_SIZE - half_view_height:
+		var floor_camera_y: float = LevelManager.ground_down.default_y + 160.0 - half_view_height
+		local_added_distance.y = (floor_camera_y - position.y) * GD_FREE_EASE * framerate_compensation
 	if LevelManager.platformer:
 		local_added_distance.x = local_target_distance_axis(
 			local_player_distance.x,
@@ -98,6 +111,7 @@ func _process(delta: float) -> void:
 
 
 func reset() -> void:
+	_last_ground_was_floor = false
 	limit_left = -10000000
 	limit_top = -10000000
 	limit_right = 10000000
