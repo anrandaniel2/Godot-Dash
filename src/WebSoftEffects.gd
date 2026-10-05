@@ -80,6 +80,9 @@ func _ready() -> void:
 
 	var panel_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
 	if panel_mat:
+		# Assign the web shader on the live material, not only the .tres
+		# default: shader baker can otherwise keep the screen-copy pipeline.
+		panel_mat.shader = preload("res://resources/shaders/BackgroundBlurWeb.gdshader")
 		panel_mat.set_shader_parameter("blur_tex", _blur.get_texture())
 	_resize(true)
 
@@ -299,7 +302,7 @@ func _make_viewport() -> SubViewport:
 	viewport.handle_input_locally = false
 	viewport.physics_object_picking = false
 	viewport.use_hdr_2d = false
-	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	viewport.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR
 	viewport.size = Vector2i(320, 180)
 	add_child(viewport)

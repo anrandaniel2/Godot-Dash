@@ -232,10 +232,16 @@ func _init():
 		config_file.save("user://config.cfg")
 	bloom = config_file.get_value("Graphics", "bloom", bloom)
 	menu_blur = config_file.get_value("Graphics", "menu_blur", menu_blur)
-	if OS.has_feature("web"):
-		var blur_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
-		if blur_mat:
+	# SimpleBlurMaterial.tres ships the web shader (no hint_screen_texture) so
+	# the WebGPU baker cannot pin the desktop screen-copy pipeline onto every
+	# panel. Desktop swaps back to mip-LOD SCREEN_TEXTURE frost.
+	var blur_mat := load("res://resources/SimpleBlurMaterial.tres") as ShaderMaterial
+	if blur_mat:
+		if OS.has_feature("web"):
 			blur_mat.shader = preload("res://resources/shaders/BackgroundBlurWeb.gdshader")
+			Engine.max_fps = 0
+		else:
+			blur_mat.shader = preload("res://resources/shaders/BackgroundBlur.gdshader")
 	blur_strength = config_file.get_value("Graphics", "blur_strength", blur_strength)
 	ui_color = config_file.get_value("Graphics", "ui_color", ui_color)
 	transition_duration = config_file.get_value("Graphics", "transition_duration", transition_duration)
@@ -332,9 +338,21 @@ func _apply_bloom_to_world(value: bool) -> void:
 func _ready() -> void:
 	if OS.has_feature("web"):
 		_adopt_web_panel_hz()
+		_strip_web_screen_copies()
+		var root_window := get_tree().root
+		# RGBA16 2D is a second full-bandwidth target on WebGPU. LDR is the
+		# same pixels the browser presents.
+		root_window.use_hdr_2d = false
+		# 120 Hz physics with 12 catch-up steps turns a slow frame into a
+		# worse one. 4 steps still covers 120 Hz at 30+ fps.
+		Engine.max_physics_steps_per_frame = 4
+		Engine.max_fps = 0
 		var effects := preload("res://src/WebSoftEffects.gd").new()
 		effects.name = "WebSoftEffects"
 		add_child(effects)
+		print("[gdash] web pacing max_fps=%d hdr_2d=%s" % [
+			Engine.max_fps, str(root_window.use_hdr_2d)
+		])
 	apply_frame_pacing()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
@@ -370,11 +388,34 @@ func _adopt_web_panel_hz() -> void:
 ## follow a 90/120/144 Hz requestAnimationFrame. rAF is the vsync — always
 ## uncap on web.
 func apply_frame_pacing() -> void:
-	DisplayServer.window_set_vsync_mode(vsync)
 	if OS.has_feature("web"):
+		# rAF is the vsync. A second wait on the proxy pthread plus Engine.max_fps
+		# sleep is how the loop stuck at 60.
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSyncMode.VSYNC_ENABLED)
 		Engine.max_fps = 0
 	else:
+		DisplayServer.window_set_vsync_mode(vsync)
 		Engine.max_fps = int(max_fps)
+
+
+## Drop hint_screen_texture from materials that are drawn while a level plays.
+## Godot copies the whole framebuffer for any shader that declares that hint,
+## even if the sample is behind a uniform branch.
+func _strip_web_screen_copies() -> void:
+	var fade_shader: Shader = preload("res://resources/shaders/FadeEnterEffectWeb.gdshader")
+	for path: String in [
+		"res://resources/FadeEnterEffect.tres",
+		"res://resources/FadeEnterEffectCanvasGroup.tres",
+	]:
+		var mat := load(path) as ShaderMaterial
+		if mat == null:
+			continue
+		mat.shader = fade_shader
+		mat.set_shader_parameter("enabled", true)
+		mat.set_shader_parameter("transition_width", 15.0)
+		mat.set_shader_parameter("fade_power", 1.0)
+		mat.set_shader_parameter("move_power", 0.0)
+		mat.set_shader_parameter("scale_power", 0.0)
 
 
 func _notification(what):

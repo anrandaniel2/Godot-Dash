@@ -97,14 +97,15 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
    - `WorldEnvironment` disables `Environment.glow` on web. Do **not** re-render the 2D world
      into a second SubViewport for bloom: sharing `world_2d` is a second full canvas pass and
      dropped OuterSpace to ~20 fps on WebGPU. `WebSoftEffects` is frost-only (title + pause).
-     Frost is a half-res copy plus a separable 9-tap Gaussian (`WebBlurSource` two viewports);
-     panels sample it via `BackgroundBlurWeb` (Y-flips `SCREEN_UV` because ViewportTexture is
-     inverted on RenderingDevice/WebGPU).
-   - Frame pacing: `Config.apply_frame_pacing()` **always** sets `Engine.max_fps = 0` on web.
-     Threaded hogdot (`PROXY_TO_PTHREAD`) calls `OS::add_frame_delay`; any cap sleeps on a
-     ~16 ms timer and cannot follow a 144 Hz rAF. `_init` stored 60 because
-     `DisplayServer.screen_get_refresh_rate()` is -1; `_adopt_web_panel_hz()` upgrades a leftover
-     60 when `screen.refreshRate` reports the panel. rAF is the vsync.
+     `SimpleBlurMaterial.tres` **ships** `BackgroundBlurWeb.gdshader` (no `hint_screen_texture`)
+     so the shader baker cannot keep the desktop screen-copy pipeline; desktop swaps back in
+     `Config._init`. Frost is half-res + separable 9-tap. Sawblade `FadeEnterEffect` uses
+     `FadeEnterEffectWeb.gdshader` on web for the same reason. Root `use_hdr_2d` is off;
+     `Engine.max_physics_steps_per_frame` is 4.
+   - Frame pacing: `Config.apply_frame_pacing()` **always** sets `Engine.max_fps = 0` on web
+     (also in `_init`). Threaded hogdot (`PROXY_TO_PTHREAD`) calls `OS::add_frame_delay`; any
+     cap sleeps on a ~16 ms timer. rAF is the vsync. Console: `[gdash] build=web-frost-v2`
+     and `[gdash] web pacing max_fps=0 hdr_2d=false`.
    - `html/head_include` wraps `navigator.gpu.requestAdapter` with `powerPreference:
      'high-performance'`. **Chrome on Windows ignores that hint** and always uses GPU 0
      (usually the iGPU) — crbug 369219127. An AMD CPU + Intel dGPU therefore logs
