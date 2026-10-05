@@ -168,7 +168,7 @@ of scenes**:
 ```
 GMDObjects.NATIVE_EFFECT_TRIGGER_IDS (src/static/GMDObjects.gd:381):
   29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006, 1007, 1049, 1268,
-  1346, 1347, 1520, 1611, 1612, 1613, 1616, 1811, 1817, 1913, 1916, 1935, 2015, 2067, 3022, 2913, 2919, 2920, 2921, 3613
+  1346, 1347, 1520, 1585, 1611, 1612, 1613, 1616, 1811, 1817, 1913, 1916, 1935, 2015, 2067, 3022, 2913, 2919, 2920, 2921, 3613
 ```
 
 Consequences, all verified in code:
@@ -297,8 +297,8 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   the batched renderer lacks) and HSV pulses with no `50`; both are counted in
   `ImportReport.inert_trigger_ids`. Regression: `native/tests/test_trigger_effect_parse.cpp`.
 - Every trigger on the inert `NativeGenericTrigger` shell that the native runtime does not
-  execute on the current path — notably the 2.1 tools Animate 1585, Touch 1595 and
-  Collision 1815 — is a silent no-op on **both**
+  execute on the current path — notably the 2.1 tools Touch 1595 and Collision 1815 — is a
+  silent no-op on **both**
   paths; it is now counted in `ImportReport.inert_trigger_ids` (printed by
   `RobTopLevels` (both online paths), `LevelOperationsHandler` and `SubsceneManager`).
 - **Follow (1347)** is implemented on both paths: native `TriggerEffectKind::FOLLOW`
@@ -314,6 +314,19 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   the target; key 56 spawns the group, otherwise toggles it off) are editor-documented,
   i.e. a hypothesis until checked in GD. Not done: collectible items that change item IDs,
   and on the GDScript path, item counts are not saved in practice snapshots.
+- **Group pulse (1006, key 52 = 1)** is implemented on both paths: native `pulse_group` →
+  `apply_group_pulse` (batches: `NativeDecorationRenderer.set_group_pulse`, one colour+weight
+  per renderer applied in the dirty rebuild only while weight > 0; node-drawn layers:
+  `self_modulate = lerp(1, pulse/tint, w)`), GDScript `GroupPulse` + `pulse_group` on
+  `ColorChannelChangerComponent`. Keys 65/66 (main/detail only) are not yet honoured.
+- **Animate (1585) and monster animation**: `tools/build_monster_animations.py` derives
+  `assets/textures/gd_atlas/monster_animations.json` from GD's objectDefinitions.plist and
+  GJBeastNN_AnimDesc.plist (inputs not committed). Monsters (918/1327/1328/1584/2012) now
+  play their default clip in the animated batches; native `ANIMATE` (key 76, cited to 2.11
+  `customObjectSetup` case 1585) and `AnimateComponent` call
+  `DecorationBatch.play_monster_animation`. ID tables for Beast/Bat are from the 2.1 help
+  transcriptions; the Spikeball table and clip chaining are hypotheses; per-frame z changes
+  are not applied.
 - Online downloads (`import_online_level_string`: C++ `parse_online_level` normalisation, then
   the shared GDScript conversion loop) get every converter change above; guarded in
   `tools/runtime_visual_smoke_test.gd` ("pulse/follow modes").

@@ -196,6 +196,7 @@ func free_current_level() -> void:
 func reset() -> void:
 	Engine.time_scale = 1.0
 	ToggleComponent.reset_items()
+	get_tree().call_group(DecorationBatch.MONSTER_BATCH_GROUP, &"reset_monster_animations")
 	if native_trigger_bridge != null:
 		native_trigger_bridge.reset_runtime()
 	if LevelManager.current_level:

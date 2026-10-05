@@ -494,7 +494,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 				used_channels[int(copy_source)] = true
 
 		# A trigger on the inert generic shell that the native runtime does not
-		# execute on this path (Touch 1595, Animate 1585, Collision 1815, ...)
+		# execute on this path (Touch 1595, Collision 1815, ...)
 		# fires and changes nothing; report it instead of staying silent.
 		if GMDObjects.get_object(gd_id).get("scene", "") == GMDObjects.GENERIC_TRIGGER.scene \
 				and not _native_trigger_execution(gd_id):
@@ -1406,6 +1406,12 @@ static func _components_from_properties(
 						"state": toggle_state,
 					})
 				components["ToggleComponent"] = { "toggled_groups": toggled_groups }
+		1585: # Animate trigger (twin of the native ANIMATE arm)
+			if "AnimateComponent" in supported:
+				components["AnimateComponent"] = {
+					"target_group": target_groups[0] if not target_groups.is_empty() else "",
+					"animation_id": int(properties.get("76", "0")),
+				}
 		1611, 1811, 1817: # Count / Instant Count / Pickup (twin of the native item arms)
 			if "ToggleComponent" in supported:
 				var item_modes: Dictionary[int, int] = {

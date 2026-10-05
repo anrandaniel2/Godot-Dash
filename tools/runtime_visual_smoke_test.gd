@@ -566,6 +566,28 @@ func _test_native_core() -> void:
 	assert(ToggleComponent.item_counts.get(4, 0) == -1, "native smoke: Pickup must add its count to the item")
 	ToggleComponent.reset_items()
 	assert(ToggleComponent.item_counts.is_empty(), "native smoke: restart must clear item counts")
+	# Animate (1585, GD 2.11 customObjectSetup keys 51/76) is executable on
+	# both paths and its key 76 survives the online parse; the monster table
+	# (tools/build_monster_animations.py) maps IDs, chains and binds sprites.
+	var animate_report := GMDConverter.ImportReport.new()
+	var animate_level := GMDConverter.import_online_level_string(
+		"kA2,0,kA4,0;1,1585,2,30,3,30,51,5,76,1;", "animate trigger", animate_report)
+	var animate_entries: Array = animate_level.get("layers", [{}])[0].get("objects", [])
+	assert(animate_entries.size() == 1 and not animate_report.inert_trigger_ids.has(1585), "native smoke: Animate must not be inert")
+	assert(str(animate_entries[0].get("gd_properties", {}).get("76", "")) == "1", "native smoke: online parse lost Animate key 76")
+	assert(MonsterAnimations.monster_for(918) == "GJBeast01" and MonsterAnimations.monster_for(1584) == "GJBeast04", "monsters: object table missing")
+	assert(MonsterAnimations.name_for_id("GJBeast01", 1) == "attack01" and MonsterAnimations.name_for_id("GJBeast04", 8) == "sleep_end", "monsters: animation IDs")
+	assert(MonsterAnimations.name_for_id("GJBeast01", 9).is_empty(), "monsters: unknown animation ID must be ignored")
+	var beast: Dictionary = MonsterAnimations.monster("GJBeast01")
+	assert(str(beast.get("default", "")) == "bite" and beast.animations.bite.frames.size() == 16, "monsters: Big Beast bite clip")
+	assert(str(beast.animations.attack01.get("next", "")) == "attack01_loop", "monsters: attack01 chains into its loop")
+	var bite_rest: Array = beast.animations.bite.frames[0]
+	assert(MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_02_glow_001.png", Vector2(0.225, -10.45)) == 0, "monsters: glow copy follows its base sprite")
+	assert(MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_03_001.png", Vector2(0.775, 11.5)) == 1, "monsters: overlay follows the sprite it sits on")
+	assert(MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_03_001.png", Vector2(33.5, 19.5)) == -1, "monsters: unrelated sprite stays static")
+	var rest_local := MonsterAnimations.sprite_local([ "x", 3.0, 6.0, 1.0, 1.0, 0.0, 1, 0, 0 ])
+	assert(rest_local.origin.is_equal_approx(Vector2(3.0, -6.0) * Constants.CELL_SIZE / GMDConverter.GD_CELL_SIZE) and rest_local.x.x < 0.0,
+		"monsters: sprite placement must match the loader's part transform (y up, flip mirrors)")
 	# GD vertical camera law (Geometry-Dash-1.0 PlayLayer::updateCamera):
 	# 3-cell top / 4-cell bottom band, 1/10 ease; 1/30 in fly modes.
 	var half_view: float = 675.0

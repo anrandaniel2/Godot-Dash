@@ -112,8 +112,27 @@ class Item:
 	var render_index: int = -1
 
 
+## One animated monster (Big Beast, Bat, Spikeball...) drawn by this batch:
+## its sprites are re-placed from [MonsterAnimations] whenever its current
+## animation advances a frame.
+class Monster:
+	var name: String = ""
+	var object_transform: Transform2D = Transform2D.IDENTITY
+	var art_scale_factor: float = 1.0
+	## Parallel arrays: the item, the animation sprite index it follows, and
+	## its atlas trim offset.
+	var bound_items: Array[Item] = []
+	var sprite_indices: PackedInt32Array = PackedInt32Array()
+	var trim_offsets: PackedVector2Array = PackedVector2Array()
+	var animation: String = ""
+	var frame: int = 0
+	var elapsed: float = 0.0
+
+
 ## Every item in this batch.
 var items: Array[Item] = []
+## Animated monsters in this batch; empty for nearly every batch.
+var monsters: Array[Monster] = []
 
 ## Only the items with a non-zero spin, so the per-frame update stays
 ## proportional to the number of rotating objects rather than the batch size.
@@ -155,6 +174,9 @@ var _native_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 ## [member _native_by_channel] minus the glow layers, which are always
 ## additive whatever their channel says.
 var _native_blend_by_channel: Dictionary[StringName, PackedInt32Array] = {}
+## Batches drawing a monster join this group so a restart can reset them.
+const MONSTER_BATCH_GROUP: StringName = &"gd_monster_batches"
+
 ## Group pulse state for the portable draw path (see apply_group_pulse).
 var _pulse_color: Color = Color.WHITE
 var _pulse_weight: float = 0.0
@@ -426,6 +448,109 @@ func apply_group_pulse(pulse: Color, weight: float) -> void:
 	_request_redraw()
 
 
+## Registers a monster whose sprites this batch draws. [param sprites] holds
+## one [code]{item, frame, rest}[/code] dictionary per sprite (atlas frame
+## name and Geometry Dash rest position) so each can be bound to the
+## animation sprite it follows.
+func register_monster(monster_name: String, object_transform: Transform2D, art_scale_factor: float, sprites: Array[Dictionary]) -> void:
+	var definition: Dictionary = MonsterAnimations.monster(monster_name)
+	var default_animation: String = str(definition.get("default", ""))
+	var frames: Array = definition.get("animations", {}).get(default_animation, {}).get("frames", [])
+	if frames.is_empty():
+		return
+	var monster := Monster.new()
+	monster.name = monster_name
+	monster.object_transform = object_transform
+	monster.art_scale_factor = art_scale_factor
+	monster.animation = default_animation
+	var sheet: GDSpriteSheet.Sheet = GDDecorationLoader.get_sheet()
+	for sprite: Dictionary in sprites:
+		var item: Item = sprite.get("item")
+		var frame_name: String = str(sprite.get("frame", ""))
+		var index: int = MonsterAnimations.bind_sprite(frames[0], frame_name, sprite.get("rest", Vector2.ZERO))
+		var atlas_frame: GDSpriteSheet.Frame = sheet.get_frame(frame_name) if sheet != null else null
+		if item == null or index == -1 or atlas_frame == null:
+			continue
+		monster.bound_items.append(item)
+		monster.sprite_indices.append(index)
+		monster.trim_offsets.append(atlas_frame.offset)
+	if not monster.bound_items.is_empty():
+		monsters.append(monster)
+		add_to_group(MONSTER_BATCH_GROUP)
+
+
+## Animate trigger (1585): plays animation [param animation_id] (key 76) on
+## every monster in this batch that has it.
+func play_monster_animation(animation_id: int) -> void:
+	for monster: Monster in monsters:
+		var animation: String = MonsterAnimations.name_for_id(monster.name, animation_id)
+		if not animation.is_empty():
+			_start_animation(monster, animation)
+
+
+## Restart: every monster returns to its default animation.
+func reset_monster_animations() -> void:
+	for monster: Monster in monsters:
+		_start_animation(monster, str(MonsterAnimations.monster(monster.name).get("default", "")))
+
+
+func _start_animation(monster: Monster, animation: String) -> void:
+	monster.animation = animation
+	monster.frame = 0
+	monster.elapsed = 0.0
+	_place_monster(monster)
+
+
+func _advance_monsters(delta: float) -> void:
+	for monster: Monster in monsters:
+		var animation: Dictionary = MonsterAnimations.monster(monster.name).get("animations", {}).get(monster.animation, {})
+		var delay: float = maxf(float(animation.get("delay", 0.05)), 0.001)
+		var frame_count: int = animation.get("frames", []).size()
+		if frame_count == 0:
+			continue
+		monster.elapsed += delta
+		var advanced: bool = false
+		while monster.elapsed >= delay:
+			monster.elapsed -= delay
+			advanced = true
+			monster.frame += 1
+			if monster.frame < frame_count:
+				continue
+			if bool(animation.get("loop", false)):
+				monster.frame = 0
+				continue
+			var following: String = str(animation.get("next", ""))
+			if following.is_empty():
+				following = str(MonsterAnimations.monster(monster.name).get("default", ""))
+			monster.animation = following
+			monster.frame = 0
+			animation = MonsterAnimations.monster(monster.name).get("animations", {}).get(following, {})
+			delay = maxf(float(animation.get("delay", 0.05)), 0.001)
+			frame_count = maxi(animation.get("frames", []).size(), 1)
+		if advanced:
+			_place_monster(monster)
+
+
+func _place_monster(monster: Monster) -> void:
+	var frames: Array = MonsterAnimations.monster(monster.name).get("animations", {}).get(monster.animation, {}).get("frames", [])
+	if monster.frame >= frames.size():
+		return
+	var sprites: Array = frames[monster.frame]
+	for i: int in monster.bound_items.size():
+		var index: int = monster.sprite_indices[i]
+		if index >= sprites.size():
+			continue
+		var item: Item = monster.bound_items[i]
+		item.transform = MonsterAnimations.placement(
+				monster.object_transform * MonsterAnimations.sprite_local(sprites[index]),
+				monster.art_scale_factor,
+				monster.trim_offsets[i],
+		)
+		if _native_canvas != null and item.render_index >= 0:
+			_native_canvas.call(&"set_item_transform", item.render_index, item.transform)
+	_request_redraw()
+
+
 ## Flips every item on [param channel] between normal and additive blending.
 ##
 ## Geometry Dash colour triggers toggle a channel's Blending state at fire
@@ -488,6 +613,8 @@ func sort_key() -> int:
 func _process(delta: float) -> void:
 	if not _built:
 		return
+	if not monsters.is_empty():
+		_advance_monsters(delta)
 
 	# Rotating objects - sawblades and the like - carry a degrees-per-second
 	# speed in Geometry Dash's key 97.

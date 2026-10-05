@@ -251,7 +251,12 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 	# A CanvasItem's retained command list is immutable per draw command, so one
 	# spinning saw otherwise forces every visible static decoration sharing this
 	# batch to be resubmitted on every frame.
-	var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending, not is_zero_approx(spin))
+	# Monsters (Big Beast, Bat, Spikeball...) re-place their sprites every
+	# animation frame, so they join the animated batches too.
+	var monster_name: String = MonsterAnimations.monster_for(gd_id)
+	var animated: bool = not is_zero_approx(spin) or not monster_name.is_empty()
+	var monster_sprites: Dictionary[DecorationBatch, Array] = { }
+	var batch: DecorationBatch = _batch_for(batches, group_key, z_layer, blending, animated)
 
 	# Geometry Dash draws an object as a small tree of sprites: the parts
 	# with a negative order behind the root sprite, then the root, then the
@@ -275,6 +280,7 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 						art_scale_factor, tint, hsv_shift, base_alpha, spin,
 					)
 			root_drawn = true
+			_note_monster_sprite(monster_sprites, batch, base_item, frames.base, Vector2(frames.root_x, frames.root_y), monster_name)
 		var is_glow_part: bool = str(part.get("color", GDObjectFrames.COLOR_BASE)) == GDObjectFrames.COLOR_GLOW
 		var part_item: DecorationBatch.Item = null
 		if is_glow_part:
@@ -283,7 +289,7 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 			# base channel, and only when the placement asks for glow (key 96).
 			if wants_glow:
 				if glow_batch == null:
-					glow_batch = _batch_for(batches, group_key, z_layer, true, not is_zero_approx(spin))
+					glow_batch = _batch_for(batches, group_key, z_layer, true, animated)
 				part_item = _add_part(
 							glow_batch, sheet, part, transform, z_order, gd_id, channels,
 							art_scale_factor, tint, hsv_shift, detail_tint, detail_hsv,
@@ -297,6 +303,10 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 					)
 		if part_item == null:
 			continue
+		_note_monster_sprite(
+				monster_sprites, glow_batch if is_glow_part else batch, part_item, str(part.get("frame", "")),
+				Vector2(float(part.get("x", 0.0)), float(part.get("y", 0.0))), monster_name,
+		)
 		if first_part == null and not is_glow_part:
 			first_part = part_item
 		if part_item.layer == "detail":
@@ -310,6 +320,11 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 				batch, sheet, frames, transform, z_order, gd_id, channels,
 				art_scale_factor, tint, hsv_shift, base_alpha, spin,
 		)
+		_note_monster_sprite(monster_sprites, batch, base_item, frames.base, Vector2(frames.root_x, frames.root_y), monster_name)
+	for monster_batch: DecorationBatch in monster_sprites:
+		var sprites: Array[Dictionary] = []
+		sprites.assign(monster_sprites[monster_batch])
+		monster_batch.register_monster(monster_name, transform, art_scale_factor, sprites)
 
 	# An object with no visible root sprite is still one object when saved
 	# and recoloured, so one of its parts stands in for it: preferably one
@@ -350,6 +365,22 @@ static func add_object(batches: Dictionary, object_data: Dictionary, art_scale_f
 				_channel_for(channels, "base"), "glow", art_scale_factor, tint, hsv_shift, base_alpha,
 				spin, DRAW_ORDER_GLOW, transform.origin,
 		)
+
+## Records one sprite of an animated monster for its batch's registration.
+static func _note_monster_sprite(
+		monster_sprites: Dictionary[DecorationBatch, Array],
+		batch: DecorationBatch,
+		item: DecorationBatch.Item,
+		frame_name: String,
+		rest: Vector2,
+		monster_name: String,
+) -> void:
+	if monster_name.is_empty() or item == null or batch == null:
+		return
+	if not monster_sprites.has(batch):
+		monster_sprites[batch] = []
+	monster_sprites[batch].append({ "item": item, "frame": frame_name, "rest": rest })
+
 
 ## Finalises a batch set accumulated by [method add_object]: sorts each
 ## batch's items, drops empty batches (freeing their nodes) and assigns the

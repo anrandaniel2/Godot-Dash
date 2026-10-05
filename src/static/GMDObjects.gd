@@ -234,6 +234,8 @@ const MAP: Dictionary[int, Dictionary] = {
 	1611: { "scene": TRIGGERS + "ToggleTrigger.tscn", "name": "CountTrigger", "components": ["ToggleComponent"] },
 	1811: { "scene": TRIGGERS + "ToggleTrigger.tscn", "name": "InstantCountTrigger", "components": ["ToggleComponent"] },
 	1817: { "scene": TRIGGERS + "ToggleTrigger.tscn", "name": "PickupTrigger", "components": ["ToggleComponent"] },
+	# Animate: plays a monster animation (key 76) on the target group.
+	1585: { "scene": TRIGGERS + "AnimateTrigger.tscn", "name": "AnimateTrigger", "components": ["AnimateComponent"] },
 	# SpawnTriggerComponent holds SpawnedTrigger resources rather than a plain
 	# target group, so it keeps its defaults too.
 	1268: { "scene": TRIGGERS + "SpawnTrigger.tscn", "name": "SpawnTrigger" },
@@ -397,7 +399,7 @@ const GENERIC_TRIGGER: Dictionary = {
 ## runtime: they are one or two per level and still run their components.
 const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
-	1007, 1049, 1268, 1346, 1347, 1520, 1611, 1612, 1613, 1616, 1811, 1817,
+	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1611, 1612, 1613, 1616, 1811, 1817,
 	1913, 1916, 1935, 2015, 2067, 3022,
 	2913, 2919, 2920, 2921,
 	3613,

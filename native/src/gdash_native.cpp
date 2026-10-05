@@ -121,6 +121,7 @@ enum class TriggerEffectKind : int32_t {
 	PICKUP,             // 1817 Pickup (adds key 77 to item key 80)
 	COUNT,              // 1611 Count (armed when passed; fires when the item reaches key 77)
 	INSTANT_COUNT,      // 1811 Instant Count (compares the item once, when passed)
+	ANIMATE,            // 1585 Animate (plays monster animation key 76 on the target group)
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -275,6 +276,7 @@ struct TriggerEffect {
 	int64_t item_count = 0;      // 1611/1811: target, 1817: amount (key 77)
 	int32_t item_compare_mode = 0; // 1811: key 88 (0 equals, 1 larger, 2 smaller)
 	bool item_multi = false;     // 1611: key 104 (multi activate)
+	int32_t animation_id = 0;    // 1585: key 76
 	double degrees = 0.0;        // 1346: keys 68 + 69*360
 	bool allow_self_rotation = true; // 1346: key 70 != "1"
 	Vector2 scale_factor = Vector2(1.0, 1.0); // 2067: keys 150/151 (multiplied)
@@ -625,6 +627,9 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 1817: effect.kind = TriggerEffectKind::PICKUP; break;
 		case 1611: effect.kind = TriggerEffectKind::COUNT; break;
 		case 1811: effect.kind = TriggerEffectKind::INSTANT_COUNT; break;
+		// parity: GD 2.11 EffectGameObject::customObjectSetup case 1585 reads
+		// key 51 (target group) and key 76 (animation ID).
+		case 1585: effect.kind = TriggerEffectKind::ANIMATE; break;
 		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
 		case 1616: effect.kind = TriggerEffectKind::STOP; break;
 		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
@@ -753,6 +758,9 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			break;
 		}
+		case TriggerEffectKind::ANIMATE:
+			effect.animation_id = static_cast<int32_t>(prop_int(properties, "76", 0));
+			break;
 		case TriggerEffectKind::PICKUP:
 		case TriggerEffectKind::COUNT:
 		case TriggerEffectKind::INSTANT_COUNT:
@@ -1491,6 +1499,16 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::PICKUP:
 				change_item(effect.item_id, effect.item_count, player);
 				break;
+			case TriggerEffectKind::ANIMATE: {
+				// Monster batches own their animation clocks (DecorationBatch
+				// .play_monster_animation); the trigger only selects the clip.
+				static const StringName play_method("play_monster_animation");
+				for (ObjectID id : resolve_effect_members(effect)) {
+					Object *member = ObjectDB::get_instance(id);
+					if (member && member->has_method(play_method)) member->call(play_method, static_cast<int64_t>(effect.animation_id));
+				}
+				break;
+			}
 			case TriggerEffectKind::COUNT:
 				if (std::find(armed_counts.begin(), armed_counts.end(), index) == armed_counts.end()) {
 					armed_counts.push_back(index);
