@@ -1,0 +1,107 @@
+name: Level memory profile
+
+# Measures memory and time for opening one huge downloaded level (ORBIT by
+# MindCap, 310k objects) under a real Godot. Runs only when the profiler
+# itself changes, so ordinary pushes never wait on it.
+on:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - "tools/level_memory_profile.gd"
+      - ".github/workflows/level-profile.yml"
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  LEVEL_ID: "133175713"
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot binary
+        uses: actions/cache@v4
+        id: cache-godot
+        with:
+          path: godot-bin
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot binary
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$GODOT_BIN_URL" -O godot.zip
+          mkdir -p godot-bin
+          unzip -q -o godot.zip -d godot-bin
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Cache scons build cache
+        uses: actions/cache@v4
+        with:
+          path: native/scons-cache
+          key: native-scons-profile-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**') }}
+          restore-keys: native-scons-profile-${{ env.GODOT_CPP_REF }}-
+
+      - name: Build gdash_native (Linux, release-like)
+        run: |
+          set -euo pipefail
+          pip3 install --break-system-packages -q scons
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          scons platform=linux target=template_debug arch=x86_64 api_version=4.7 lto=none -j4 > /tmp/scons.log 2>&1 || { tail -n 60 /tmp/scons.log; exit 1; }
+          ls -lh bin/linux/
+
+      - name: Download level from GDHistory
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+          lid = int(os.environ["LEVEL_ID"])
+          info = json.load(urllib.request.urlopen(f"https://history.geometrydash.eu/api/v1/level/{lid}/", timeout=60))
+          recs = [r for r in info.get("records", []) if r.get("level_string_available") and not r.get("is_invalid")]
+          recs.sort(key=lambda r: (r.get("record_type") == "download", r.get("level_version") or 0, r["id"]))
+          rid = recs[-1]["id"]
+          url = f"https://history.geometrydash.eu/level/{lid}/{rid}/download/"
+          print("download", url)
+          data = urllib.request.urlopen(url, timeout=120).read()
+          open("/tmp/level.gmd", "wb").write(data)
+          print("bytes", len(data))
+          PY
+
+      - name: Import project resources
+        run: |
+          chmod +x "$GODOT_BIN"
+          "$GODOT_BIN" --headless --path . --import > import.log 2>&1 || true
+          grep -n "SCRIPT ERROR\|Parse Error" import.log | head -20 || true
+
+      - name: Profile level open
+        run: |
+          set +e
+          /usr/bin/time -v env GDASH_PROFILE_LEVEL=/tmp/level.gmd timeout 1500s \
+            "$GODOT_BIN" --headless --path . --audio-driver Dummy \
+            res://tools/level_memory_profile.tscn > profile.log 2> time.log
+          status=$?
+          grep -E "LEVEL_PROFILE|SCRIPT ERROR|ERROR" profile.log | head -80
+          grep -E "Maximum resident|Elapsed" time.log
+          {
+            echo "## Level memory profile (exit $status)"
+            echo '```'
+            grep -E "LEVEL_PROFILE" profile.log
+            grep -E "Maximum resident|Elapsed" time.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Annotations survive when raw logs cannot be downloaded.
+          while IFS= read -r line; do echo "::notice::${line}"; done < <(grep -E "LEVEL_PROFILE" profile.log | head -20)
+          echo "::notice::$(grep -E 'Maximum resident' time.log)"
+          grep -q "LEVEL_PROFILE done" profile.log
