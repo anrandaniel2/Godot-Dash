@@ -310,6 +310,31 @@ func build() -> void:
 	_request_redraw()
 
 
+## Takes over a renderer that NativePackedDecorationBuilder already filled:
+## this batch never holds Items, and [method build] is not called for it.
+## [param info] is the builder's batch_info.
+func adopt_native_canvas(canvas: Object, info: Dictionary) -> void:
+	_native_canvas = canvas
+	_items_released = true
+	_bounds = info.get("bounds", Rect2())
+	_sort_key = int(info.get("sort_key", 0))
+	_native_by_channel = _channel_index_lists(info.get("channels", { }))
+	_native_blend_by_channel = _channel_index_lists(info.get("blend_channels", { }))
+	for channel: StringName in _native_by_channel:
+		add_to_group(CHANNEL_GROUP_PREFIX + channel)
+	_built = true
+	set_process(false)
+	_request_redraw()
+
+
+## Channel id -> record indices, keyed by the channel's group name.
+static func _channel_index_lists(lists: Dictionary) -> Dictionary[StringName, PackedInt32Array]:
+	var result: Dictionary[StringName, PackedInt32Array] = { }
+	for channel_id: int in lists:
+		result[StringName(Constants.COLOR_CHANNEL_GROUP_PREFIX + str(channel_id))] = lists[channel_id]
+	return result
+
+
 ## Drops every [DecorationBatch.Item] once the native renderer holds the same
 ## data in packed records. A huge level carries hundreds of thousands of them,
 ## each a RefCounted object with its own arrays.

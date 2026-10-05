@@ -181,15 +181,220 @@ static func build_batches(objects: Array, art_scale_factor: float) -> Array[Deco
 
 ## [method build_batches] plus every row of a [PackedDecorations] table.
 static func build_batches_packed(objects: Array, packed: Dictionary, art_scale_factor: float) -> Array[DecorationBatch]:
+	var builder: Object = _native_packed_builder(packed, art_scale_factor)
 	var batches := new_batches()
 	for object_data: Dictionary in objects:
 		add_object(batches, object_data, art_scale_factor)
-	add_packed(batches, packed, art_scale_factor)
+	if builder == null:
+		add_packed(batches, packed, art_scale_factor)
+	else:
+		# Animated monsters keep the Item path; everything else was expanded
+		# in C++.
+		var fallback_rows: PackedInt32Array = builder.call(&"get_fallback_rows")
+		for row: int in fallback_rows:
+			add_object(batches, PackedDecorations.row(packed, row), art_scale_factor)
 	# Runtime-only path (editor builds expand the table into objects), so the
 	# sprite items are not needed once the native renderer has them.
 	for batch: DecorationBatch in batches.values():
 		batch.release_items_after_native = true
-	return finish_batches(batches)
+	var result: Array[DecorationBatch] = []
+	for batch: DecorationBatch in batches.values():
+		if batch.items.is_empty():
+			continue
+		batch.build()
+		result.append(batch)
+	if builder != null:
+		var batch_count: int = builder.call(&"batch_count")
+		for index: int in batch_count:
+			var batch: DecorationBatch = _native_packed_batch(builder, index)
+			if batch != null:
+				result.append(batch)
+	finalise_batch_order(result)
+	return result
+
+
+## Recipe kind bits shared with NativePackedDecorationBuilder (C++).
+const RECIPE_COLOR_DETAIL: int = 1
+const RECIPE_COLOR_BLACK: int = 2
+const RECIPE_GLOW_LAYER: int = 4
+const RECIPE_GLOW_BATCH: int = 8
+const RECIPE_NEEDS_GLOW: int = 16
+
+## Every object type's sprite recipes, built once per process (and again if
+## the art scale changes) and handed to C++ as packed columns.
+static var _recipe_scale: float = -1.0
+static var _recipe_done: Dictionary[int, bool] = { }
+static var _recipe_textures: Array = []
+static var _recipe_texture_index: Dictionary[Texture2D, int] = { }
+static var _recipe_ids := PackedInt32Array()
+static var _recipe_offsets := PackedInt32Array([0])
+static var _recipe_texture := PackedInt32Array()
+static var _recipe_regions := PackedFloat32Array()
+static var _recipe_locals := PackedFloat32Array()
+static var _recipe_draw_orders := PackedInt32Array()
+static var _recipe_kinds := PackedInt32Array()
+static var _recipe_opacities := PackedFloat32Array()
+static var _recipe_fallback_ids := PackedInt32Array()
+
+
+## Expands [param packed] in C++, or returns null when the native builder is
+## unavailable (the caller then uses [method add_packed]).
+static func _native_packed_builder(packed: Dictionary, art_scale_factor: float) -> Object:
+	if PackedDecorations.size_of(packed) == 0 or NativeCore.backend() == null:
+		return null
+	if not ClassDB.class_exists(&"NativePackedDecorationBuilder") or not ClassDB.class_exists(&"NativeDecorationRenderer"):
+		return null
+	var builder: Object = ClassDB.instantiate(&"NativePackedDecorationBuilder")
+	if builder == null:
+		return null
+	var ids: PackedInt32Array = builder.call(&"unique_ids", packed)
+	_ensure_recipes(ids, art_scale_factor)
+	builder.call(
+			&"set_recipes", _recipe_textures, _recipe_ids, _recipe_offsets, _recipe_texture,
+			_recipe_regions, _recipe_locals, _recipe_draw_orders, _recipe_kinds, _recipe_opacities,
+			_recipe_fallback_ids,
+	)
+	builder.call(&"build", packed, Config.ldm)
+	return builder
+
+
+## Wraps native batch [param index] in a [DecorationBatch] node that owns its
+## renderer.
+static func _native_packed_batch(builder: Object, index: int) -> DecorationBatch:
+	var info: Dictionary = builder.call(&"batch_info", index)
+	if int(info.get("count", 0)) == 0:
+		return null
+	var group_key: Array = []
+	for group_id: int in info.get("groups", PackedInt32Array()):
+		group_key.append(Constants.GROUP_PREFIX + str(group_id))
+	var batch: DecorationBatch = _new_batch(
+			group_key, int(info.get("z_layer", 0)), bool(info.get("additive", false)), "PackedDecorationBatch%d" % index
+	)
+	var renderer: Object = ClassDB.instantiate(&"NativeDecorationRenderer")
+	if renderer == null:
+		batch.free()
+		return null
+	builder.call(&"configure_renderer", index, renderer, batch, true, DecorationBatch.BUCKET_WIDTH, DecorationBatch.CULL_MARGIN)
+	batch.adopt_native_canvas(renderer, info)
+	return batch
+
+
+## Adds recipes for every id in [param ids] not described yet.
+static func _ensure_recipes(ids: PackedInt32Array, art_scale_factor: float) -> void:
+	if not is_equal_approx(art_scale_factor, _recipe_scale):
+		_recipe_scale = art_scale_factor
+		_recipe_done.clear()
+		_recipe_textures = []
+		_recipe_texture_index.clear()
+		_recipe_ids = PackedInt32Array()
+		_recipe_offsets = PackedInt32Array([0])
+		_recipe_texture = PackedInt32Array()
+		_recipe_regions = PackedFloat32Array()
+		_recipe_locals = PackedFloat32Array()
+		_recipe_draw_orders = PackedInt32Array()
+		_recipe_kinds = PackedInt32Array()
+		_recipe_opacities = PackedFloat32Array()
+		_recipe_fallback_ids = PackedInt32Array()
+	var sheet: GDSpriteSheet.Sheet = get_sheet()
+	for gd_id: int in ids:
+		if _recipe_done.has(gd_id):
+			continue
+		_recipe_done[gd_id] = true
+		if not MonsterAnimations.monster_for(gd_id).is_empty():
+			_recipe_fallback_ids.append(gd_id)
+			continue
+		var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
+		if frames != null:
+			_append_recipes(sheet, frames, art_scale_factor)
+		_recipe_ids.append(gd_id)
+		_recipe_offsets.append(_recipe_kinds.size())
+
+
+## The sprites add_object would emit for one object type, in the same order:
+## parts behind the root, the root, the remaining parts, then the legacy
+## detail and glow layers.
+static func _append_recipes(sheet: GDSpriteSheet.Sheet, frames: GDObjectFrames.ObjectFrames, art_scale_factor: float) -> void:
+	var gd_to_world: float = float(Constants.CELL_SIZE) / GMDConverter.GD_CELL_SIZE
+	var root_drawn: bool = false
+	for part: Dictionary in frames.parts:
+		var order: int = int(part.get("order", 0))
+		if order >= 0 and not root_drawn:
+			_append_root_recipe(sheet, frames, art_scale_factor, gd_to_world)
+			root_drawn = true
+		var frame_name: String = str(part.get("frame", ""))
+		var frame: GDSpriteSheet.Frame = sheet.get_frame(frame_name)
+		if frame == null:
+			continue
+		var kind: int = 0
+		match str(part.get("color", GDObjectFrames.COLOR_BASE)):
+			GDObjectFrames.COLOR_DETAIL:
+				kind = RECIPE_COLOR_DETAIL
+			GDObjectFrames.COLOR_GLOW:
+				kind = RECIPE_GLOW_LAYER | RECIPE_GLOW_BATCH | RECIPE_NEEDS_GLOW
+			GDObjectFrames.COLOR_BLACK:
+				kind = RECIPE_COLOR_BLACK
+		var local := Transform2D(
+				-deg_to_rad(float(part.get("rot", 0.0))),
+				Vector2(float(part.get("sx", 1.0)), float(part.get("sy", 1.0))),
+				0.0,
+				Vector2(float(part.get("x", 0.0)), -float(part.get("y", 0.0))) * gd_to_world,
+		)
+		var anchor := Vector2(float(part.get("ax", 0.0)), float(part.get("ay", 0.0)))
+		if anchor != Vector2.ZERO:
+			local = local.translated_local(Vector2(-anchor.x, anchor.y) * frame.region.size * art_scale_factor)
+		_append_recipe(
+				frame, local, order, kind, clampf(float(part.get("opacity", 1.0)), 0.0, 1.0), art_scale_factor
+		)
+	if not root_drawn:
+		_append_root_recipe(sheet, frames, art_scale_factor, gd_to_world)
+	if frames.has_detail():
+		_append_recipe(
+				sheet.get_frame(frames.detail), Transform2D.IDENTITY, DRAW_ORDER_DETAIL, RECIPE_COLOR_DETAIL, 1.0,
+				art_scale_factor,
+		)
+	if frames.has_glow():
+		_append_recipe(
+				sheet.get_frame(frames.glow), Transform2D.IDENTITY, DRAW_ORDER_GLOW,
+				RECIPE_GLOW_LAYER | RECIPE_GLOW_BATCH | RECIPE_NEEDS_GLOW, 1.0, art_scale_factor,
+		)
+
+
+static func _append_root_recipe(sheet: GDSpriteSheet.Sheet, frames: GDObjectFrames.ObjectFrames, art_scale_factor: float, gd_to_world: float) -> void:
+	if not frames.has_visible_root():
+		return
+	var local := Transform2D(
+			-deg_to_rad(frames.root_rot),
+			Vector2(frames.root_sx, frames.root_sy),
+			0.0,
+			Vector2(frames.root_x, -frames.root_y) * gd_to_world,
+	)
+	var kind: int = RECIPE_COLOR_BLACK if frames.color == GDObjectFrames.COLOR_BLACK else 0
+	_append_recipe(sheet.get_frame(frames.base), local, DRAW_ORDER_ROOT, kind, frames.opacity, art_scale_factor)
+
+
+## One sprite recipe. The atlas scale and trim offset are folded into the
+## local transform exactly as _add_layer applies them.
+static func _append_recipe(frame: GDSpriteSheet.Frame, local: Transform2D, draw_order: int, kind: int, opacity: float, art_scale_factor: float) -> void:
+	if frame == null or frame.atlas == null:
+		return
+	if not _recipe_texture_index.has(frame.atlas):
+		_recipe_texture_index[frame.atlas] = _recipe_textures.size()
+		_recipe_textures.append(frame.atlas)
+	var trim := Transform2D(
+			0.0, Vector2(art_scale_factor, art_scale_factor), 0.0,
+			Vector2(frame.offset.x, -frame.offset.y) * art_scale_factor,
+	)
+	var placed: Transform2D = local * trim
+	_recipe_texture.append(_recipe_texture_index[frame.atlas])
+	_recipe_regions.append_array(PackedFloat32Array([
+			frame.region.position.x, frame.region.position.y, frame.region.size.x, frame.region.size.y,
+	]))
+	_recipe_locals.append_array(PackedFloat32Array([
+			placed.x.x, placed.x.y, placed.y.x, placed.y.y, placed.origin.x, placed.origin.y,
+	]))
+	_recipe_draw_orders.append(draw_order)
+	_recipe_kinds.append(kind)
+	_recipe_opacities.append(opacity)
 
 
 ## Feeds every row of a [PackedDecorations] table into [param batches]. Each
@@ -640,9 +845,15 @@ static func _batch_for(
 	var key: String = "%s|%d|%d|%d" % [",".join(PackedStringArray(group_key)), z_layer, int(additive), int(dynamic)]
 	if batches.has(key):
 		return batches[key]
+	var batch: DecorationBatch = _new_batch(group_key, z_layer, additive, "DecorationBatch%d" % batches.size())
+	batches[key] = batch
+	return batch
 
+
+## A configured, empty batch node for one (group set, z layer, blend).
+static func _new_batch(group_key: Array, z_layer: int, additive: bool, batch_name: String) -> DecorationBatch:
 	var batch := DecorationBatch.new()
-	batch.name = "DecorationBatch%d" % batches.size()
+	batch.name = batch_name
 	batch.gd_z_layer = z_layer
 	batch.gd_blending = additive
 	# Geometry Dash layers run B4..T3 as -3..9. They are spread far apart so
@@ -658,8 +869,6 @@ static func _batch_for(
 		var material := CanvasItemMaterial.new()
 		material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 		batch.material = material
-
-	batches[key] = batch
 	return batch
 
 

@@ -45,6 +45,13 @@
 #include <godot_cpp/templates/hash_map.hpp>
 
 #include <algorithm>
+#include <climits>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -5258,6 +5265,7 @@ static uint64_t decoration_last_update_frame = UINT64_MAX;
 // RenderingServer canvas-item RID parented to that proxy's canvas item.
 class NativeDecorationRenderer : public RefCounted {
 	GDCLASS(NativeDecorationRenderer, RefCounted)
+	friend class NativePackedDecorationBuilder;
 
 	struct Record {
 		Ref<Texture2D> texture;
@@ -5420,11 +5428,7 @@ public:
 		commands_dirty = false;
 	}
 
-	void configure(Object *p_owner, const Array &textures, const Array &regions, const Array &transforms,
-			const PackedColorArray &colors, const PackedFloat32Array &origins,
-			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
-			const PackedFloat32Array &spins, const PackedFloat32Array &spin_pivots,
-			bool enable_culling, double width, double margin) {
+	void attach_owner(Object *p_owner) {
 		CanvasItem *owner_canvas = Object::cast_to<CanvasItem>(p_owner);
 		owner_id = owner_canvas ? owner_canvas->get_instance_id() : 0;
 		RenderingServer *server = RenderingServer::get_singleton();
@@ -5451,10 +5455,17 @@ public:
 				server->canvas_item_set_visible(canvas_item_add, false);
 			}
 		}
+	}
+
+	void configure(Object *p_owner, const Array &textures, const Array &regions, const Array &transforms,
+			const PackedColorArray &colors, const PackedFloat32Array &origins,
+			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
+			const PackedFloat32Array &spins, const PackedFloat32Array &spin_pivots,
+			bool enable_culling, double width, double margin) {
+		attach_owner(p_owner);
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
-		records.clear(); spinning_indices.clear(); sections.clear(); records.reserve(static_cast<size_t>(count));
-		emitted_stamp.clear();
-		bucket_width = width > 0.0 ? width : 256.0;
+		std::vector<Record> built;
+		built.reserve(static_cast<size_t>(count));
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
 			record.texture = textures[i]; record.region = regions[i];
@@ -5467,6 +5478,20 @@ public:
 			if (spins.size() > i) record.spin_radians = spins[i] * 0.01745329251994329577f;
 			if (spin_pivots.size() >= (i + 1) * 2) record.spin_pivot = Vector2(spin_pivots[i * 2], spin_pivots[i * 2 + 1]);
 			else record.spin_pivot = record.transform.get_origin();
+			built.push_back(std::move(record));
+		}
+		index_records(std::move(built), enable_culling, width, margin);
+	}
+
+	// Takes ownership of already-sorted records and builds the spatial index.
+	// NativePackedDecorationBuilder hands its std::vector here directly, so no
+	// per-sprite Variant crosses the boundary.
+	void index_records(std::vector<Record> &&p_records, bool enable_culling, double width, double margin) {
+		records = std::move(p_records);
+		spinning_indices.clear(); sections.clear(); emitted_stamp.clear();
+		bucket_width = width > 0.0 ? width : 256.0;
+		for (size_t index = 0; index < records.size(); ++index) {
+			const Record &record = records[index];
 			const Rect2 bounds = record.transform.xform(Rect2(-record.region.size * 0.5, record.region.size));
 			// Index the complete conservative rotation circle, not only the origin.
 			// The previous batch-wide maximum radius let one giant background sprite
@@ -5476,7 +5501,6 @@ public:
 			const Vector2 center = record.spin_pivot;
 			const double radius = record.transform.get_origin().distance_to(center) + (bounds.size * 0.5).length();
 			const Rect2 coverage(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0));
-			const size_t index = records.size(); records.push_back(record);
 			if (record.spin_radians != 0.0f) spinning_indices.push_back(index);
 			const int64_t first_column = static_cast<int64_t>(std::floor(coverage.position.x / bucket_width));
 			const int64_t last_column = static_cast<int64_t>(std::floor(coverage.get_end().x / bucket_width));
@@ -5610,6 +5634,333 @@ public:
 	int64_t last_drawn_count() const { return last_drawn_items; }
 	bool is_spatially_culled() const { return cull; }
 };
+
+// Expands a PackedDecorations table into finished renderer records entirely
+// in C++. GDScript describes every object type once as a short list of sprite
+// "recipes" (packed arrays); each table row is then expanded, batched by
+// (group set, z layer, blend, animated), stably sorted exactly like
+// DecorationBatch.build and moved into a NativeDecorationRenderer. Sprites
+// live in std::vector only: no Dictionary, Array or Object per sprite. Mirrors
+// GDDecorationLoader.add_object / _add_root / _add_part / _add_layer.
+class NativePackedDecorationBuilder : public RefCounted {
+	GDCLASS(NativePackedDecorationBuilder, RefCounted)
+
+public:
+	// Recipe kind bits; must match GDDecorationLoader.RECIPE_*.
+	static constexpr uint32_t COLOR_MASK = 3u; // 0 base, 1 detail, 2 black
+	static constexpr uint32_t COLOR_DETAIL = 1u;
+	static constexpr uint32_t COLOR_BLACK = 2u;
+	static constexpr uint32_t GLOW_LAYER = 4u; // layer "glow": never re-routed by a Blending flip
+	static constexpr uint32_t GLOW_BATCH = 8u; // drawn in the always-additive batch
+	static constexpr uint32_t NEEDS_GLOW = 16u; // only when the placement asks for glow (key 96)
+	// PackedDecorations.FLAG_*.
+	static constexpr uint8_t FLAG_BLENDING = 1, FLAG_GLOW = 2, FLAG_HIGH_DETAIL = 4, FLAG_BASE_HSV = 8, FLAG_DETAIL_HSV = 16;
+
+private:
+	struct Recipe {
+		int32_t texture = 0;
+		Rect2 region;
+		Transform2D local; // part placement with the atlas scale and trim offset folded in
+		int32_t draw_order = 0;
+		uint32_t kind = 0;
+		float opacity = 1.0f;
+	};
+	struct Sprite {
+		NativeDecorationRenderer::Record record;
+		int32_t texture = 0;
+		int32_t z_order = 0;
+		int32_t draw_order = 0;
+		int32_t channel = -1;
+		bool glow_layer = false;
+	};
+	struct Batch {
+		std::vector<int32_t> groups;
+		int32_t z_layer = 0;
+		bool additive = false;
+		std::vector<Sprite> sprites;
+		Rect2 bounds;
+		std::map<int32_t, std::vector<int32_t>> channels;
+		std::map<int32_t, std::vector<int32_t>> blend_channels;
+	};
+	using BatchKey = std::tuple<std::vector<int32_t>, int32_t, bool, bool>;
+
+	std::vector<Ref<Texture2D>> textures;
+	std::vector<uint64_t> texture_ids;
+	std::unordered_map<int32_t, std::pair<int32_t, int32_t>> recipe_ranges;
+	std::unordered_set<int32_t> fallback_ids;
+	std::vector<Recipe> recipes;
+	std::vector<Batch> batches;
+	PackedInt32Array fallback_rows;
+
+	static Variant field(const Dictionary &table, const char *key) { return table.get(String(key), Variant()); }
+
+protected:
+	static void _bind_methods() {
+		ClassDB::bind_method(D_METHOD("set_recipes", "textures", "ids", "offsets", "texture_index", "regions", "locals", "draw_orders", "kinds", "opacities", "fallback_ids"), &NativePackedDecorationBuilder::set_recipes);
+		ClassDB::bind_method(D_METHOD("build", "table", "drop_high_detail"), &NativePackedDecorationBuilder::build);
+		ClassDB::bind_method(D_METHOD("batch_count"), &NativePackedDecorationBuilder::batch_count);
+		ClassDB::bind_method(D_METHOD("sprite_count"), &NativePackedDecorationBuilder::sprite_count);
+		ClassDB::bind_method(D_METHOD("batch_info", "index"), &NativePackedDecorationBuilder::batch_info);
+		ClassDB::bind_method(D_METHOD("configure_renderer", "index", "renderer", "owner", "enable_culling", "width", "margin"), &NativePackedDecorationBuilder::configure_renderer);
+		ClassDB::bind_method(D_METHOD("get_fallback_rows"), &NativePackedDecorationBuilder::get_fallback_rows);
+		ClassDB::bind_method(D_METHOD("unique_ids", "table"), &NativePackedDecorationBuilder::unique_ids);
+	}
+
+public:
+	// Sorted distinct object ids of a table, so GDScript prepares recipes only
+	// for the types a level actually uses.
+	PackedInt32Array unique_ids(const Dictionary &table) const {
+		const PackedInt32Array ids = field(table, "gd_id");
+		std::vector<int32_t> values(ids.ptr(), ids.ptr() + ids.size());
+		std::sort(values.begin(), values.end());
+		values.erase(std::unique(values.begin(), values.end()), values.end());
+		PackedInt32Array result;
+		result.resize(static_cast<int64_t>(values.size()));
+		if (!values.empty()) std::memcpy(result.ptrw(), values.data(), values.size() * sizeof(int32_t));
+		return result;
+	}
+
+	// Recipe i of object ids[k] is offsets[k] <= i < offsets[k + 1]. regions
+	// holds 4 floats and locals 6 (x axis, y axis, origin) per recipe.
+	void set_recipes(const Array &p_textures, const PackedInt32Array &ids, const PackedInt32Array &offsets,
+			const PackedInt32Array &texture_index, const PackedFloat32Array &regions, const PackedFloat32Array &locals,
+			const PackedInt32Array &draw_orders, const PackedInt32Array &kinds, const PackedFloat32Array &opacities,
+			const PackedInt32Array &p_fallback_ids) {
+		textures.clear(); texture_ids.clear(); recipe_ranges.clear(); fallback_ids.clear(); recipes.clear();
+		for (int64_t i = 0; i < p_textures.size(); ++i) {
+			Ref<Texture2D> texture = p_textures[i];
+			textures.push_back(texture);
+			texture_ids.push_back(texture.is_valid() ? texture->get_instance_id() : 0);
+		}
+		const int64_t count = std::min({texture_index.size(), regions.size() / 4, locals.size() / 6,
+				draw_orders.size(), kinds.size(), opacities.size()});
+		recipes.resize(static_cast<size_t>(std::max<int64_t>(count, 0)));
+		for (int64_t i = 0; i < count; ++i) {
+			Recipe &recipe = recipes[static_cast<size_t>(i)];
+			recipe.texture = texture_index[i];
+			recipe.region = Rect2(regions[i * 4], regions[i * 4 + 1], regions[i * 4 + 2], regions[i * 4 + 3]);
+			recipe.local = Transform2D(Vector2(locals[i * 6], locals[i * 6 + 1]), Vector2(locals[i * 6 + 2], locals[i * 6 + 3]),
+					Vector2(locals[i * 6 + 4], locals[i * 6 + 5]));
+			recipe.draw_order = draw_orders[i];
+			recipe.kind = static_cast<uint32_t>(kinds[i]);
+			recipe.opacity = opacities[i];
+		}
+		for (int64_t k = 0; k + 1 < offsets.size() && k < ids.size(); ++k) {
+			const int32_t first = std::clamp<int32_t>(offsets[k], 0, static_cast<int32_t>(count));
+			const int32_t last = std::clamp<int32_t>(offsets[k + 1], first, static_cast<int32_t>(count));
+			recipe_ranges[ids[k]] = {first, last};
+		}
+		for (int64_t i = 0; i < p_fallback_ids.size(); ++i) fallback_ids.insert(p_fallback_ids[i]);
+	}
+
+	// Expands every row. Rows of fallback ids (animated monsters) are left for
+	// GDScript and listed by get_fallback_rows; ids without a recipe have no
+	// drawable artwork and are skipped, as add_object skips them.
+	int64_t build(const Dictionary &table, bool drop_high_detail) {
+		batches.clear();
+		fallback_rows = PackedInt32Array();
+		const PackedInt32Array gd_id = field(table, "gd_id");
+		const PackedFloat32Array xform = field(table, "xform");
+		const PackedInt32Array z_order = field(table, "z_order");
+		const PackedInt32Array z_layer = field(table, "z_layer");
+		const PackedColorArray tint = field(table, "tint");
+		const PackedColorArray detail_tint = field(table, "detail_tint");
+		const PackedFloat32Array base_alpha = field(table, "base_alpha");
+		const PackedFloat32Array spin = field(table, "spin");
+		const PackedByteArray flags = field(table, "flags");
+		const PackedInt32Array base_channel = field(table, "base_channel");
+		const PackedInt32Array detail_channel = field(table, "detail_channel");
+		const PackedFloat32Array base_hsv = field(table, "base_hsv");
+		const PackedFloat32Array detail_hsv = field(table, "detail_hsv");
+		const PackedInt32Array group_offsets = field(table, "group_offsets");
+		const PackedInt32Array group_ids = field(table, "group_ids");
+		const int64_t rows = gd_id.size();
+		if (xform.size() < rows * 6 || z_order.size() < rows || z_layer.size() < rows || tint.size() < rows ||
+				detail_tint.size() < rows || base_alpha.size() < rows || spin.size() < rows || flags.size() < rows ||
+				base_channel.size() < rows || detail_channel.size() < rows || base_hsv.size() < rows * 5 ||
+				detail_hsv.size() < rows * 5 || group_offsets.size() < rows + 1) {
+			ERR_PRINT("NativePackedDecorationBuilder: packed decoration table columns are inconsistent");
+			return 0;
+		}
+		const float *xf = xform.ptr();
+		const float *bh = base_hsv.ptr();
+		const float *dh = detail_hsv.ptr();
+		const int32_t *go = group_offsets.ptr();
+		const int32_t *gi = group_ids.ptr();
+		const int64_t group_count = group_ids.size();
+		std::map<BatchKey, size_t> index_by_key;
+		std::vector<int32_t> fallback;
+		auto batch_for = [&](const std::vector<int32_t> &groups, int32_t layer, bool additive, bool dynamic) -> size_t {
+			BatchKey key(groups, layer, additive, dynamic);
+			auto found = index_by_key.find(key);
+			if (found != index_by_key.end()) return found->second;
+			const size_t created = batches.size();
+			index_by_key.emplace(std::move(key), created);
+			Batch batch;
+			batch.groups = groups; batch.z_layer = layer; batch.additive = additive;
+			batches.push_back(std::move(batch));
+			return created;
+		};
+		std::vector<int32_t> groups;
+		for (int64_t row = 0; row < rows; ++row) {
+			const int32_t id = gd_id[row];
+			const uint8_t row_flags = flags[row];
+			if (fallback_ids.count(id)) { fallback.push_back(static_cast<int32_t>(row)); continue; }
+			if (drop_high_detail && (row_flags & FLAG_HIGH_DETAIL)) continue;
+			auto range = recipe_ranges.find(id);
+			if (range == recipe_ranges.end() || range->second.first == range->second.second) continue;
+
+			const Transform2D transform(Vector2(xf[row * 6], xf[row * 6 + 1]), Vector2(xf[row * 6 + 2], xf[row * 6 + 3]),
+					Vector2(xf[row * 6 + 4], xf[row * 6 + 5]));
+			const float row_spin = spin[row];
+			const bool wants_glow = (row_flags & FLAG_GLOW) != 0;
+			const bool dynamic = row_spin != 0.0f;
+			// Sorted so the same groups in another order share a batch.
+			groups.clear();
+			const int32_t g0 = std::clamp<int32_t>(go[row], 0, static_cast<int32_t>(group_count));
+			const int32_t g1 = std::clamp<int32_t>(go[row + 1], g0, static_cast<int32_t>(group_count));
+			groups.assign(gi + g0, gi + g1);
+			std::sort(groups.begin(), groups.end());
+			constexpr size_t NONE = SIZE_MAX;
+			size_t main_batch = NONE;
+			size_t glow_batch = NONE;
+			for (int32_t r = range->second.first; r < range->second.second; ++r) {
+				const Recipe &recipe = recipes[static_cast<size_t>(r)];
+				if ((recipe.kind & NEEDS_GLOW) && !wants_glow) continue;
+				size_t target;
+				if (recipe.kind & GLOW_BATCH) {
+					if (glow_batch == NONE) glow_batch = batch_for(groups, z_layer[row], true, dynamic);
+					target = glow_batch;
+				} else {
+					if (main_batch == NONE) main_batch = batch_for(groups, z_layer[row], (row_flags & FLAG_BLENDING) != 0, dynamic);
+					target = main_batch;
+				}
+				Sprite sprite;
+				NativeDecorationRenderer::Record &record = sprite.record;
+				const uint32_t color = recipe.kind & COLOR_MASK;
+				Color colour = tint[row];
+				const float *hsv = nullptr;
+				int32_t channel = base_channel[row];
+				if (color == COLOR_DETAIL) {
+					colour = detail_tint[row];
+					channel = detail_channel[row];
+					if (row_flags & FLAG_DETAIL_HSV) hsv = dh + row * 5;
+				} else if (color == COLOR_BLACK) {
+					colour = Color(0.0f, 0.0f, 0.0f, tint[row].a);
+					channel = -1;
+				} else if (row_flags & FLAG_BASE_HSV) {
+					hsv = bh + row * 5;
+				}
+				colour.a *= recipe.opacity;
+				record.color = colour;
+				record.base_alpha = base_alpha[row] * recipe.opacity;
+				if (hsv) {
+					for (int c = 0; c < 5; ++c) record.hsv[c] = hsv[c];
+					record.has_hsv = hsv[4] >= 0.0f;
+				} else {
+					for (int c = 0; c < 5; ++c) record.hsv[c] = -1.0f;
+				}
+				record.region = recipe.region;
+				record.transform = transform * recipe.local;
+				record.spin_radians = row_spin * 0.01745329251994329577f;
+				record.spin_pivot = transform.get_origin();
+				sprite.texture = recipe.texture;
+				sprite.z_order = z_order[row];
+				sprite.draw_order = recipe.draw_order;
+				sprite.channel = channel;
+				sprite.glow_layer = (recipe.kind & GLOW_LAYER) != 0;
+				batches[target].sprites.push_back(std::move(sprite));
+			}
+		}
+		for (Batch &batch : batches) finish(batch);
+		fallback_rows.resize(static_cast<int64_t>(fallback.size()));
+		if (!fallback.empty()) std::memcpy(fallback_rows.ptrw(), fallback.data(), fallback.size() * sizeof(int32_t));
+		return static_cast<int64_t>(batches.size());
+	}
+
+	// DecorationBatch.build's order (z order, draw order, texture, insertion),
+	// then the bounds and channel index lists DecorationBatch keeps.
+	void finish(Batch &batch) {
+		std::stable_sort(batch.sprites.begin(), batch.sprites.end(), [&](const Sprite &a, const Sprite &b) {
+			if (a.z_order != b.z_order) return a.z_order < b.z_order;
+			if (a.draw_order != b.draw_order) return a.draw_order < b.draw_order;
+			return texture_id(a.texture) < texture_id(b.texture);
+		});
+		for (size_t i = 0; i < batch.sprites.size(); ++i) {
+			const Sprite &sprite = batch.sprites[i];
+			const Transform2D &t = sprite.record.transform;
+			const Vector2 extent = (sprite.record.region.size * 0.5).abs() * t.get_scale().abs();
+			const Rect2 rect(t.get_origin() - extent, extent * 2.0);
+			batch.bounds = i == 0 ? rect : batch.bounds.merge(rect);
+			if (sprite.channel >= 0) {
+				batch.channels[sprite.channel].push_back(static_cast<int32_t>(i));
+				if (!sprite.glow_layer) batch.blend_channels[sprite.channel].push_back(static_cast<int32_t>(i));
+			}
+		}
+	}
+
+	uint64_t texture_id(int32_t index) const {
+		return index >= 0 && static_cast<size_t>(index) < texture_ids.size() ? texture_ids[static_cast<size_t>(index)] : 0;
+	}
+
+	int64_t batch_count() const { return static_cast<int64_t>(batches.size()); }
+	int64_t sprite_count() const {
+		size_t total = 0;
+		for (const Batch &batch : batches) total += batch.sprites.size();
+		return static_cast<int64_t>(total);
+	}
+	PackedInt32Array get_fallback_rows() const { return fallback_rows; }
+
+	static Dictionary channel_lists(const std::map<int32_t, std::vector<int32_t>> &lists) {
+		Dictionary result;
+		for (const auto &[channel, indices] : lists) {
+			PackedInt32Array packed;
+			packed.resize(static_cast<int64_t>(indices.size()));
+			std::memcpy(packed.ptrw(), indices.data(), indices.size() * sizeof(int32_t));
+			result[channel] = packed;
+		}
+		return result;
+	}
+
+	// Per-batch facts the DecorationBatch node needs (one call per batch).
+	Dictionary batch_info(int64_t index) const {
+		Dictionary info;
+		if (index < 0 || index >= static_cast<int64_t>(batches.size())) return info;
+		const Batch &batch = batches[static_cast<size_t>(index)];
+		PackedInt32Array groups;
+		groups.resize(static_cast<int64_t>(batch.groups.size()));
+		if (!batch.groups.empty()) std::memcpy(groups.ptrw(), batch.groups.data(), batch.groups.size() * sizeof(int32_t));
+		info["groups"] = groups;
+		info["z_layer"] = batch.z_layer;
+		info["additive"] = batch.additive;
+		info["sort_key"] = batch.sprites.empty() ? 0 : batch.sprites.front().z_order;
+		info["bounds"] = batch.bounds;
+		info["count"] = static_cast<int64_t>(batch.sprites.size());
+		info["channels"] = channel_lists(batch.channels);
+		info["blend_channels"] = channel_lists(batch.blend_channels);
+		return info;
+	}
+
+	// Moves batch `index`'s records into `renderer`; the batch's sprites are
+	// released here, so each is held once.
+	bool configure_renderer(int64_t index, Object *renderer, Object *owner, bool enable_culling, double width, double margin) {
+		NativeDecorationRenderer *target = Object::cast_to<NativeDecorationRenderer>(renderer);
+		if (!target || index < 0 || index >= static_cast<int64_t>(batches.size())) return false;
+		Batch &batch = batches[static_cast<size_t>(index)];
+		std::vector<NativeDecorationRenderer::Record> built;
+		built.reserve(batch.sprites.size());
+		for (Sprite &sprite : batch.sprites) {
+			if (sprite.texture >= 0 && static_cast<size_t>(sprite.texture) < textures.size()) {
+				sprite.record.texture = textures[static_cast<size_t>(sprite.texture)];
+			}
+			built.push_back(std::move(sprite.record));
+		}
+		std::vector<Sprite>().swap(batch.sprites);
+		target->attach_owner(owner);
+		target->index_records(std::move(built), enable_culling, width, margin);
+		return true;
+	}
+};
 static void decoration_coordinator_enter() {
 	++decoration_coordinator_count;
 }
@@ -5730,6 +6081,7 @@ void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(godot::NativeFrustumIndex);
 		GDREGISTER_CLASS(godot::NativeLevelBuildJob);
 		GDREGISTER_CLASS(godot::NativeDecorationRenderer);
+		GDREGISTER_CLASS(godot::NativePackedDecorationBuilder);
 		GDREGISTER_CLASS(godot::NativeColorChannelIndex);
 	}
 }
