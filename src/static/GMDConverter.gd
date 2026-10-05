@@ -1753,6 +1753,13 @@ static func _components_from_properties(
 							float(properties.get(Prop.MOVE_X, "0")) / GD_CELL_SIZE,
 							float(properties.get(Prop.MOVE_Y, "0")) / GD_CELL_SIZE,
 					),
+					# Lock to Player X/Y (keys 58/59) with 2.2 mods 143/144.
+					"lock_player_x": properties.get("58", "0") == "1",
+					"lock_player_y": properties.get("59", "0") == "1",
+					"lock_mod": Vector2(
+							float(properties.get("143", "1")),
+							float(properties.get("144", "1")),
+					),
 				}
 		1007: # Alpha trigger
 			if "AlphaChangerComponent" in supported:

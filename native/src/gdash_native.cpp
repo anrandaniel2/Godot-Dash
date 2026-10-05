@@ -455,6 +455,9 @@ struct TriggerEffect {
 	bool teleport_flip_x = false;         // 4
 	double teleport_rotation = 0.0;       // 6
 	Vector2 move_px;             // 901: keys 28/29 in pixels
+	bool move_lock_x = false;     // 901: key 58, lock to player X
+	bool move_lock_y = false;     // 901: key 59, lock to player Y
+	Vector2 move_mod = Vector2(1, 1); // 901: keys 143/144, scale the locked movement
 	Vector2 follow_mod = Vector2(1.0, 1.0); // 1347: keys 72/73 (X/Y multipliers)
 	int32_t item_id = 0;         // 1611/1811/1817: key 80
 	int64_t item_count = 0;      // 1611/1811: target, 1817: amount (key 77)
@@ -722,6 +725,16 @@ static String level_color_property_for_channel(int32_t channel) {
 	return String();
 }
 
+// Move trigger lock to player (keys 58/59, mods 143/144): on a locked axis the
+// group moves by the player's own movement this tick times the mod, and the
+// eased offset on that axis is dropped. GD 2.2 GJEffectManager::prepareMoveActions,
+// read in gdsolver modifiers.hpp / GucciBot src/absense/world/step.cpp.
+static inline Vector2 move_lock_step(const Vector2 &eased, const Vector2 &player_delta,
+		bool lock_x, bool lock_y, const Vector2 &mod) {
+	return Vector2(lock_x ? player_delta.x * mod.x : eased.x,
+			lock_y ? player_delta.y * mod.y : eased.y);
+}
+
 // One Follow (1347) tick: the target group moves by the follow object's
 // movement since the last tick, scaled per axis by keys 72/73. Positions are
 // Godot pixels, so the follow object's own Y direction carries over unchanged.
@@ -855,6 +868,11 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 				static_cast<real_t>(prop_float(properties, "28", 0.0) * CELLS_TO_PX_X),
 				static_cast<real_t>(prop_float(properties, "29", 0.0) * CELLS_TO_PX_Y));
 			effect.camera_offset_px = effect.move_px;
+			effect.move_lock_x = String(properties.get("58", String("0"))) == "1";
+			effect.move_lock_y = String(properties.get("59", String("0"))) == "1";
+			effect.move_mod = Vector2(
+				static_cast<real_t>(prop_float(properties, "143", 1.0)),
+				static_cast<real_t>(prop_float(properties, "144", 1.0)));
 			break;
 		case TriggerEffectKind::ROTATE:
 		case TriggerEffectKind::CAMERA_ROTATE:
@@ -1995,6 +2013,10 @@ private:
 			case TriggerEffectKind::ROTATE:
 				fade.members = resolve_effect_members(effect);
 				fade.pivot = resolve_pivot(effect);
+				if (effect.move_lock_x || effect.move_lock_y) {
+					Node2D *locked = Object::cast_to<Node2D>(ObjectDB::get_instance(player_id));
+					if (locked) fade.follow_last = locked->get_global_position();
+				}
 				break;
 			case TriggerEffectKind::FOLLOW: {
 				Node2D *follow = Object::cast_to<Node2D>(ObjectDB::get_instance(resolve_pivot(effect)));
@@ -2207,7 +2229,17 @@ private:
 				break;
 			}
 			case TriggerEffectKind::MOVE: {
-				const Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
+				Vector2 player_delta;
+				if (effect.move_lock_x || effect.move_lock_y) {
+					Node2D *locked = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.player));
+					if (locked) {
+						const Vector2 now = locked->get_global_position();
+						player_delta = now - fade.follow_last;
+						fade.follow_last = now;
+					}
+				}
+				const Vector2 offset = move_lock_step(effect.move_px * static_cast<real_t>(weight_delta),
+						player_delta, effect.move_lock_x, effect.move_lock_y, effect.move_mod);
 				if (offset == Vector2()) break;
 				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
 				for (ObjectID id : fade.members) {

@@ -102,6 +102,15 @@ int main() {
 	expect_true("no movement, no follow", still == Vector2());
 	expect_true("follow is a distinct effect kind", TriggerEffectKind::FOLLOW != TriggerEffectKind::MOVE);
 
+	// Move lock to player (keys 58/59, mods 143/144): a locked axis takes the
+	// player's movement times the mod and drops the eased offset.
+	const Vector2 lock_x = move_lock_step(Vector2(5.0, 7.0), Vector2(20.0, -3.0), true, false, Vector2(1.0, 1.0));
+	expect_close("lock x follows the player", lock_x.x, 20.0);
+	expect_close("unlocked y keeps the eased offset", lock_x.y, 7.0);
+	const Vector2 lock_y = move_lock_step(Vector2(5.0, 7.0), Vector2(20.0, -3.0), false, true, Vector2(1.0, 2.0));
+	expect_close("unlocked x keeps the eased offset", lock_y.x, 5.0);
+	expect_close("lock y scaled by key 144", lock_y.y, -6.0);
+
 	// Item triggers (1611/1811/1817): Instant Count key 88 compare modes and
 	// the Count edge (fires only on arrival at the target).
 	expect_true("instant equals", item_compare(3, 3, 0) && !item_compare(4, 3, 0));

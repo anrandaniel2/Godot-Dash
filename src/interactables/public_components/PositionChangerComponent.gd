@@ -29,6 +29,12 @@ enum Mode {
 @export var follow_group: String = ""
 ## [constant Mode.FOLLOW]: per-axis multiplier of the followed movement (keys 72/73).
 @export var follow_mod: Vector2 = Vector2.ONE
+## [constant Mode.ADD]: lock the X axis to the player's movement (key 58).
+@export var lock_player_x: bool = false
+## [constant Mode.ADD]: lock the Y axis to the player's movement (key 59).
+@export var lock_player_y: bool = false
+## [constant Mode.ADD]: per-axis multiplier of the locked player movement (keys 143/144).
+@export var lock_mod: Vector2 = Vector2.ONE
 
 @export_storage var initial_global_positions: Dictionary[Node2D, Vector2]
 @export_storage var initial_position_deltas: Dictionary[Node2D, Vector2]
@@ -36,6 +42,8 @@ enum Mode {
 
 var _follow_target: Node2D = null
 var _follow_last: Vector2 = Vector2.ZERO
+var _lock_player: Player = null
+var _lock_last: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -57,6 +65,8 @@ func _validate_property(property: Dictionary) -> void:
 	if property.name in ["move_towards", "group_center", "offset", "distance_multiplier"] and mode != Mode.MOVE_TOWARDS:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if property.name == "position" and mode in [Mode.MOVE_TOWARDS, Mode.FOLLOW]:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if property.name in ["lock_player_x", "lock_player_y", "lock_mod"] and mode != Mode.ADD:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if property.name in ["follow_group", "follow_mod"] and mode != Mode.FOLLOW:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
@@ -92,7 +102,10 @@ func _field_from_data(field_name: String, field_data: Variant) -> void:
 			set(field_name, field_data)
 
 
-func start(_player: Player) -> void:
+func start(player: Player) -> void:
+	_lock_player = player
+	if is_instance_valid(player):
+		_lock_last = player.global_position
 	var target_group_component := parent.query(TargetGroupComponent)
 	group_objects.assign(target_group_component.all_members())
 	group_objects.map(func(object): initial_global_positions.set(object, object.global_position))
@@ -130,8 +143,20 @@ func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
 				if group_object != _follow_target:
 					group_object.global_position += step
 		Mode.ADD:
+			var step: Vector2 = position * Constants.CELLS_TO_PX * weight_delta
+			if (lock_player_x or lock_player_y) and is_instance_valid(_lock_player):
+				# Twin of the native move_lock_step: a locked axis moves by the
+				# player's own movement times the mod (GD 2.2
+				# GJEffectManager::prepareMoveActions).
+				var now: Vector2 = _lock_player.global_position
+				var player_step: Vector2 = (now - _lock_last) * lock_mod
+				_lock_last = now
+				if lock_player_x:
+					step.x = player_step.x
+				if lock_player_y:
+					step.y = player_step.y
 			for group_object in group_objects:
-				group_object.global_position += position * Constants.CELLS_TO_PX * weight_delta
+				group_object.global_position += step
 		Mode.SET:
 			for group_object in group_objects:
 				var initial_global_position = initial_global_positions[group_object]
