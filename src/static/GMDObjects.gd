@@ -214,6 +214,12 @@ const MAP: Dictionary[int, Dictionary] = {
 		"name": "MoveTrigger",
 		"components": ["TargetGroupComponent", "PositionChangerComponent", "EasingComponent"],
 	},
+	# Follow: the Move trigger scene, PositionChangerComponent in FOLLOW mode.
+	1347: {
+		"scene": TRIGGERS + "MoveTrigger.tscn",
+		"name": "FollowTrigger",
+		"components": ["TargetGroupComponent", "PositionChangerComponent", "EasingComponent"],
+	},
 	1007: {
 		"scene": TRIGGERS + "AlphaTrigger.tscn",
 		"name": "AlphaTrigger",
@@ -387,7 +393,7 @@ const GENERIC_TRIGGER: Dictionary = {
 ## runtime: they are one or two per level and still run their components.
 const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
-	1007, 1049, 1268, 1346, 1520, 1612, 1613, 1616,
+	1007, 1049, 1268, 1346, 1347, 1520, 1612, 1613, 1616,
 	1913, 1916, 1935, 2015, 2067, 3022,
 	2913, 2919, 2920, 2921,
 	3613,

@@ -517,6 +517,25 @@ func _test_native_core() -> void:
 			# native set (camera static, edge, end level) keep their components.
 			assert(bool(trigger_data.get("native_only_trigger", false)), "native smoke: runtime import must pack effect triggers as records")
 			assert(not trigger_data.has("components"), "native smoke: packed records must not carry component data")
+	# Online import of the 2.1 pulse/follow vocabulary (GD 2.11
+	# EffectGameObject::customObjectSetup cases 1006/1347): an HSV pulse and a
+	# Follow are executable on both paths, so only the group pulse (key 52 = 1)
+	# may be reported inert, and the Follow keys must survive parse_online_level.
+	var mode_report := GMDConverter.ImportReport.new()
+	var mode_level := GMDConverter.import_online_level_string(
+		"kA2,0,kA4,0;1,1006,2,30,3,30,51,6,48,1,50,3,49,30a1a1a0a0,45,0.1,47,0.1;"
+		+ "1,1006,2,60,3,30,51,6,52,1,45,0.1,47,0.1;"
+		+ "1,1347,2,90,3,30,51,7,71,8,72,0.5,73,1,10,2;",
+		"pulse/follow modes", mode_report)
+	var mode_entries: Array = mode_level.get("layers", [{}])[0].get("objects", [])
+	assert(mode_entries.size() == 3, "native smoke: online pulse/follow triggers were dropped")
+	assert(int(mode_report.inert_trigger_ids.get(1006, 0)) == 1, "native smoke: only the group pulse may be inert")
+	assert(not mode_report.inert_trigger_ids.has(1347), "native smoke: Follow must not be reported inert")
+	for mode_data: Dictionary in mode_entries:
+		if int(mode_data.get("gd_object_id", 0)) == 1347:
+			var follow_props: Dictionary = mode_data.get("gd_properties", {})
+			assert(str(follow_props.get("72", "")) == "0.5" and str(follow_props.get("71", "")) == "8",
+				"native smoke: online parse lost the Follow keys 71/72")
 	# Colour triggers must keep their colour source: an explicit RGB, a copied
 	# channel (key 50, with the copy HSV of key 49 and the opacity copy of key
 	# 60), a player colour (keys 15/16), or the channel's own colour when the

@@ -5,6 +5,10 @@ enum Mode {
 	ADD,
 	SET,
 	MOVE_TOWARDS,
+	## Follow trigger (1347): every frame of the duration, move the group by
+	## the follow object's movement times [member follow_mod]. Twin of the
+	## native FOLLOW arm (native/src/gdash_native.cpp, follow_step).
+	FOLLOW,
 }
 
 @export var mode: Mode = Mode.ADD:
@@ -21,10 +25,17 @@ enum Mode {
 ##   •  [code]-1.0[/code]: the group's objects will follow the target object but [b]invert[/b] their relative distance to it.
 @export_range(0.0, 2.0, 0.05, "or_greater", "or_less", "slider") var distance_multiplier: float = 0.0
 @export var offset: Vector2 ## Offset in global coordinates in units from the move target.
+## [constant Mode.FOLLOW]: the group whose first member is followed (key 71).
+@export var follow_group: String = ""
+## [constant Mode.FOLLOW]: per-axis multiplier of the followed movement (keys 72/73).
+@export var follow_mod: Vector2 = Vector2.ONE
 
 @export_storage var initial_global_positions: Dictionary[Node2D, Vector2]
 @export_storage var initial_position_deltas: Dictionary[Node2D, Vector2]
 @export_storage var group_objects: Array[Node2D]
+
+var _follow_target: Node2D = null
+var _follow_last: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -45,7 +56,9 @@ func _get_property_default_value(property: String) -> Variant:
 func _validate_property(property: Dictionary) -> void:
 	if property.name in ["move_towards", "group_center", "offset", "distance_multiplier"] and mode != Mode.MOVE_TOWARDS:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
-	if property.name == "position" and mode == Mode.MOVE_TOWARDS:
+	if property.name == "position" and mode in [Mode.MOVE_TOWARDS, Mode.FOLLOW]:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if property.name in ["follow_group", "follow_mod"] and mode != Mode.FOLLOW:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 
 
@@ -88,6 +101,15 @@ func start(_player: Player) -> void:
 			"empty_group:" + ",".join(target_group_component.all_groups()),
 			"In %s: target group doesn't contain any objects" % parent.name,
 		)
+	if mode == Mode.FOLLOW:
+		_follow_target = null
+		if not follow_group.is_empty():
+			for node: Node in get_tree().get_nodes_in_group(follow_group):
+				if node is Node2D:
+					_follow_target = node
+					break
+		if _follow_target != null:
+			_follow_last = _follow_target.global_position
 	if mode == Mode.MOVE_TOWARDS:
 		if move_towards != ^"":
 			var move_towards_ref: Node2D = LevelManager.current_level.get_node(move_towards)
@@ -98,6 +120,15 @@ func start(_player: Player) -> void:
 
 func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
 	match mode:
+		Mode.FOLLOW:
+			if not is_instance_valid(_follow_target):
+				return
+			var now: Vector2 = _follow_target.global_position
+			var step: Vector2 = (now - _follow_last) * follow_mod
+			_follow_last = now
+			for group_object in group_objects:
+				if group_object != _follow_target:
+					group_object.global_position += step
 		Mode.ADD:
 			for group_object in group_objects:
 				group_object.global_position += position * Constants.CELLS_TO_PX * weight_delta

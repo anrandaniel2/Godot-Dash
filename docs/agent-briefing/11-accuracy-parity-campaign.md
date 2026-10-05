@@ -168,7 +168,7 @@ of scenes**:
 ```
 GMDObjects.NATIVE_EFFECT_TRIGGER_IDS (src/static/GMDObjects.gd:381):
   29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006, 1007, 1049, 1268,
-  1346, 1520, 1612, 1613, 1616, 1913, 1916, 1935, 2015, 2067, 3022, 2913, 2919, 2920, 2921, 3613
+  1346, 1347, 1520, 1612, 1613, 1616, 1913, 1916, 1935, 2015, 2067, 3022, 2913, 2919, 2920, 2921, 3613
 ```
 
 Consequences, all verified in code:
@@ -297,10 +297,18 @@ These are real, in-tree, and each is a plausible "colours look slightly off" roo
   the batched renderer lacks) and HSV pulses with no `50`; both are counted in
   `ImportReport.inert_trigger_ids`. Regression: `native/tests/test_trigger_effect_parse.cpp`.
 - Every trigger on the inert `NativeGenericTrigger` shell that the native runtime does not
-  execute on the current path — notably the 2.1 tools Follow 1347, Animate 1585, Touch 1595,
+  execute on the current path — notably the 2.1 tools Animate 1585, Touch 1595,
   Count 1611, Instant Count 1811, Collision 1815, Pickup 1817 — is a silent no-op on **both**
   paths; it is now counted in `ImportReport.inert_trigger_ids` (printed by
-  `RobTopLevels` / `LevelOperationsHandler`).
+  `RobTopLevels` (both online paths), `LevelOperationsHandler` and `SubsceneManager`).
+- **Follow (1347)** is implemented on both paths: native `TriggerEffectKind::FOLLOW`
+  (`follow_step`: target group moves by the follow object's (key 71) per-tick movement × keys
+  72/73, for key 10 seconds) and `PositionChangerComponent.Mode.FOLLOW` via
+  `GMDObjects.MAP[1347]`. Vocabulary cited to GD 2.11 `customObjectSetup` case 1347; the
+  per-tick law itself is not in any decompilation (editor-documented behaviour).
+- Online downloads (`import_online_level_string`: C++ `parse_online_level` normalisation, then
+  the shared GDScript conversion loop) get every converter change above; guarded in
+  `tools/runtime_visual_smoke_test.gd` ("pulse/follow modes").
 - Player channels P1/P2 (1005/1006) are intentional no-ops in the trigger arms in both paths
   (matching the component). If a level recolours P1/P2 via a trigger, GD *does* apply it —
   decide deliberately which is right.

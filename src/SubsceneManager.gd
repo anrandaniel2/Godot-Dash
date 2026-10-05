@@ -122,8 +122,10 @@ func _launch_from_file(path: String):
 		Toasts.error("Couldn't import %s (error %d)" % [path.get_file(), file_error], 5.0)
 		return
 
-	if report.skipped > 0:
+	if report.skipped > 0 or not report.inert_trigger_ids.is_empty():
 		Toasts.warning("Imported %s — %s" % [level_name, report.summary()], 6.0)
+	if not report.inert_trigger_ids.is_empty():
+		push_warning("GMD import kept triggers whose mode does nothing yet:\n%s" % report.inert_trigger_breakdown())
 
 	if DiscordRPCManager.available:
 		DiscordRPCHandler.set_details("Playing a level")

@@ -80,6 +80,14 @@ int main() {
 	expect_true("group pulse still inert", classify_pulse(5, 1, 0, 0) == PulseSource::INERT);
 	expect_true("missing target is inert", classify_pulse(0, 0, 0, 0) == PulseSource::INERT);
 
+	// Follow (1347): target moves by the follow object's movement times keys 72/73.
+	const Vector2 follow = follow_step(Vector2(100.0, 50.0), Vector2(130.0, 30.0), Vector2(0.5, 2.0));
+	expect_close("follow x scaled by key 72", follow.x, 15.0);
+	expect_close("follow y scaled by key 73", follow.y, -40.0);
+	const Vector2 still = follow_step(Vector2(10.0, 10.0), Vector2(10.0, 10.0), Vector2(1.0, 1.0));
+	expect_true("no movement, no follow", still == Vector2());
+	expect_true("follow is a distinct effect kind", TriggerEffectKind::FOLLOW != TriggerEffectKind::MOVE);
+
 	// is_shader_kind helper test
 	expect_true("gray is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_GRAYSCALE));
 	expect_true("sepia is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_SEPIA));

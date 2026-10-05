@@ -65,6 +65,8 @@ const Prop := {
 	TIMES_360 = "69",
 	LOCK_OBJECT_ROTATION = "70",
 	STRENGTH = "75",
+	FOLLOW_X_MOD = "72", # Follow: X multiplier of the followed movement
+	FOLLOW_Y_MOD = "73", # Follow: Y multiplier of the followed movement
 	TIME_MOD = "120",
 	Z_LAYER = "24",
 	DISABLE_GLOW = "96",
@@ -1361,6 +1363,17 @@ static func _components_from_properties(
 						"channel_type": TargetColorChannelComponent.Type.CUSTOM,
 						"target_color_channel": Constants.COLOR_CHANNEL_GROUP_PREFIX + str(pulse_target),
 					}
+		1347: # Follow trigger (twin of the native FOLLOW arm)
+			if "PositionChangerComponent" in supported:
+				var follow_groups: PackedStringArray = _group_list_from_property(properties.get(Prop.CENTER_GROUP, ""))
+				components["PositionChangerComponent"] = {
+					"mode": PositionChangerComponent.Mode.FOLLOW,
+					"follow_group": Constants.GROUP_PREFIX + follow_groups[0] if not follow_groups.is_empty() else "",
+					"follow_mod": Vector2(
+							float(properties.get(Prop.FOLLOW_X_MOD, "1")),
+							float(properties.get(Prop.FOLLOW_Y_MOD, "1")),
+					),
+				}
 		901: # Move trigger
 			if "PositionChangerComponent" in supported:
 				components["PositionChangerComponent"] = {

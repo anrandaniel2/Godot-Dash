@@ -117,6 +117,7 @@ enum class TriggerEffectKind : int32_t {
 	UI,                 // 3613 UI Trigger
 	SFX,                // 3602 SFX Trigger
 	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
+	FOLLOW,             // 1347 Follow (target group tracks the follow group's movement)
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -265,6 +266,7 @@ struct TriggerEffect {
 	std::vector<String> target_groups; // key 51, "g_N" names (dot/comma lists)
 	String center_group;               // key 71, "g_N" (rotate/scale/teleport centre)
 	Vector2 move_px;             // 901: keys 28/29 in pixels
+	Vector2 follow_mod = Vector2(1.0, 1.0); // 1347: keys 72/73 (X/Y multipliers)
 	double degrees = 0.0;        // 1346: keys 68 + 69*360
 	bool allow_self_rotation = true; // 1346: key 70 != "1"
 	Vector2 scale_factor = Vector2(1.0, 1.0); // 2067: keys 150/151 (multiplied)
@@ -526,6 +528,18 @@ static String level_color_property_for_channel(int32_t channel) {
 	return String();
 }
 
+// One Follow (1347) tick: the target group moves by the follow object's
+// movement since the last tick, scaled per axis by keys 72/73. Positions are
+// Godot pixels, so the follow object's own Y direction carries over unchanged.
+// parity (vocabulary): GD 2.11 EffectGameObject::customObjectSetup case 1347
+// (Wyliemaster/GD-Decompiled, GD/code/src/EffectGameObject.cpp) - keys 51
+// target, 71 follow group, 10 duration, 72/73 X/Y mod. The per-tick update
+// itself is not in the decompilation; this reproduces the editor-documented
+// behaviour (Follow Group, X Mod, Y Mod).
+static Vector2 follow_step(const Vector2 &previous, const Vector2 &current, const Vector2 &mod) {
+	return (current - previous) * mod;
+}
+
 // How a Pulse trigger (1006) sources its colour. parity: GD 2.11
 // EffectGameObject::customObjectSetup case 1006 (Wyliemaster/GD-Decompiled,
 // GD/code/src/EffectGameObject.cpp): key 48 (pulse mode, atoi-truthy) selects
@@ -562,6 +576,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 718: case 743: case 744: case 900: case 915:
 			effect.kind = TriggerEffectKind::COLOR; break;
 		case 1006: effect.kind = TriggerEffectKind::PULSE; break;
+		case 1347: effect.kind = TriggerEffectKind::FOLLOW; break;
 		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
 		case 1616: effect.kind = TriggerEffectKind::STOP; break;
 		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
@@ -688,6 +703,13 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			break;
 		}
+		case TriggerEffectKind::FOLLOW:
+			// GD always serialises both mods; a missing key keeps the editor
+			// default of 1 rather than freezing that axis.
+			effect.follow_mod = Vector2(
+				static_cast<real_t>(prop_float(properties, "72", 1.0)),
+				static_cast<real_t>(prop_float(properties, "73", 1.0)));
+			break;
 		case TriggerEffectKind::SHAKE:
 			effect.shake_strength = Math::max(0.01, prop_float(properties, "75", 5.0));
 			break;
@@ -814,7 +836,8 @@ class NativeTriggerRuntime : public RefCounted {
 		std::vector<Vector2> initial_scales;  // 2067 multiplies from these
 		std::vector<String> group_targets;    // 1007 eases each group's opacity
 		std::vector<double> initial_group_opacities; // captured at fire time
-		ObjectID pivot;                       // rotate/scale centre (key 71)
+		ObjectID pivot;                       // rotate/scale centre (key 71); 1347 follow object
+		mutable Vector2 follow_last;          // 1347: follow object's position at the last tick
 		ObjectID channel_data;                // ColorChannelData resource
 		String level_color_property;          // set for bg/ground/line targets
 		Color from_color = Color(1.0f, 1.0f, 1.0f);
@@ -1423,6 +1446,7 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			}
 			case TriggerEffectKind::MOVE:
+			case TriggerEffectKind::FOLLOW:
 			case TriggerEffectKind::ROTATE:
 			case TriggerEffectKind::SCALE:
 			case TriggerEffectKind::ALPHA:
@@ -1586,6 +1610,14 @@ private:
 				fade.members = resolve_effect_members(effect);
 				fade.pivot = resolve_pivot(effect);
 				break;
+			case TriggerEffectKind::FOLLOW: {
+				Node2D *follow = Object::cast_to<Node2D>(ObjectDB::get_instance(resolve_pivot(effect)));
+				if (!follow) return; // no follow object: nothing to track
+				fade.pivot = ObjectID(follow->get_instance_id());
+				fade.follow_last = follow->get_global_position();
+				fade.members = resolve_effect_members(effect);
+				break;
+			}
 			case TriggerEffectKind::SCALE: {
 				fade.members = resolve_effect_members(effect);
 				fade.pivot = resolve_pivot(effect);
@@ -1764,8 +1796,24 @@ private:
 	}
 
 	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta) {
-		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE) return;
+		// Shake and Follow act on every tick of their duration, not on weight.
+		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE
+				&& effect.kind != TriggerEffectKind::FOLLOW) return;
 		switch (effect.kind) {
+			case TriggerEffectKind::FOLLOW: {
+				Node2D *follow = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+				if (!follow) break;
+				const Vector2 now = follow->get_global_position();
+				const Vector2 offset = follow_step(fade.follow_last, now, effect.follow_mod);
+				fade.follow_last = now;
+				if (offset == Vector2()) break;
+				for (ObjectID id : fade.members) {
+					if (id == fade.pivot) continue; // never chase itself
+					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+					if (node) node->set_global_position(node->get_global_position() + offset);
+				}
+				break;
+			}
 			case TriggerEffectKind::MOVE: {
 				const Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
 				if (offset == Vector2()) break;
