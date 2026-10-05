@@ -263,6 +263,7 @@ struct TriggerEffect {
 	double duration = 0.0;       // key 10
 	int32_t easing = 0;          // key 30
 	bool pulse_envelope = false; // any of keys 45/46/47 present (pulse style)
+	bool pulse_group = false;    // 1006 key 52 = 1: target_groups are object groups
 	double fade_in = 0.0;        // key 45
 	double hold = 0.0;           // key 46
 	double fade_out = 0.0;       // key 47
@@ -566,6 +567,26 @@ static bool item_count_reached(int64_t previous, int64_t current, int64_t target
 	return current == target && previous != target;
 }
 
+// Group pulse (1006 with key 52 = 1): GD tints every member object from its
+// own colour towards the pulse colour by the envelope weight (the same lerp
+// a channel pulse applies to the channel). A batched record lerps directly;
+// a node-drawn layer keeps its watcher-owned modulate and gets the factor
+// self_modulate = lerp(1, pulse / tint, w), so modulate * self_modulate
+// equals lerp(tint, pulse, w) wherever the tint component is non-zero.
+static Color pulse_record_color(const Color &base, const Color &pulse, float weight) {
+	Color out = base.lerp(pulse, weight);
+	out.a = base.a;
+	return out;
+}
+
+static Color pulse_self_modulate(const Color &tint, const Color &pulse, double weight) {
+	auto factor = [weight](real_t from, real_t to) -> real_t {
+		const double target = from > static_cast<real_t>(1.0 / 255.0) ? static_cast<double>(to) / from : (to > 0 ? 255.0 : 1.0);
+		return static_cast<real_t>(1.0 + (target - 1.0) * weight);
+	};
+	return Color(factor(tint.r, pulse.r), factor(tint.g, pulse.g), factor(tint.b, pulse.b), 1.0);
+}
+
 // How a Pulse trigger (1006) sources its colour. parity: GD 2.11
 // EffectGameObject::customObjectSetup case 1006 (Wyliemaster/GD-Decompiled,
 // GD/code/src/EffectGameObject.cpp): key 48 (pulse mode, atoi-truthy) selects
@@ -573,16 +594,14 @@ static bool item_count_reached(int64_t previous, int64_t current, int64_t target
 // (key 49); RGB mode reads ONLY keys 7/8/9 - keys 15/16/50 are not part of a
 // pulse's vocabulary. Key 52 selects the target type (1 = object group).
 enum class PulseSource : int32_t {
-	INERT = 0, // no target, an unmodelled group pulse, or HSV mode without a source channel
+	INERT = 0, // no target, or HSV mode without a source channel
 	RGB,
 	HSV_COPY,
 };
 
 static PulseSource classify_pulse(int64_t target_channel, int64_t target_type, int64_t pulse_mode, int64_t copied_channel) {
+	(void)target_type; // key 52: channel vs group target, same colour sources
 	if (target_channel <= 0) return PulseSource::INERT;
-	// Group pulses tint every member object, which needs a per-object colour
-	// override the channel-batched renderer does not have yet.
-	if (target_type == 1) return PulseSource::INERT;
 	if (pulse_mode != 0) return copied_channel > 0 ? PulseSource::HSV_COPY : PulseSource::INERT;
 	return PulseSource::RGB;
 }
@@ -707,7 +726,9 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			const int32_t channel = static_cast<int32_t>(prop_int(properties, "51", 0));
 			const String level_property = level_color_property_for_channel(channel);
-			if (!level_property.is_empty()) {
+			if (prop_int(properties, "52", 0) == 1) {
+				effect.pulse_group = true; // target_groups already holds key 51
+			} else if (!level_property.is_empty()) {
 				effect.channel_is_level_color = true;
 				effect.target_channel = channel;
 			} else if (channel == 1005 || channel == 1006) {
@@ -1728,6 +1749,12 @@ private:
 			}
 			case TriggerEffectKind::COLOR:
 			case TriggerEffectKind::PULSE: {
+				if (effect.pulse_group) {
+					fade.members = resolve_effect_members(effect);
+					double unused_alpha = 1.0;
+					fade.to_color = resolve_source_color(effect, Color(1, 1, 1, 1), unused_alpha);
+					break;
+				}
 				if (!capture_color_target(effect, fade)) return; // missing channel: no-op, like the component
 				break;
 			}
@@ -1999,6 +2026,10 @@ private:
 			}
 			case TriggerEffectKind::COLOR:
 			case TriggerEffectKind::PULSE:
+				if (effect.pulse_group) {
+					apply_group_pulse(fade.members, fade.to_color, weight);
+					break;
+				}
 				apply_color(fade, effect, weight, weight_delta);
 				break;
 			case TriggerEffectKind::TIMEWARP: {
@@ -2096,6 +2127,34 @@ private:
 	// also fade HSV shift, intensity and opacity toward the trigger's values;
 	// the watcher fan-out runs from the resource's changed signal, whose
 	// native fast path recolours every bound object in C++.
+	// Batches forward to their renderer (one pulse per batch: a batch holds
+	// a single group set); node-drawn objects tint each layer sprite.
+	void apply_group_pulse(const std::vector<ObjectID> &members, const Color &pulse, double weight) {
+		static const StringName batch_method("apply_group_pulse");
+		for (ObjectID id : members) {
+			Node *node = Object::cast_to<Node>(ObjectDB::get_instance(id));
+			if (!node) continue;
+			if (node->has_method(batch_method)) {
+				node->call(batch_method, pulse, weight);
+				continue;
+			}
+			const int32_t child_count = node->get_child_count();
+			for (int32_t c = 0; c < child_count; ++c) {
+				CanvasItem *layer = Object::cast_to<CanvasItem>(node->get_child(c));
+				if (layer) layer->set_self_modulate(pulse_self_modulate(layer->get_modulate(), pulse, weight));
+			}
+		}
+	}
+
+	// A restart or rebuild drops running fades; release their tints first.
+	void release_group_pulses() {
+		for (const Fade &fade : fades) {
+			if (fade.record_index >= records.size()) continue;
+			const TriggerEffect &effect = records[fade.record_index].effect;
+			if (effect.kind == TriggerEffectKind::PULSE && effect.pulse_group) apply_group_pulse(fade.members, fade.to_color, 0.0);
+		}
+	}
+
 	void apply_color(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta) {
 		const Color color = fade.from_color.lerp(fade.to_color, static_cast<real_t>(weight));
 		if (!fade.level_color_property.is_empty()) {
@@ -2369,6 +2428,7 @@ public:
 		++structure_epoch;
 		restore_ui_objects();
 		ui_triggers_applied = false;
+		release_group_pulses();
 		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
@@ -3030,6 +3090,7 @@ public:
 		// must not keep mutating mid-animation state. The respawn jump is a
 		// teleport, not a crossing: forget the tracked positions so the
 		// first frame after a restart fires no crossings.
+		release_group_pulses();
 		fades.clear();
 		// Group opacity is level state, not object state: a restart clears
 		// it (the same fades re-fire as the player crosses them again), and
@@ -3063,7 +3124,7 @@ public:
 		++structure_epoch;
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
-		clock = state.get("clock", 0.0); events.clear(); fades.clear();
+		clock = state.get("clock", 0.0); events.clear(); release_group_pulses(); fades.clear();
 		item_counts.clear(); armed_counts.clear();
 		const Dictionary items = state.get("items", Dictionary());
 		const Array item_keys = items.keys();
@@ -5221,6 +5282,11 @@ class NativeDecorationRenderer : public RefCounted {
 	bool range_has_records = false;
 	bool commands_dirty = false;
 	int64_t last_drawn_items = 0;
+	// Group pulse (1006, key 52 = 1): a batch holds one group set, so one
+	// pulse per renderer covers it. Weight 0 keeps the draw loop untouched;
+	// a pulsing batch re-emits only its visible records per changed tick.
+	Color pulse_color = Color(1, 1, 1, 1);
+	float pulse_weight = 0.0f;
 
 	CanvasItem *owner() const {
 		return Object::cast_to<CanvasItem>(ObjectDB::get_instance(ObjectID(owner_id)));
@@ -5254,7 +5320,9 @@ class NativeDecorationRenderer : public RefCounted {
 			server->canvas_item_add_set_transform(target, record.transform);
 			server->canvas_item_add_texture_rect_region(
 					target, Rect2(-record.region.size * 0.5, record.region.size),
-					record.texture->get_rid(), record.region, record.color, false, true);
+					record.texture->get_rid(), record.region,
+					pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color,
+					false, true);
 			++last_drawn_items;
 		};
 		if (!cull) {
@@ -5295,6 +5363,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("get_item_blend", "index"), &NativeDecorationRenderer::get_item_blend);
 		ClassDB::bind_method(D_METHOD("get_item_color", "index"), &NativeDecorationRenderer::get_item_color);
 		ClassDB::bind_method(D_METHOD("set_item_color", "index", "color"), &NativeDecorationRenderer::set_item_color);
+		ClassDB::bind_method(D_METHOD("set_group_pulse", "color", "weight"), &NativeDecorationRenderer::set_group_pulse);
 		ClassDB::bind_method(D_METHOD("set_item_transform", "index", "transform"), &NativeDecorationRenderer::set_item_transform);
 		ClassDB::bind_method(D_METHOD("advance_animation", "delta"), &NativeDecorationRenderer::advance_animation);
 		ClassDB::bind_method(D_METHOD("get_item_transform", "index"), &NativeDecorationRenderer::get_item_transform);
@@ -5501,6 +5570,13 @@ public:
 			}
 			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
 		}
+		commands_dirty = true;
+	}
+	void set_group_pulse(const Color &color, double weight) {
+		const float clamped = static_cast<float>(Math::clamp(weight, 0.0, 1.0));
+		if (clamped == pulse_weight && (clamped == 0.0f || color == pulse_color)) return;
+		pulse_color = color;
+		pulse_weight = clamped;
 		commands_dirty = true;
 	}
 	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }

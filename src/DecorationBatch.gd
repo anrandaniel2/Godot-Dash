@@ -155,6 +155,9 @@ var _native_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 ## [member _native_by_channel] minus the glow layers, which are always
 ## additive whatever their channel says.
 var _native_blend_by_channel: Dictionary[StringName, PackedInt32Array] = {}
+## Group pulse state for the portable draw path (see apply_group_pulse).
+var _pulse_color: Color = Color.WHITE
+var _pulse_weight: float = 0.0
 
 
 func _init() -> void:
@@ -408,6 +411,21 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 		_request_redraw()
 
 
+## Group pulse (1006, key 52 = 1) on this batch: every item lerps from its
+## own tint towards [param pulse] by [param weight]. A batch holds one group
+## set, so the pulse is batch-wide; weight 0 releases it.
+func apply_group_pulse(pulse: Color, weight: float) -> void:
+	if _native_canvas != null:
+		_native_canvas.call(&"set_group_pulse", pulse, weight)
+		return
+	var clamped: float = clampf(weight, 0.0, 1.0)
+	if is_equal_approx(clamped, _pulse_weight) and (is_zero_approx(clamped) or pulse == _pulse_color):
+		return
+	_pulse_color = pulse
+	_pulse_weight = clamped
+	_request_redraw()
+
+
 ## Flips every item on [param channel] between normal and additive blending.
 ##
 ## Geometry Dash colour triggers toggle a channel's Blending state at fire
@@ -549,5 +567,13 @@ func _draw_item(item: Item) -> void:
 			item.texture,
 			Rect2(-item.region.size * 0.5, item.region.size),
 			item.region,
-			item.modulate,
+			_pulsed(item.modulate),
 	)
+
+
+func _pulsed(tint: Color) -> Color:
+	if _pulse_weight <= 0.0:
+		return tint
+	var pulsed: Color = tint.lerp(_pulse_color, _pulse_weight)
+	pulsed.a = tint.a
+	return pulsed

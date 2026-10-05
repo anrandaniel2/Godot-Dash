@@ -177,7 +177,7 @@ const PULSE_TRIGGER_ID: int = 1006
 ## mode, atoi-truthy) selects HSV mode, which reads only keys 49/50; RGB mode
 ## reads only keys 7/8/9. Key 52 = 1 targets an object group.
 enum PulseSource {
-	INERT, ## no target, an unmodelled group pulse, or HSV mode without a source
+	INERT, ## no target, or HSV mode without a source
 	RGB,
 	HSV_COPY,
 }
@@ -508,7 +508,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			if pulse_source == PulseSource.INERT:
 				report.note_inert_trigger(gd_id)
 			else:
-				var pulse_channels: Array[int] = [int(properties.get(Prop.TARGET_GROUP, "0"))]
+				# A group pulse's key 51 names an object group, not a channel.
+				var pulse_channels: Array[int] = []
+				if int(properties.get(Prop.PULSE_TARGET_TYPE, "0")) != 1:
+					pulse_channels.append(int(properties.get(Prop.TARGET_GROUP, "0")))
 				if pulse_source == PulseSource.HSV_COPY:
 					pulse_channels.append(int(properties.get(Prop.COPIED_COLOR_ID, "0")))
 				for pulse_channel: int in pulse_channels:
@@ -915,10 +918,6 @@ const DEFAULT_STYLE: Dictionary = { "color": Color.WHITE, "alpha": 1.0, "blendin
 
 static func _classify_pulse(properties: Dictionary) -> PulseSource:
 	if int(properties.get(Prop.TARGET_GROUP, "0")) <= 0:
-		return PulseSource.INERT
-	# Group pulses tint every member object, which needs a per-object colour
-	# override the channel-batched renderer does not have yet.
-	if int(properties.get(Prop.PULSE_TARGET_TYPE, "0")) == 1:
 		return PulseSource.INERT
 	if int(properties.get(Prop.PULSE_MODE, "0")) != 0:
 		if int(properties.get(Prop.COPIED_COLOR_ID, "0")) > 0:
@@ -1350,8 +1349,12 @@ static func _components_from_properties(
 					_:
 						# Inert (reported via ImportReport.inert_trigger_ids).
 						pulse["source"] = ColorChannelChangerComponent.ColorSource.KEEP
+				var group_pulse: bool = int(properties.get(Prop.PULSE_TARGET_TYPE, "0")) == 1
+				if group_pulse:
+					pulse["pulse_group"] = str(pulse_target)
 				components["ColorChannelChangerComponent"] = pulse
-			if "TargetColorChannelComponent" in supported and pulse_source != PulseSource.INERT:
+			if "TargetColorChannelComponent" in supported and pulse_source != PulseSource.INERT \
+					and int(properties.get(Prop.PULSE_TARGET_TYPE, "0")) != 1:
 				var pulse_special: int = SPECIAL_CHANNELS.get(pulse_target, -1)
 				if pulse_special != -1:
 					components["TargetColorChannelComponent"] = {

@@ -519,8 +519,9 @@ func _test_native_core() -> void:
 			assert(not trigger_data.has("components"), "native smoke: packed records must not carry component data")
 	# Online import of the 2.1 pulse/follow vocabulary (GD 2.11
 	# EffectGameObject::customObjectSetup cases 1006/1347): an HSV pulse and a
-	# Follow are executable on both paths, so only the group pulse (key 52 = 1)
-	# may be reported inert, and the Follow keys must survive parse_online_level.
+	# Follow are executable on both paths, as is the group pulse (key 52 = 1),
+	# so none may be reported inert, and the Follow keys must survive
+	# parse_online_level.
 	var mode_report := GMDConverter.ImportReport.new()
 	var mode_level := GMDConverter.import_online_level_string(
 		"kA2,0,kA4,0;1,1006,2,30,3,30,51,6,48,1,50,3,49,30a1a1a0a0,45,0.1,47,0.1;"
@@ -529,7 +530,12 @@ func _test_native_core() -> void:
 		"pulse/follow modes", mode_report)
 	var mode_entries: Array = mode_level.get("layers", [{}])[0].get("objects", [])
 	assert(mode_entries.size() == 3, "native smoke: online pulse/follow triggers were dropped")
-	assert(int(mode_report.inert_trigger_ids.get(1006, 0)) == 1, "native smoke: only the group pulse may be inert")
+	assert(not mode_report.inert_trigger_ids.has(1006), "native smoke: no pulse mode may be inert")
+	var pulse_tint := Color(0.5, 0.25, 1.0)
+	var pulse_factor: Color = GroupPulse.self_modulate_for(pulse_tint, Color(1.0, 0.0, 0.5), 0.5)
+	assert(is_equal_approx(pulse_tint.r * pulse_factor.r, 0.75) and is_equal_approx(pulse_tint.g * pulse_factor.g, 0.125),
+		"group pulse: layer tint times factor must equal the lerp")
+	assert(GroupPulse.self_modulate_for(pulse_tint, Color.RED, 0.0) == Color.WHITE, "group pulse: weight 0 must release")
 	assert(not mode_report.inert_trigger_ids.has(1347), "native smoke: Follow must not be reported inert")
 	for mode_data: Dictionary in mode_entries:
 		if int(mode_data.get("gd_object_id", 0)) == 1347:

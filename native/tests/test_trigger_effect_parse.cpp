@@ -77,7 +77,21 @@ int main() {
 	expect_true("hsv mode is atoi-truthy", classify_pulse(5, 0, 2, 3) == PulseSource::HSV_COPY);
 	expect_true("rgb mode ignores key 50", classify_pulse(5, 0, 0, 3) == PulseSource::RGB);
 	expect_true("hsv pulse without source is inert", classify_pulse(5, 0, 1, 0) == PulseSource::INERT);
-	expect_true("group pulse still inert", classify_pulse(5, 1, 0, 0) == PulseSource::INERT);
+	expect_true("group pulse uses the rgb source", classify_pulse(5, 1, 0, 0) == PulseSource::RGB);
+	expect_true("group hsv pulse copies key 50", classify_pulse(5, 1, 1, 3) == PulseSource::HSV_COPY);
+	// Group pulse tint: batched records lerp, node layers get a factor whose
+	// product with the watcher tint is the same lerp.
+	const Color tint(0.5f, 0.25f, 1.0f, 0.6f);
+	const Color pulse_to(1.0f, 0.0f, 0.5f, 1.0f);
+	const Color half = pulse_record_color(tint, pulse_to, 0.5f);
+	expect_close("record pulse lerps r", half.r, 0.75);
+	expect_close("record pulse keeps alpha", half.a, 0.6);
+	const Color factor = pulse_self_modulate(tint, pulse_to, 0.5);
+	expect_close("node pulse product r", tint.r * factor.r, 0.75);
+	expect_close("node pulse product g", tint.g * factor.g, 0.125);
+	expect_close("node pulse product b", tint.b * factor.b, 0.75);
+	const Color idle = pulse_self_modulate(tint, pulse_to, 0.0);
+	expect_true("weight 0 releases the node tint", idle == Color(1, 1, 1, 1));
 	expect_true("missing target is inert", classify_pulse(0, 0, 0, 0) == PulseSource::INERT);
 
 	// Follow (1347): target moves by the follow object's movement times keys 72/73.

@@ -63,6 +63,11 @@ const CHANNEL_GROUND_2 := 1009
 ## opacity, HSV, intensity, blending and the copy link are left alone. Mirrors
 ## the native runtime, where those writes are COLOR-only.
 @export var pulse: bool = false
+## Group pulse (key 52 = 1): the Geometry Dash group whose members are
+## tinted instead of a colour channel. Empty for channel pulses.
+@export var pulse_group: String = ""
+
+var _group_pulse_color: Color = Color.WHITE
 @export_group("Copied channel")
 @export var copied_channel_id: int = 0
 @export var copy_opacity: bool = false
@@ -134,6 +139,9 @@ func _field_from_data(field_name: String, field_data: Variant) -> void:
 func start(_player: Player) -> void:
 	# An inert pulse (unsupported mode, reported at import) changes nothing.
 	if pulse and source == ColorSource.KEEP:
+		return
+	if pulse and not pulse_group.is_empty():
+		_group_pulse_color = _resolved_color(Color.WHITE)
 		return
 	match color_space:
 		ColorSpace.SRGB:
@@ -282,6 +290,9 @@ func _shift_copied_hsv(base: Color) -> Color:
 
 func _on_easing_progressed(player: Player, weight_delta: float) -> void:
 	var weight: float = parent.query(EasingComponent).weights[player]
+	if pulse and not pulse_group.is_empty():
+		GroupPulse.apply_to_group(get_tree(), StringName(Constants.GROUP_PREFIX + pulse_group), _group_pulse_color, weight)
+		return
 	match _type:
 		Type.CUSTOM:
 			if not color_channel:
