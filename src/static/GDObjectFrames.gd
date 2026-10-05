@@ -152,6 +152,13 @@ static func has_frames(gd_id: int) -> bool:
 	return _map.has(gd_id)
 
 
+## Every mapped object ID.
+static func ids() -> Array[int]:
+	if not _loaded:
+		reload()
+	return _map.keys()
+
+
 ## Number of mapped objects, for diagnostics.
 static func count() -> int:
 	if not _loaded:

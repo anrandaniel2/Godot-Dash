@@ -28,8 +28,17 @@ func _ready() -> void:
 	encoded = ""
 	_mark("decoded level string (%d chars)" % level_string.length())
 
+	var reference := _import_signature(level_string, false)
+	_mark("reference GDScript import done")
 	var report := GMDConverter.ImportReport.new()
 	var level_data := GMDConverter.import_online_level_string(level_string, "Profile", report)
+	_mark("C++ packed import done")
+	var signature := _import_signature_of(level_data, report)
+	if not _signatures_match(reference, signature):
+		print("LEVEL_PROFILE import parity MISMATCH\n  gdscript %s\n  native   %s" % [str(reference), str(signature)])
+		get_tree().quit(1)
+		return
+	print("LEVEL_PROFILE import parity ok: %s" % str(signature))
 	level_string = ""
 	var objects: Array = level_data.layers[0].objects
 	var decorations := 0
@@ -82,6 +91,54 @@ func _packed_count(level_data: Dictionary) -> int:
 	for layer: Dictionary in level_data.get("layers", []):
 		total += PackedDecorations.size_of(layer.get(PackedDecorations.LAYER_KEY, { }))
 	return total
+
+
+func _signatures_match(a: Dictionary, b: Dictionary) -> bool:
+	if a.keys() != b.keys():
+		return false
+	for key: Variant in a:
+		if a[key] is float or b[key] is float:
+			if absf(float(a[key]) - float(b[key])) > maxf(0.05, absf(float(a[key])) * 1e-6):
+				return false
+		elif a[key] != b[key]:
+			return false
+	return true
+
+
+## Imports with the GDScript decoration conversion (native_packed false) and
+## summarises the result; the import itself is released before returning.
+func _import_signature(level_string: String, native_packed: bool) -> Dictionary:
+	GMDConverter.use_native_packed_import = native_packed
+	var report := GMDConverter.ImportReport.new()
+	var data := GMDConverter.import_online_level_string(level_string, "Profile", report)
+	GMDConverter.use_native_packed_import = true
+	return _import_signature_of(data, report)
+
+
+## Rounded column sums of the packed table plus the report and object
+## counts: equal for two imports that produced the same level.
+func _import_signature_of(data: Dictionary, report: GMDConverter.ImportReport) -> Dictionary:
+	var layer: Dictionary = data.layers[0]
+	var table: Dictionary = layer.get(PackedDecorations.LAYER_KEY, { })
+	var signature: Dictionary = {
+		"objects": (layer.objects as Array).size(),
+		"summary": report.summary(),
+		"channels": (data.color_channels as Array).size(),
+		"trigger_records": (data.native_trigger_records as Array).size(),
+	}
+	for column: String in table:
+		var total := 0.0
+		var values: Variant = table[column]
+		if values is PackedColorArray:
+			for c: Color in values:
+				total += c.r + c.g * 3.0 + c.b * 7.0 + c.a * 11.0
+		else:
+			var index := 0
+			for v: Variant in values:
+				index += 1
+				total += float(v) * float(index % 7 + 1)
+		signature[column] = snappedf(total, 0.01)
+	return signature
 
 
 func _sprite_count(batch: DecorationBatch) -> int:

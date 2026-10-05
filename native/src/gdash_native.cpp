@@ -3449,6 +3449,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("parse_gd_pairs", "chunk"), &GdashNative::parse_gd_pairs);
 		ClassDB::bind_method(D_METHOD("parse_channel_styles", "color_string"), &GdashNative::parse_channel_styles);
 		ClassDB::bind_method(D_METHOD("parse_online_level", "level_string"), &GdashNative::parse_online_level);
+		ClassDB::bind_method(D_METHOD("parse_online_header", "level_string"), &GdashNative::parse_online_header);
+		ClassDB::bind_method(D_METHOD("import_online_level_packed", "level_string", "tables"), &GdashNative::import_online_level_packed);
 		ClassDB::bind_method(D_METHOD("decode_level_string", "encoded"), &GdashNative::decode_level_string);
 		ClassDB::bind_method(D_METHOD("encode_level_string", "plain"), &GdashNative::encode_level_string);
 		ClassDB::bind_method(D_METHOD("sort_decoration_indices", "z_orders", "draw_orders", "texture_ids"), &GdashNative::sort_decoration_indices);
@@ -3858,6 +3860,609 @@ public:
 	// pairs; crossing the GDScript/native boundary once per object was both
 	// expensive and made partial parsing harder to diagnose. Keep one entry per
 	// source chunk so converter indices and draw order remain exact.
+	// One object's properties in parse order, backed by a reused std::vector
+	// instead of a Dictionary. Numeric keys (every object key Geometry Dash
+	// writes) compare as integers. Offers the has()/operator[] subset that
+	// normalize_object_properties uses.
+	struct PropList {
+		std::vector<String> keys;
+		std::vector<String> values;
+		std::vector<int32_t> numbers; // -1 for a key that is not a plain number
+
+		static int32_t key_number(const char *key) {
+			if (!key || !*key || (key[0] == '0' && key[1] != '\0')) return -1;
+			int32_t value = 0;
+			for (; *key; ++key) {
+				if (*key < '0' || *key > '9' || value > 100000000) return -1;
+				value = value * 10 + (*key - '0');
+			}
+			return value;
+		}
+		static int32_t key_number(const String &key) {
+			const int64_t length = key.length();
+			if (length == 0 || length > 9 || (key[0] == '0' && length > 1)) return -1;
+			int32_t value = 0;
+			for (int64_t i = 0; i < length; ++i) {
+				const char32_t c = key[i];
+				if (c < '0' || c > '9') return -1;
+				value = value * 10 + static_cast<int32_t>(c - '0');
+			}
+			return value;
+		}
+		void clear() { keys.clear(); values.clear(); numbers.clear(); }
+		int64_t find_number(int32_t number) const {
+			for (size_t i = 0; i < numbers.size(); ++i) if (numbers[i] == number) return static_cast<int64_t>(i);
+			return -1;
+		}
+		int64_t find(const char *key) const {
+			const int32_t number = key_number(key);
+			if (number >= 0) return find_number(number);
+			const String text(key);
+			for (size_t i = 0; i < keys.size(); ++i) if (numbers[i] < 0 && keys[i] == text) return static_cast<int64_t>(i);
+			return -1;
+		}
+		bool has(const char *key) const { return find(key) >= 0; }
+		String &operator[](const char *key) {
+			const int64_t found = find(key);
+			if (found >= 0) return values[static_cast<size_t>(found)];
+			keys.push_back(String(key)); values.push_back(String()); numbers.push_back(key_number(key));
+			return values.back();
+		}
+		// Last value wins, keeping the key's first position (Dictionary semantics).
+		bool set_parsed(const String &key, const String &value) {
+			const int32_t number = key_number(key);
+			for (size_t i = 0; i < keys.size(); ++i) {
+				if (number >= 0 ? numbers[i] == number : (numbers[i] < 0 && keys[i] == key)) {
+					values[i] = value;
+					return true;
+				}
+			}
+			keys.push_back(key); values.push_back(value); numbers.push_back(number);
+			return false;
+		}
+		const String *get(int32_t number) const {
+			const int64_t found = find_number(number);
+			return found >= 0 ? &values[static_cast<size_t>(found)] : nullptr;
+		}
+		String value_or(int32_t number, const char *fallback) const {
+			const String *value = get(number);
+			return value ? *value : String(fallback);
+		}
+		bool equals(int32_t number, const char *text) const {
+			const String *value = get(number);
+			return value && *value == text;
+		}
+		Dictionary to_dictionary() const {
+			Dictionary result;
+			for (size_t i = 0; i < keys.size(); ++i) result[keys[i]] = values[i];
+			return result;
+		}
+	};
+
+	// parse_pairs into a PropList (same tokenisation and counters).
+	static void parse_pairs_list(const String &chunk, PropList &result, int64_t *odd_fields,
+			int64_t *duplicate_keys, int64_t *empty_keys) {
+		result.clear();
+		String key;
+		bool expecting_key = true;
+		int64_t token_start = 0;
+		const int64_t length = chunk.length();
+		for (int64_t cursor = 0; cursor <= length; ++cursor) {
+			if (cursor < length && chunk[cursor] != ',') continue;
+			if (cursor == length && token_start == cursor && expecting_key) break;
+			const String token = chunk.substr(token_start, cursor - token_start);
+			token_start = cursor + 1;
+			if (expecting_key) {
+				key = token.strip_edges();
+				expecting_key = false;
+			} else {
+				if (key.is_empty()) {
+					if (empty_keys) ++*empty_keys;
+				} else if (result.set_parsed(key, token) && duplicate_keys) {
+					++*duplicate_keys;
+				}
+				expecting_key = true;
+			}
+		}
+		if (!expecting_key && odd_fields) ++*odd_fields;
+	}
+
+	// parse_online_level's header test for the first chunk.
+	static bool chunk_is_header(const PropList &chunk) {
+		if (!chunk.has("1")) return true;
+		for (const char *key : {"kA1", "kA2", "kS38", "kS1", "kS29"}) if (chunk.has(key)) return true;
+		for (const String &key : chunk.keys) if (key.begins_with("k")) return true;
+		return false;
+	}
+
+	// The header alone, so GDScript can resolve channel styles before the
+	// streaming import (import_online_level_packed) needs them.
+	Dictionary parse_online_header(const String &level_string) const {
+		Dictionary result;
+		const int64_t length = level_string.length();
+		int64_t start = 0;
+		while (start <= length) {
+			int64_t end = level_string.find(";", start);
+			if (end < 0) end = length;
+			const String chunk = level_string.substr(start, end - start);
+			start = end + 1;
+			if (chunk.strip_edges().is_empty()) continue;
+			PropList first;
+			parse_pairs_list(chunk, first, nullptr, nullptr, nullptr);
+			Dictionary header;
+			const bool is_header = chunk_is_header(first);
+			if (is_header) header = first.to_dictionary();
+			resolve_legacy_header_colors(header);
+			result["header"] = header;
+			result["headerless"] = !is_header;
+			return result;
+		}
+		result["header"] = Dictionary();
+		result["headerless"] = false;
+		return result;
+	}
+
+	// GDScript Color.h/s/v + from_hsv HSV shift (GMDConverter._apply_hsv_shift).
+	static Color apply_hsv_shift(const Color &color, const PropList &p, int32_t enabled_key, int32_t hsv_key) {
+		if (!p.equals(enabled_key, "1")) return color;
+		const PackedStringArray parts = p.value_or(hsv_key, "").split("a", false);
+		if (parts.size() < 3) return color;
+		const double hue = parts[0].to_float() / 360.0;
+		const double saturation = parts[1].to_float();
+		const double value = parts[2].to_float();
+		const bool saturation_additive = parts.size() > 3 && parts[3] == "1";
+		const bool value_additive = parts.size() > 4 && parts[4] == "1";
+		if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value)) return color;
+		if (Math::is_zero_approx(Math::fposmod(hue, 1.0)) &&
+				Math::is_equal_approx(saturation, saturation_additive ? 0.0 : 1.0) &&
+				Math::is_equal_approx(value, value_additive ? 0.0 : 1.0)) return color;
+		const double sat = saturation_additive ? color.get_s() + saturation : color.get_s() * saturation;
+		const double val = value_additive ? color.get_v() + value : color.get_v() * value;
+		return Color::from_hsv(Math::fposmod(static_cast<double>(color.get_h()) + hue, 1.0),
+				CLAMP(sat, 0.0, 1.0), CLAMP(val, 0.0, 1.0), color.a);
+	}
+
+	// GMDConverter._hsv_shift_array: 5 floats, or false when disabled/short.
+	static bool hsv_shift_array(const PropList &p, int32_t enabled_key, int32_t hsv_key, float out[5]) {
+		if (!p.equals(enabled_key, "1")) return false;
+		const PackedStringArray parts = p.value_or(hsv_key, "").split("a", false);
+		if (parts.size() < 3) return false;
+		out[0] = static_cast<float>(parts[0].to_float() / 360.0);
+		out[1] = static_cast<float>(parts[1].to_float());
+		out[2] = static_cast<float>(parts[2].to_float());
+		out[3] = parts.size() > 3 && parts[3] == "1" ? 1.0f : 0.0f;
+		out[4] = parts.size() > 4 && parts[4] == "1" ? 1.0f : 0.0f;
+		return true;
+	}
+
+	template <typename T, typename A>
+	static A to_packed(const std::vector<T> &values) {
+		A result;
+		result.resize(static_cast<int64_t>(values.size()));
+		for (size_t i = 0; i < values.size(); ++i) result.set(static_cast<int64_t>(i), values[i]);
+		return result;
+	}
+
+	// Streams an online level string chunk by chunk. Decoration objects (the
+	// ids `tables` marks) are converted exactly like
+	// GMDConverter._decoration_from_properties and appended to std::vector
+	// columns in the PackedDecorations format; nothing per decoration is kept
+	// as a Variant. Every other valid object is returned as a Dictionary for
+	// the GDScript importer. See GMDConverter._import_level_string_packed.
+	Dictionary import_online_level_packed(const String &level_string, const Dictionary &tables) const {
+		enum : uint8_t { ID_DECORATION = 1, ID_BASE_BLACK = 2, ID_DETAIL_BLACK = 4, ID_HAS_DETAIL_LAYER = 8 };
+		constexpr int32_t CHANNEL_BG = 1000, CHANNEL_LINE = 1002, CHANNEL_BLACK = 1010, CHANNEL_MG2 = 1014;
+		const PackedByteArray id_flags = tables.get("id_flags", PackedByteArray());
+		const PackedInt32Array default_base = tables.get("default_base", PackedInt32Array());
+		const PackedInt32Array default_detail = tables.get("default_detail", PackedInt32Array());
+		const PackedInt32Array default_z_order = tables.get("default_z_order", PackedInt32Array());
+		const PackedInt32Array default_z_layer = tables.get("default_z_layer", PackedInt32Array());
+		const PackedInt32Array channel_ids = tables.get("channel_ids", PackedInt32Array());
+		const PackedColorArray channel_colors = tables.get("channel_colors", PackedColorArray());
+		const PackedFloat32Array channel_alphas = tables.get("channel_alphas", PackedFloat32Array());
+		const PackedByteArray channel_blending = tables.get("channel_blending", PackedByteArray());
+		const double cell_size = tables.get("cell_size", 30.0);
+		const double gd_cell_size = tables.get("gd_cell_size", 30.0);
+		const double ground_y = tables.get("ground_y", 0.0);
+		const int64_t id_count = std::min({id_flags.size(), default_base.size(), default_detail.size(),
+				default_z_order.size(), default_z_layer.size()});
+
+		struct Style { Color color = Color(1, 1, 1, 1); float alpha = 1.0f; bool blending = false; };
+		std::unordered_map<int32_t, Style> explicit_styles;
+		for (int64_t i = 0; i < channel_ids.size() && i < channel_colors.size() && i < channel_alphas.size() && i < channel_blending.size(); ++i) {
+			explicit_styles[channel_ids[i]] = Style{channel_colors[i], channel_alphas[i], channel_blending[i] != 0};
+		}
+		std::set<int32_t> touched_channels;
+		std::set<int32_t> used_channels;
+		// GMDConverter._is_colorable_channel / _style_for.
+		auto colorable = [&](int32_t id) -> bool {
+			if (id <= 0) return false;
+			if (explicit_styles.count(id)) return true;
+			if (id < CHANNEL_BG || (id >= CHANNEL_BG && id <= CHANNEL_MG2)) { touched_channels.insert(id); return true; }
+			return false;
+		};
+		auto style_for = [&](int32_t id) -> Style {
+			if (!colorable(id)) return Style();
+			auto found = explicit_styles.find(id);
+			if (found != explicit_styles.end()) return found->second;
+			Style style;
+			if (id == CHANNEL_BLACK) style.color = Color(0, 0, 0, 1);
+			style.blending = id == CHANNEL_LINE;
+			return style;
+		};
+
+		// PackedDecorations columns.
+		std::vector<int32_t> col_gd_id, col_source_index, col_z_order, col_z_layer, col_base_channel, col_detail_channel;
+		std::vector<int32_t> col_group_offsets{0}, col_group_ids;
+		std::vector<float> col_xform, col_base_alpha, col_spin, col_base_hsv, col_detail_hsv, col_object_hsv;
+		std::vector<Color> col_tint, col_detail_tint;
+		std::vector<uint8_t> col_flags;
+		std::map<int32_t, int64_t> decoration_ids, hidden_ids;
+		std::map<int32_t, int64_t> populated_groups, targeted_groups;
+
+		Array objects;
+		std::vector<int32_t> object_chunks;
+		std::vector<int32_t> sfx_ids;
+		int64_t odd_pair_chunks = 0, duplicate_keys = 0, empty_keys = 0, valid_objects = 0, malformed_objects = 0;
+		int64_t invalid_numeric_objects = 0, source_chunks = 0;
+		double min_x = INFINITY, max_x = -INFINITY;
+		Dictionary header;
+		bool have_header = false;
+		PropList p;
+		std::vector<int32_t> groups;
+
+		auto handle_object = [&](int64_t chunk_odd) {
+			++source_chunks;
+			odd_pair_chunks += chunk_odd;
+			const int32_t chunk_index = static_cast<int32_t>(source_chunks);
+			normalize_object_properties(p);
+			if (const String *sfx = p.get(392)) {
+				const String sfx_str = sfx->strip_edges();
+				if (sfx_str.is_valid_int()) {
+					const int32_t sid = static_cast<int32_t>(sfx_str.to_int());
+					if (sid > 0 && std::find(sfx_ids.begin(), sfx_ids.end(), sid) == sfx_ids.end()) sfx_ids.push_back(sid);
+				}
+			}
+			const String *id_value = p.get(1);
+			const String *x_value = p.get(2);
+			const String *y_value = p.get(3);
+			if (chunk_odd != 0 || !id_value || !x_value || !y_value) { ++malformed_objects; return; }
+			const String id_text = id_value->strip_edges();
+			const String x_text = x_value->strip_edges();
+			const String y_text = y_value->strip_edges();
+			if (!id_text.is_valid_int() || !x_text.is_valid_float() || !y_text.is_valid_float()) {
+				++invalid_numeric_objects; ++malformed_objects; return;
+			}
+			const int64_t object_id = id_text.to_int();
+			if (object_id <= 0) { ++invalid_numeric_objects; ++malformed_objects; return; }
+			++valid_objects;
+			const double x = x_text.to_float();
+			min_x = std::min(min_x, x);
+			max_x = std::max(max_x, x);
+
+			// GDScript reads the id with int(properties["1"]) (unstripped).
+			const int32_t gd_id = static_cast<int32_t>(id_value->to_int());
+			const uint8_t flags = gd_id >= 0 && gd_id < id_count ? id_flags[gd_id] : 0;
+			if (!(flags & ID_DECORATION)) {
+				objects.append(p.to_dictionary());
+				object_chunks.push_back(chunk_index);
+				return;
+			}
+
+			const String target_group = p.value_or(51, "");
+			if (target_group.is_valid_int()) ++targeted_groups[static_cast<int32_t>(target_group.to_int())];
+
+			// _decoration_from_properties.
+			const Vector2 position(
+					static_cast<real_t>(p.value_or(2, "0").to_float() / gd_cell_size * cell_size),
+					static_cast<real_t>(ground_y - p.value_or(3, "0").to_float() / gd_cell_size * cell_size));
+			const double uniform_scale = p.value_or(32, "1").to_float();
+			const String *sx_value = p.get(128);
+			const String *sy_value = p.get(129);
+			Vector2 scale(static_cast<real_t>(sx_value ? sx_value->to_float() : uniform_scale),
+					static_cast<real_t>(sy_value ? sy_value->to_float() : uniform_scale));
+			if (Math::is_zero_approx(scale.x)) scale.x = 1.0;
+			if (Math::is_zero_approx(scale.y)) scale.y = 1.0;
+			if (p.equals(4, "1")) scale.x *= -1.0;
+			if (p.equals(5, "1")) scale.y *= -1.0;
+			const Transform2D transform(static_cast<real_t>(Math::deg_to_rad(p.value_or(6, "0").to_float())), scale, 0.0, position);
+
+			int32_t base_id;
+			if (flags & ID_BASE_BLACK) {
+				base_id = CHANNEL_BLACK;
+			} else {
+				const String raw = p.value_or(21, "").strip_edges();
+				base_id = raw.is_valid_int() && raw.to_int() > 0 ? static_cast<int32_t>(raw.to_int()) : default_base[gd_id];
+			}
+			int32_t detail_id;
+			if (flags & ID_DETAIL_BLACK) {
+				detail_id = CHANNEL_BLACK;
+			} else {
+				const String raw = p.value_or(22, "").strip_edges();
+				if (raw.is_valid_int() && raw.to_int() > 0) detail_id = static_cast<int32_t>(raw.to_int());
+				else detail_id = default_detail[gd_id] == 0 || base_id == 0 ? base_id : default_detail[gd_id];
+			}
+			const Style style = style_for(base_id);
+			Color tint = style.color;
+			float base_hsv[5] = {0, 0, 0, 0, 0};
+			bool has_base_hsv = false;
+			if (base_id != CHANNEL_BLACK) {
+				tint = apply_hsv_shift(tint, p, 41, 43);
+				has_base_hsv = hsv_shift_array(p, 41, 43, base_hsv);
+			}
+			const float own_opacity = static_cast<float>(CLAMP(p.value_or(35, "1").to_float(), 0.0, 1.0));
+			tint.a = style.alpha * own_opacity;
+			const Style detail_style = style_for(detail_id);
+			Color detail_tint = detail_style.color;
+			float detail_hsv[5] = {0, 0, 0, 0, 0};
+			bool has_detail_hsv = false;
+			if (detail_id != CHANNEL_BLACK) {
+				detail_tint = apply_hsv_shift(detail_tint, p, 42, 44);
+				has_detail_hsv = hsv_shift_array(p, 42, 44, detail_hsv);
+			}
+			detail_tint.a = detail_style.alpha * own_opacity;
+
+			// _groups_from_properties: key 57 then 33, positive ints, deduplicated.
+			groups.clear();
+			auto add_group = [&](const String &text) {
+				if (!text.is_valid_int() || text.to_int() <= 0) return;
+				const int32_t group = static_cast<int32_t>(text.to_int());
+				if (std::find(groups.begin(), groups.end(), group) == groups.end()) groups.push_back(group);
+			};
+			const PackedStringArray listed = p.value_or(57, "").split(".", false);
+			for (int64_t i = 0; i < listed.size(); ++i) add_group(listed[i].strip_edges());
+			const String single = p.value_or(33, "").strip_edges();
+			if (!single.is_empty()) add_group(single);
+
+			// _decoration_channels.
+			int32_t bound_base = -1, bound_detail = -1;
+			if (colorable(base_id)) { bound_base = base_id; used_channels.insert(base_id); }
+			if ((flags & ID_HAS_DETAIL_LAYER) && colorable(detail_id)) { bound_detail = detail_id; used_channels.insert(detail_id); }
+
+			float object_hsv[3] = {0, 0, 0};
+			if (p.equals(41, "1")) {
+				const PackedStringArray parts = p.value_or(43, "").split("a", false);
+				if (parts.size() >= 3) {
+					object_hsv[0] = static_cast<float>(parts[0].to_float() / 360.0);
+					object_hsv[1] = static_cast<float>(parts[1].to_float());
+					object_hsv[2] = static_cast<float>(parts[2].to_float());
+				}
+			}
+			const String *z_order_value = p.get(25);
+			const int32_t z_order = z_order_value ? static_cast<int32_t>(CLAMP(z_order_value->to_int(), (int64_t)-9999, (int64_t)9999)) : default_z_order[gd_id];
+			const String *z_layer_value = p.get(24);
+			const int32_t z_layer = z_layer_value ? static_cast<int32_t>(z_layer_value->to_int()) : default_z_layer[gd_id];
+			const float spin = p.equals(98, "1") ? 0.0f : static_cast<float>(p.value_or(97, "0").to_float());
+
+			// Hidden decorations (key 135) are skipped after conversion, as in GDScript.
+			if (p.equals(135, "1")) { ++hidden_ids[gd_id]; return; }
+			++decoration_ids[gd_id];
+			for (int32_t group : groups) ++populated_groups[group];
+
+			uint8_t row_flags = 0;
+			if (style.blending) row_flags |= 1;
+			if (!p.equals(96, "1")) row_flags |= 2;
+			if (p.equals(103, "1")) row_flags |= 4;
+			if (has_base_hsv) row_flags |= 8;
+			if (has_detail_hsv) row_flags |= 16;
+			col_gd_id.push_back(gd_id);
+			col_source_index.push_back(chunk_index);
+			const real_t m[6] = {transform.columns[0].x, transform.columns[0].y, transform.columns[1].x,
+					transform.columns[1].y, transform.columns[2].x, transform.columns[2].y};
+			for (real_t v : m) col_xform.push_back(static_cast<float>(v));
+			col_z_order.push_back(z_order);
+			col_z_layer.push_back(z_layer);
+			col_tint.push_back(tint);
+			col_detail_tint.push_back(detail_tint);
+			col_base_alpha.push_back(own_opacity);
+			col_spin.push_back(spin);
+			col_flags.push_back(row_flags);
+			col_base_channel.push_back(bound_base);
+			col_detail_channel.push_back(bound_detail);
+			for (int c = 0; c < 5; ++c) col_base_hsv.push_back(has_base_hsv ? base_hsv[c] : 0.0f);
+			for (int c = 0; c < 5; ++c) col_detail_hsv.push_back(has_detail_hsv ? detail_hsv[c] : 0.0f);
+			for (int c = 0; c < 3; ++c) col_object_hsv.push_back(object_hsv[c]);
+			col_group_ids.insert(col_group_ids.end(), groups.begin(), groups.end());
+			col_group_offsets.push_back(static_cast<int32_t>(col_group_ids.size()));
+		};
+
+		const int64_t length = level_string.length();
+		int64_t start = 0;
+		while (start <= length) {
+			int64_t end = level_string.find(";", start);
+			if (end < 0) end = length;
+			const String chunk = level_string.substr(start, end - start);
+			start = end + 1;
+			if (chunk.strip_edges().is_empty()) continue;
+			int64_t chunk_odd = 0;
+			parse_pairs_list(chunk, p, &chunk_odd, &duplicate_keys, &empty_keys);
+			if (!have_header) {
+				have_header = true;
+				if (chunk_is_header(p)) {
+					header = p.to_dictionary();
+					odd_pair_chunks += chunk_odd;
+					resolve_legacy_header_colors(header);
+					continue;
+				}
+				resolve_legacy_header_colors(header);
+			}
+			handle_object(chunk_odd);
+		}
+
+		Dictionary packed;
+		packed["gd_id"] = to_packed<int32_t, PackedInt32Array>(col_gd_id);
+		packed["source_index"] = to_packed<int32_t, PackedInt32Array>(col_source_index);
+		packed["xform"] = to_packed<float, PackedFloat32Array>(col_xform);
+		packed["z_order"] = to_packed<int32_t, PackedInt32Array>(col_z_order);
+		packed["z_layer"] = to_packed<int32_t, PackedInt32Array>(col_z_layer);
+		packed["tint"] = to_packed<Color, PackedColorArray>(col_tint);
+		packed["detail_tint"] = to_packed<Color, PackedColorArray>(col_detail_tint);
+		packed["base_alpha"] = to_packed<float, PackedFloat32Array>(col_base_alpha);
+		packed["spin"] = to_packed<float, PackedFloat32Array>(col_spin);
+		packed["flags"] = to_packed<uint8_t, PackedByteArray>(col_flags);
+		packed["base_channel"] = to_packed<int32_t, PackedInt32Array>(col_base_channel);
+		packed["detail_channel"] = to_packed<int32_t, PackedInt32Array>(col_detail_channel);
+		packed["base_hsv"] = to_packed<float, PackedFloat32Array>(col_base_hsv);
+		packed["detail_hsv"] = to_packed<float, PackedFloat32Array>(col_detail_hsv);
+		packed["object_hsv"] = to_packed<float, PackedFloat32Array>(col_object_hsv);
+		packed["group_offsets"] = to_packed<int32_t, PackedInt32Array>(col_group_offsets);
+		packed["group_ids"] = to_packed<int32_t, PackedInt32Array>(col_group_ids);
+
+		auto counts = [](const std::map<int32_t, int64_t> &values) {
+			Dictionary result;
+			for (const auto &[key, count] : values) result[key] = count;
+			return result;
+		};
+		auto group_counts = [](const std::map<int32_t, int64_t> &values) {
+			Dictionary result;
+			for (const auto &[key, count] : values) result[String::num_int64(key)] = count;
+			return result;
+		};
+		Dictionary result;
+		result["header"] = header;
+		result["objects"] = objects;
+		result["object_chunks"] = to_packed<int32_t, PackedInt32Array>(object_chunks);
+		result["packed_decorations"] = packed;
+		result["decoration_ids"] = counts(decoration_ids);
+		result["hidden_ids"] = counts(hidden_ids);
+		result["populated_groups"] = group_counts(populated_groups);
+		result["targeted_groups"] = group_counts(targeted_groups);
+		result["used_channels"] = to_packed<int32_t, PackedInt32Array>(std::vector<int32_t>(used_channels.begin(), used_channels.end()));
+		result["touched_channels"] = to_packed<int32_t, PackedInt32Array>(std::vector<int32_t>(touched_channels.begin(), touched_channels.end()));
+		result["source_chunks"] = source_chunks;
+		result["valid_objects"] = valid_objects;
+		result["malformed_objects"] = malformed_objects;
+		result["invalid_numeric_objects"] = invalid_numeric_objects;
+		result["odd_pair_chunks"] = odd_pair_chunks;
+		result["duplicate_keys"] = duplicate_keys;
+		result["empty_keys"] = empty_keys;
+		result["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
+		result["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
+		result["sfx_ids"] = to_packed<int32_t, PackedInt32Array>(sfx_ids);
+		return result;
+	}
+
+	// Legacy id substitution, 1.9 colour key, legacy groups and the scale
+	// fallback (decompiled GameObject::newObjectFromVector). Templated so the
+	// Dictionary parser and the vector-backed PropList importer share it.
+	template <typename P>
+	static void normalize_object_properties(P &properties) {
+
+		// Handle legacy object ID substitution and initial property setup (decompiled GameObject::newObjectFromVector):
+		if (properties.has("1")) {
+			const String raw1 = String(properties["1"]).strip_edges();
+			if (raw1.is_valid_int()) {
+				int64_t key = raw1.to_int();
+				int64_t key_orig = -1;
+				switch (key) {
+					case 104:
+						key_orig = key;
+						key = 915;
+						break;
+					case 221:
+					case 717:
+					case 718:
+					case 743:
+						key_orig = key;
+						key = 899;
+						break;
+					case 675: key = 1734; break;
+					case 676: key = 1735; break;
+					case 677: key = 1736; break;
+					case 1008: key = 1292; break;
+					default:
+						if (key >= 1964 && key < 2012) {
+							key = 1964;
+						}
+						break;
+				}
+				if (key != raw1.to_int()) {
+					properties["1"] = String::num_int64(key);
+				}
+				if (key_orig != -1) {
+					switch (key_orig) {
+						case 104:
+							if (!properties.has("17")) properties["17"] = "1"; // usesBlending
+							break;
+						case 221: if (!properties.has("23")) properties["23"] = "1"; break;
+						case 717: if (!properties.has("23")) properties["23"] = "2"; break;
+						case 718: if (!properties.has("23")) properties["23"] = "3"; break;
+						case 743: if (!properties.has("23")) properties["23"] = "4"; break;
+					}
+				}
+				if ((key == 9 || key == 1715) && !properties.has("25")) {
+					properties["25"] = "2";
+				} else if (key == 3613) {
+					if (!properties.has("24")) properties["24"] = "5";
+					if (!properties.has("25")) properties["25"] = "2";
+				}
+			}
+		}
+
+		// Handle legacy 1.9 object color selection key 19 (decompiled GameObject::newObjectFromVector):
+		if (properties.has("19") && !properties.has("21")) {
+			const String raw19 = String(properties["19"]).strip_edges();
+			if (raw19.is_valid_int()) {
+				const int64_t old_id = raw19.to_int();
+				int64_t mapped_id = 0;
+				switch (old_id) {
+					case 1: mapped_id = 1005; break; // Player 1
+					case 2: mapped_id = 1006; break; // Player 2
+					case 3: mapped_id = 1; break;    // Color 1
+					case 4: mapped_id = 2; break;    // Color 2
+					case 5: mapped_id = 1007; break; // Tint / LBG
+					case 6: mapped_id = 3; break;    // Color 3
+					case 7: mapped_id = 4; break;    // Color 4
+					case 8: mapped_id = 1003; break; // 3DL
+					default: mapped_id = 0; break;
+				}
+				if (mapped_id > 0) {
+					properties["21"] = String::num_int64(mapped_id);
+				}
+			}
+		}
+
+		// Handle legacy groups: merge keys 26 and 33 into 57 (decompiled GameObject::newObjectFromVector):
+		static const char *legacy_group_keys[2] = { "26", "33" };
+		for (int gi = 0; gi < 2; ++gi) {
+			const char *group_key = legacy_group_keys[gi];
+			if (properties.has(group_key)) {
+				const String grp = String(properties[group_key]).strip_edges();
+				if (!grp.is_empty() && grp != "0") {
+					const String cur57 = properties.has("57") ? String(properties["57"]).strip_edges() : String();
+					if (cur57.is_empty()) {
+						properties["57"] = grp;
+					} else {
+						bool found = false;
+						const PackedStringArray grps = cur57.split(".");
+						for (int64_t i = 0; i < grps.size(); ++i) {
+							if (String(grps[i]).strip_edges() == grp) {
+								found = true;
+								break;
+							}
+						}
+						if (!found) {
+							properties["57"] = cur57 + String(".") + grp;
+						}
+					}
+				}
+			}
+		}
+
+		// Handle scale fallback: key 32 to 128 / 129 (decompiled GameObject::newObjectFromVector)
+		if (properties.has("32")) {
+			const String s32 = String(properties["32"]).strip_edges();
+			if (!s32.is_empty() && s32.to_float() != 0.0f) {
+				bool need_128 = !properties.has("128") || String(properties["128"]).strip_edges().to_float() == 0.0f;
+				bool need_129 = !properties.has("129") || String(properties["129"]).strip_edges().to_float() == 0.0f;
+				if (need_128 && need_129) {
+					properties["128"] = s32;
+					properties["129"] = s32;
+				}
+			}
+		}
+	}
+
 	Dictionary parse_online_level(const String &level_string) const {
 		Dictionary parsed;
 		Array objects;
@@ -3880,120 +4485,7 @@ public:
 			++source_chunks;
 			odd_pair_chunks += chunk_odd;
 
-			// Handle legacy object ID substitution and initial property setup (decompiled GameObject::newObjectFromVector):
-			if (properties.has("1")) {
-				const String raw1 = String(properties["1"]).strip_edges();
-				if (raw1.is_valid_int()) {
-					int64_t key = raw1.to_int();
-					int64_t key_orig = -1;
-					switch (key) {
-						case 104:
-							key_orig = key;
-							key = 915;
-							break;
-						case 221:
-						case 717:
-						case 718:
-						case 743:
-							key_orig = key;
-							key = 899;
-							break;
-						case 675: key = 1734; break;
-						case 676: key = 1735; break;
-						case 677: key = 1736; break;
-						case 1008: key = 1292; break;
-						default:
-							if (key >= 1964 && key < 2012) {
-								key = 1964;
-							}
-							break;
-					}
-					if (key != raw1.to_int()) {
-						properties["1"] = String::num_int64(key);
-					}
-					if (key_orig != -1) {
-						switch (key_orig) {
-							case 104:
-								if (!properties.has("17")) properties["17"] = "1"; // usesBlending
-								break;
-							case 221: if (!properties.has("23")) properties["23"] = "1"; break;
-							case 717: if (!properties.has("23")) properties["23"] = "2"; break;
-							case 718: if (!properties.has("23")) properties["23"] = "3"; break;
-							case 743: if (!properties.has("23")) properties["23"] = "4"; break;
-						}
-					}
-					if ((key == 9 || key == 1715) && !properties.has("25")) {
-						properties["25"] = "2";
-					} else if (key == 3613) {
-						if (!properties.has("24")) properties["24"] = "5";
-						if (!properties.has("25")) properties["25"] = "2";
-					}
-				}
-			}
-
-			// Handle legacy 1.9 object color selection key 19 (decompiled GameObject::newObjectFromVector):
-			if (properties.has("19") && !properties.has("21")) {
-				const String raw19 = String(properties["19"]).strip_edges();
-				if (raw19.is_valid_int()) {
-					const int64_t old_id = raw19.to_int();
-					int64_t mapped_id = 0;
-					switch (old_id) {
-						case 1: mapped_id = 1005; break; // Player 1
-						case 2: mapped_id = 1006; break; // Player 2
-						case 3: mapped_id = 1; break;    // Color 1
-						case 4: mapped_id = 2; break;    // Color 2
-						case 5: mapped_id = 1007; break; // Tint / LBG
-						case 6: mapped_id = 3; break;    // Color 3
-						case 7: mapped_id = 4; break;    // Color 4
-						case 8: mapped_id = 1003; break; // 3DL
-						default: mapped_id = 0; break;
-					}
-					if (mapped_id > 0) {
-						properties["21"] = String::num_int64(mapped_id);
-					}
-				}
-			}
-
-			// Handle legacy groups: merge keys 26 and 33 into 57 (decompiled GameObject::newObjectFromVector):
-			static const char *legacy_group_keys[2] = { "26", "33" };
-			for (int gi = 0; gi < 2; ++gi) {
-				const char *group_key = legacy_group_keys[gi];
-				if (properties.has(group_key)) {
-					const String grp = String(properties[group_key]).strip_edges();
-					if (!grp.is_empty() && grp != "0") {
-						const String cur57 = properties.has("57") ? String(properties["57"]).strip_edges() : String();
-						if (cur57.is_empty()) {
-							properties["57"] = grp;
-						} else {
-							bool found = false;
-							const PackedStringArray grps = cur57.split(".");
-							for (int64_t i = 0; i < grps.size(); ++i) {
-								if (String(grps[i]).strip_edges() == grp) {
-									found = true;
-									break;
-								}
-							}
-							if (!found) {
-								properties["57"] = cur57 + String(".") + grp;
-							}
-						}
-					}
-				}
-			}
-
-			// Handle scale fallback: key 32 to 128 / 129 (decompiled GameObject::newObjectFromVector)
-			if (properties.has("32")) {
-				const String s32 = String(properties["32"]).strip_edges();
-				if (!s32.is_empty() && s32.to_float() != 0.0f) {
-					bool need_128 = !properties.has("128") || String(properties["128"]).strip_edges().to_float() == 0.0f;
-					bool need_129 = !properties.has("129") || String(properties["129"]).strip_edges().to_float() == 0.0f;
-					if (need_128 && need_129) {
-						properties["128"] = s32;
-						properties["129"] = s32;
-					}
-				}
-			}
-
+			normalize_object_properties(properties);
 			objects.append(properties);
 			object_validity.append(0);
 			if (properties.has("392")) {

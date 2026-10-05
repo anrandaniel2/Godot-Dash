@@ -363,9 +363,17 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var native_objects: Array = []
 	var native_validity := PackedByteArray()
 	var native_parsed := false
+	# Streaming C++ import: decorations go straight into packed columns and
+	# only the remaining objects come back as dictionaries.
+	var native_import: Dictionary = { }
+	var native_packed: bool = false
+	var object_chunks := PackedInt32Array()
 	if use_online_parser:
 		var native := NativeCore.backend()
-		if native != null and native.has_method(&"parse_online_level"):
+		if native != null and use_native_packed_import and native.has_method(&"import_online_level_packed"):
+			header = native.call(&"parse_online_header", level_string).get("header", { })
+			native_packed = true
+		elif native != null and native.has_method(&"parse_online_level"):
 			var parsed: Dictionary = native.call(&"parse_online_level", level_string)
 			header = parsed.get("header", { })
 			native_objects = parsed.get("objects", [])
@@ -378,7 +386,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 				int(parsed.get("duplicate_keys", 0)), int(parsed.get("empty_keys", 0)),
 				str(parsed.get("min_x", 0.0)), str(parsed.get("max_x", 0.0)),
 			])
-	if not native_parsed:
+	if not native_parsed and not native_packed:
 		chunks = level_string.split(";", false)
 		header = _parse_pairs(chunks[0]) if not chunks.is_empty() else {}
 
@@ -396,6 +404,19 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# Which channels the level's objects actually use, filled in as they are
 	# converted, so ColorChannelData is only created for channels with a user.
 	var used_channels: Dictionary[int, bool] = { }
+	if native_packed:
+		native_import = NativeCore.backend().call(
+				&"import_online_level_packed", level_string, _native_import_tables(channel_style)
+		)
+		native_objects = native_import.get("objects", [])
+		object_chunks = native_import.get("object_chunks", PackedInt32Array())
+		native_parsed = true
+		print("[RobTop] C++ packed import: chars=%d chunks=%d valid=%d malformed=%d decorations=%d dictionaries=%d" % [
+			level_string.length(), int(native_import.get("source_chunks", 0)), int(native_import.get("valid_objects", 0)),
+			int(native_import.get("malformed_objects", 0)),
+			PackedDecorations.size_of(native_import.get("packed_decorations", { })), native_objects.size(),
+		])
+		_apply_native_import(native_import, report, channel_style, used_channels)
 	var objects: Array[Dictionary] = []
 	# Decorations go into packed columns instead of one Dictionary each; see
 	# PackedDecorations for why (memory on 300k-object levels).
@@ -407,10 +428,19 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# triggers point at, so the report can explain empty triggers.
 	var populated_groups: Dictionary[String, int] = { }
 	var targeted_groups: Dictionary[String, int] = { }
+	if native_packed:
+		var native_populated: Dictionary = native_import.get("populated_groups", { })
+		for group_id: String in native_populated:
+			populated_groups[group_id] = int(native_populated[group_id])
+		var native_targeted: Dictionary = native_import.get("targeted_groups", { })
+		for group_id: String in native_targeted:
+			targeted_groups[group_id] = int(native_targeted[group_id])
 
 	var source_object_count := native_objects.size() if native_parsed else maxi(0, chunks.size() - 1)
 	for source_idx in source_object_count:
 		var chunk_idx := source_idx + 1 # Retain Geometry Dash source naming/order.
+		if native_packed:
+			chunk_idx = object_chunks[source_idx]
 		# Each object is isolated: a malformed or unsupported one is dropped and
 		# the loop continues with the next.
 		var properties: Dictionary
@@ -537,7 +567,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			var group_id: String = group.trim_prefix(Constants.GROUP_PREFIX)
 			populated_groups[group_id] = populated_groups.get(group_id, 0) + 1
 
-		if kind == 1 and packed_decorations.append_entry(object_data, chunk_idx):
+		if kind == 1 and not native_packed and packed_decorations.append_entry(object_data, chunk_idx):
 			report.imported += 1
 			continue
 		objects.append(object_data)
@@ -601,7 +631,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"layers": [{
 			"name": "Imported Layer",
 			"objects": objects,
-			PackedDecorations.LAYER_KEY: packed_decorations.to_data(),
+			PackedDecorations.LAYER_KEY: native_import.get("packed_decorations", { }) if native_packed else packed_decorations.to_data(),
 			"locked": false,
 		}],
 		"active_layer_idx": 0,
@@ -610,6 +640,108 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			"hsv": { "hsv_shift": [0.0, 0.0, 0.0], "intensity": 1.0, "alpha": 1.0 },
 		},
 	}
+
+
+## Per-ID routing and defaults for GdashNative.import_online_level_packed,
+## built once per process. An ID is converted in C++ only when this importer
+## would take its decoration path; everything else stays a dictionary.
+static var _native_id_tables: Dictionary = { }
+## Off only for parity checks (tools/level_memory_profile.gd), which compare
+## the streaming C++ import against the GDScript conversion.
+static var use_native_packed_import: bool = true
+static var _native_id_tables_decorations: bool = false
+
+const NATIVE_ID_DECORATION: int = 1
+const NATIVE_ID_BASE_BLACK: int = 2
+const NATIVE_ID_DETAIL_BLACK: int = 4
+const NATIVE_ID_HAS_DETAIL_LAYER: int = 8
+
+
+static func _native_import_tables(channel_style: Dictionary[int, Dictionary]) -> Dictionary:
+	if _native_id_tables.is_empty() or _native_id_tables_decorations != Config.import_gd_decorations:
+		_native_id_tables_decorations = Config.import_gd_decorations
+		var ids: Array[int] = GDObjectFrames.ids()
+		var size: int = 1
+		for gd_id: int in ids:
+			size = maxi(size, gd_id + 1)
+		var flags := PackedByteArray()
+		flags.resize(size)
+		var default_base := PackedInt32Array()
+		default_base.resize(size)
+		var default_detail := PackedInt32Array()
+		default_detail.resize(size)
+		var default_z_order := PackedInt32Array()
+		default_z_order.resize(size)
+		var default_z_layer := PackedInt32Array()
+		default_z_layer.resize(size)
+		for gd_id: int in ids:
+			if gd_id < 0 or GMDObjects.MAP.has(gd_id) or gd_id in GMDObjects.TRIGGER_IDS \
+					or LEGACY_COLOR_TRIGGER_CHANNELS.has(gd_id) or gd_id == PULSE_TRIGGER_ID:
+				continue
+			if not GDDecorationLoader.can_draw(gd_id):
+				continue
+			var frames: GDObjectFrames.ObjectFrames = GDObjectFrames.get_frames(gd_id)
+			var id_flags: int = NATIVE_ID_DECORATION
+			if GMDDefaultChannels.is_base_black(gd_id):
+				id_flags |= NATIVE_ID_BASE_BLACK
+			if GMDDefaultChannels.is_detail_black(gd_id):
+				id_flags |= NATIVE_ID_DETAIL_BLACK
+			if frames.has_detail_layer():
+				id_flags |= NATIVE_ID_HAS_DETAIL_LAYER
+			flags[gd_id] = id_flags
+			default_base[gd_id] = GMDDefaultChannels.base_channel(gd_id)
+			default_detail[gd_id] = GMDDefaultChannels.detail_channel(gd_id)
+			default_z_order[gd_id] = _z_order_from_properties({ }, gd_id)
+			default_z_layer[gd_id] = _z_layer_from_properties({ }, gd_id)
+		_native_id_tables = {
+			"id_flags": flags,
+			"default_base": default_base,
+			"default_detail": default_detail,
+			"default_z_order": default_z_order,
+			"default_z_layer": default_z_layer,
+		}
+	var tables: Dictionary = _native_id_tables.duplicate()
+	var channel_ids := PackedInt32Array()
+	var channel_colors := PackedColorArray()
+	var channel_alphas := PackedFloat32Array()
+	var channel_blending := PackedByteArray()
+	for channel_id: int in channel_style:
+		var style: Dictionary = channel_style[channel_id]
+		channel_ids.append(channel_id)
+		channel_colors.append(style.get("color", Color.WHITE))
+		channel_alphas.append(float(style.get("alpha", 1.0)))
+		channel_blending.append(1 if bool(style.get("blending", false)) else 0)
+	tables["channel_ids"] = channel_ids
+	tables["channel_colors"] = channel_colors
+	tables["channel_alphas"] = channel_alphas
+	tables["channel_blending"] = channel_blending
+	tables["cell_size"] = float(Constants.CELL_SIZE)
+	tables["gd_cell_size"] = GD_CELL_SIZE
+	tables["ground_y"] = GROUND_Y
+	return tables
+
+
+## Folds the C++ import's decoration side results into the report and the
+## channel bookkeeping the GDScript loop would have done for them.
+static func _apply_native_import(
+		native_import: Dictionary,
+		report: ImportReport,
+		channel_style: Dictionary[int, Dictionary],
+		used_channels: Dictionary[int, bool],
+) -> void:
+	var decoration_ids: Dictionary = native_import.get("decoration_ids", { })
+	for gd_id: int in decoration_ids:
+		report.decoration_ids[gd_id] = report.decoration_ids.get(gd_id, 0) + int(decoration_ids[gd_id])
+		report.imported += int(decoration_ids[gd_id])
+	var hidden_ids: Dictionary = native_import.get("hidden_ids", { })
+	for gd_id: int in hidden_ids:
+		report.skipped_ids[gd_id] = report.skipped_ids.get(gd_id, 0) + int(hidden_ids[gd_id])
+	# Reserved/undefined channels the decorations named are created exactly as
+	# _is_colorable_channel would have created them.
+	for channel_id: int in native_import.get("touched_channels", PackedInt32Array()):
+		_is_colorable_channel(channel_style, channel_id)
+	for channel_id: int in native_import.get("used_channels", PackedInt32Array()):
+		used_channels[channel_id] = true
 
 
 ## Builds the serialized object dictionary for one Geometry Dash object.
