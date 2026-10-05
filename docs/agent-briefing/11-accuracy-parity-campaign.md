@@ -349,8 +349,12 @@ const MAX_DISTANCE   := Vector2(400.0, 300.0)
 @export var offset_smoothing   := 0.125
 ```
 
-- `_process`: player/ground distance → rotate into gameplay space → `local_target_distance_axis`
-  (deadzone at `MAX_DISTANCE / zoom`, then `* 0.2 * delta * 60` catch-up) → rotate back → apply
+- `_process`: player/ground distance → rotate into gameplay space → vertical axis via
+  `gd_vertical_step` (GD law from Wyliemaster/Geometry-Dash-1.0 `PlayLayer::updateCamera`:
+  cube band 3 cells from the top / 4 from the bottom, swapped when flipped, 1/10 catch-up per
+  60 Hz frame; fly modes chase the portal centre at 1/30; applied to all levels; that 2.1 keeps
+  the 1.0 law is a hypothesis); platformer X still uses `local_target_distance_axis`
+  (deadzone `MAX_DISTANCE / zoom`, 0.2 catch-up) → rotate back → apply
   per axis unless `static_factor` blocks that axis → clamp the view to `ground_down + 160` /
   `ground_up - 160` → `offset = get_offset_target(≈delta*60)`.
 - `get_offset_target()`: `(gameplay_offset / zoom) * gameplay_offset_factor * (1 - static_factor)

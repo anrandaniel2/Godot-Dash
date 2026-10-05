@@ -536,6 +536,40 @@ func _test_native_core() -> void:
 			var follow_props: Dictionary = mode_data.get("gd_properties", {})
 			assert(str(follow_props.get("72", "")) == "0.5" and str(follow_props.get("71", "")) == "8",
 				"native smoke: online parse lost the Follow keys 71/72")
+	# Item triggers (GD 2.11 customObjectSetup cases 1611/1811/1817): Pickup,
+	# Count and Instant Count execute on both paths, so none is inert, and
+	# their item keys (80 item, 77 count, 104 multi) survive the online parse.
+	var item_report := GMDConverter.ImportReport.new()
+	var item_level := GMDConverter.import_online_level_string(
+		"kA2,0,kA4,0;1,1817,2,30,3,30,80,4,77,2;"
+		+ "1,1611,2,60,3,30,51,9,80,4,77,2,56,1,104,1;"
+		+ "1,1811,2,90,3,30,51,9,80,4,77,1,88,1;",
+		"item triggers", item_report)
+	var item_entries: Array = item_level.get("layers", [{}])[0].get("objects", [])
+	assert(item_entries.size() == 3, "native smoke: online item triggers were dropped")
+	for item_id: int in [1611, 1811, 1817]:
+		assert(not item_report.inert_trigger_ids.has(item_id), "native smoke: item trigger %d reported inert" % item_id)
+	for item_data: Dictionary in item_entries:
+		var item_props: Dictionary = item_data.get("gd_properties", {})
+		assert(str(item_props.get("80", "")) == "4", "native smoke: online parse lost item key 80")
+		if int(item_data.get("gd_object_id", 0)) == 1611:
+			assert(str(item_props.get("104", "")) == "1", "native smoke: online parse lost Count key 104")
+	ToggleComponent.reset_items()
+	ToggleComponent.change_item(4, 2, null)
+	ToggleComponent.change_item(4, -3, null)
+	assert(ToggleComponent.item_counts.get(4, 0) == -1, "native smoke: Pickup must add its count to the item")
+	ToggleComponent.reset_items()
+	assert(ToggleComponent.item_counts.is_empty(), "native smoke: restart must clear item counts")
+	# GD vertical camera law (Geometry-Dash-1.0 PlayLayer::updateCamera):
+	# 3-cell top / 4-cell bottom band, 1/10 ease; 1/30 in fly modes.
+	var half_view: float = 675.0
+	var lower_edge: float = half_view - 4.0 * Constants.CELL_SIZE
+	var upper_edge: float = 3.0 * Constants.CELL_SIZE - half_view
+	assert(is_zero_approx(PlayerCamera.gd_vertical_step(lower_edge - 1.0, half_view, true, false, 1.0)), "camera: inside the band must not move")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(lower_edge + 100.0, half_view, true, false, 1.0), 10.0), "camera: below the band eases 1/10")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(upper_edge - 100.0, half_view, true, false, 1.0), -10.0), "camera: above the band eases 1/10")
+	assert(is_zero_approx(PlayerCamera.gd_vertical_step(lower_edge + 100.0, half_view, true, true, 1.0)), "camera: flipped gravity swaps the margins")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(300.0, half_view, false, false, 1.0), 10.0), "camera: fly modes ease 1/30")
 	# Colour triggers must keep their colour source: an explicit RGB, a copied
 	# channel (key 50, with the copy HSV of key 49 and the opacity copy of key
 	# 60), a player colour (keys 15/16), or the channel's own colour when the

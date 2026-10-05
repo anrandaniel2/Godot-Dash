@@ -4,6 +4,18 @@ extends Camera2D
 const DEFAULT_ZOOM: Vector2 = Vector2(0.8, 0.8)
 const DEFAULT_OFFSET: Vector2 = Vector2(400.0, 0.0)
 const MAX_DISTANCE := Vector2(400.0, 300.0)
+## Geometry Dash vertical camera law, from Wyliemaster/Geometry-Dash-1.0
+## PlayLayer/updateCamera.cpp (PlayLayer::updateCamera): in cube-style modes
+## the player is kept 90 units (3 cells) below the top edge and 120 units
+## (4 cells) above the bottom edge, swapped under flipped gravity, and the
+## camera closes 1/10 of the gap per 60 Hz frame; fly modes chase the portal
+## centre at 1/30. GD's 320-unit view (10.7 cells) matches this camera's
+## 1080 / 0.8 px view (10.5 cells), so the margins carry over in cells.
+## Hypothesis: GD 2.1 keeps the 1.0 law (only the 1.0 body is decompiled).
+const GD_TOP_MARGIN_CELLS: float = 3.0
+const GD_BOTTOM_MARGIN_CELLS: float = 4.0
+const GD_FREE_EASE: float = 1.0 / 10.0
+const GD_LOCKED_EASE: float = 1.0 / 30.0
 
 @export var position_smoothing: float = 0.1
 @export var offset_smoothing: float = 0.125
@@ -53,9 +65,11 @@ func _process(delta: float) -> void:
 	var local_player_distance = player_distance.rotated(-player.gameplay_rotation)
 	var local_ground_distance = ground_distance.rotated(-player.gameplay_rotation)
 	var local_added_distance = local_player_distance
-	local_added_distance.y = local_target_distance_axis(
+	local_added_distance.y = gd_vertical_step(
 		local_player_distance.y if freefly else local_ground_distance.y,
-		MAX_DISTANCE.y / zoom.y,
+		get_viewport_rect().size.y / 2.0 / zoom.y,
+		freefly,
+		player.gravity_flip < 0,
 		framerate_compensation,
 	)
 	if LevelManager.platformer:
@@ -103,6 +117,23 @@ func local_target_distance_axis(distance: float, max_distance: float, framerate_
 		return 0.0
 	else:
 		return (distance - sign(distance) * max_distance) * 0.2 * framerate_compensation
+
+
+## One frame of GD's vertical camera follow. distance is the player's (or,
+## in fly modes, the portal centre's) rotation-local offset from the view
+## centre, +y down; half_height is half the visible height in px.
+static func gd_vertical_step(distance: float, half_height: float, is_freefly: bool, flipped: bool, framerate_compensation: float) -> float:
+	if not is_freefly:
+		return distance * GD_LOCKED_EASE * framerate_compensation
+	var top_margin: float = (GD_BOTTOM_MARGIN_CELLS if flipped else GD_TOP_MARGIN_CELLS) * Constants.CELL_SIZE
+	var bottom_margin: float = (GD_TOP_MARGIN_CELLS if flipped else GD_BOTTOM_MARGIN_CELLS) * Constants.CELL_SIZE
+	var upper_limit: float = top_margin - half_height
+	var lower_limit: float = half_height - bottom_margin
+	if distance < upper_limit:
+		return (distance - upper_limit) * GD_FREE_EASE * framerate_compensation
+	if distance > lower_limit:
+		return (distance - lower_limit) * GD_FREE_EASE * framerate_compensation
+	return 0.0
 
 
 func get_offset_target(framerate_compensation: float) -> Vector2:
