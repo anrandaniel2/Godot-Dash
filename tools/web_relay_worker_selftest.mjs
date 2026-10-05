@@ -62,6 +62,12 @@ assert.strictEqual(calls.at(-1).headers["user-agent"], "");
 assert.strictEqual(calls.at(-1).headers["content-type"], "application/x-www-form-urlencoded");
 assert.strictEqual(calls.at(-1).body, "levelID=128&secret=Wmfd2893gb7");
 
+// 3b. Newgrounds song files (the URL getGJSongInfo.php returns) are relayed.
+const songTarget = "https://audio.ngfiles.com/80000/80273_newgrounds_animat.mp3";
+response = await worker.fetch(new Request(`${base}/?url=${encodeURIComponent(songTarget)}`));
+assert.strictEqual(response.status, 200);
+assert.strictEqual(calls.at(-1).url, songTarget);
+
 // 4. Path-style target (serve_web.py compatibility).
 response = await worker.fetch(new Request(`${base}/cors-proxy/${target}`));
 assert.strictEqual(response.status, 200);

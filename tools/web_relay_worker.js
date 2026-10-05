@@ -15,6 +15,8 @@
  *                                     level-file download.
  *   geometrydashcontent.b-cdn.net,
  *   geometrydashfiles.b-cdn.net       BunnyCDN, no CORS headers.
+ *   audio.ngfiles.com                 Newgrounds song files (the URL
+ *                                     getGJSongInfo.php returns), no CORS.
  *
  * So the request has to be made server-side. This Worker performs it and
  * answers the browser with CORS headers, body and status intact.
@@ -50,6 +52,8 @@ const ALLOWED_HOSTS = new Set([
   "geometrydashfiles.b-cdn.net",
   "www.newgrounds.com",
   "newgrounds.com",
+  // Newgrounds' audio host: getGJSongInfo.php returns song URLs here.
+  "audio.ngfiles.com",
   "cvolton.eu",
   "www.cvolton.eu",
 ]);
