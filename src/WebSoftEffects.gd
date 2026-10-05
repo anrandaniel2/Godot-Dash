@@ -37,6 +37,7 @@ var _window_size := Vector2.ZERO
 var _strength := -1.0
 var _source_is_frame := false
 var _capture_world := false
+var _have_world_frame := false
 
 
 func _ready() -> void:
@@ -63,6 +64,10 @@ func _ready() -> void:
 	_world.name = "WorldView"
 	_world.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	_world.world_2d = get_viewport().world_2d
+	# Match the root's HDR canvas so the extract sees the same brights the
+	# player sees. A LDR copy of an HDR 2D view crushed the bloom into a
+	# smear on WebGPU.
+	_world.use_hdr_2d = get_viewport().use_hdr_2d
 
 	_blur = _make_viewport()
 	_blur_rect = _make_stretch_rect()
@@ -114,18 +119,32 @@ func _process(_delta: float) -> void:
 	_resize(false)
 	if in_level:
 		_set_update(_plate, false)
-		# Freeze on pause so the panel blurs the level, not the pause menu.
-		# The pause menu is a CanvasLayer, so it is not in this world view.
-		_capture_world = not paused and (Config.bloom or Config.menu_blur)
-		_set_update(_world, _capture_world)
-		_use_source(_world.get_texture(), true)
+		# Glow re-renders the 2D world at low res (cannot sample the root
+		# framebuffer without trailing). Frost is only on pause/title panels,
+		# so do not also blur that copy every play frame — that was a third
+		# full-scene pass on top of the WebGPU present.
 		var glow := Config.bloom and not paused
+		var frost := Config.menu_blur and paused
+		if glow:
+			_capture_world = true
+			_set_update(_world, true)
+			_have_world_frame = true
+		elif frost and not _have_world_frame:
+			_capture_world = true
+			_world.render_target_update_mode = SubViewport.UPDATE_ONCE
+			_have_world_frame = true
+		else:
+			_capture_world = false
+			_set_update(_world, false)
+		_use_source(_world.get_texture(), true)
 		_set_update(_extract, glow)
 		if glow and _extract_rect.texture != _world.get_texture():
 			_extract_rect.texture = _world.get_texture()
 		_glow_rect.visible = glow
+		_set_update(_blur, frost)
 	else:
 		_capture_world = false
+		_have_world_frame = false
 		_set_update(_world, false)
 		_set_update(_extract, false)
 		_glow_rect.visible = false
@@ -133,7 +152,7 @@ func _process(_delta: float) -> void:
 		if Config.menu_blur:
 			_sync_plate()
 			_use_source(_plate.get_texture(), false)
-	_set_update(_blur, Config.menu_blur)
+		_set_update(_blur, Config.menu_blur)
 
 
 func _in_level() -> bool:

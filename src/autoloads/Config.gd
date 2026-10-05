@@ -208,7 +208,8 @@ func _init():
 
 	# Graphics. On a fresh install, cap to the actual panel refresh rate rather
 	# than an arbitrary 60 FPS. Keep 60 as the platform fallback for displays
-	# that do not report a usable refresh value.
+	# that do not report a usable refresh value. Web's DisplayServer returns
+	# -1 here; display_refresh_hz() can still read screen.refreshRate in _ready.
 	var refresh_rate := roundi(DisplayServer.screen_get_refresh_rate())
 	if refresh_rate <= 0:
 		refresh_rate = 60
@@ -329,6 +330,7 @@ func _apply_bloom_to_world(value: bool) -> void:
 
 
 func _ready() -> void:
+	apply_frame_pacing()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
 			get_tree().root.set_size(saved_window_size)
@@ -336,6 +338,36 @@ func _ready() -> void:
 		var effects := preload("res://src/WebSoftEffects.gd").new()
 		effects.name = "WebSoftEffects"
 		add_child(effects)
+
+
+## Monitor refresh in Hz. Web's DisplayServer always reports -1, so we also
+## read `screen.refreshRate` when the browser exposes it (Chrome).
+func display_refresh_hz() -> int:
+	var rate := roundi(DisplayServer.screen_get_refresh_rate())
+	if OS.has_feature("web") and JavaScriptBridge != null:
+		var js_rate := int(JavaScriptBridge.eval(
+			"(function(){var s=window.screen||{};var r=Number(s.refreshRate||s.mozRefreshRate||0);return (r>1&&r<500)?Math.round(r):0;})()"
+		))
+		if js_rate > rate:
+			rate = js_rate
+	if rate <= 0:
+		return 60
+	return rate
+
+
+## Apply Max FPS / V-Sync. On web, `Engine.max_fps` sleeps with a ~16 ms timer
+## tick after every frame, so a 144 Hz cap becomes ~60 Hz and beats against a
+## 144 Hz panel. requestAnimationFrame already vsyncs to the display; uncap
+## when the user asked for the panel rate.
+func apply_frame_pacing() -> void:
+	DisplayServer.window_set_vsync_mode(vsync)
+	if OS.has_feature("web"):
+		if max_fps == 0 or max_fps >= 90:
+			Engine.max_fps = 0
+		else:
+			Engine.max_fps = int(max_fps)
+	else:
+		Engine.max_fps = int(max_fps)
 
 
 func _notification(what):

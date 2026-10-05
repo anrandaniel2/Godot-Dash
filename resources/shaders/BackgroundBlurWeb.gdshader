@@ -21,7 +21,11 @@ vec3 rgb2hsv(vec3 c) {
 void fragment() {
 	float use_original_color = step(rgb2hsv(COLOR.xyz).z, 0.3);
 	if (menu_blur) {
-		vec4 blurred = texture(blur_tex, SCREEN_UV) * mix(vec4(1.0), ui_color, COLOR.a);
+		// ViewportTexture is Y-flipped on RenderingDevice (WebGPU/Mobile).
+		// Sampling SCREEN_UV unflipped mapped the frost onto the wrong
+		// part of the panel.
+		vec2 uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y);
+		vec4 blurred = texture(blur_tex, uv) * mix(vec4(1.0), ui_color, COLOR.a);
 		COLOR.rgb = mix(COLOR.rgb, blurred.rgb, use_original_color);
 		COLOR.a = mix(COLOR.a, 1.0, use_original_color);
 	} else if (use_original_color != 0.0) {

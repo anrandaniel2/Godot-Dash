@@ -7,10 +7,8 @@ signal closed
 func _ready() -> void:
 	# The reset/default value follows the current monitor instead of hard-coding
 	# 60, matching Config's first-launch choice on 90/120/144 Hz displays.
-	var refresh_rate := roundi(DisplayServer.screen_get_refresh_rate())
-	%"Max FPS".default = refresh_rate if refresh_rate > 0 else 60
-	Engine.max_fps = int(Config.max_fps)
-	DisplayServer.window_set_vsync_mode(Config.vsync)
+	%"Max FPS".default = Config.display_refresh_hz()
+	Config.apply_frame_pacing()
 	var saved_bus_layout: AudioBusLayout
 	if ResourceLoader.exists("user://default_bus_layout.tres"):
 		saved_bus_layout = load("user://default_bus_layout.tres") as AudioBusLayout
@@ -60,11 +58,13 @@ func _on_touch_screen_mode_value_changed(value: int) -> void:
 
 
 func _on_max_fps_value_changed(value: float) -> void:
-	Engine.max_fps = int(value)
+	Config.max_fps = int(value)
+	Config.apply_frame_pacing()
 
 
 func _on_vsync_value_changed(id: int) -> void:
-	DisplayServer.window_set_vsync_mode(id)
+	Config.vsync = id
+	Config.apply_frame_pacing()
 
 
 func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:

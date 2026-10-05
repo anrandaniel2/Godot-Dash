@@ -96,7 +96,16 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
 7. **Web-specific runtime behaviour**:
    - `WorldEnvironment` disables `Environment.glow` on web; `WebSoftEffects` implements a soft
      bloom with `WebBlurSource`/`WebGlowExtract`/`WebGlowOverlay` shaders and
-     `SimpleBlurMaterial`/`BackgroundBlurWeb`.
+     `SimpleBlurMaterial`/`BackgroundBlurWeb`. Frost runs on title/pause only; in-level it does
+     not re-blur every play frame. `BackgroundBlurWeb` Y-flips `SCREEN_UV` because ViewportTexture
+     is inverted on RenderingDevice/WebGPU.
+   - Frame pacing: `Config.apply_frame_pacing()`. Web `Engine.max_fps` sleeps on a ~16 ms timer
+     tick, so a 144 Hz cap became ~60 Hz; values ≥ 90 uncap and let `requestAnimationFrame`
+     match the panel. `DisplayServer.screen_get_refresh_rate()` is -1 on web; `display_refresh_hz()`
+     also reads `screen.refreshRate` when the browser exposes it.
+   - `html/head_include` wraps `navigator.gpu.requestAdapter` with `powerPreference:
+     'high-performance'` (Chrome on Windows currently ignores the hint). Keep
+     `rendering_method.web = mobile` (WebGPU); do not fall back to `gl_compatibility`.
    - `Config` forces `WINDOWED` (browsers require a user gesture for fullscreen) and runs a
      one-time bloom migration (`web_soft_glow`).
    - `UpdateManager` reports `DISABLED` (Codeberg sends no CORS headers; the host owns updates).
