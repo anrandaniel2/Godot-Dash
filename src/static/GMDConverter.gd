@@ -1785,6 +1785,25 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
+		1912: # Random (twin of the native RANDOM arm)
+			if "RandomTriggerComponent" in supported:
+				var chance: float = clampf(float(properties.get("10", "50")), 0.0, 100.0)
+				var hit: String = properties.get("51", "0")
+				var miss: String = properties.get("71", "0")
+				components["RandomTriggerComponent"] = {
+					"groups": PackedStringArray([hit if int(hit) > 0 else "", miss if int(miss) > 0 else ""]),
+					"weights": PackedFloat64Array([chance, 100.0 - chance]),
+				}
+		2068: # Advanced Random (twin of the native RANDOM arm)
+			if "RandomTriggerComponent" in supported:
+				var random_groups := PackedStringArray()
+				var random_weights := PackedFloat64Array()
+				var parts: PackedStringArray = String(properties.get("152", "")).replace(",", ".").split(".")
+				for index: int in range(0, parts.size() - 1, 2):
+					if int(parts[index]) > 0 and float(parts[index + 1]) > 0.0:
+						random_groups.append(parts[index])
+						random_weights.append(float(parts[index + 1]))
+				components["RandomTriggerComponent"] = { "groups": random_groups, "weights": random_weights }
 		1611, 1811, 1817: # Count / Instant Count / Pickup (twin of the native item arms)
 			if "ToggleComponent" in supported:
 				var item_modes: Dictionary[int, int] = {

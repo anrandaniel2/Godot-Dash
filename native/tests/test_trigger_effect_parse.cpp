@@ -102,6 +102,17 @@ int main() {
 	expect_true("no movement, no follow", still == Vector2());
 	expect_true("follow is a distinct effect kind", TriggerEffectKind::FOLLOW != TriggerEffectKind::MOVE);
 
+	// Random (1912) / Advanced Random (2068): weighted pick and key 152 pairs.
+	const std::vector<double> random_weights = { 30.0, 70.0 };
+	expect_true("random roll below chance picks the hit group", pick_weighted(random_weights, 0.29) == 0);
+	expect_true("random roll at chance picks the miss group", pick_weighted(random_weights, 0.30) == 1);
+	expect_true("random zero weight is never picked", pick_weighted({ 0.0, 5.0 }, 0.0) == 1);
+	expect_true("random without weight picks nothing", pick_weighted({ 0.0 }, 0.5) == -1);
+	const std::vector<ChancePair> pairs = parse_chance_pairs("12.40.7.60.0.5.9.0");
+	expect_true("adv random keeps positive group/weight pairs", pairs.size() == 2);
+	expect_true("adv random first pair", pairs.size() == 2 && pairs[0].group == 12 && pairs[0].weight == 40.0);
+	expect_true("adv random second pair", pairs.size() == 2 && pairs[1].group == 7 && pairs[1].weight == 60.0);
+
 	// Move lock to player (keys 58/59, mods 143/144): a locked axis takes the
 	// player's movement times the mod and drops the eased offset.
 	const Vector2 lock_x = move_lock_step(Vector2(5.0, 7.0), Vector2(20.0, -3.0), true, false, Vector2(1.0, 1.0));

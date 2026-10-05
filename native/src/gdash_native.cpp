@@ -132,6 +132,7 @@ enum class TriggerEffectKind : int32_t {
 	COUNT,              // 1611 Count (armed when passed; fires when the item reaches key 77)
 	INSTANT_COUNT,      // 1811 Instant Count (compares the item once, when passed)
 	ANIMATE,            // 1585 Animate (plays monster animation key 76 on the target group)
+	RANDOM,             // 1912 Random / 2068 Advanced Random (spawns one weighted group)
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -456,6 +457,8 @@ struct TriggerEffect {
 	double teleport_rotation = 0.0;       // 6
 	Vector2 move_px;             // 901: keys 28/29 in pixels
 	bool move_lock_x = false;     // 901: key 58, lock to player X
+	std::vector<String> chance_groups;  // 1912 keys 51/71, 2068 key 152 groups
+	std::vector<double> chance_weights; // 1912 key 10 chance and 100 - chance, 2068 key 152 weights
 	bool move_lock_y = false;     // 901: key 59, lock to player Y
 	Vector2 move_mod = Vector2(1, 1); // 901: keys 143/144, scale the locked movement
 	Vector2 follow_mod = Vector2(1.0, 1.0); // 1347: keys 72/73 (X/Y multipliers)
@@ -498,6 +501,57 @@ struct TriggerEffect {
 	bool sfx_loop = false;       // 3602: key 404 (Loop)
 	int32_t gravity_mode = GRAVITY_PORTAL_DOWN; // 10/11/2926, or "gravity_mode"
 };
+
+// Random triggers. Keys from gmdkit data/csv/prop_table.csv: 1912 key 10
+// trigger.random.CHANCE (percent), key 51 TRUE_ID (spawned on a hit), key 71
+// FALSE_ID (otherwise); 2068 key 152 trigger.adv_random.TARGETS, "group.weight"
+// pairs (ChanceTriggerGameObject::m_chanceObjects in the 2.206 headers,
+// CallocGD/GD-2.206-Decompiled headers/Common/ChanceObject.h).
+struct ChancePair {
+	int group = 0;
+	double weight = 0.0;
+};
+
+static std::vector<ChancePair> parse_chance_pairs(const std::string &raw) {
+	std::vector<ChancePair> pairs;
+	std::vector<std::string> parts;
+	std::string current;
+	for (char c : raw) {
+		if (c == '.' || c == ',') {
+			parts.push_back(current);
+			current.clear();
+		} else {
+			current.push_back(c);
+		}
+	}
+	parts.push_back(current);
+	for (size_t i = 0; i + 1 < parts.size(); i += 2) {
+		const int group = std::atoi(parts[i].c_str());
+		const double weight = std::atof(parts[i + 1].c_str());
+		if (group > 0 && weight > 0.0) pairs.push_back({ group, weight });
+	}
+	return pairs;
+}
+
+// Picks the entry whose cumulative weight first exceeds roll01 * total, or
+// -1 when nothing can be picked. roll01 is in [0, 1).
+static int pick_weighted(const std::vector<double> &weights, double roll01) {
+	double total = 0.0;
+	for (double w : weights) total += Math::max(0.0, w);
+	if (total <= 0.0) return -1;
+	const double target = roll01 * total;
+	double running = 0.0;
+	for (size_t i = 0; i < weights.size(); ++i) {
+		const double w = Math::max(0.0, weights[i]);
+		if (w <= 0.0) continue;
+		running += w;
+		if (target < running) return static_cast<int>(i);
+	}
+	for (size_t i = weights.size(); i > 0; --i) {
+		if (weights[i - 1] > 0.0) return static_cast<int>(i - 1);
+	}
+	return -1;
+}
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
 	std::vector<String> groups;
@@ -828,6 +882,38 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		// key 51 (target group) and key 76 (animation ID).
 		case 1585: effect.kind = TriggerEffectKind::ANIMATE; break;
 		case 1268: effect.kind = TriggerEffectKind::SPAWN; break;
+		case 1912: {
+			effect.kind = TriggerEffectKind::RANDOM;
+			const double chance = Math::clamp(prop_float(properties, "10", 50.0), 0.0, 100.0);
+			const int hit = String(properties.get("51", String("0"))).to_int();
+			const int miss = String(properties.get("71", String("0"))).to_int();
+			if (hit > 0) {
+				effect.chance_groups.push_back(String("g_") + String::num_int64(hit));
+				effect.chance_weights.push_back(chance);
+			}
+			if (miss > 0) {
+				effect.chance_groups.push_back(String("g_") + String::num_int64(miss));
+				effect.chance_weights.push_back(100.0 - chance);
+			}
+			// A one-sided random still rolls: a miss spawns nothing.
+			if (hit > 0 && miss <= 0) {
+				effect.chance_groups.push_back(String());
+				effect.chance_weights.push_back(100.0 - chance);
+			} else if (hit <= 0 && miss > 0) {
+				effect.chance_groups.insert(effect.chance_groups.begin(), String());
+				effect.chance_weights.insert(effect.chance_weights.begin(), chance);
+			}
+			break;
+		}
+		case 2068: {
+			effect.kind = TriggerEffectKind::RANDOM;
+			const CharString raw = String(properties.get("152", String())).utf8();
+			for (const ChancePair &pair : parse_chance_pairs(std::string(raw.get_data()))) {
+				effect.chance_groups.push_back(String("g_") + String::num_int64(pair.group));
+				effect.chance_weights.push_back(pair.weight);
+			}
+			break;
+		}
 		case 1616: effect.kind = TriggerEffectKind::STOP; break;
 		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
 		case 1613: effect.kind = TriggerEffectKind::SHOW; break;
@@ -1697,6 +1783,14 @@ class NativeTriggerRuntime : public RefCounted {
 				}
 				for (const String &group : effect.target_groups) {
 					schedule_group(StringName(group), delay, player);
+				}
+				break;
+			}
+			case TriggerEffectKind::RANDOM: {
+				const double roll = static_cast<double>(std::rand() % 1000000) / 1000000.0;
+				const int picked = pick_weighted(effect.chance_weights, roll);
+				if (picked >= 0 && !effect.chance_groups[picked].is_empty()) {
+					schedule_group(StringName(effect.chance_groups[picked]), 0.0, player);
 				}
 				break;
 			}

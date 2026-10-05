@@ -150,6 +150,14 @@ func _ready() -> void:
 		var packed_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
 		_expect("Native physics packed cube gravity falls", absf(packed_res[3] - (Player.GRAVITY / 60.0)) < 0.1)
 
+	# Random triggers (1912/2068): GDScript twin of native pick_weighted, with
+	# the same expectations as native/tests/test_trigger_effect_parse.cpp.
+	var random_weights := PackedFloat64Array([30.0, 70.0])
+	_expect("Random roll below chance picks the hit group", RandomTriggerComponent.pick_weighted(random_weights, 0.29) == 0)
+	_expect("Random roll at chance picks the miss group", RandomTriggerComponent.pick_weighted(random_weights, 0.30) == 1)
+	_expect("Random zero weight is never picked", RandomTriggerComponent.pick_weighted(PackedFloat64Array([0.0, 5.0]), 0.0) == 1)
+	_expect("Random without weight picks nothing", RandomTriggerComponent.pick_weighted(PackedFloat64Array([0.0]), 0.5) == -1)
+
 	# HSV test on white base (preventing glow/white turning red)
 	var white_test_channel := ColorChannelData.new()
 	white_test_channel.color = Color.WHITE
