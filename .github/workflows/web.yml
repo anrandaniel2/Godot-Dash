@@ -156,11 +156,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq glslang-tools pkg-config unzip >/dev/null
           df -h /
-          rm -rf hogdot-src
-          git clone --filter=blob:none --no-checkout https://github.com/hogdanish/hogdot.git hogdot-src
-          git -C hogdot-src fetch --depth 1 origin "$HOGDOT_COMMIT"
-          git -C hogdot-src checkout FETCH_HEAD
-          cd hogdot-src
+          # Clone outside the project: an engine checkout under res:// gets
+          # scanned by the export and packed into index.pck (it doubled the
+          # web build, 29 MB -> 64 MB, on every template cache miss).
+          HOGDOT_SRC="$RUNNER_TEMP/hogdot-src"
+          rm -rf "$HOGDOT_SRC"
+          git clone --filter=blob:none --no-checkout https://github.com/hogdanish/hogdot.git "$HOGDOT_SRC"
+          git -C "$HOGDOT_SRC" fetch --depth 1 origin "$HOGDOT_COMMIT"
+          git -C "$HOGDOT_SRC" checkout FETCH_HEAD
+          cd "$HOGDOT_SRC"
           # No build_profile. The published profile disables Line2D, physics
           # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
           scons platform=web target=template_release arch=wasm32 \
@@ -175,9 +179,11 @@ jobs:
             echo "::error::Unstripped template is still missing Line2D"
             exit 1
           fi
-          mkdir -p ../hogdot-templates
-          cp bin/godot.web.template_release.wasm32.dlink.zip ../hogdot-templates/web_dlink_release.zip
-          ls -lh ../hogdot-templates/web_dlink_release.zip
+          mkdir -p "$GITHUB_WORKSPACE/hogdot-templates"
+          cp bin/godot.web.template_release.wasm32.dlink.zip "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
+          ls -lh "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$HOGDOT_SRC"
 
       - name: Install hogdot editor and point the Web preset at it
         run: |
