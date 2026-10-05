@@ -69,9 +69,19 @@ jobs:
           import json, os, sys, urllib.request, urllib.parse
           lid = int(os.environ["LEVEL_ID"])
           UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"}
+          RELAY = "https://gddash.anrandaniel2.workers.dev/?url="
           def get(url, data=None, headers=UA):
-              req = urllib.request.Request(url, data=data, headers=headers)
-              return urllib.request.urlopen(req, timeout=180).read()
+              # GDHistory and RobTop answer 403 to GitHub runner IPs; go through
+              # the project's own relay, as the web build does.
+              last = None
+              for target in (url, RELAY + urllib.parse.quote(url, safe="")):
+                  try:
+                      req = urllib.request.Request(target, data=data, headers=headers)
+                      return urllib.request.urlopen(req, timeout=180).read()
+                  except Exception as e:
+                      last = e
+                      print("failed", target[:90], repr(e))
+              raise last
           errors = []
           try:
               info = json.loads(get(f"https://history.geometrydash.eu/api/v1/level/{lid}/"))
