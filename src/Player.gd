@@ -34,6 +34,10 @@ const SPEED := Vector2(1250.0, 2395.0)
 const GRAVITY_PORTAL_LAUNCH := 0.42
 const SPEED_MINI := Vector2(1250.0, 1600.0)
 const SPEED_BIG := Vector2(1250.0, 3000.0)
+## Testing fly mode ([member Config.fly_mode]): arrow-key speed in px/s, and
+## the multiplier while Shift is held.
+const FLY_MODE_SPEED: float = 1250.0
+const FLY_MODE_FAST_MULTIPLIER: float = 3.0
 const TERMINAL_VELOCITY := Vector2(0.0, 3000.0)
 const FLY_TERMINAL_VELOCITY := Vector2(0.0, 1800.0)
 const FLY_GRAVITY_MULTIPLIER: float = 0.5
@@ -253,6 +257,11 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	if not _should_process():
+		return
+	# Testing fly mode: no auto-run, no gravity, no collision, no replay
+	# frames. Replays always play back with normal physics.
+	if Config.fly_mode and not in_replay:
+		_fly_mode_step(delta)
 		return
 
 	# Get velocity
@@ -568,6 +577,27 @@ func get_spider_trail_global_position() -> Vector2:
 
 func has_just_spawned() -> bool:
 	return _just_spawned
+
+
+## One tick of the testing fly mode: the arrow keys move the player freely
+## through blocks and hazards. Position is set directly, so the collision
+## layers and mask stay untouched; kill colliders are ignored while it is on.
+func _fly_mode_step(delta: float) -> void:
+	var direction := Vector2(
+			float(Input.is_physical_key_pressed(KEY_RIGHT)) - float(Input.is_physical_key_pressed(KEY_LEFT)),
+			float(Input.is_physical_key_pressed(KEY_DOWN)) - float(Input.is_physical_key_pressed(KEY_UP)),
+	)
+	var fly_speed: float = FLY_MODE_SPEED
+	if Input.is_physical_key_pressed(KEY_SHIFT):
+		fly_speed *= FLY_MODE_FAST_MULTIPLIER
+	velocity = Vector2.ZERO
+	if direction != Vector2.ZERO:
+		position += direction.normalized() * fly_speed * delta
+
+
+## Whether touching a solid or hazard may kill the player right now.
+func _can_die_on_contact() -> bool:
+	return _spider_dash_frames == 0 and not Config.noclip and not Config.fly_mode
 
 
 func _should_process() -> bool:
@@ -1555,12 +1585,12 @@ func _handle_checkpoint_placement(practice_mode: bool = LevelManager.practice_mo
 
 
 func _on_kill_collider_solid_body_entered(_body: Node2D) -> void:
-	if _spider_dash_frames == 0 and not Config.noclip:
+	if _can_die_on_contact():
 		_death_animator.play("DeathAnimation")
 
 
 func _on_kill_collider_hazard_area_entered(_area: Area2D) -> void:
-	if _spider_dash_frames == 0 and not Config.noclip:
+	if _can_die_on_contact():
 		_death_animator.play("DeathAnimation")
 
 

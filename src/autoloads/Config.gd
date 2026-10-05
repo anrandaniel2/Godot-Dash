@@ -114,6 +114,10 @@ enum ParticlePreprocessing {
 @export var show_percentage: bool = true
 @export var click_on_steps: bool = true
 @export var noclip: bool = false
+## Testing aid for hard levels: the player stops auto-running, ignores gravity
+## and collision, cannot die, and is steered with the arrow keys (Shift for
+## faster). Not recorded into replays.
+@export var fly_mode: bool = false
 
 # Practice
 @export_subgroup("Practice")
@@ -267,6 +271,7 @@ func _init():
 	# Gameplay
 	click_on_steps = config_file.get_value("Gameplay", "click_on_steps", click_on_steps)
 	noclip = config_file.get_value("Gameplay", "noclip", noclip)
+	fly_mode = config_file.get_value("Gameplay", "fly_mode", fly_mode)
 
 	# Practice
 	automatic_checkpoints = config_file.get_value("Practice", "automatic_checkpoints", automatic_checkpoints)
@@ -377,6 +382,7 @@ func save() -> void:
 	# Gameplay
 	config_file.set_value("Gameplay", "click_on_steps", click_on_steps)
 	config_file.set_value("Gameplay", "noclip", noclip)
+	config_file.set_value("Gameplay", "fly_mode", fly_mode)
 
 	# Practice
 	config_file.set_value("Practice", "automatic_checkpoints", automatic_checkpoints)
