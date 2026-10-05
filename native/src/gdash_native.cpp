@@ -68,6 +68,7 @@
 #include <vector>
 
 #include "gravity_portal.h"
+#include "gd_physics_constants.h"
 
 namespace godot {
 
@@ -279,10 +280,9 @@ static double gd_teleport_force_angle(bool has_destination, int64_t object_id,
 	return flip + (portal_kind ? 180.0 : 90.0) - destination_rotation;
 }
 
-// GD velocity (x = platformer X, y = m_yVelocity, y up) -> px/s. Calibrated
-// from the cube jump: GD 11.180032 vs Player.SPEED.y 2395 (hypothesis: the
-// project's tuning is linear in GD's units).
-static constexpr double GD_VELOCITY_TO_PX = 2395.0 / 11.180032;
+// GD velocity (x = platformer X, y = m_yVelocity, y up) -> px/s: the GD frame
+// law's dtSlow * 60 fps * 128/30 px per unit (gd_physics_constants.h).
+static constexpr double GD_VELOCITY_TO_PX = gd_physics::VELOCITY_TO_PX;
 
 // Static force (keys 345/346/443). Returns the new GD velocity; X changes only
 // for platformer players, as in GD.
@@ -5365,12 +5365,12 @@ public:
 			gravity_flip *= -1.0;
 		}
 
-		static constexpr double GRAVITY = 10600.0;
+		static constexpr double GRAVITY = gd_physics::GRAVITY_PX;
 		static constexpr double FLY_GRAVITY_MULTIPLIER = 0.5;
 		static constexpr double UFO_GRAVITY_MULTIPLIER = 0.7;
 		static constexpr double SPIDER_GRAVITY_MULTIPLIER = 0.65;
 		static constexpr double FLY_TERMINAL_VELOCITY_Y = 1800.0;
-		static constexpr double TERMINAL_VELOCITY_Y = 3000.0;
+		static constexpr double TERMINAL_VELOCITY_Y = gd_physics::TERMINAL_PX;
 		static constexpr double PLATFORMER_ACCELERATION = 5.0;
 
 		if (!has_dash_control) {
@@ -5381,7 +5381,7 @@ public:
 				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * FLY_GRAVITY_MULTIPLIER);
 				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
 			} else if (internal_gamemode == 4 /*WAVE*/) {
-				local_velocity.y = static_cast<real_t>(1250.0 * gravity_flip * gravity_multiplier * jump_state * -1.0);
+				local_velocity.y = static_cast<real_t>(gd_physics::X_SPEED_PX * gravity_flip * gravity_multiplier * jump_state * -1.0);
 				if (speed_multiplier > 0.0) {
 					local_velocity.y = static_cast<real_t>(local_velocity.y * speed_multiplier);
 				}
@@ -5398,6 +5398,8 @@ public:
 					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER);
 				} else {
 					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier);
+					// GD caps the cube's fall at 15 units per frame (updateJump).
+					local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 				}
 			}
 		}
@@ -5413,7 +5415,7 @@ public:
 
 		// Robot hold jump
 		if (jump_state == 1 && robot_timer_time_left > 0.0 && internal_gamemode == 5 /*ROBOT*/) {
-			local_velocity.y = static_cast<real_t>(1250.0 * gravity_flip * -1.0);
+			local_velocity.y = static_cast<real_t>(gd_physics::X_SPEED_PX * gravity_flip * -1.0);
 		}
 
 		int64_t instant_jump_mode = -1;
@@ -5485,7 +5487,7 @@ public:
 		const Vector2 slope_velocity = params.get("slope_velocity", Vector2());
 		const int64_t internal_gamemode = params.get("internal_gamemode", 0);
 		const int64_t player_scale = params.get("player_scale", 1);
-		const Vector2 speed = params.get("speed", Vector2(1250.0, 2395.0));
+		const Vector2 speed = params.get("speed", Vector2(static_cast<real_t>(gd_physics::X_SPEED_PX), static_cast<real_t>(gd_physics::JUMP_PX)));
 		const double speed_multiplier = params.get("speed_multiplier", 1.0);
 		const double gravity_flip = params.get("gravity_flip", 1.0);
 		const double gravity_multiplier = params.get("gravity_multiplier", 1.0);

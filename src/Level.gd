@@ -23,11 +23,13 @@ const GD_GAMEPLAY_META: StringName = &"gd_gameplay"
 
 const START_SPEED: Array[float] = [
 	0.0, # 0x
-	0.807, # 0.5x
+	# GD playerSpeed * timeMod over the 1x product (0.9 * 5.770002), see
+	# native/src/gd_physics_constants.h.
+	0.806085, # 0.5x: 0.7 * 5.980002
 	1.0, # 1x
-	1.243, # 2x
-	1.502, # 3x
-	1.849, # 4x
+	1.243405, # 2x: 1.1 * 5.870002
+	1.502022, # 3x: 1.3 * 6.000002
+	1.848642, # 4x: 1.6 * 6.000002
 	2.431, # 5x
 ]
 

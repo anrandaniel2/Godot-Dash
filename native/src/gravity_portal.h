@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include "gd_physics_constants.h"
 
 // Modes match GravityFlipChangerComponent.FlipState.
 // DOWN is the blue portal (object 10, atlas portal_01), UP the yellow portal
@@ -55,7 +56,7 @@ inline GravityPortalResult compute_gravity_portal(double current_flip, double lo
 	}
 	out.changed = true;
 	double reversed = local_velocity_y * GRAVITY_PORTAL_SPEED_KEEP;
-	constexpr double terminal = 3000.0;
+	constexpr double terminal = gd_physics::TERMINAL_PX;
 	if (reversed > terminal) {
 		reversed = terminal;
 	}

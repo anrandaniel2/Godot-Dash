@@ -48,7 +48,7 @@ int main() {
 	expect_close("green portal halves speed, keeps direction", toggled.local_velocity_y, -250.0);
 
 	const GravityPortalResult capped = compute_gravity_portal(1.0, -8000.0, GRAVITY_PORTAL_UP);
-	expect_close("kept speed is terminal-clamped", capped.local_velocity_y, -3000.0);
+	expect_close("kept speed is terminal-clamped", capped.local_velocity_y, -3456.0);
 
 	const GravityPortalResult slow = compute_gravity_portal(1.0, 100.0, GRAVITY_PORTAL_UP);
 	expect_close("slow speed gets the nudge into the new fall", slow.local_velocity_y, -180.0);

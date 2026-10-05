@@ -113,18 +113,18 @@ func _ready() -> void:
 		}
 		var res_cube: Dictionary = native.call(&"compute_player_velocity", p_cube)
 		var v_cube: Vector2 = res_cube["velocity"]
-		_expect("Native physics cube gravity falls", absf(v_cube.y - (10600.0 / 60.0)) < 0.1)
+		_expect("Native physics cube gravity falls", absf(v_cube.y - (Player.GRAVITY / 60.0)) < 0.1)
 
 		var p_wave := {
 			"delta": 1.0 / 60.0,
-			"previous_velocity": Vector2(1250, 0),
+			"previous_velocity": Vector2(Player.SPEED.x, 0),
 			"direction": 1,
 			"jump_state": 1,
 			"internal_gamemode": 4,
 		}
 		var res_wave: Dictionary = native.call(&"compute_player_velocity", p_wave)
 		var v_wave: Vector2 = res_wave["velocity"]
-		_expect("Native physics wave ascends at -1250", absf(v_wave.y - (-1250.0)) < 0.1)
+		_expect("Native physics wave ascends at the GDScript x speed", absf(v_wave.y + Player.SPEED.x) < 0.1)
 
 		var cls: Dictionary = native.call(&"classify_collision", deg_to_rad(5.0), deg_to_rad(45.0))
 		_expect("Native physics classify 5 deg as floor", bool(cls["is_floor"]))
@@ -142,13 +142,13 @@ func _ready() -> void:
 		p_packed[4] = 0.0
 		p_packed[11] = 0.0 # CUBE
 		p_packed[12] = 1.0
-		p_packed[13] = 1250.0
-		p_packed[14] = 2395.0
+		p_packed[13] = Player.SPEED.x
+		p_packed[14] = Player.SPEED.y
 		p_packed[15] = 1.0
 		p_packed[16] = 1.0
 		p_packed[17] = 1.0
 		var packed_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
-		_expect("Native physics packed cube gravity falls", absf(packed_res[3] - (10600.0 / 60.0)) < 0.1)
+		_expect("Native physics packed cube gravity falls", absf(packed_res[3] - (Player.GRAVITY / 60.0)) < 0.1)
 
 	# HSV test on white base (preventing glow/white turning red)
 	var white_test_channel := ColorChannelData.new()

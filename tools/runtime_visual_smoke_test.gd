@@ -1222,14 +1222,14 @@ func _test_native_core() -> void:
 	p_packed.resize(30)
 	p_packed[0] = 1.0 / 60.0
 	p_packed[3] = 1.0
-	p_packed[13] = 1250.0
-	p_packed[14] = 2395.0
+	p_packed[13] = Player.SPEED.x
+	p_packed[14] = Player.SPEED.y
 	p_packed[15] = 1.0
 	p_packed[16] = 1.0
 	p_packed[17] = 1.0
 	var packed_physics_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
 	assert(packed_physics_res.size() == 11, "native smoke: packed physics result size")
-	assert(absf(packed_physics_res[3] - (10600.0 / 60.0)) < 0.1, "native smoke: packed physics gravity fall")
+	assert(absf(packed_physics_res[3] - (Player.GRAVITY / 60.0)) < 0.1, "native smoke: packed physics gravity fall")
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
 
 

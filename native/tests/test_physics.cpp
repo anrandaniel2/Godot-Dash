@@ -2,6 +2,8 @@
 #include <iostream>
 #include <algorithm>
 
+#include "../src/gd_physics_constants.h"
+
 struct Vector2D {
 	double x = 0.0;
 	double y = 0.0;
@@ -16,12 +18,12 @@ struct Vector2D {
 	}
 };
 
-static constexpr double PLAYER_GRAVITY = 10600.0;
+static constexpr double PLAYER_GRAVITY = gd_physics::GRAVITY_PX;
 static constexpr double PLAYER_FLY_GRAVITY_MULTIPLIER = 0.5;
 static constexpr double PLAYER_UFO_GRAVITY_MULTIPLIER = 0.7;
 static constexpr double PLAYER_SPIDER_GRAVITY_MULTIPLIER = 0.65;
 static constexpr double PLAYER_FLY_TERMINAL_VELOCITY_Y = 1800.0;
-static constexpr double PLAYER_TERMINAL_VELOCITY_Y = 3000.0;
+static constexpr double PLAYER_TERMINAL_VELOCITY_Y = gd_physics::TERMINAL_PX;
 static constexpr double PLAYER_PLATFORMER_ACCELERATION = 5.0;
 
 struct PlayerPhysicsState {
@@ -36,7 +38,7 @@ struct PlayerPhysicsState {
 	Vector2D slope_velocity;
 	int64_t internal_gamemode = 0;
 	int64_t player_scale = 1;
-	Vector2D speed = Vector2D(1250.0, 2395.0);
+	Vector2D speed = Vector2D(gd_physics::X_SPEED_PX, gd_physics::JUMP_PX);
 	double speed_multiplier = 1.0;
 	double gravity_flip = 1.0;
 	double gravity_multiplier = 1.0;
@@ -112,7 +114,7 @@ PlayerPhysicsResult compute_player_velocity_core(const PlayerPhysicsState &state
 			local_velocity.y += PLAYER_GRAVITY * state.delta * gravity_flip * state.gravity_multiplier * PLAYER_FLY_GRAVITY_MULTIPLIER;
 			local_velocity.y = clamp_val(local_velocity.y, -PLAYER_FLY_TERMINAL_VELOCITY_Y, PLAYER_FLY_TERMINAL_VELOCITY_Y);
 		} else if (state.internal_gamemode == 4 /*WAVE*/) {
-			local_velocity.y = 1250.0 * gravity_flip * state.gravity_multiplier * state.jump_state * -1.0;
+			local_velocity.y = gd_physics::X_SPEED_PX * gravity_flip * state.gravity_multiplier * state.jump_state * -1.0;
 			if (state.speed_multiplier > 0.0) {
 				local_velocity.y *= state.speed_multiplier;
 			}
@@ -129,6 +131,7 @@ PlayerPhysicsResult compute_player_velocity_core(const PlayerPhysicsState &state
 				local_velocity.y += PLAYER_GRAVITY * state.delta * gravity_flip * state.gravity_multiplier * PLAYER_UFO_GRAVITY_MULTIPLIER;
 			} else {
 				local_velocity.y += PLAYER_GRAVITY * state.delta * gravity_flip * state.gravity_multiplier;
+				local_velocity.y = clamp_val(local_velocity.y, -PLAYER_TERMINAL_VELOCITY_Y, PLAYER_TERMINAL_VELOCITY_Y);
 			}
 		}
 	}
@@ -144,7 +147,7 @@ PlayerPhysicsResult compute_player_velocity_core(const PlayerPhysicsState &state
 
 	// Robot hold jump
 	if (state.jump_state == 1 && state.robot_timer_time_left > 0.0 && state.internal_gamemode == 5 /*ROBOT*/) {
-		local_velocity.y = 1250.0 * gravity_flip * -1.0;
+		local_velocity.y = gd_physics::X_SPEED_PX * gravity_flip * -1.0;
 	}
 
 	int64_t instant_jump_mode = -1;
@@ -263,7 +266,24 @@ int main() {
 		PlayerPhysicsResult res = compute_player_velocity_core(p);
 		double expected_y = PLAYER_GRAVITY * (1.0 / 60.0);
 		check_true("Cube falls with gravity", std::abs(res.velocity.y - expected_y) < 1e-2);
-		check_true("Cube horizontal velocity set", std::abs(res.velocity.x - 1250.0) < 1e-2);
+		check_true("Cube horizontal velocity set", std::abs(res.velocity.x - gd_physics::X_SPEED_PX) < 1e-2);
+	}
+
+	// GD constants (gd_physics_constants.h) against GD's measured values.
+	{
+		using namespace gd_physics;
+		const double units_per_second = X_SPEED_PX / PX_PER_UNIT;
+		check_true("1x speed is Pathfinder's 311.58 u/s", std::abs(units_per_second - 311.580093712804) < 1e-3);
+		check_true("4x speed is 576.0 u/s", std::abs(units_per_second * speed_ratio(4) - 576.00020058307177) < 1e-3);
+		check_true("0.5x speed is 251.16 u/s", std::abs(units_per_second * speed_ratio(0) - 251.16007972276924) < 1e-3);
+		const double airtime = 2.0 * JUMP_PX / GRAVITY_PX;
+		check_true("cube airtime is 26/60 s within a frame", std::abs(airtime - 26.0 / 60.0) < 1.0 / 60.0);
+		const double peak_blocks = JUMP_PX * JUMP_PX / (2.0 * GRAVITY_PX) / 128.0;
+		check_true("cube jump peaks at 2.17 blocks", std::abs(peak_blocks - 2.174) < 0.01);
+		PlayerPhysicsState p;
+		p.previous_velocity = Vector2D(X_SPEED_PX, TERMINAL_PX);
+		PlayerPhysicsResult res = compute_player_velocity_core(p);
+		check_true("cube fall capped at 15 units per frame", std::abs(res.velocity.y - TERMINAL_PX) < 1e-6);
 	}
 
 	// 2. Cube instant jump
@@ -303,12 +323,12 @@ int main() {
 		p.jump_state = 1;
 		p.internal_gamemode = 4; // WAVE
 		PlayerPhysicsResult res = compute_player_velocity_core(p);
-		check_true("Wave rising at 45 deg (-1250)", std::abs(res.velocity.y - (-1250.0)) < 1e-2);
-		check_true("Wave horizontal (1250)", std::abs(res.velocity.x - 1250.0) < 1e-2);
+		check_true("Wave rising at 45 deg", std::abs(res.velocity.y - (-gd_physics::X_SPEED_PX)) < 1e-2);
+		check_true("Wave horizontal (1250)", std::abs(res.velocity.x - gd_physics::X_SPEED_PX) < 1e-2);
 
 		p.jump_state = -1;
 		res = compute_player_velocity_core(p);
-		check_true("Wave falling at 45 deg (+1250)", std::abs(res.velocity.y - 1250.0) < 1e-2);
+		check_true("Wave falling at 45 deg", std::abs(res.velocity.y - gd_physics::X_SPEED_PX) < 1e-2);
 	}
 
 	// 5. Ball gravity flip on jump
@@ -388,7 +408,7 @@ int main() {
 		p.internal_gamemode = 5; // ROBOT
 		p.robot_timer_time_left = 0.2;
 		PlayerPhysicsResult res = compute_player_velocity_core(p);
-		check_true("Robot holding jump gives -1250 boost", std::abs(res.velocity.y - (-1250.0)) < 1e-2);
+		check_true("Robot holding jump gives the x-speed boost", std::abs(res.velocity.y - (-gd_physics::X_SPEED_PX)) < 1e-2);
 	}
 
 	// 10. Mini and Big wave vertical speed scaling
@@ -401,11 +421,11 @@ int main() {
 		p.internal_gamemode = 4; // WAVE
 		p.player_scale = 0; // MINI
 		PlayerPhysicsResult res_mini = compute_player_velocity_core(p);
-		check_true("Mini wave has 2x vertical speed (-2500)", std::abs(res_mini.velocity.y - (-2500.0)) < 1e-2);
+		check_true("Mini wave has 2x vertical speed ", std::abs(res_mini.velocity.y - (-2.0 * gd_physics::X_SPEED_PX)) < 1e-2);
 
 		p.player_scale = 2; // BIG
 		PlayerPhysicsResult res_big = compute_player_velocity_core(p);
-		check_true("Big wave has 0.5x vertical speed (-625)", std::abs(res_big.velocity.y - (-625.0)) < 1e-2);
+		check_true("Big wave has 0.5x vertical speed ", std::abs(res_big.velocity.y - (-0.5 * gd_physics::X_SPEED_PX)) < 1e-2);
 	}
 
 	// 11. UFO jump impulse

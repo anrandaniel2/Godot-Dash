@@ -28,21 +28,26 @@ enum PlayerScale {
 }
 
 #region Constants
-const GRAVITY: float = 10600
-const SPEED := Vector2(1250.0, 2395.0)
+## GD player constants in px/s, derived in native/src/gd_physics_constants.h
+## (GD frame law: dtSlow = 0.9 dt; 128 px per 30-unit block). x: 0.9 * 5.770002
+## * 60 u/s; jump: 11.180032 * 230.4; gravity: 0.958199 * 12441.6.
+const GRAVITY: float = 11921.53
+const SPEED := Vector2(1329.41, 2575.88)
 # Softer than the blue gravity pad's 0.706 bounce. Enough to leave the floor.
 ## Twin of native/src/gravity_portal.h: GD halves vertical speed through a
 ## gravity portal (PlayerObject::flipGravity) and a grounded player gets a
 ## small nudge into the new fall.
 const GRAVITY_PORTAL_SPEED_KEEP := 0.5
 const GRAVITY_PORTAL_NUDGE := 180.0
-const SPEED_MINI := Vector2(1250.0, 1600.0)
-const SPEED_BIG := Vector2(1250.0, 3000.0)
+## GD mini: jump times 0.8 (m_vehicleSize != 1).
+const SPEED_MINI := Vector2(1329.41, 2060.70)
+const SPEED_BIG := Vector2(1329.41, 3000.0)
 ## Testing fly mode ([member Config.fly_mode]): arrow-key speed in px/s, and
 ## the multiplier while Shift is held.
 const FLY_MODE_SPEED: float = 1250.0
 const FLY_MODE_FAST_MULTIPLIER: float = 3.0
-const TERMINAL_VELOCITY := Vector2(0.0, 3000.0)
+## GD caps the cube fall at 15 units per frame (15 * 230.4).
+const TERMINAL_VELOCITY := Vector2(0.0, 3456.0)
 const FLY_TERMINAL_VELOCITY := Vector2(0.0, 1800.0)
 const FLY_GRAVITY_MULTIPLIER: float = 0.5
 const UFO_GRAVITY_MULTIPLIER: float = 0.7
@@ -1012,6 +1017,7 @@ func _compute_velocity(
 				local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER
 			else:
 				local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier
+				local_velocity.y = clampf(local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
 	#endregion
 
 	var flying_gamemode_slope_boost: bool = internal_gamemode in [Gamemode.SHIP, Gamemode.SWING] and (

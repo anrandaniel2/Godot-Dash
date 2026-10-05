@@ -5,9 +5,9 @@ extends RefCounted
 ## transcribed in square3ang/CBFExtrapolate src/physics/gjbasegamelayer.cpp and
 ## cross-checked against gdsolver/gdsolver src/solver/solver.hpp.
 
-## GD velocity unit -> px/s, calibrated from the cube jump (GD 11.180032 vs
-## Player.SPEED.y 2395). Hypothesis: the project's tuning is linear in GD units.
-const GD_VELOCITY_TO_PX: float = 2395.0 / 11.180032
+## GD velocity unit -> px/s: 0.9 * 60 * 128 / 30 (native/src/gd_physics_constants.h,
+## VELOCITY_TO_PX). Player.SPEED.y is GD's 11.180032 jump times this.
+const GD_VELOCITY_TO_PX: float = 230.4
 const PORTAL_IDS: Array[int] = [38, 747, 749, 2064, 2902]
 
 
