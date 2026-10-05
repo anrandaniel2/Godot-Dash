@@ -104,7 +104,10 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
      match the panel. `DisplayServer.screen_get_refresh_rate()` is -1 on web; `display_refresh_hz()`
      also reads `screen.refreshRate` when the browser exposes it.
    - `html/head_include` wraps `navigator.gpu.requestAdapter` with `powerPreference:
-     'high-performance'` (Chrome on Windows currently ignores the hint). Keep
+     'high-performance'`. **Chrome on Windows ignores that hint** and always uses GPU 0
+     (usually the iGPU) — crbug 369219127. An AMD CPU + Intel dGPU therefore logs
+     `adapter=amd/rdna-2` until the user sets chrome.exe to High performance in Windows
+     Graphics settings or enables `chrome://flags/#force-high-performance-gpu`. Keep
      `rendering_method.web = mobile` (WebGPU); do not fall back to `gl_compatibility`.
    - `Config` forces `WINDOWED` (browsers require a user gesture for fullscreen) and runs a
      one-time bloom migration (`web_soft_glow`).
