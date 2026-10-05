@@ -923,6 +923,7 @@ class NativeTriggerRuntime : public RefCounted {
 	// missing; the player-visible behaviour is "attempt N starts from the
 	// imported table".
 	struct ChannelSnapshot {
+		ObjectID id;
 		Color color = Color(1.0f, 1.0f, 1.0f);
 		double alpha = 1.0;
 		double intensity = 1.0;
@@ -936,9 +937,12 @@ class NativeTriggerRuntime : public RefCounted {
 		bool copy_saturation_additive = false;
 		bool copy_value_additive = false;
 		bool copy_opacity = false;
-		Array hsv_shift;
+		double hsv0 = 0.0;
+		double hsv1 = 0.0;
+		double hsv2 = 0.0;
+		bool has_hsv = false;
 	};
-	HashMap<ObjectID, ChannelSnapshot> channel_start;
+	std::vector<ChannelSnapshot> channel_start;
 	bool have_level_start_colors = false;
 	Color start_background_color = Color(1.0f, 1.0f, 1.0f);
 	Color start_ground_color = Color(1.0f, 1.0f, 1.0f);
@@ -2629,6 +2633,7 @@ public:
 
 	static ChannelSnapshot capture_channel_snapshot(Object *data) {
 		ChannelSnapshot snap;
+		snap.id = data->get_instance_id();
 		snap.color = static_cast<Color>(data->get("color"));
 		snap.alpha = static_cast<double>(data->get("alpha"));
 		snap.intensity = static_cast<double>(data->get("intensity"));
@@ -2642,18 +2647,20 @@ public:
 		snap.copy_saturation_additive = static_cast<bool>(data->get("copy_saturation_additive"));
 		snap.copy_value_additive = static_cast<bool>(data->get("copy_value_additive"));
 		snap.copy_opacity = static_cast<bool>(data->get("copy_opacity"));
-		const Variant hsv = data->get("hsv_shift");
-		if (hsv.get_type() == Variant::ARRAY) {
-			snap.hsv_shift = Array(hsv).duplicate();
+		Array hsv = data->get("hsv_shift");
+		if (hsv.size() >= 3) {
+			snap.has_hsv = true;
+			snap.hsv0 = hsv[0];
+			snap.hsv1 = hsv[1];
+			snap.hsv2 = hsv[2];
 		}
 		return snap;
 	}
 
 	void restore_channel_snapshots() {
-		for (const KeyValue<ObjectID, ChannelSnapshot> &entry : channel_start) {
-			Object *data = ObjectDB::get_instance(entry.key);
+		for (const ChannelSnapshot &snap : channel_start) {
+			Object *data = ObjectDB::get_instance(snap.id);
 			if (!data) continue;
-			const ChannelSnapshot &snap = entry.value;
 			data->set("color", snap.color);
 			data->set("alpha", snap.alpha);
 			data->set("intensity", snap.intensity);
@@ -2667,7 +2674,14 @@ public:
 			data->set("copy_saturation_additive", snap.copy_saturation_additive);
 			data->set("copy_value_additive", snap.copy_value_additive);
 			data->set("copy_opacity", snap.copy_opacity);
-			data->set("hsv_shift", snap.hsv_shift.duplicate());
+			if (snap.has_hsv) {
+				Array hsv;
+				hsv.resize(3);
+				hsv.set(0, snap.hsv0);
+				hsv.set(1, snap.hsv1);
+				hsv.set(2, snap.hsv2);
+				data->set("hsv_shift", hsv);
+			}
 			data->emit_signal(StringName("changed"));
 		}
 	}
@@ -2685,7 +2699,13 @@ public:
 		if (!data || name.is_empty()) return;
 		const ObjectID id = data->get_instance_id();
 		channel_index[name] = id;
-		channel_start[id] = capture_channel_snapshot(data);
+		for (ChannelSnapshot &existing : channel_start) {
+			if (existing.id == id) {
+				existing = capture_channel_snapshot(data);
+				return;
+			}
+		}
+		channel_start.push_back(capture_channel_snapshot(data));
 	}
 	void set_group_members(const String &group, const Array &members) {
 		std::vector<ObjectID> ids;
