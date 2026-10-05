@@ -1249,6 +1249,35 @@ func _test_native_core() -> void:
 	var packed_physics_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
 	assert(packed_physics_res.size() == 11, "native smoke: packed physics result size")
 	assert(absf(packed_physics_res[3] - (10600.0 / 60.0)) < 0.1, "native smoke: packed physics gravity fall")
+
+	# 901 Lock to Player X (key 58): GDRweb MoveTrigger.applyTransform copies
+	# this tick's playerMovement onto a locked axis and ignores keys 28/29
+	# there. A lock-only move (28=0,29=0) used to no-op because apply_fade
+	# dropped a zero move_px. OuterSpace letterbox bars follow this way.
+	var lock_runtime: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
+	var lock_level := FakeLevel.new()
+	add_child(lock_level)
+	lock_runtime.call(&"bind_context", lock_level, null, null)
+	var lock_member := Node2D.new()
+	lock_member.position = Vector2(10.0, 20.0)
+	lock_member.add_to_group(&"g_1")
+	lock_level.add_child(lock_member)
+	lock_runtime.call(&"set_group_members", &"g_1", [lock_member])
+	var lock_player := Node2D.new()
+	lock_level.add_child(lock_player)
+	lock_runtime.call(&"register_packed_trigger", 10.0, 0.0, 0, 0, PackedStringArray(), 901,
+		{"1": "901", "51": "1", "58": "1", "28": "999", "29": "0", "10": "1.0"})
+	lock_runtime.call(&"finalize")
+	lock_runtime.call(&"advance", lock_player, 0.0, 20.0)
+	lock_player.position = Vector2(128.0, 64.0)
+	lock_runtime.call(&"tick", 0.5)
+	assert(is_equal_approx(lock_member.position.x, 138.0),
+		"native smoke: lock-to-player X did not copy the player's X")
+	assert(is_equal_approx(lock_member.position.y, 20.0),
+		"native smoke: lock-to-player X applied Move Y or player Y")
+	lock_runtime.call(&"reset")
+	lock_level.queue_free()
+
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
 
 

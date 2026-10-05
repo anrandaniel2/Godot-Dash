@@ -266,6 +266,12 @@ struct TriggerEffect {
 	std::vector<String> target_groups; // key 51, "g_N" names (dot/comma lists)
 	String center_group;               // key 71, "g_N" (rotate/scale/teleport centre)
 	Vector2 move_px;             // 901: keys 28/29 in pixels
+	// 901: keys 58/59. GDRweb MoveTrigger.lockToPlayerX/Y: while the fade
+	// runs, that axis copies the activating player's per-tick translation
+	// instead of keys 28/29. EffectGameObject::customObjectSetup for 901
+	// lists 58 and 59. 2.2 Lock to Camera / Mod X/Y (143/144) are unread.
+	bool lock_to_player_x = false;
+	bool lock_to_player_y = false;
 	double degrees = 0.0;        // 1346: keys 68 + 69*360
 	bool allow_self_rotation = true; // 1346: key 70 != "1"
 	Vector2 scale_factor = Vector2(1.0, 1.0); // 2067: keys 150/151 (multiplied)
@@ -658,6 +664,13 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 	}
 	switch (effect.kind) {
 		case TriggerEffectKind::MOVE:
+			// GD units to pixels; +Y in GD is up, +Y in Godot is down.
+			effect.move_px = Vector2(
+				static_cast<real_t>(prop_float(properties, "28", 0.0) * CELLS_TO_PX_X),
+				static_cast<real_t>(prop_float(properties, "29", 0.0) * CELLS_TO_PX_Y));
+			effect.lock_to_player_x = prop_bool(properties, "58");
+			effect.lock_to_player_y = prop_bool(properties, "59");
+			break;
 		case TriggerEffectKind::CAMERA_OFFSET:
 			// GD units to pixels; +Y in GD is up, +Y in Godot is down.
 			effect.move_px = Vector2(
@@ -901,6 +914,11 @@ class NativeTriggerRuntime : public RefCounted {
 		Ref<FastNoiseLite> noise;
 		double initial_shader_value = 0.0;
 		double target_shader_value = 1.0;
+		// 901 lock-to-player: last activating-player position and the
+		// per-tick delta snapshotted before apply_fade (which can rebuild).
+		Vector2 last_player_pos;
+		Vector2 player_delta;
+		bool have_player_pos = false;
 	};
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
@@ -1694,6 +1712,14 @@ private:
 			case TriggerEffectKind::ROTATE:
 				fade.members = resolve_effect_members(effect);
 				fade.pivot = resolve_pivot(effect);
+				if (effect.kind == TriggerEffectKind::MOVE
+						&& (effect.lock_to_player_x || effect.lock_to_player_y)) {
+					Node2D *player_node = Object::cast_to<Node2D>(ObjectDB::get_instance(player_id));
+					if (player_node) {
+						fade.last_player_pos = player_node->get_global_position();
+						fade.have_player_pos = true;
+					}
+				}
 				break;
 			case TriggerEffectKind::SCALE: {
 				fade.members = resolve_effect_members(effect);
@@ -1880,10 +1906,18 @@ private:
 	}
 
 	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta) {
-		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE) return;
+		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE
+				&& !(effect.kind == TriggerEffectKind::MOVE
+					&& (effect.lock_to_player_x || effect.lock_to_player_y))) {
+			return;
+		}
 		switch (effect.kind) {
 			case TriggerEffectKind::MOVE: {
-				const Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
+				Vector2 offset = effect.move_px * static_cast<real_t>(weight_delta);
+				// GDRweb MoveTrigger.applyTransform: a locked axis uses
+				// this tick's playerMovement, not movementAmount * moveX/Y.
+				if (effect.lock_to_player_x) offset.x = fade.player_delta.x;
+				if (effect.lock_to_player_y) offset.y = fade.player_delta.y;
 				if (offset == Vector2()) break;
 				Node2D *ui_root = Object::cast_to<Node2D>(ObjectDB::get_instance(ui_root_id));
 				for (ObjectID id : fade.members) {
@@ -3070,6 +3104,22 @@ public:
 					&& !fades[i].noise.is_null()) {
 				fades[i].linear_eased_weight += delta
 					/ (effect.duration > 0.0 ? effect.duration : 1.0);
+			}
+			if (effect.kind == TriggerEffectKind::MOVE
+					&& (effect.lock_to_player_x || effect.lock_to_player_y)) {
+				Node2D *player_node = Object::cast_to<Node2D>(ObjectDB::get_instance(fades[i].player));
+				if (player_node) {
+					const Vector2 pos = player_node->get_global_position();
+					if (fades[i].have_player_pos) {
+						fades[i].player_delta = pos - fades[i].last_player_pos;
+					} else {
+						fades[i].player_delta = Vector2();
+					}
+					fades[i].last_player_pos = pos;
+					fades[i].have_player_pos = true;
+				} else {
+					fades[i].player_delta = Vector2();
+				}
 			}
 			// Snapshot by value: apply_fade reaches back into GDScript
 			// (update_size/update_color/channel changed signals) which can

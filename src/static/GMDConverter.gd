@@ -54,6 +54,8 @@ const Prop := {
 	BLENDING = "17", # Color trigger: the Blending checkbox, flips the channel additive
 	MOVE_X = "28",
 	MOVE_Y = "29",
+	LOCK_TO_PLAYER_X = "58", # 901 Move: copy the player's X delta while the fade runs
+	LOCK_TO_PLAYER_Y = "59", # 901 Move: copy the player's Y delta while the fade runs
 	TARGET_COLOR_ID = "23",
 	DEGREES = "68",
 	LEGACY_GROUP = "26", # pre-1.9 single group key, folded into GROUPS on import
@@ -1328,6 +1330,11 @@ static func _components_from_properties(
 							float(properties.get(Prop.MOVE_X, "0")) / GD_CELL_SIZE,
 							float(properties.get(Prop.MOVE_Y, "0")) / GD_CELL_SIZE,
 					),
+					# Keys 58/59: GDRweb MoveTrigger.lockToPlayerX/Y. A locked
+					# axis copies the activating player's per-tick translation
+					# for the move duration instead of MOVE_X / MOVE_Y.
+					"lock_to_player_x": properties.get(Prop.LOCK_TO_PLAYER_X, "0") == "1",
+					"lock_to_player_y": properties.get(Prop.LOCK_TO_PLAYER_Y, "0") == "1",
 				}
 		1007: # Alpha trigger
 			if "AlphaChangerComponent" in supported:

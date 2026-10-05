@@ -72,8 +72,10 @@ Camera-*trigger* parity is still in scope — 2.2 levels depend on it — but it
 | --- | --- |
 | "Colours look slightly off" in the multicolour section | channel resolution (§5): copy chains, HSV shifts, LBG (1007), `Color8` vs `Color/255` linear mismatch, native-vs-GDScript divergence |
 | "We just don't see the boss" | objects were **skipped at import** (unsupported ID, missing scene/atlas frame), hidden by an imported alpha/toggle, wrong z-layer/order, or culled — start from `ImportReport.skipped_ids` (§3) |
-| "Cinematic black bars don't work" | geometry/layering, not camera triggers: giant scaled sprites, z-layer/order, `HIDE`/`TOGGLE` handling, `FrustumCuller` (`OVERSIZE_CELLS = 64`, `src/FrustumCuller.gd`), alpha/pulse state left at import default |
+| "Cinematic black bars don't work" | geometry/layering, not camera triggers: giant scaled sprites, z-layer/order, `HIDE`/`TOGGLE` handling, `FrustumCuller` (`OVERSIZE_CELLS = 64`, `src/FrustumCuller.gd`), alpha/pulse state left at import default. **Also 901 Lock to Player X/Y (keys 58/59)** — 2.1 levels pin letterbox bars / following bosses to the player for the move duration; a lock-only move (`28=0,29=0`) was a native no-op until 2026-10-05. |
 | "Camera follows differently than GD" | `PlayerCamera` constants and catch-up math vs GD's lead and per-step update (§6) |
+
+**Landed 2026-10-05 — 901 Lock to Player X/Y (keys 58/59).** Native `TriggerEffectKind::MOVE` and the `PositionChangerComponent` fallback copy the activating player's per-tick translation onto a locked axis for the move duration, matching GDRweb `MoveTrigger.applyTransform` (`third_party/gdrweb/src/object/trigger/move-trigger.ts`) and the 2.11 `EffectGameObject::customObjectSetup` key list for 901 (58, 59). A locked axis ignores keys 28/29. Guard: `tools/runtime_visual_smoke_test.gd` (lock X copies player X, ignores Move X/Y and player Y). Untouched: 2.2 Lock to Camera / Mod X/Y (keys 143/144), Target Mode (100/101/395), key 85 (citation missing). Component path applies the lock on `EasingComponent.progressed` ticks only (ADD mode, which is what the importer writes).
 
 ---
 
