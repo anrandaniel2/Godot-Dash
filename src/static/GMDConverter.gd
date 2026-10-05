@@ -1609,12 +1609,12 @@ static func _components_from_properties(
 				}
 		1913: # Camera zoom trigger
 			if "CameraZoomChangerComponent" in supported:
-				# Key 371 is already the zoom percentage the component
-				# wants (100 = default); rescaling it made a 50% zoom
-				# trigger ease towards a 5000% camera instead.
+				# Key 371 is EffectGameObject::m_zoomValue, a multiplier of
+				# the default zoom (1 = unchanged); the component works in
+				# percent (100 = default). Twin of gd_camera_zoom_factor.
 				components["CameraZoomChangerComponent"] = {
 					"mode": CameraZoomChangerComponent.Mode.SET,
-					"zoom": Vector2.ONE * maxf(0.01, float(properties.get("371", "100"))),
+					"zoom": Vector2.ONE * maxf(0.01, float(properties.get("371", "1"))) * 100.0,
 				}
 		1914: # Camera static trigger
 			if "CameraStaticComponent" in supported:

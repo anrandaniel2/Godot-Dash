@@ -829,7 +829,7 @@ func _test_native_core() -> void:
 		{"1": "1049", "51": "8", "56": "0"})
 	# 1913 Zoom Camera: 50% (half of the 0.8 default) over 1s.
 	effect_runtime.call(&"register_packed_trigger", 85.0, 0.0, 0, 4, PackedStringArray(), 1913,
-		{"1": "1913", "371": "50", "10": "1.0"})
+		{"1": "1913", "371": "0.5", "10": "1.0"})
 	# 1935 Timewarp: 50% over 1s.
 	effect_runtime.call(&"register_packed_trigger", 90.0, 0.0, 0, 5, PackedStringArray(), 1935,
 		{"1": "1935", "120": "0.5", "10": "1.0"})

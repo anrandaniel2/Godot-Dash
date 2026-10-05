@@ -170,6 +170,14 @@ int main() {
 	const Vector2 rel_y = NativeTriggerRuntime::compute_ui_anchor(Vector2(0.0, -300.0), 0, 8, false, true, vp_4_3);
 	expect_close("4:3 relative Y proportional scale", rel_y.y, -300.0 * (1350.0 / 1200.0));
 
+	// Zoom 1913 key 371 is a multiplier (EffectGameObject::m_zoomValue): 1
+	// keeps the default zoom. Read as a percentage it became 0.01 and ORBIT
+	// rendered 100x zoomed out.
+	expect_close("zoom 371=1 keeps the default", gd_camera_zoom_factor(1.0), 1.0);
+	expect_close("zoom 371=0.5 halves", gd_camera_zoom_factor(0.5), 0.5);
+	expect_close("zoom 371=2 doubles", gd_camera_zoom_factor(2.0), 2.0);
+	expect_close("zoom 371<=0 clamps", gd_camera_zoom_factor(0.0), 0.01);
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

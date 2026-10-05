@@ -226,6 +226,13 @@ static double ease_weight(int gd_easing, double t) {
 
 // Property readers. GD serialises every value as a string, including empty
 // ones that must round-trip untouched (see the converter's lossless pairs).
+// Zoom trigger 1913 key 371 is EffectGameObject::m_zoomValue, a float
+// multiplier of the default camera zoom (1 = unchanged; the Camera Guide
+// shares the key), not a percentage. Returns the multiplier.
+static double gd_camera_zoom_factor(double key_371) {
+	return Math::max(0.01, key_371);
+}
+
 static double prop_float(const Dictionary &properties, const char *key, double fallback) {
 	const Variant value = properties.get(key, Variant());
 	switch (value.get_type()) {
@@ -303,7 +310,7 @@ struct TriggerEffect {
 	bool blending = false;       // 899: key 17, the Blending checkbox
 	double shake_strength = 5.0; // 1520: key 75
 	double time_scale = 1.0;     // 1935: key 120
-	double camera_zoom = 1.0;    // 1913: key 371 (GD zoom percentage)
+	double camera_zoom = 1.0;    // 1913: key 371 (multiplier of the default zoom)
 	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
 	double camera_rotation_degrees = 0.0; // 2015: key 68
 	double shader_value = 1.0;   // 2913/2919/2920/2921: key 35
@@ -793,9 +800,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		}
 		case TriggerEffectKind::CAMERA_ZOOM:
-			// Key 371 is a percentage (100 = the default zoom), not a raw
-			// multiplier: 50 means half the player camera's default 0.8.
-			effect.camera_zoom = Math::max(0.01, prop_float(properties, "371", 100.0) / 100.0);
+			effect.camera_zoom = gd_camera_zoom_factor(prop_float(properties, "371", 1.0));
 			break;
 		case TriggerEffectKind::SHADER_GRAYSCALE:
 			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
