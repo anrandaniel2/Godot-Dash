@@ -145,6 +145,15 @@ var floor_angle_history: Array[float]
 var floor_angle_average: float
 var sprite_floor_angle: float
 var dual_index: int
+## Options trigger (2899) Hide P1 / P2.
+var gd_hidden: bool = false
+var _event_last_flip: int = 1
+var _event_last_gamemode: int = -1
+var _event_was_grounded: bool = true
+
+## Event (3604) ids for entering each gamemode: Portal Normal .. Swing
+## (gd_docs data/tables/events.csv), indexed by Gamemode.
+const PORTAL_EVENT_IDS: Array[int] = [26, 27, 29, 28, 30, 31, 32, 33]
 # Allow Ceiling Hit blocks can stack, this avoids their effect being disabled
 # in the case of a double collision, which would happen with a bool.
 var allow_ceiling_hit_count: int:
@@ -322,6 +331,7 @@ func _physics_process(delta: float) -> void:
 	if gravity_portal_grace > 0:
 		gravity_portal_grace -= 1
 	_check_max_gameplay_y()
+	_emit_gd_events(jump_state)
 
 	# Sprite updates
 	_update_sprites_rotation(delta, jump_state)
@@ -756,6 +766,15 @@ func _get_jump_state() -> int:
 	var is_jump_pressed: bool = InputUtils.is_action_pressed(&"jump") if not _is_playing_back_replay() else replay.pressing_jump(replay_physics_tick)
 	var is_jump_just_pressed: bool = InputUtils.is_action_just_pressed(&"jump") if not _is_playing_back_replay() else replay.just_pressed_jump(replay_physics_tick)
 	var is_jump_just_released: bool = InputUtils.is_action_just_released(&"jump") if not _is_playing_back_replay() else replay.just_released_jump(replay_physics_tick)
+	# Touch (1595) sees every jump click, even with controls disabled.
+	if is_jump_just_pressed:
+		NativeTriggerBridge.notify_touch(self, dual_index + 1, true)
+	if is_jump_just_released:
+		NativeTriggerBridge.notify_touch(self, dual_index + 1, false)
+	if GDLevelOptions.are_controls_disabled(dual_index + 1):
+		is_jump_pressed = false
+		is_jump_just_pressed = false
+		is_jump_just_released = false
 	var is_down_pressed: bool = InputUtils.is_action_pressed(&"platformer_wave_down") if not _is_playing_back_replay() else replay.pressing_down(replay_physics_tick)
 
 	if (
@@ -1575,9 +1594,42 @@ func _check_max_gameplay_y() -> void:
 		_death_animator.play("DeathAnimation")
 
 
+## Options trigger (2899) Hide P1 / P2: hides every player visual.
+func set_gd_hidden(hidden: bool) -> void:
+	gd_hidden = hidden
+	modulate.a = 0.0 if hidden else 1.0
+
+
+## Event trigger (3604) sources detected from this tick's state changes:
+## 4 normal landing, 10/11 gravity inverted/restored, 12 normal jump and
+## 26-33 gamemode portals. Hypothesis: GD raises these at the same points.
+func _emit_gd_events(jump_state: int) -> void:
+	var slot: int = dual_index + 1
+	var grounded: bool = is_on_floor() or is_on_ceiling()
+	if _event_last_gamemode < 0:
+		# First tick after spawn or respawn only records the state.
+		_event_was_grounded = grounded
+		_event_last_flip = gravity_flip
+		_event_last_gamemode = internal_gamemode
+		return
+	if grounded and not _event_was_grounded:
+		NativeTriggerBridge.notify_event(self, 4, slot)
+	elif not grounded and _event_was_grounded and jump_state == 1 and internal_gamemode == Gamemode.CUBE:
+		NativeTriggerBridge.notify_event(self, 12, slot)
+	_event_was_grounded = grounded
+	if gravity_flip != _event_last_flip:
+		NativeTriggerBridge.notify_event(self, 10 if gravity_flip < 0 else 11, slot)
+		_event_last_flip = gravity_flip
+	if internal_gamemode != _event_last_gamemode:
+		NativeTriggerBridge.notify_event(self, PORTAL_EVENT_IDS[internal_gamemode], slot)
+	_event_last_gamemode = internal_gamemode
+
+
 func _player_death() -> void:
-	AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), true)
+	if not GDLevelOptions.audio_on_death:
+		AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), true)
 	dead = true
+	_event_last_gamemode = -1
 	NativeTriggerBridge.notify_player_death(self)
 	last_automatic_checkpoint_position = position
 	_icon.hide()
@@ -1587,7 +1639,8 @@ func _player_death() -> void:
 	_dash_particles.emitting = false
 	_ground_particles.emitting = false
 	_trail.clear_points()
-	SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3", &"In Level SFX")
+	if not GDLevelOptions.no_death_sfx:
+		SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3", &"In Level SFX")
 
 
 func _on_death_restart() -> void:

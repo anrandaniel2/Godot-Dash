@@ -178,6 +178,10 @@ func _ready() -> void:
 	_expect("Item greater widened by tolerance", GDItemMath.compare(1.8, 1, 2.0, 0.5) and not GDItemMath.compare(1.0, 1, 2.0, 0.5))
 	_expect("Collision pair is unordered", GDItemMath.collision_pair_key(3, 7, false, false, false) == GDItemMath.collision_pair_key(7, 3, false, false, false))
 	_expect("Collision pair sides round-trip", GDItemMath.collision_pair_sides(GDItemMath.collision_pair_key(5, 7, true, false, false)) == PackedInt32Array([-1, 7]))
+	_expect("Touch hold mode", GDItemMath.touch_toggle_result(true, 0, true, true) == 0 and GDItemMath.touch_toggle_result(true, 1, true, false) == 1)
+	_expect("Touch default flips", GDItemMath.touch_toggle_result(false, 0, true, true) == 0 and GDItemMath.touch_toggle_result(false, 0, false, true) == -1)
+	_expect("Follow Y eases at speed 1", is_equal_approx(GDItemMath.follow_player_y_step(0.0, 100.0, 1.0, 0.0, 1.0 / 60.0), 25.0))
+	_expect("Event matches", GDItemMath.event_matches(PackedInt32Array([4, 12]), 0, 0, 12, 0, 2) and not GDItemMath.event_matches(PackedInt32Array([4]), 0, 1, 4, 0, 2))
 	_expect("Time event due", GDItemMath.timer_event_due(1.0, 2.0, 3.0) and not GDItemMath.timer_event_due(1.0, 2.0, 1.0))
 	_expect("Item compare equal within tolerance", GDItemMath.compare(1.0, 0, 1.4, 0.5))
 	var seq_state: Dictionary = {}

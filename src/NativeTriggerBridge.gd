@@ -93,6 +93,20 @@ static func notify_player_death(player: Player) -> void:
 	GameplayTriggerComponent.notify_player_death(player)
 
 
+## Jump press / release for Touch triggers (1595); slot 1 = P1, 2 = P2.
+static func notify_touch(player: Player, slot: int, pressed: bool) -> void:
+	if current != null and current._runtime != null:
+		current._runtime.call(&"notify_touch", player, slot, pressed)
+	GameplayTriggerComponent.notify_touch(player, slot, pressed)
+
+
+## Player events for Event triggers (3604).
+static func notify_event(player: Player, event_id: int, slot: int, material: int = 0) -> void:
+	if current != null and current._runtime != null:
+		current._runtime.call(&"notify_event", player, event_id, slot, material)
+	GameplayTriggerComponent.notify_event(player, event_id, slot, material)
+
+
 ## Colour-family trigger ids the key diagnostics report on.
 const COLOR_FAMILY := {
 	29: true, 30: true, 104: true, 105: true, 221: true, 717: true, 718: true,

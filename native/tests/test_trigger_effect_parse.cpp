@@ -131,6 +131,17 @@ int main() {
 	expect_true("collision P1 replaces block A", collision_pair_key(5, 7, true, false, false) == collision_pair_key(-1, 7, false, false, false)
 			&& collision_pair_key(5, 7, true, false, false) != collision_pair_key(5, 7, false, true, false));
 	expect_true("collision PP ignores blocks", collision_pair_key(1, 2, false, false, true) == collision_pair_key(9, 9, false, false, true));
+	expect_true("touch default flips per press", touch_toggle_result(false, 0, true, true) == 0 && touch_toggle_result(false, 0, true, false) == 1
+			&& touch_toggle_result(false, 0, false, true) == -1);
+	expect_true("touch toggle on / off modes", touch_toggle_result(false, 1, true, true) == 1 && touch_toggle_result(false, 2, true, false) == 0);
+	expect_true("touch hold mode", touch_toggle_result(true, 0, true, true) == 0 && touch_toggle_result(true, 0, false, false) == 1
+			&& touch_toggle_result(true, 1, true, false) == 1 && touch_toggle_result(true, 1, false, true) == 0
+			&& touch_toggle_result(true, 2, true, true) == 0);
+	expect_close("follow Y snaps at speed 4", follow_player_y_step(0.0, 100.0, 4.0, 0.0, 1.0 / 240.0), 100.0);
+	expect_close("follow Y eases at speed 1", follow_player_y_step(0.0, 100.0, 1.0, 0.0, 1.0 / 60.0), 25.0);
+	expect_close("follow Y max speed", follow_player_y_step(0.0, 100.0, 4.0, 10.0, 1.0 / 60.0), 10.0);
+	expect_true("event matches id, material, player", event_matches({ 4, 12 }, 0, 0, 12, 0, 2)
+			&& !event_matches({ 4 }, 0, 0, 12, 0, 1) && !event_matches({ 4 }, 3, 0, 4, 0, 1) && !event_matches({ 4 }, 0, 1, 4, 0, 2));
 	expect_true("time event due", timer_event_due(1.0, 2.0, 3.0) && timer_event_due(-1.0, -2.0, -3.0) && !timer_event_due(1.0, 2.0, 1.0));
 	expect_true("compare equal within tolerance", item_compare_values(1.0, 0, 1.4, 0.5));
 	expect_true("compare not-equal outside tolerance", item_compare_values(1.0, 5, 2.0, 0.5));

@@ -158,3 +158,33 @@ static func collision_pair_sides(key: int) -> PackedInt32Array:
 	if low >= 0x80000000:
 		low -= 0x100000000
 	return PackedInt32Array([key >> 32, low])
+
+
+## Touch (1595): 1 toggle on, 0 toggle off, -1 nothing. Twin of the native
+## touch_toggle_result.
+static func touch_toggle_result(hold: bool, mode: int, pressed: bool, current_on: bool) -> int:
+	if hold:
+		return 1 if (mode == 1) == pressed else 0
+	if not pressed:
+		return -1
+	if mode == 1:
+		return 1
+	if mode == 2:
+		return 0
+	return 0 if current_on else 1
+
+
+## Follow Player Y (1814): easing 4/speed, max px per 60 Hz frame (0 = none).
+static func follow_player_y_step(current: float, target: float, speed: float, max_px: float, dt: float) -> float:
+	var diff: float = target - current
+	var frac: float = 1.0 if speed >= 4.0 else clampf(speed / 4.0 * dt * 60.0, 0.0, 1.0)
+	var step: float = diff * frac
+	if max_px > 0.0:
+		var limit: float = max_px * dt * 60.0
+		step = clampf(step, -limit, limit)
+	return step
+
+
+## Event (3604): any listed id, exact material, player 0 = any.
+static func event_matches(ids: PackedInt32Array, material: int, player: int, event_id: int, event_material: int, slot: int) -> bool:
+	return ids.has(event_id) and material == event_material and (player == 0 or player == slot)

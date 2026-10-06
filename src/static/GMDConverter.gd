@@ -1785,7 +1785,7 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
-		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812: # twins of the native gameplay arms
+		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899: # twins of the native gameplay arms
 			if "GameplayTriggerComponent" in supported:
 				var raw: Dictionary[String, String] = {}
 				for key: Variant in properties:
@@ -1793,6 +1793,14 @@ static func _components_from_properties(
 				components["GameplayTriggerComponent"] = {
 					"kind": GameplayTriggerComponent.KIND_BY_ID[gd_id],
 					"properties": raw,
+				}
+		3600: # End (gd_docs end.md): 51 spawn, 71 target pos, 487 instant
+			if "EndLevelComponent" in supported:
+				components["EndLevelComponent"] = {
+					"spawn_group": properties.get("51", ""),
+					"target_group": properties.get("71", ""),
+					"instant": properties.get("487", "0") == "1",
+					"gd_import": true,
 				}
 		1816: # Collision block, keys 80 block id and 94 dynamic
 			if "CollisionBlockComponent" in supported:

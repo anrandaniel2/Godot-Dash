@@ -19,6 +19,10 @@ enum Kind {
 	COLLISION,
 	INSTANT_COLLISION,
 	ON_DEATH,
+	TOUCH,
+	FOLLOW_PLAYER_Y,
+	EVENT,
+	OPTIONS,
 }
 
 const KIND_BY_ID: Dictionary[int, Kind] = {
@@ -33,7 +37,14 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	1815: Kind.COLLISION,
 	3609: Kind.INSTANT_COLLISION,
 	1812: Kind.ON_DEATH,
+	1595: Kind.TOUCH,
+	1814: Kind.FOLLOW_PLAYER_Y,
+	3604: Kind.EVENT,
+	2899: Kind.OPTIONS,
 }
+
+## GD units to pixels on Y (+Y up in GD); matches native CELLS_TO_PX_Y.
+const UNITS_TO_PX_Y: float = -128.0 / 30.0
 
 ## Godot group holding imported collision blocks (1816); twin of the native
 ## refresh_collision_blocks().
@@ -48,6 +59,11 @@ static var _last_timer_frame: int = -1
 static var _level_time: float = 0.0
 static var _armed_collisions: Array[GameplayTriggerComponent] = []
 static var _armed_deaths: Array[GameplayTriggerComponent] = []
+static var _armed_touches: Array[GameplayTriggerComponent] = []
+static var _armed_events: Array[GameplayTriggerComponent] = []
+static var _touch_states: Dictionary[GameplayTriggerComponent, bool] = {}
+## Target group -> {"trigger", "player", "remaining", "history": Array[Vector2] of (time, y)}.
+static var _follow_player_y: Dictionary[String, Dictionary] = {}
 ## Pair key -> last recorded overlap state.
 static var _collision_states: Dictionary[int, bool] = {}
 ## Pair key -> [block a, block b] for every collision trigger in the level.
@@ -66,6 +82,10 @@ static func reset_state() -> void:
 	_level_time = 0.0
 	_armed_collisions.clear()
 	_armed_deaths.clear()
+	_armed_touches.clear()
+	_armed_events.clear()
+	_touch_states.clear()
+	_follow_player_y.clear()
 	_collision_states.clear()
 
 
@@ -86,9 +106,60 @@ static func notify_player_death(player: Player) -> void:
 			trigger._toggle_spawn(player)
 
 
+static func notify_touch(player: Player, slot: int, pressed: bool) -> void:
+	for trigger: GameplayTriggerComponent in _armed_touches.duplicate():
+		if not is_instance_valid(trigger):
+			continue
+		var only: int = trigger._i("198")
+		if only != 0 and only != slot:
+			continue
+		var result: int = GDItemMath.touch_toggle_result(trigger._b("81"), trigger._i("82"), pressed, _touch_states.get(trigger, true))
+		if result < 0:
+			continue
+		_touch_states[trigger] = result == 1
+		trigger._toggle_spawn_state(result == 1, player)
+
+
+static func notify_event(player: Player, event_id: int, slot: int, material: int) -> void:
+	for trigger: GameplayTriggerComponent in _armed_events.duplicate():
+		if not is_instance_valid(trigger):
+			continue
+		var ids := PackedInt32Array()
+		for part: String in trigger.properties.get("430", "").replace(",", ".").split(".", false):
+			ids.append(int(part))
+		if GDItemMath.event_matches(ids, material, trigger._i("525"), event_id, trigger._i("447"), slot):
+			_spawn(trigger.properties.get("51", ""), player)
+
+
+static func _step_follow_player_y(delta: float) -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	for group: String in _follow_player_y.keys():
+		var follow: Dictionary = _follow_player_y[group]
+		var trigger: GameplayTriggerComponent = follow["trigger"]
+		var player: Player = follow["player"]
+		if not is_instance_valid(trigger) or not is_instance_valid(player) or float(follow["remaining"]) <= 0.0:
+			_follow_player_y.erase(group)
+			continue
+		var history: Array[Vector2] = follow["history"]
+		history.append(Vector2(_level_time, player.global_position.y))
+		var delay: float = maxf(0.0, trigger._f("91"))
+		while history.size() > 1 and history[1].x <= _level_time - delay:
+			history.pop_front()
+		var target: float = history[0].y + trigger._f("92") * UNITS_TO_PX_Y
+		var max_px: float = absf(trigger._f("105") / 4.0 * UNITS_TO_PX_Y)
+		for node: Node in tree.get_nodes_in_group(StringName(Constants.GROUP_PREFIX + group)):
+			if node is Node2D:
+				var node_2d := node as Node2D
+				node_2d.global_position.y += GDItemMath.follow_player_y_step(node_2d.global_position.y, target, trigger._f("90", 1.0), max_px, delta)
+		follow["remaining"] = float(follow["remaining"]) - delta
+
+
 ## Key 56 unchecked toggles the group off; checked toggles it on and spawns it.
 func _toggle_spawn(player: Player) -> void:
-	var on: bool = _b("56")
+	_toggle_spawn_state(_b("56"), player)
+
+
+func _toggle_spawn_state(on: bool, player: Player) -> void:
 	for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
 		if node is CanvasItem:
 			(node as CanvasItem).visible = on
@@ -159,6 +230,7 @@ func _physics_process(delta: float) -> void:
 	_last_timer_frame = frame
 	_level_time += delta
 	_advance_timers(delta)
+	_step_follow_player_y(delta)
 	_check_collisions()
 
 
@@ -307,6 +379,20 @@ func _on_interacted(player: Player = null) -> void:
 		Kind.ON_DEATH:
 			if not _armed_deaths.has(self):
 				_armed_deaths.append(self)
+		Kind.TOUCH:
+			if not _armed_touches.has(self):
+				_armed_touches.append(self)
+		Kind.EVENT:
+			if not _armed_events.has(self):
+				_armed_events.append(self)
+		Kind.OPTIONS:
+			if LevelManager.current_level != null:
+				LevelManager.current_level.apply_gd_options(properties)
+		Kind.FOLLOW_PLAYER_Y:
+			var group: String = properties.get("51", "")
+			if player != null and not group.is_empty() and group != "0":
+				var history: Array[Vector2] = []
+				_follow_player_y[group] = { "trigger": self, "player": player, "remaining": maxf(0.0, _f("10")), "history": history }
 		Kind.REVERSE:
 			if player != null and not LevelManager.platformer:
 				player.horizontal_direction = -player.horizontal_direction

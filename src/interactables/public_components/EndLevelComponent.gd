@@ -7,6 +7,17 @@ const TRANSITION_DURATION := 1.0
 @export var static_trigger: TriggerInteractable
 @export var shake_trigger: TriggerInteractable
 
+## GD End trigger (3600, gd_docs docs/triggers/misc/end.md): 51 spawn group,
+## 71 target position group, 487 instant. Imported levels set these.
+@export var spawn_group: String = ""
+@export var target_group: String = ""
+@export var instant: bool = false
+## Set by GMDConverter: the trigger itself is the fallback end position.
+@export var gd_import: bool = false
+
+## Only the first End activation per attempt counts.
+static var _ended: bool = false
+
 var initial_player_positions: Dictionary[Player, Vector2]
 var _target: Node2D
 
@@ -29,17 +40,31 @@ func _ready() -> void:
 
 
 func start(player: Player) -> void:
-	if parent.query(TargetObjectComponent).target.is_empty():
+	var gd_target: Node2D = _gd_target()
+	if gd_target != null:
+		if _ended:
+			return
+		_ended = true
+		if not spawn_group.is_empty() and spawn_group != "0":
+			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + spawn_group)):
+				if node.has_signal(&"interacted"):
+					node.interacted.emit(player)
+	elif parent.query(TargetObjectComponent).target.is_empty():
 		Toasts.error("In %s: target object is unset" % parent.name)
 		return
 	var static_target: TargetObjectComponent = static_trigger.query(TargetObjectComponent)
-	static_target.target = parent.query(TargetObjectComponent).target
+	static_target.target = LevelManager.current_level.get_path_to(gd_target) if gd_target != null else parent.query(TargetObjectComponent).target
+	if instant and gd_target != null:
+		player.set_collisions_enabled(false)
+		player.in_end_level_animation = true
+		_on_static_easing_finished(player)
+		return
 	static_trigger.interacted.emit(player)
 	# Disable player collision
 	player.set_collisions_enabled(false)
 	player.in_end_level_animation = true
 	initial_player_positions[player] = player.global_position
-	_target = parent.query(TargetObjectComponent).target_to_node()
+	_target = gd_target if gd_target != null else parent.query(TargetObjectComponent).target_to_node()
 	if Editor.in_editor:
 		LevelManager.current_level.record_duration()
 		var duration: float = LevelManager.current_level.duration
@@ -48,7 +73,19 @@ func start(player: Player) -> void:
 		Editor.level_data_snapshot.duration = duration
 
 
+## Imported GD End: the unique Target Pos member, else the trigger itself.
+func _gd_target() -> Node2D:
+	if not gd_import:
+		return null
+	if not target_group.is_empty() and target_group != "0":
+		var members: Array[Node] = get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + target_group))
+		if members.size() == 1 and members[0] is Node2D:
+			return members[0] as Node2D
+	return parent as Node2D
+
+
 func reset() -> void:
+	_ended = false
 	static_trigger.query(EasingComponent).reset()
 	shake_trigger.query(EasingComponent).reset()
 

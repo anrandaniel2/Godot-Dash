@@ -415,6 +415,12 @@ func start_level() -> void:
 	LevelManager.level_playing = true
 
 
+## Options trigger (2899): called by the native OPTIONS arm and the
+## GameplayTriggerComponent twin.
+func apply_gd_options(options: Dictionary) -> void:
+	GDLevelOptions.apply(options)
+
+
 func stop_level() -> void:
 	song_player.stop()
 	LevelManager.player_duals.clear()

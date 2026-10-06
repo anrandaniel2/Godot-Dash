@@ -54,6 +54,7 @@
 #include <unordered_set>
 #include <cmath>
 #include <limits>
+#include <deque>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -145,6 +146,10 @@ enum class TriggerEffectKind : int32_t {
 	COLLISION,          // 1815 Collision
 	INSTANT_COLLISION,  // 3609 Instant Collision
 	ON_DEATH,           // 1812 On Death
+	TOUCH,              // 1595 Touch
+	FOLLOW_PLAYER_Y,    // 1814 Follow Player Y
+	EVENT,              // 3604 Event
+	OPTIONS,            // 2899 Options
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -484,6 +489,17 @@ struct TriggerEffect {
 	// 1815/3609 (gd_docs collision_trigger.md): blocks 80/95, 138 P1, 200 P2,
 	// 201 between players, 93 trigger on exit.
 	bool collision_p1 = false, collision_p2 = false, collision_pp = false, collision_exit = false;
+	// 1595 (gd_docs touch.md): 81 hold, 82 TouchMode 0 toggle / 1 on / 2 off,
+	// 198 TargetPlayer 0 all / 1 P1 / 2 P2.
+	bool touch_hold = false;
+	int32_t touch_mode = 0, touch_player = 0;
+	// 1814 (gd_docs follow_player_y.md): 90 speed, 105 max speed, 91 delay, 92 offset.
+	double follow_y_speed = 1.0, follow_y_max_px = 0.0, follow_y_delay = 0.0, follow_y_offset_px = 0.0;
+	// 3604 (gd_docs event.md): 430 event ids, 447 material, 525 player.
+	std::vector<int32_t> event_ids;
+	int32_t event_material = 0, event_player = 0;
+	// 2899 (gd_docs options.md): raw Option values (-1 off, 0 unchanged, 1 on).
+	Dictionary options;
 	// 3641: 491 set persistent, 492 target all, 493 reset, 494 timer.
 	bool persist_set = false, persist_all = false, persist_reset = false, persist_timer = false;
 	// 3614/3615/3617: 467 start, 470 mod, 471 start paused, 468 don't override,
@@ -667,6 +683,38 @@ static int64_t collision_pair_key(int64_t a, int64_t b, bool p1, bool p2, bool p
 	else if (p2) a = -2;
 	if (a > b) std::swap(a, b);
 	return static_cast<int64_t>(static_cast<uint64_t>(a) << 32) ^ (b & 0xffffffffLL);
+}
+
+// Touch (1595): returns 1 toggle on, 0 toggle off, -1 nothing. Hold mode
+// turns the group off while held (on with TouchMode ON); otherwise only
+// presses act and the default mode flips the current state.
+static int touch_toggle_result(bool hold, int mode, bool pressed, bool current_on) {
+	if (hold) return (mode == 1) == pressed ? 1 : 0;
+	if (!pressed) return -1;
+	if (mode == 1) return 1;
+	if (mode == 2) return 0;
+	return current_on ? 0 : 1;
+}
+
+// Follow Player Y (1814): easing 4/speed (speed >= 4 snaps), max speed per
+// 60 Hz frame in px (0 = unlimited). Returns the Y step for this tick.
+static double follow_player_y_step(double current, double target, double speed, double max_px, double dt) {
+	const double diff = target - current;
+	const double frac = speed >= 4.0 ? 1.0 : Math::clamp(speed / 4.0 * dt * 60.0, 0.0, 1.0);
+	double step = diff * frac;
+	if (max_px > 0.0) {
+		const double limit = max_px * dt * 60.0;
+		step = Math::clamp(step, -limit, limit);
+	}
+	return step;
+}
+
+// Event (3604): any listed id matches; material must equal Extra ID; Extra
+// ID 2 (player) 0 matches any player.
+static bool event_matches(const std::vector<int32_t> &ids, int material, int player, int64_t event_id, int64_t event_material, int64_t slot) {
+	if (std::find(ids.begin(), ids.end(), event_id) == ids.end()) return false;
+	if (material != event_material) return false;
+	return player == 0 || player == slot;
 }
 
 // Time Event arms already past its target fire immediately.
@@ -1132,6 +1180,37 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
 			const int false_id = static_cast<int>(String(properties.get("71", String("0"))).to_int());
 			if (false_id > 0) effect.item_false_group = String("g_") + String::num_int64(false_id);
+			break;
+		}
+		case 1595:
+			effect.kind = TriggerEffectKind::TOUCH;
+			effect.touch_hold = String(properties.get("81", String("0"))) == "1";
+			effect.touch_mode = static_cast<int32_t>(String(properties.get("82", String("0"))).to_int());
+			effect.touch_player = static_cast<int32_t>(String(properties.get("198", String("0"))).to_int());
+			break;
+		case 1814:
+			effect.kind = TriggerEffectKind::FOLLOW_PLAYER_Y;
+			effect.follow_y_speed = prop_float(properties, "90", 1.0);
+			effect.follow_y_max_px = std::fabs(prop_float(properties, "105", 0.0) / 4.0 * CELLS_TO_PX_Y);
+			effect.follow_y_delay = Math::max(0.0, prop_float(properties, "91", 0.0));
+			effect.follow_y_offset_px = prop_float(properties, "92", 0.0) * CELLS_TO_PX_Y;
+			break;
+		case 3604: {
+			effect.kind = TriggerEffectKind::EVENT;
+			const PackedStringArray ids = String(properties.get("430", String())).replace(",", ".").split(".", false);
+			for (int64_t i = 0; i < ids.size(); ++i) {
+				if (String(ids[i]).is_valid_int()) effect.event_ids.push_back(static_cast<int32_t>(String(ids[i]).to_int()));
+			}
+			effect.event_material = static_cast<int32_t>(String(properties.get("447", String("0"))).to_int());
+			effect.event_player = static_cast<int32_t>(String(properties.get("525", String("0"))).to_int());
+			break;
+		}
+		case 2899: {
+			effect.kind = TriggerEffectKind::OPTIONS;
+			static const char *keys[] = { "159", "160", "161", "162", "163", "165", "195", "199", "532", "573", "574", "575", "576", "593" };
+			for (const char *key : keys) {
+				if (properties.has(key)) effect.options[key] = properties[key];
+			}
 			break;
 		}
 		case 1812:
@@ -2133,6 +2212,27 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::ON_DEATH:
 				armed_deaths.insert(index);
 				break;
+			case TriggerEffectKind::TOUCH:
+				armed_touches.insert(index);
+				break;
+			case TriggerEffectKind::EVENT:
+				armed_events.insert(index);
+				break;
+			case TriggerEffectKind::OPTIONS: {
+				Object *level = ObjectDB::get_instance(level_id);
+				if (level && level->has_method("apply_gd_options")) level->call("apply_gd_options", effect.options);
+				break;
+			}
+			case TriggerEffectKind::FOLLOW_PLAYER_Y: {
+				// One instance per target group: a new activation replaces it.
+				if (effect.target_groups.empty() || !player) break;
+				FollowPlayerY follow;
+				follow.record = index;
+				follow.player = ObjectID(player->get_instance_id());
+				follow.remaining = effect.duration;
+				follow_player_y[effect.target_groups[0]] = follow;
+				break;
+			}
 			case TriggerEffectKind::REVERSE: {
 				// gd_docs reverse.md: no effect in platformer mode.
 				Object *level = ObjectDB::get_instance(level_id);
@@ -2249,7 +2349,72 @@ class NativeTriggerRuntime : public RefCounted {
 	std::set<int32_t> persistent_items, persistent_timers;
 	bool persist_all_items = false, persist_all_timers = false;
 	std::map<size_t, SequenceState> sequence_states;
-	std::set<size_t> armed_collisions, armed_deaths;
+	std::set<size_t> armed_collisions, armed_deaths, armed_touches, armed_events;
+	std::map<size_t, bool> touch_states;
+	struct FollowPlayerY {
+		size_t record = 0;
+		ObjectID player;
+		double remaining = 0.0;
+		std::deque<std::pair<double, real_t>> history;
+	};
+	std::map<String, FollowPlayerY> follow_player_y;
+
+	void step_follow_player_y(double delta) {
+		for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
+			FollowPlayerY &follow = it->second;
+			Node2D *player = Object::cast_to<Node2D>(ObjectDB::get_instance(follow.player));
+			if (!player || follow.record >= records.size() || follow.remaining <= 0.0) {
+				it = follow_player_y.erase(it);
+				continue;
+			}
+			const TriggerEffect &effect = records[follow.record].effect;
+			follow.history.push_back({ clock, player->get_global_position().y });
+			while (follow.history.size() > 1 && follow.history[1].first <= clock - effect.follow_y_delay) follow.history.pop_front();
+			const double target = follow.history.front().second + effect.follow_y_offset_px;
+			const auto found = member_index.find(it->first);
+			if (found != member_index.end()) for (ObjectID id : found->value) {
+				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+				if (!node) continue;
+				const Vector2 position = node->get_global_position();
+				const double step = follow_player_y_step(position.y, target, effect.follow_y_speed, effect.follow_y_max_px, delta);
+				if (step != 0.0) node->set_global_position(Vector2(position.x, position.y + static_cast<real_t>(step)));
+			}
+			follow.remaining -= delta;
+			++it;
+		}
+	}
+public:
+	// Jump press / release (gd_docs touch.md); slot 1 = P1, 2 = P2. Fires
+	// even with player controls disabled.
+	void notify_touch(Object *player, int64_t slot, bool pressed) {
+		const std::vector<size_t> armed(armed_touches.begin(), armed_touches.end());
+		const uint64_t epoch = structure_epoch;
+		for (size_t index : armed) {
+			if (structure_epoch != epoch || index >= records.size()) return;
+			const TriggerEffect &effect = records[index].effect;
+			if (effect.touch_player != 0 && effect.touch_player != slot) continue;
+			auto state = touch_states.find(index);
+			const bool current = state == touch_states.end() ? true : state->second;
+			int on = touch_toggle_result(effect.touch_hold, effect.touch_mode, pressed, current);
+			if (on < 0) continue;
+			touch_states[index] = on == 1;
+			TriggerEffect toggled = effect;
+			toggled.toggle_on = on == 1;
+			fire_toggle_spawn(toggled, player);
+		}
+	}
+	// Player events (gd_docs event.md / data/tables/events.csv).
+	void notify_event(Object *player, int64_t event_id, int64_t slot, int64_t material) {
+		const std::vector<size_t> armed(armed_events.begin(), armed_events.end());
+		const uint64_t epoch = structure_epoch;
+		for (size_t index : armed) {
+			if (structure_epoch != epoch || index >= records.size()) return;
+			const TriggerEffect &effect = records[index].effect;
+			if (!event_matches(effect.event_ids, effect.event_material, effect.event_player, event_id, material, slot)) continue;
+			for (const String &group : effect.target_groups) spawn_named(group, player);
+		}
+	}
+private:
 	// Collision pair state, keyed by collision_key(); updated every tick.
 	std::map<int64_t, bool> collision_states;
 	struct CollisionBlockNode {
@@ -2450,6 +2615,10 @@ private:
 		sequence_states.clear();
 		armed_collisions.clear();
 		armed_deaths.clear();
+		armed_touches.clear();
+		armed_events.clear();
+		touch_states.clear();
+		follow_player_y.clear();
 		collision_states.clear();
 		collision_blocks_epoch = UINT64_MAX;
 		points = 0;
@@ -3380,6 +3549,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
 		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
 		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeTriggerRuntime::notify_player_death);
+		ClassDB::bind_method(D_METHOD("notify_touch", "player", "slot", "pressed"), &NativeTriggerRuntime::notify_touch);
+		ClassDB::bind_method(D_METHOD("notify_event", "player", "event_id", "slot", "material"), &NativeTriggerRuntime::notify_event);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeTriggerRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeTriggerRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeTriggerRuntime::restore);
@@ -4053,6 +4224,7 @@ public:
 			}
 			++dispatched;
 		}
+		step_follow_player_y(delta);
 		check_collisions();
 		check_touch_overlaps();
 		frame_players.clear();
@@ -4281,6 +4453,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeLevelRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeLevelRuntime::notify_player_death);
+		ClassDB::bind_method(D_METHOD("notify_touch", "player", "slot", "pressed"), &NativeLevelRuntime::notify_touch);
+		ClassDB::bind_method(D_METHOD("notify_event", "player", "event_id", "slot", "material"), &NativeLevelRuntime::notify_event);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
@@ -4395,6 +4569,12 @@ public:
 	}
 	void notify_player_death(Object *player) {
 		triggers->notify_player_death(player);
+	}
+	void notify_touch(Object *player, int64_t slot, bool pressed) {
+		triggers->notify_touch(player, slot, pressed);
+	}
+	void notify_event(Object *player, int64_t event_id, int64_t slot, int64_t material) {
+		triggers->notify_event(player, event_id, slot, material);
 	}
 	void reset() {
 		triggers->reset();
