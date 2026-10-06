@@ -150,6 +150,9 @@ enum class TriggerEffectKind : int32_t {
 	FOLLOW_PLAYER_Y,    // 1814 Follow Player Y
 	EVENT,              // 3604 Event
 	OPTIONS,            // 2899 Options
+	ADV_FOLLOW,         // 3016 Advanced Follow
+	RESET_GROUP,        // 3618 Reset
+	END_WALL,           // 1931 End Wall
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -446,6 +449,23 @@ static bool prop_bool(const Dictionary &properties, const char *key, bool fallba
 
 // A trigger's effect, parsed once at registration. Field meanings follow the
 // converter's component arms so native execution is behaviour-identical.
+// Advanced Follow (3016) settings; see adv_follow_tick.
+struct AdvFollowParams {
+	int mode = 0;                // AdvFollowMode 0 easing, 1 accel/friction, 2 steering
+	double easing = 0.0;         // 361
+	double max_speed = 0.0;      // 298, <= 0 unlimited
+	double max_range = 0.0;      // 308, 0 unlimited, < 0 disabled
+	double accel = 0.0;          // 334, 1.00 = 0.01 units/tick per tick
+	double friction = 0.0;       // 558, percent per tick
+	double near_dist = 0.0;      // 359
+	double near_accel = 0.0;     // 357
+	double near_friction = 0.0;  // 561
+	double start_speed = 0.0;    // 300
+	double start_dir = 0.0;      // 563, degrees clockwise from up
+	int init = 0;                // 572 AdvFollowInit 0 init, 1 set, 2 add
+	bool x_only = false, y_only = false;  // 306 / 307
+};
+
 struct TriggerEffect {
 	TriggerEffectKind kind = TriggerEffectKind::NONE;
 	double duration = 0.0;       // key 10
@@ -500,6 +520,14 @@ struct TriggerEffect {
 	int32_t event_material = 0, event_player = 0;
 	// 2899 (gd_docs options.md): raw Option values (-1 off, 0 unchanged, 1 on).
 	Dictionary options;
+	// 3016 (gd_docs advanced_follow.md; keys gmdkit prop_table adv_follow).
+	AdvFollowParams adv;
+	String adv_follow_group;
+	bool adv_p1 = false, adv_p2 = false, adv_exclusive = false;
+	int32_t adv_priority = 0;
+	double adv_delay = 0.0;
+	// 1931: 59 lock Y (hypothesis: no gd_docs page).
+	bool end_wall_lock_y = false;
 	// 3641: 491 set persistent, 492 target all, 493 reset, 494 timer.
 	bool persist_set = false, persist_all = false, persist_reset = false, persist_timer = false;
 	// 3614/3615/3617: 467 start, 470 mod, 471 start paused, 468 don't override,
@@ -683,6 +711,38 @@ static int64_t collision_pair_key(int64_t a, int64_t b, bool p1, bool p2, bool p
 	else if (p2) a = -2;
 	if (a > b) std::swap(a, b);
 	return static_cast<int64_t>(static_cast<uint64_t>(a) << 32) ^ (b & 0xffffffffLL);
+}
+
+// Advanced Follow (3016, gd_docs docs/triggers/follows/advanced_follow.md).
+// Velocities are GD units per 240 Hz tick; the runtime converts to px.
+// One tick for one target. `offset` = center - target, `velocity` in/out;
+// `first` = first action on this target. Returns the displacement to apply,
+// both in GD units (any consistent unit works, the maths is linear).
+static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2 &velocity, bool first) {
+	if (p.x_only) offset.y = 0.0f;
+	if (p.y_only) offset.x = 0.0f;
+	const double dist = offset.length();
+	if (p.max_range < 0.0 || (p.max_range > 0.0 && dist > p.max_range)) return Vector2();
+	if (p.mode == 0) {
+		velocity = offset / static_cast<real_t>(Math::max(1.0, p.easing));
+	} else {
+		const Vector2 start = Vector2(0.0f, -1.0f).rotated(static_cast<real_t>(Math::deg_to_rad(p.start_dir))) * static_cast<real_t>(p.start_speed);
+		if (p.init == 0 && first) velocity = start;
+		else if (p.init == 1 && p.start_speed != 0.0) velocity = start;
+		else if (p.init == 2) velocity += start;
+		double accel = p.accel, friction = p.friction;
+		if (p.near_dist > 0.0 && dist < p.near_dist) {
+			const double t = dist / p.near_dist;
+			accel = p.near_accel + (p.accel - p.near_accel) * t;
+			friction = p.near_friction + (p.friction - p.near_friction) * t;
+		}
+		velocity *= static_cast<real_t>(1.0 - friction / 100.0);  // friction before acceleration
+		if (dist > 0.0) velocity += offset / static_cast<real_t>(dist) * static_cast<real_t>(accel * 0.01);
+		if (p.x_only) velocity.y = 0.0f;
+		if (p.y_only) velocity.x = 0.0f;
+	}
+	if (p.max_speed > 0.0 && velocity.length() > p.max_speed) velocity = velocity.normalized() * static_cast<real_t>(p.max_speed);
+	return velocity;
 }
 
 // Touch (1595): returns 1 toggle on, 0 toggle off, -1 nothing. Hold mode
@@ -1213,6 +1273,37 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			break;
 		}
+		case 3016: {
+			effect.kind = TriggerEffectKind::ADV_FOLLOW;
+			AdvFollowParams &a = effect.adv;
+			a.mode = static_cast<int>(String(properties.get("367", String("0"))).to_int());
+			a.easing = prop_float(properties, "361", 0.0);
+			a.max_speed = prop_float(properties, "298", 0.0);
+			a.max_range = prop_float(properties, "308", 0.0);
+			a.accel = prop_float(properties, "334", 0.0);
+			a.friction = prop_float(properties, "558", 0.0);
+			a.near_dist = prop_float(properties, "359", 0.0);
+			a.near_accel = prop_float(properties, "357", 0.0);
+			a.near_friction = prop_float(properties, "561", 0.0);
+			a.start_speed = prop_float(properties, "300", 0.0);
+			a.start_dir = prop_float(properties, "563", 0.0);
+			a.init = static_cast<int>(String(properties.get("572", String("0"))).to_int());
+			a.x_only = String(properties.get("306", String("0"))) == "1";
+			a.y_only = String(properties.get("307", String("0"))) == "1";
+			const int follow_id = static_cast<int>(String(properties.get("71", String("0"))).to_int());
+			if (follow_id > 0) effect.adv_follow_group = String("g_") + String::num_int64(follow_id);
+			effect.adv_p1 = String(properties.get("138", String("0"))) == "1";
+			effect.adv_p2 = String(properties.get("200", String("0"))) == "1";
+			effect.adv_exclusive = String(properties.get("571", String("0"))) == "1";
+			effect.adv_priority = static_cast<int32_t>(String(properties.get("365", String("0"))).to_int());
+			effect.adv_delay = Math::max(0.0, prop_float(properties, "292", 0.0));
+			break;
+		}
+		case 3618: effect.kind = TriggerEffectKind::RESET_GROUP; break;
+		case 1931:
+			effect.kind = TriggerEffectKind::END_WALL;
+			effect.end_wall_lock_y = String(properties.get("59", String("0"))) == "1";
+			break;
 		case 1812:
 			effect.kind = TriggerEffectKind::ON_DEATH;
 			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
@@ -2215,6 +2306,35 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::TOUCH:
 				armed_touches.insert(index);
 				break;
+			case TriggerEffectKind::ADV_FOLLOW: {
+				AdvFollow follow;
+				follow.record = index;
+				follow.order = ++adv_follow_order;
+				follow.start = clock;
+				follow.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
+				adv_follows.push_back(follow);
+				std::stable_sort(adv_follows.begin(), adv_follows.end(), [&](const AdvFollow &a, const AdvFollow &b) {
+					const int32_t pa = records[a.record].effect.adv_priority, pb = records[b.record].effect.adv_priority;
+					return pa != pb ? pa > pb : a.order < b.order;
+				});
+				break;
+			}
+			case TriggerEffectKind::RESET_GROUP:
+				// gd_docs reset.md: re-arm collectibles, destroyables and
+				// checkpoints; objects opt in with a gd_reset() method.
+				for (ObjectID id : resolve_effect_members(effect)) {
+					Object *node = ObjectDB::get_instance(id);
+					if (node && node->has_method("gd_reset")) node->call("gd_reset");
+				}
+				break;
+			case TriggerEffectKind::END_WALL: {
+				Node2D *wall = effect.target_groups.empty() ? nullptr : resolve_first_member(effect.target_groups[0]);
+				Object *level = ObjectDB::get_instance(level_id);
+				if (wall && level && level->has_method("apply_gd_end_wall")) {
+					level->call("apply_gd_end_wall", wall->get_global_position(), effect.end_wall_lock_y);
+				}
+				break;
+			}
 			case TriggerEffectKind::EVENT:
 				armed_events.insert(index);
 				break;
@@ -2245,6 +2365,7 @@ class NativeTriggerRuntime : public RefCounted {
 				// Cancels pending spawns targeting each group, cutting spawn loops.
 				for (const String &group : effect.target_groups) {
 					cancel_group_events(StringName(group));
+					stop_group_follows(group);
 				}
 				break;
 			case TriggerEffectKind::HIDE:
@@ -2358,6 +2479,77 @@ class NativeTriggerRuntime : public RefCounted {
 		std::deque<std::pair<double, real_t>> history;
 	};
 	std::map<String, FollowPlayerY> follow_player_y;
+	struct AdvFollow {
+		size_t record = 0;
+		uint64_t order = 0;
+		double start = 0.0;
+		ObjectID player;
+		std::deque<std::pair<double, Vector2>> history;
+	};
+	std::vector<AdvFollow> adv_follows;  // priority desc, then spawn order
+	uint64_t adv_follow_order = 0;
+	std::map<ObjectID, Vector2> adv_velocities;  // GD units per tick
+	static constexpr double ADV_TICK_HZ = 240.0;
+	static constexpr double PX_PER_UNIT = ENGINE_CELL_SIZE / GD_CELL_SIZE;
+
+	bool adv_center(const TriggerEffect &effect, Vector2 &center) const {
+		Node2D *node = nullptr;
+		if (effect.adv_p1 || effect.adv_p2) {
+			const size_t slot = effect.adv_p1 ? 0 : 1;
+			if (slot < frame_players.size()) node = Object::cast_to<Node2D>(ObjectDB::get_instance(frame_players[slot]));
+		} else {
+			node = resolve_first_member(effect.adv_follow_group);
+		}
+		if (!node) return false;
+		center = node->get_global_position();
+		return true;
+	}
+	// Stop also ends Advanced Follow / Follow Player Y instances spawned
+	// from the stopped trigger group.
+	void stop_group_follows(const String &group) {
+		auto found = group_index.find(group);
+		if (found == group_index.end()) return;
+		const std::set<size_t> stopped(found->value.begin(), found->value.end());
+		adv_follows.erase(std::remove_if(adv_follows.begin(), adv_follows.end(),
+				[&](const AdvFollow &f) { return stopped.count(f.record) > 0; }), adv_follows.end());
+		for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
+			it = stopped.count(it->second.record) ? follow_player_y.erase(it) : std::next(it);
+		}
+	}
+	// After Follow Player Y, before Follow (gd_docs advanced_follow.md).
+	void step_adv_follow(double delta) {
+		if (adv_follows.empty()) return;
+		const double ticks = delta * ADV_TICK_HZ;
+		std::set<ObjectID> exclusive, touched;
+		for (AdvFollow &follow : adv_follows) {
+			if (follow.record >= records.size()) continue;
+			const TriggerEffect &effect = records[follow.record].effect;
+			Vector2 now;
+			if (!adv_center(effect, now)) continue;
+			follow.history.push_back({ clock, now });
+			while (follow.history.size() > 1 && follow.history[1].first <= clock - effect.adv_delay) follow.history.pop_front();
+			if (clock - follow.start < effect.adv_delay) continue;  // delay also delays the start
+			const Vector2 center = follow.history.front().second;
+			for (ObjectID id : resolve_effect_members(effect)) {
+				if (exclusive.count(id)) continue;
+				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+				if (!node || id == follow.player) continue;
+				const Vector2 offset_units = (center - node->get_global_position()) / static_cast<real_t>(PX_PER_UNIT);
+				const bool first = adv_velocities.find(id) == adv_velocities.end();
+				Vector2 &velocity = adv_velocities[id];
+				Vector2 step = adv_follow_tick(effect.adv, offset_units, velocity, first) * static_cast<real_t>(ticks);
+				// Mode 1 eases toward the center: never overshoot it.
+				if (effect.adv.mode == 0 && step.length_squared() > offset_units.length_squared()) step = offset_units;
+				touched.insert(id);
+				if (effect.adv_exclusive && step != Vector2()) exclusive.insert(id);
+				if (step != Vector2()) node->set_global_position(node->get_global_position() + step * static_cast<real_t>(PX_PER_UNIT));
+			}
+		}
+		// Targets no longer followed lose their velocity.
+		for (auto it = adv_velocities.begin(); it != adv_velocities.end();) {
+			it = touched.count(it->first) ? std::next(it) : adv_velocities.erase(it);
+		}
+	}
 
 	void step_follow_player_y(double delta) {
 		for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
@@ -2619,6 +2811,8 @@ private:
 		armed_events.clear();
 		touch_states.clear();
 		follow_player_y.clear();
+		adv_follows.clear();
+		adv_velocities.clear();
 		collision_states.clear();
 		collision_blocks_epoch = UINT64_MAX;
 		points = 0;
@@ -4225,6 +4419,7 @@ public:
 			++dispatched;
 		}
 		step_follow_player_y(delta);
+		step_adv_follow(delta);
 		check_collisions();
 		check_touch_overlaps();
 		frame_players.clear();

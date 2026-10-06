@@ -23,6 +23,9 @@ enum Kind {
 	FOLLOW_PLAYER_Y,
 	EVENT,
 	OPTIONS,
+	ADV_FOLLOW,
+	RESET_GROUP,
+	END_WALL,
 }
 
 const KIND_BY_ID: Dictionary[int, Kind] = {
@@ -41,7 +44,13 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	1814: Kind.FOLLOW_PLAYER_Y,
 	3604: Kind.EVENT,
 	2899: Kind.OPTIONS,
+	3016: Kind.ADV_FOLLOW,
+	3618: Kind.RESET_GROUP,
+	1931: Kind.END_WALL,
 }
+
+const ADV_TICK_HZ: float = 240.0
+const PX_PER_UNIT: float = 128.0 / 30.0
 
 ## GD units to pixels on Y (+Y up in GD); matches native CELLS_TO_PX_Y.
 const UNITS_TO_PX_Y: float = -128.0 / 30.0
@@ -64,6 +73,11 @@ static var _armed_events: Array[GameplayTriggerComponent] = []
 static var _touch_states: Dictionary[GameplayTriggerComponent, bool] = {}
 ## Target group -> {"trigger", "player", "remaining", "history": Array[Vector2] of (time, y)}.
 static var _follow_player_y: Dictionary[String, Dictionary] = {}
+## Each {"trigger", "order", "start", "player", "history": Array[Vector3] (time, x, y)},
+## sorted by priority (key 365) descending, then spawn order.
+static var _adv_follows: Array[Dictionary] = []
+static var _adv_order: int = 0
+static var _adv_velocities: Dictionary[Node2D, Vector2] = {}
 ## Pair key -> last recorded overlap state.
 static var _collision_states: Dictionary[int, bool] = {}
 ## Pair key -> [block a, block b] for every collision trigger in the level.
@@ -86,6 +100,8 @@ static func reset_state() -> void:
 	_armed_events.clear()
 	_touch_states.clear()
 	_follow_player_y.clear()
+	_adv_follows.clear()
+	_adv_velocities.clear()
 	_collision_states.clear()
 
 
@@ -152,6 +168,63 @@ static func _step_follow_player_y(delta: float) -> void:
 				var node_2d := node as Node2D
 				node_2d.global_position.y += GDItemMath.follow_player_y_step(node_2d.global_position.y, target, trigger._f("90", 1.0), max_px, delta)
 		follow["remaining"] = float(follow["remaining"]) - delta
+
+
+static func _adv_center(trigger: GameplayTriggerComponent) -> Variant:
+	if trigger._b("138"):
+		return LevelManager.player.global_position if is_instance_valid(LevelManager.player) else null
+	if trigger._b("200"):
+		for dual: Player in LevelManager.player_duals:
+			if is_instance_valid(dual):
+				return dual.global_position
+		return null
+	var tree := Engine.get_main_loop() as SceneTree
+	for node: Node in tree.get_nodes_in_group(StringName(Constants.GROUP_PREFIX + trigger.properties.get("71", ""))):
+		if node is Node2D:
+			return (node as Node2D).global_position
+	return null
+
+
+## Twin of the native step_adv_follow (gd_docs advanced_follow.md).
+static func _step_adv_follow(delta: float) -> void:
+	if _adv_follows.is_empty():
+		return
+	var tree := Engine.get_main_loop() as SceneTree
+	var ticks: float = delta * ADV_TICK_HZ
+	var exclusive: Dictionary[Node2D, bool] = {}
+	var touched: Dictionary[Node2D, bool] = {}
+	for follow: Dictionary in _adv_follows:
+		var trigger: GameplayTriggerComponent = follow["trigger"]
+		if not is_instance_valid(trigger):
+			continue
+		var now: Variant = _adv_center(trigger)
+		if now == null:
+			continue
+		var history: Array[Vector3] = follow["history"]
+		history.append(Vector3(_level_time, now.x, now.y))
+		var delay: float = maxf(0.0, trigger._f("292"))
+		while history.size() > 1 and history[1].x <= _level_time - delay:
+			history.pop_front()
+		if _level_time - float(follow["start"]) < delay:
+			continue
+		var center := Vector2(history[0].y, history[0].z)
+		for node: Node in tree.get_nodes_in_group(StringName(Constants.GROUP_PREFIX + trigger.properties.get("51", ""))):
+			var target := node as Node2D
+			if target == null or target == follow["player"] or exclusive.has(target):
+				continue
+			var offset: Vector2 = (center - target.global_position) / PX_PER_UNIT
+			var result: Array = GDItemMath.adv_follow_tick(trigger.properties, offset, _adv_velocities.get(target, Vector2.ZERO), not _adv_velocities.has(target))
+			_adv_velocities[target] = result[1]
+			var step: Vector2 = result[0] * ticks
+			if trigger._i("367") == 0 and step.length_squared() > offset.length_squared():
+				step = offset
+			touched[target] = true
+			if trigger._b("571") and step != Vector2.ZERO:
+				exclusive[target] = true
+			target.global_position += step * PX_PER_UNIT
+	for target: Node2D in _adv_velocities.keys():
+		if not touched.has(target):
+			_adv_velocities.erase(target)
 
 
 ## Key 56 unchecked toggles the group off; checked toggles it on and spawns it.
@@ -231,6 +304,7 @@ func _physics_process(delta: float) -> void:
 	_level_time += delta
 	_advance_timers(delta)
 	_step_follow_player_y(delta)
+	_step_adv_follow(delta)
 	_check_collisions()
 
 
@@ -385,6 +459,23 @@ func _on_interacted(player: Player = null) -> void:
 		Kind.EVENT:
 			if not _armed_events.has(self):
 				_armed_events.append(self)
+		Kind.ADV_FOLLOW:
+			_adv_order += 1
+			var adv_history: Array[Vector3] = []
+			_adv_follows.append({ "trigger": self, "order": _adv_order, "start": _level_time, "player": player, "history": adv_history })
+			_adv_follows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				var pa: int = (a["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(a["trigger"]) else 0
+				var pb: int = (b["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(b["trigger"]) else 0
+				return pa > pb if pa != pb else int(a["order"]) < int(b["order"]))
+		Kind.RESET_GROUP:
+			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
+				if node.has_method(&"gd_reset"):
+					node.call(&"gd_reset")
+		Kind.END_WALL:
+			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
+				if node is Node2D and LevelManager.current_level != null:
+					LevelManager.current_level.apply_gd_end_wall((node as Node2D).global_position, _b("59"))
+					break
 		Kind.OPTIONS:
 			if LevelManager.current_level != null:
 				LevelManager.current_level.apply_gd_options(properties)

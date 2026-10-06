@@ -13,6 +13,14 @@ func _ready() -> void:
 		$Hitbox.debug_color = Color.hex(0x00ff0033)
 
 
+## Reset trigger (3618): re-arms single-use objects (collectibles,
+## destroyables, checkpoints) without undoing their effects.
+func gd_reset() -> void:
+	for component: Component in components:
+		if component is SingleUsageComponent:
+			(component as SingleUsageComponent).reset()
+
+
 func register_public(component: Component) -> void:
 	components.append(component)
 

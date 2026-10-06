@@ -421,6 +421,15 @@ func apply_gd_options(options: Dictionary) -> void:
 	GDLevelOptions.apply(options)
 
 
+## End Wall (1931): moves the level end to the wall group's position.
+## Hypothesis (no gd_docs page): key 59 also pins the end Y.
+func apply_gd_end_wall(wall_position: Vector2, lock_y: bool) -> void:
+	if LevelManager.player_camera == null:
+		return
+	var end: Vector2 = LevelManager.player_camera.gd_level_end
+	LevelManager.player_camera.gd_level_end = Vector2(wall_position.x, wall_position.y if lock_y or not is_finite(end.y) else end.y)
+
+
 func stop_level() -> void:
 	song_player.stop()
 	LevelManager.player_duals.clear()

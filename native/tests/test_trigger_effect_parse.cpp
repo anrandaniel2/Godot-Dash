@@ -142,6 +142,25 @@ int main() {
 	expect_close("follow Y max speed", follow_player_y_step(0.0, 100.0, 4.0, 10.0, 1.0 / 60.0), 10.0);
 	expect_true("event matches id, material, player", event_matches({ 4, 12 }, 0, 0, 12, 0, 2)
 			&& !event_matches({ 4 }, 0, 0, 12, 0, 1) && !event_matches({ 4 }, 3, 0, 4, 0, 1) && !event_matches({ 4 }, 0, 1, 4, 0, 2));
+	{
+		AdvFollowParams m1; m1.easing = 2.0;
+		Vector2 v;
+		expect_true("adv follow mode 1 is distance / easing", adv_follow_tick(m1, Vector2(10, 0), v, true).is_equal_approx(Vector2(5, 0)));
+		m1.max_range = 5.0; v = Vector2();
+		expect_true("adv follow outside max range does nothing", adv_follow_tick(m1, Vector2(10, 0), v, true) == Vector2());
+		m1.max_range = 0.0; m1.max_speed = 1.0;
+		expect_true("adv follow max speed", adv_follow_tick(m1, Vector2(10, 0), v, true).is_equal_approx(Vector2(1, 0)));
+		AdvFollowParams m2; m2.mode = 1; m2.start_speed = 2.0; m2.start_dir = 90.0;
+		Vector2 w;
+		expect_true("adv follow init start speed points clockwise from up", adv_follow_tick(m2, Vector2(0, 0), w, true).is_equal_approx(Vector2(2, 0)));
+		expect_true("adv follow init only on first action", adv_follow_tick(m2, Vector2(0, 0), w, false).is_equal_approx(Vector2(2, 0)));
+		AdvFollowParams fr; fr.mode = 1; fr.friction = 50.0; fr.accel = 100.0;
+		Vector2 f(4, 0);
+		expect_true("adv follow friction then accel", adv_follow_tick(fr, Vector2(0, 10), f, false).is_equal_approx(Vector2(2, 1)));
+		AdvFollowParams xo; xo.x_only = true; xo.easing = 1.0;
+		Vector2 x;
+		expect_true("adv follow X only", adv_follow_tick(xo, Vector2(3, 7), x, true).is_equal_approx(Vector2(3, 0)));
+	}
 	expect_true("time event due", timer_event_due(1.0, 2.0, 3.0) && timer_event_due(-1.0, -2.0, -3.0) && !timer_event_due(1.0, 2.0, 1.0));
 	expect_true("compare equal within tolerance", item_compare_values(1.0, 0, 1.4, 0.5));
 	expect_true("compare not-equal outside tolerance", item_compare_values(1.0, 5, 2.0, 0.5));

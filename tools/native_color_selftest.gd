@@ -182,6 +182,8 @@ func _ready() -> void:
 	_expect("Touch default flips", GDItemMath.touch_toggle_result(false, 0, true, true) == 0 and GDItemMath.touch_toggle_result(false, 0, false, true) == -1)
 	_expect("Follow Y eases at speed 1", is_equal_approx(GDItemMath.follow_player_y_step(0.0, 100.0, 1.0, 0.0, 1.0 / 60.0), 25.0))
 	_expect("Event matches", GDItemMath.event_matches(PackedInt32Array([4, 12]), 0, 0, 12, 0, 2) and not GDItemMath.event_matches(PackedInt32Array([4]), 0, 1, 4, 0, 2))
+	_expect("Adv follow mode 1 is distance / easing", (GDItemMath.adv_follow_tick({ "361": "2" }, Vector2(10, 0), Vector2.ZERO, true)[0] as Vector2).is_equal_approx(Vector2(5, 0)))
+	_expect("Adv follow friction then accel", (GDItemMath.adv_follow_tick({ "367": "1", "558": "50", "334": "100" }, Vector2(0, 10), Vector2(4, 0), false)[0] as Vector2).is_equal_approx(Vector2(2, 1)))
 	_expect("Time event due", GDItemMath.timer_event_due(1.0, 2.0, 3.0) and not GDItemMath.timer_event_due(1.0, 2.0, 1.0))
 	_expect("Item compare equal within tolerance", GDItemMath.compare(1.0, 0, 1.4, 0.5))
 	var seq_state: Dictionary = {}

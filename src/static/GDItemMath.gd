@@ -188,3 +188,52 @@ static func follow_player_y_step(current: float, target: float, speed: float, ma
 ## Event (3604): any listed id, exact material, player 0 = any.
 static func event_matches(ids: PackedInt32Array, material: int, player: int, event_id: int, event_material: int, slot: int) -> bool:
 	return ids.has(event_id) and material == event_material and (player == 0 or player == slot)
+
+
+## Advanced Follow (3016) tick, twin of the native adv_follow_tick. [param p]
+## holds the raw GD keys (gmdkit prop_table adv_follow). Returns
+## [step, velocity] in GD units per 240 Hz tick; out of range leaves the
+## velocity unchanged and steps zero.
+static func adv_follow_tick(p: Dictionary, offset: Vector2, velocity: Vector2, first: bool) -> Array:
+	var x_only: bool = p.get("306", "0") == "1"
+	var y_only: bool = p.get("307", "0") == "1"
+	if x_only:
+		offset.y = 0.0
+	if y_only:
+		offset.x = 0.0
+	var dist: float = offset.length()
+	var max_range: float = float(p.get("308", "0"))
+	if max_range < 0.0 or (max_range > 0.0 and dist > max_range):
+		return [Vector2.ZERO, velocity]
+	if int(p.get("367", "0")) == 0:
+		velocity = offset / maxf(1.0, float(p.get("361", "0")))
+	else:
+		var start_speed: float = float(p.get("300", "0"))
+		var start: Vector2 = Vector2.UP.rotated(deg_to_rad(float(p.get("563", "0")))) * start_speed
+		match int(p.get("572", "0")):
+			0:
+				if first:
+					velocity = start
+			1:
+				if start_speed != 0.0:
+					velocity = start
+			2:
+				velocity += start
+		var accel: float = float(p.get("334", "0"))
+		var friction: float = float(p.get("558", "0"))
+		var near_dist: float = float(p.get("359", "0"))
+		if near_dist > 0.0 and dist < near_dist:
+			var t: float = dist / near_dist
+			accel = lerpf(float(p.get("357", "0")), accel, t)
+			friction = lerpf(float(p.get("561", "0")), friction, t)
+		velocity *= 1.0 - friction / 100.0
+		if dist > 0.0:
+			velocity += offset / dist * accel * 0.01
+		if x_only:
+			velocity.y = 0.0
+		if y_only:
+			velocity.x = 0.0
+	var max_speed: float = float(p.get("298", "0"))
+	if max_speed > 0.0 and velocity.length() > max_speed:
+		velocity = velocity.normalized() * max_speed
+	return [velocity, velocity]
