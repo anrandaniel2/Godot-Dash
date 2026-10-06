@@ -16,6 +16,9 @@ const GD_TOP_MARGIN_CELLS: float = 3.0
 const GD_BOTTOM_MARGIN_CELLS: float = 4.0
 const GD_FREE_EASE: float = 1.0 / 10.0
 const GD_LOCKED_EASE: float = 1.0 / 30.0
+## Camera Mode (2925) Edit Camera Settings: the free-follow ease is 1 / Easing
+## (hypothesis: GD's default Easing 10 is updateCamera's 1/10 law).
+static var free_ease: float = GD_FREE_EASE
 ## GD 1.0 updateCamera: within 50 units of the end clamp the camera moves to
 ## the end portal's height.
 const GD_END_APPROACH_PX: float = 50.0 / 30.0 * Constants.CELL_SIZE
@@ -135,6 +138,7 @@ func _apply_gd_level_end(framerate_compensation: float) -> void:
 
 func reset() -> void:
 	_last_ground_was_floor = false
+	free_ease = GD_FREE_EASE
 	limit_left = -10000000
 	limit_top = -10000000
 	limit_right = 10000000
@@ -159,6 +163,7 @@ func local_target_distance_axis(distance: float, max_distance: float, framerate_
 ## One frame of GD's vertical camera follow. distance is the player's (or,
 ## in fly modes, the portal centre's) rotation-local offset from the view
 ## centre, +y down; half_height is half the visible height in px.
+## Free mode closes [member free_ease] of the gap per 60 Hz frame.
 static func gd_vertical_step(distance: float, half_height: float, is_freefly: bool, flipped: bool, framerate_compensation: float) -> float:
 	if not is_freefly:
 		return distance * GD_LOCKED_EASE * framerate_compensation
@@ -167,9 +172,9 @@ static func gd_vertical_step(distance: float, half_height: float, is_freefly: bo
 	var upper_limit: float = top_margin - half_height
 	var lower_limit: float = half_height - bottom_margin
 	if distance < upper_limit:
-		return (distance - upper_limit) * GD_FREE_EASE * framerate_compensation
+		return (distance - upper_limit) * free_ease * framerate_compensation
 	if distance > lower_limit:
-		return (distance - lower_limit) * GD_FREE_EASE * framerate_compensation
+		return (distance - lower_limit) * free_ease * framerate_compensation
 	return 0.0
 
 
@@ -206,3 +211,14 @@ func _draw() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0)
 	draw_circle(Vector2.ZERO, 20.0, Color.GREEN, false, 4.0)
 	draw_circle(offset.rotated(-rotation), 20.0, Color.MAGENTA, false, 4.0)
+
+
+## Camera Mode trigger (2925, gd_docs camera_mode.md): Free Mode removes the
+## borders of the bordered gamemodes (the same as a Free Mode portal), and
+## Edit Camera Settings sets the free-follow easing. Cube and robot have no
+## borders and are unaffected.
+func apply_gd_camera_mode(free_mode: bool, edit_settings: bool, easing: float) -> void:
+	if free_mode:
+		freefly = true
+	if edit_settings and easing > 0.0:
+		free_ease = 1.0 / easing

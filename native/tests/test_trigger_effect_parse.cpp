@@ -488,6 +488,61 @@ int main() {
 		expect_true("enter 1915 none", gd_enter_effect_for_trigger(1915) == 0);
 	}
 
+	{
+		// Keyframes: gd_docs animate_keyframe.md / GD Creator School.
+		expect_close("kf shortest wraps", kf_segment_rotation(0.0, 270.0, 0, 0, 1.0), -90.0);
+		expect_close("kf CW keeps positive", kf_segment_rotation(0.0, 270.0, 1, 0, 1.0), 270.0);
+		expect_close("kf CW forces clockwise", kf_segment_rotation(90.0, 0.0, 1, 0, 1.0), 270.0);
+		expect_close("kf CCW forces counter", kf_segment_rotation(0.0, 90.0, 2, 0, 1.0), -270.0);
+		expect_close("kf x360 not scaled", kf_segment_rotation(0.0, 0.0, 0, 2, 0.5), 720.0);
+		expect_close("kf mod quirk compares scaled", kf_segment_rotation(0.0, 150.0, 0, 0, 2.0), -60.0);
+		std::vector<KfKey> keys(3);
+		keys[0].x = 0.0;   keys[0].duration = 1.0; keys[0].index = 0;
+		keys[1].x = 100.0; keys[1].duration = 2.0; keys[1].index = 1; keys[1].rot = 90.0;
+		keys[2].x = 400.0; keys[2].index = 2; keys[2].spawn_group = 9;
+		KfPlan plan = kf_build_plan(keys, KfMods());
+		expect_close("kf time total", plan.total, 3.0);
+		expect_close("kf time mid seg 1", kf_sample(plan, 0.5).x, 50.0);
+		expect_close("kf time mid seg 2", kf_sample(plan, 2.0).x, 250.0);
+		expect_close("kf rot reached", kf_sample(plan, 1.0).rot, 90.0);
+		expect_close("kf end", kf_sample(plan, 9.0).x, 400.0);
+		expect_true("kf spawn not before arrival", !kf_point_reached(plan, 2, 2.9));
+		expect_true("kf spawn on arrival", kf_point_reached(plan, 2, 3.0));
+		std::vector<KfKey> unsorted = { keys[2], keys[0], keys[1] };
+		expect_close("kf sorted by index", kf_sample(kf_build_plan(unsorted, KfMods()), 0.5).x, 50.0);
+		keys[0].time_mode = 1; // even over a ref-only middle key
+		keys[1].ref_only = true;
+		plan = kf_build_plan(keys, KfMods());
+		expect_true("kf ref-only joins span", plan.spans.size() == 1);
+		expect_close("kf even total", plan.total, 1.0);
+		expect_close("kf even half", kf_sample(plan, 0.5).x, 100.0);
+		keys[0].time_mode = 2; // dist: constant speed, rotation even
+		plan = kf_build_plan(keys, KfMods());
+		expect_close("kf dist half", kf_sample(plan, 0.5).x, 200.0);
+		expect_close("kf dist rot even", kf_sample(plan, 0.5).rot, 90.0);
+		keys[2].prox = true;
+		plan = kf_build_plan(keys, KfMods());
+		expect_true("kf prox early", kf_point_reached(plan, 2, 0.89));
+		expect_true("kf prox not too early", !kf_point_reached(plan, 2, 0.88));
+		KfMods mods;
+		mods.time = 2.0;
+		mods.pos_x = 0.5;
+		plan = kf_build_plan(keys, mods);
+		expect_close("kf time mod", plan.total, 2.0);
+		expect_close("kf pos mod", kf_sample(plan, 9.0).x, 200.0);
+		mods.time = -1.0;
+		expect_close("kf negative time mod is 0", kf_build_plan(keys, mods).total, 0.0);
+		std::vector<KfKey> loop(2);
+		loop[0].duration = 1.0; loop[0].index = 0;
+		loop[1].x = 60.0; loop[1].duration = 1.0; loop[1].index = 1; loop[1].close_loop = true;
+		plan = kf_build_plan(loop, KfMods());
+		expect_close("kf close loop total", plan.total, 2.0);
+		expect_close("kf close loop returns", kf_sample(plan, 1.5).x, 30.0);
+		loop[0].easing = 2; // ease in, rate 2
+		loop[0].rate = 2.0;
+		expect_close("kf easing applies", kf_sample(kf_build_plan(loop, KfMods()), 0.5).x, 15.0);
+	}
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

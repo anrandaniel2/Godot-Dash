@@ -161,6 +161,13 @@ enum class TriggerEffectKind : int32_t {
 	AREA_EDIT,          // 3011-3015 Edit Area
 	AREA_STOP,          // 3024 Area Stop
 	ENTER_PRESET,       // 22-28, 55-59, 1915 legacy enter effects
+	KEYFRAME,           // 3032 keyframe (data only)
+	STATE_BLOCK,        // 3640
+	CAMERA_MODE,        // 2925
+	PLAYER_TRAIL,       // 32 enable / 33 disable ghost trail
+	CHECKPOINT,         // 2063 platformer checkpoint
+	TOGGLE_BLOCK,       // 3643
+	ANIMATE_KEYFRAME,   // 3033
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -650,7 +657,215 @@ static Color area_hsv_shift(const Color &c, const AreaParams &p) {
 	return Color::from_hsv(h, Math::clamp(sat, 0.0f, 1.0f), Math::clamp(val, 0.0f, 1.0f), c.a);
 }
 
+// ---- Keyframe animations (3032 Keyframe, 3033 Animate Keyframe) ----
+// gd_docs animate_keyframe.md, GD Creator School "Keyframes" and gmdkit's
+// prop table (373 key id, 374 index, 375 ref only, 376 close loop, 377 prox,
+// 378 curve, 379 time mode, 536 spin, 537 x360, 557 spawn delay).
+struct KfKey {
+	double x = 0.0, y = 0.0;     // Godot px (y down)
+	double rot = 0.0;            // degrees, clockwise positive (GD key 6)
+	double sx = 1.0, sy = 1.0;
+	double duration = 0.0;
+	int32_t easing = 0;
+	double rate = 2.0;
+	bool ref_only = false, close_loop = false, curve = false, prox = false;
+	int32_t time_mode = 0;       // 0 time, 1 even, 2 dist
+	int32_t spin = 0;            // 0 shortest, 1 CW, 2 CCW
+	int32_t full_rot = 0;        // x360, clockwise positive
+	int32_t key_id = 0, index = 0;
+	int32_t spawn_group = 0;
+	double spawn_delay = 0.0;
+};
+struct KfMods {
+	double time = 1.0, pos_x = 1.0, pos_y = 1.0, rot = 1.0, scale_x = 1.0, scale_y = 1.0;
+};
+struct KfSpan {
+	int32_t first = 0, last = 0; // point indices
+	double t0 = 0.0, length = 0.0;
+	int32_t easing = 0;
+	double rate = 2.0;
+	std::vector<double> pos_frac, rs_frac; // last - first + 1 boundaries
+};
+struct KfPlan {
+	std::vector<double> px, py, rot, sx, sy; // per point, rot accumulated
+	std::vector<bool> curve;
+	std::vector<int32_t> spawn_group;
+	std::vector<double> spawn_delay;
+	std::vector<bool> prox;
+	std::vector<KfSpan> spans;
+	std::vector<int32_t> point_span;   // span a point ends (0 for the first)
+	double total = 0.0;
+};
+struct KfState {
+	double x = 0.0, y = 0.0, rot = 0.0, sx = 1.0, sy = 1.0;
+};
+
+// Rotation of transition i -> i+1. gd_docs animate_keyframe.md gives GD's
+// formula including its quirks: the mod also scales the CW / CCW
+// comparison, the +-360 correction and x360 are not scaled. The settings
+// belong to the keyframe the transition arrives at.
+static double kf_segment_rotation(double from, double to, int32_t spin, int32_t full_rot, double mod) {
+	const double scaled = (to - from) * mod;
+	const double cw = spin == 1 ? 2.0 : (spin == 2 ? 0.0 : 1.0);
+	const double ccw = spin == 2 ? 2.0 : (spin == 1 ? 0.0 : 1.0);
+	double offset = 0.0;
+	if (scaled > cw * 180.0) offset = -360.0;
+	else if (-scaled > ccw * 180.0) offset = 360.0;
+	return scaled + offset + 360.0 * full_rot;
+}
+
+static KfPlan kf_build_plan(std::vector<KfKey> keys, const KfMods &mods) {
+	KfPlan plan;
+	if (keys.empty()) return plan;
+	std::stable_sort(keys.begin(), keys.end(), [](const KfKey &a, const KfKey &b) { return a.index < b.index; });
+	if (keys.size() > 1 && keys.back().close_loop) keys.push_back(keys.front());
+	const size_t n = keys.size();
+	const double time_mod = std::max(0.0, mods.time);
+	const double pos_y_mod = mods.pos_y == 0.0 ? mods.pos_x : mods.pos_y;
+	const KfKey &k0 = keys.front();
+	double rot = 0.0;
+	for (size_t i = 0; i < n; ++i) {
+		const KfKey &k = keys[i];
+		plan.px.push_back(k0.x + (k.x - k0.x) * mods.pos_x);
+		plan.py.push_back(k0.y + (k.y - k0.y) * pos_y_mod);
+		plan.sx.push_back(k0.sx + (k.sx - k0.sx) * mods.scale_x);
+		plan.sy.push_back(k0.sy + (k.sy - k0.sy) * mods.scale_y);
+		if (i > 0) rot += kf_segment_rotation(keys[i - 1].rot, k.rot, k.spin, k.full_rot, mods.rot);
+		plan.rot.push_back(rot);
+		plan.curve.push_back(k.curve);
+		plan.spawn_group.push_back(k.spawn_group);
+		plan.spawn_delay.push_back(k.spawn_delay);
+		plan.prox.push_back(k.prox);
+	}
+	plan.point_span.assign(n, 0);
+	double t = 0.0;
+	size_t i = 0;
+	while (i + 1 < n) {
+		// A span runs to the next keyframe that is not Ref Only; its first
+		// keyframe's Time / Even / Dist, duration and easing cover it.
+		size_t j = i + 1;
+		while (j + 1 < n && keys[j].ref_only) ++j;
+		KfSpan span;
+		span.first = static_cast<int32_t>(i);
+		span.last = static_cast<int32_t>(j);
+		span.t0 = t;
+		span.easing = keys[i].easing;
+		span.rate = keys[i].rate;
+		const size_t segs = j - i;
+		std::vector<double> weights_pos(segs, 1.0), weights_rs(segs, 1.0);
+		const int32_t mode = keys[i].time_mode;
+		if (mode == 0) {
+			span.length = 0.0;
+			for (size_t s = 0; s < segs; ++s) {
+				weights_pos[s] = weights_rs[s] = std::max(0.0, keys[i + s].duration) * time_mod;
+				span.length += weights_pos[s];
+			}
+		} else {
+			span.length = std::max(0.0, keys[i].duration) * time_mod;
+			if (mode == 2) {
+				for (size_t s = 0; s < segs; ++s)
+					weights_pos[s] = std::hypot(plan.px[i + s + 1] - plan.px[i + s], plan.py[i + s + 1] - plan.py[i + s]);
+			}
+		}
+		auto fractions = [segs](const std::vector<double> &w) {
+			std::vector<double> f(segs + 1, 0.0);
+			double sum = 0.0;
+			for (double v : w) sum += v;
+			for (size_t s = 0; s < segs; ++s)
+				f[s + 1] = sum > 0.0 ? f[s] + w[s] / sum : double(s + 1) / double(segs);
+			f[segs] = 1.0;
+			return f;
+		};
+		span.pos_frac = fractions(weights_pos);
+		span.rs_frac = fractions(weights_rs);
+		for (size_t p = i + 1; p <= j; ++p) plan.point_span[p] = static_cast<int32_t>(plan.spans.size());
+		plan.spans.push_back(std::move(span));
+		t += plan.spans.back().length;
+		i = j;
+	}
+	plan.total = t;
+	return plan;
+}
+
+// Eased progress through a span at time t.
+static double kf_span_progress(const KfSpan &span, double t) {
+	if (span.length <= 0.0) return t >= span.t0 ? 1.0 : 0.0;
+	return gd_ease(span.easing, span.rate, (t - span.t0) / span.length);
+}
+
+// Locates progress e in boundaries f: returns segment and local fraction.
+static void kf_locate(const std::vector<double> &f, double e, size_t &seg, double &local) {
+	const size_t segs = f.size() - 1;
+	seg = 0;
+	while (seg + 1 < segs && e > f[seg + 1]) ++seg;
+	const double width = f[seg + 1] - f[seg];
+	local = width > 0.0 ? Math::clamp((e - f[seg]) / width, 0.0, 1.0) : 1.0;
+}
+
+static KfState kf_sample(const KfPlan &plan, double t) {
+	KfState state;
+	if (plan.px.empty()) return state;
+	size_t point = 0;
+	const KfSpan *span = nullptr;
+	for (const KfSpan &s : plan.spans) {
+		span = &s;
+		if (t < s.t0 + s.length) break;
+	}
+	if (!span) {
+		state.x = plan.px[0]; state.y = plan.py[0]; state.rot = plan.rot[0];
+		state.sx = plan.sx[0]; state.sy = plan.sy[0];
+		return state;
+	}
+	const double e = kf_span_progress(*span, t);
+	size_t seg = 0;
+	double local = 0.0;
+	kf_locate(span->pos_frac, e, seg, local);
+	point = static_cast<size_t>(span->first) + seg;
+	const size_t a = point, b = point + 1;
+	if (plan.curve[a] && plan.curve[b]) {
+		// Hypothesis: GD's curve is a Catmull-Rom spline through the
+		// neighbouring keyframes (the path passes through every keyframe).
+		const size_t p0 = a > 0 ? a - 1 : a;
+		const size_t p3 = b + 1 < plan.px.size() ? b + 1 : b;
+		auto cr = [local](double v0, double v1, double v2, double v3) {
+			const double s = local, s2 = s * s, s3 = s2 * s;
+			return 0.5 * (2.0 * v1 + (v2 - v0) * s + (2.0 * v0 - 5.0 * v1 + 4.0 * v2 - v3) * s2 + (3.0 * v1 - v0 - 3.0 * v2 + v3) * s3);
+		};
+		state.x = cr(plan.px[p0], plan.px[a], plan.px[b], plan.px[p3]);
+		state.y = cr(plan.py[p0], plan.py[a], plan.py[b], plan.py[p3]);
+	} else {
+		state.x = plan.px[a] + (plan.px[b] - plan.px[a]) * local;
+		state.y = plan.py[a] + (plan.py[b] - plan.py[a]) * local;
+	}
+	kf_locate(span->rs_frac, e, seg, local);
+	const size_t ra = static_cast<size_t>(span->first) + seg;
+	state.rot = plan.rot[ra] + (plan.rot[ra + 1] - plan.rot[ra]) * local;
+	state.sx = plan.sx[ra] + (plan.sx[ra + 1] - plan.sx[ra]) * local;
+	state.sy = plan.sy[ra] + (plan.sy[ra + 1] - plan.sy[ra]) * local;
+	return state;
+}
+
+// Whether the animation has reached point p by time t (Prox: 85% of the
+// transition into it, GD Creator School).
+static bool kf_point_reached(const KfPlan &plan, size_t p, double t) {
+	if (p == 0) return true;
+	const KfSpan &span = plan.spans[plan.point_span[p]];
+	if (t >= span.t0 + span.length) return true;
+	if (t < span.t0) return false;
+	const size_t b = p - static_cast<size_t>(span.first);
+	double target = span.pos_frac[b];
+	if (plan.prox[p]) target = span.pos_frac[b - 1] + 0.85 * (span.pos_frac[b] - span.pos_frac[b - 1]);
+	return kf_span_progress(span, t) >= target - 1e-9;
+}
+
 struct TriggerEffect {
+	KfKey keyframe;              // KEYFRAME
+	int32_t kf_anim_group = 0;   // ANIMATE_KEYFRAME (key 76)
+	KfMods kf_mods;
+	String state_off_group;      // STATE_BLOCK (71); State On is target_groups (51)
+	bool block_spawn_only = false, block_claim_touch = false; // TOGGLE_BLOCK 504 / 445
+	bool cam_free_mode = false, cam_edit_settings = false; // CAMERA_MODE 111 / 112
+	double cam_easing = 10.0;    // CAMERA_MODE 113
 	int32_t enter_effect = 1;    // ENTER_PRESET: PlayLayer::m_activeEnterEffect
 	AreaParams area;            // 3006-3015 Area / Edit Area, 3024 Area Stop
 	TriggerEffectKind kind = TriggerEffectKind::NONE;
@@ -1756,6 +1971,84 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.kind = TriggerEffectKind::ENTER_PRESET;
 			effect.enter_effect = gd_enter_effect_for_trigger(gd_id);
 			return effect; // no target group or timing keys
+		}
+		case 3032: {
+			// Keyframes are data for Animate Keyframe; they never fire.
+			effect.kind = TriggerEffectKind::KEYFRAME;
+			KfKey &k = effect.keyframe;
+			k.rot = prop_float(properties, "6", 0.0);
+			const double uniform = prop_float(properties, "32", 1.0);
+			k.sx = prop_float(properties, "128", uniform);
+			k.sy = prop_float(properties, "129", uniform);
+			k.duration = prop_float(properties, "10", 0.0);
+			k.easing = static_cast<int32_t>(prop_float(properties, "30", 0.0));
+			k.rate = prop_float(properties, "85", 2.0);
+			k.key_id = static_cast<int32_t>(prop_float(properties, "373", 0.0));
+			k.index = static_cast<int32_t>(prop_float(properties, "374", 0.0));
+			k.ref_only = prop_float(properties, "375", 0.0) != 0.0;
+			k.close_loop = prop_float(properties, "376", 0.0) != 0.0;
+			k.prox = prop_float(properties, "377", 0.0) != 0.0;
+			k.curve = prop_float(properties, "378", 0.0) != 0.0;
+			k.time_mode = static_cast<int32_t>(prop_float(properties, "379", 0.0));
+			k.spin = static_cast<int32_t>(prop_float(properties, "536", 0.0));
+			k.full_rot = static_cast<int32_t>(prop_float(properties, "537", 0.0));
+			// Hypothesis: SpawnGID is the target slot (51); gmdkit also
+			// names 71 keyframe.SPAWN_ID, used when 51 is empty.
+			k.spawn_group = static_cast<int32_t>(prop_float(properties, "51", 0.0));
+			if (k.spawn_group <= 0) k.spawn_group = static_cast<int32_t>(prop_float(properties, "71", 0.0));
+			k.spawn_delay = prop_float(properties, "557", 0.0);
+			return effect;
+		}
+		case 2063:
+			// GD Creator School "Gameplay Objects": reaching the checkpoint
+			// spawns SpawnID (51) and makes it the respawn point.
+			effect.kind = TriggerEffectKind::CHECKPOINT;
+			effect.target_groups = parse_group_list(properties, "51");
+			return effect;
+		case 32: case 33:
+			effect.kind = TriggerEffectKind::PLAYER_TRAIL;
+			effect.toggle_on = gd_id == 32;
+			return effect;
+		case 2925: {
+			// gd_docs camera_mode.md; keys from gmdkit (111 free mode,
+			// 112 edit camera settings, 113 easing, 114 padding).
+			effect.kind = TriggerEffectKind::CAMERA_MODE;
+			effect.cam_free_mode = prop_float(properties, "111", 0.0) != 0.0;
+			effect.cam_edit_settings = prop_float(properties, "112", 0.0) != 0.0;
+			effect.cam_easing = prop_float(properties, "113", 10.0);
+			return effect;
+		}
+		case 3640: {
+			// gd_docs state_blocks.md: spawns State On (51) when the player
+			// starts colliding and State Off (71) when it stops.
+			effect.kind = TriggerEffectKind::STATE_BLOCK;
+			effect.target_groups = parse_group_list(properties, "51");
+			const std::vector<String> off = parse_group_list(properties, "71");
+			if (!off.empty()) effect.state_off_group = off.front();
+			return effect;
+		}
+		case 3643: {
+			// gd_docs toggle_object.md: a click inside the hitbox toggles
+			// 51 off, or on and spawns it with Activate Group (56).
+			effect.kind = TriggerEffectKind::TOGGLE_BLOCK;
+			effect.target_groups = parse_group_list(properties, "51");
+			effect.toggle_on = prop_float(properties, "56", 0.0) != 0.0;
+			effect.block_spawn_only = prop_float(properties, "504", 0.0) != 0.0;
+			effect.block_claim_touch = prop_float(properties, "445", 0.0) != 0.0;
+			return effect;
+		}
+		case 3033: {
+			effect.kind = TriggerEffectKind::ANIMATE_KEYFRAME;
+			effect.kf_anim_group = static_cast<int32_t>(prop_float(properties, "76", 0.0));
+			effect.target_groups = parse_group_list(properties, "51");
+			KfMods &m = effect.kf_mods;
+			m.time = prop_float(properties, "520", 1.0);
+			m.pos_x = prop_float(properties, "521", 1.0);
+			m.pos_y = prop_float(properties, "545", 0.0);
+			m.rot = prop_float(properties, "522", 1.0);
+			m.scale_x = prop_float(properties, "523", 1.0);
+			m.scale_y = prop_float(properties, "546", 1.0);
+			return effect;
 		}
 		case 3024:
 			effect.kind = TriggerEffectKind::AREA_STOP;
@@ -2883,6 +3176,33 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::ENTER_PRESET:
 				set_enter_effect(effect.enter_effect);
 				break;
+			case TriggerEffectKind::ANIMATE_KEYFRAME:
+				start_keyframe_anim(index, effect, player);
+				break;
+			case TriggerEffectKind::KEYFRAME:
+				break;
+			case TriggerEffectKind::CHECKPOINT:
+				for (const String &group : effect.target_groups) schedule_group(StringName(group), 0.0, player);
+				if (player && player->has_method("place_gd_checkpoint")) player->call_deferred("place_gd_checkpoint");
+				break;
+			case TriggerEffectKind::PLAYER_TRAIL:
+				if (player && player->has_method("set_ghost_trail")) player->call("set_ghost_trail", effect.toggle_on);
+				break;
+			case TriggerEffectKind::CAMERA_MODE: {
+				Object *camera = ObjectDB::get_instance(camera_id);
+				if (camera && camera->has_method("apply_gd_camera_mode"))
+					camera->call("apply_gd_camera_mode", effect.cam_free_mode, effect.cam_edit_settings, effect.cam_easing);
+				break;
+			}
+			case TriggerEffectKind::STATE_BLOCK:
+				for (const String &group : effect.target_groups) schedule_group(StringName(group), 0.0, player);
+				break;
+			case TriggerEffectKind::TOGGLE_BLOCK:
+				if (player) {
+					std::vector<size_t> &queue = toggle_block_queue[static_cast<uint64_t>(player->get_instance_id())];
+					if (std::find(queue.begin(), queue.end(), index) == queue.end()) queue.push_back(index);
+				}
+				break;
 			case TriggerEffectKind::AREA_EDIT:
 				edit_areas(effect);
 				break;
@@ -3218,6 +3538,7 @@ private:
 			case TriggerEffectKind::CAMERA_ZOOM: case TriggerEffectKind::CAMERA_OFFSET: case TriggerEffectKind::CAMERA_ROTATE:
 			case TriggerEffectKind::SFX: case TriggerEffectKind::EVENT: case TriggerEffectKind::COLLISION:
 			case TriggerEffectKind::ON_DEATH: case TriggerEffectKind::AREA:
+			case TriggerEffectKind::ANIMATE_KEYFRAME:
 				return true;
 			default:
 				return false;
@@ -3276,6 +3597,8 @@ private:
 			// effects; the next tick's recompute drops what they applied.
 			areas.erase(std::remove_if(areas.begin(), areas.end(),
 					[&](const AreaInstance &a) { return targets.count(a.record) > 0; }), areas.end());
+			keyframe_anims.erase(std::remove_if(keyframe_anims.begin(), keyframe_anims.end(),
+					[&](const KeyframeAnim &a) { return targets.count(a.record) > 0; }), keyframe_anims.end());
 			for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
 				it = targets.count(it->second.record) ? follow_player_y.erase(it) : std::next(it);
 			}
@@ -3302,6 +3625,12 @@ private:
 		// Control or Start Paused, and Time Control does not undo Pause.
 		for (auto &entry : timers) {
 			if (targets.count(entry.second.source)) entry.second.stop_paused = pause;
+		}
+		for (KeyframeAnim &anim : keyframe_anims) {
+			if (!targets.count(anim.record) || anim.paused == pause) continue;
+			if (pause) anim.paused_at = clock;
+			else anim.start += clock - anim.paused_at;
+			anim.paused = pause;
 		}
 		for (AreaInstance &area : areas) {
 			if (!targets.count(area.record) || area.paused == pause) continue;
@@ -3462,6 +3791,7 @@ public:
 	// Jump press / release (gd_docs touch.md); slot 1 = P1, 2 = P2. Fires
 	// even with player controls disabled.
 	void notify_touch(Object *player, int64_t slot, bool pressed) {
+		if (pressed) press_toggle_block(player);
 		const std::vector<size_t> armed(armed_touches.begin(), armed_touches.end());
 		const uint64_t epoch = structure_epoch;
 		for (size_t index : armed) {
@@ -4375,6 +4705,146 @@ private:
 		if (gd_level) set_enter_global(value);
 	}
 
+	// ---- State / Toggle blocks (3640, 3643) ----
+	std::map<uint64_t, std::vector<size_t>> toggle_block_queue; // per player, collision order
+	bool touch_claimed = false;
+
+	// Exits never re-enter GDScript synchronously: spawns are queued.
+	void block_exit(size_t index, Node2D *player) {
+		if (index >= records.size() || !player) return;
+		const TriggerEffect &effect = records[index].effect;
+		if (effect.kind == TriggerEffectKind::STATE_BLOCK && !effect.state_off_group.is_empty()) {
+			schedule_group(StringName(effect.state_off_group), 0.0, player);
+		} else if (effect.kind == TriggerEffectKind::TOGGLE_BLOCK) {
+			auto found = toggle_block_queue.find(static_cast<uint64_t>(player->get_instance_id()));
+			if (found != toggle_block_queue.end())
+				found->second.erase(std::remove(found->second.begin(), found->second.end(), index), found->second.end());
+		}
+	}
+
+	// One toggle block per press, cycling through the overlapped blocks in
+	// collision order (gd_docs toggle_object.md "Notes").
+	void press_toggle_block(Object *player) {
+		if (!player) return;
+		auto found = toggle_block_queue.find(static_cast<uint64_t>(player->get_instance_id()));
+		if (found == toggle_block_queue.end() || found->second.empty()) return;
+		std::vector<size_t> &queue = found->second;
+		const size_t index = queue.front();
+		queue.erase(queue.begin());
+		queue.push_back(index);
+		if (index >= records.size() || paused_records.count(index)) return;
+		const TriggerEffect effect = records[index].effect;
+		if (effect.block_claim_touch) touch_claimed = true;
+		if (!effect.block_spawn_only) apply_toggle(effect);
+		if (effect.block_spawn_only || effect.toggle_on) {
+			for (const String &group : effect.target_groups) schedule_group(StringName(group), 0.0, player);
+		}
+	}
+
+public:
+	bool take_touch_claim() {
+		const bool claimed = touch_claimed;
+		touch_claimed = false;
+		return claimed;
+	}
+
+private:
+
+	// ---- Keyframe animations (3033) ----
+	struct KeyframeAnim {
+		size_t record = 0;
+		ObjectID player;
+		std::vector<ObjectID> members;
+		KfPlan plan;
+		KfState applied;
+		double start = 0.0;
+		size_t next_spawn = 0;
+		bool paused = false;
+		double paused_at = 0.0;
+	};
+	std::vector<KeyframeAnim> keyframe_anims;
+
+	void start_keyframe_anim(size_t index, const TriggerEffect &effect, Object *player) {
+		if (effect.kf_anim_group <= 0) return;
+		const auto group = group_index.find(String("g_") + String::num_int64(effect.kf_anim_group));
+		if (group == group_index.end()) return;
+		// Every animation (key id) referenced by a keyframe in the group
+		// plays once from its start, in keyframe load order.
+		std::vector<int32_t> key_ids;
+		for (size_t r : group->value) {
+			if (r >= records.size() || records[r].effect.kind != TriggerEffectKind::KEYFRAME) continue;
+			const int32_t id = records[r].effect.keyframe.key_id;
+			if (std::find(key_ids.begin(), key_ids.end(), id) == key_ids.end()) key_ids.push_back(id);
+		}
+		const std::vector<ObjectID> members = resolve_effect_members(effect);
+		for (int32_t key_id : key_ids) {
+			std::vector<KfKey> keys;
+			for (const Record &record : records) {
+				if (record.effect.kind == TriggerEffectKind::KEYFRAME && record.effect.keyframe.key_id == key_id)
+					keys.push_back(record.effect.keyframe);
+			}
+			std::stable_sort(keys.begin(), keys.end(), [](const KfKey &a, const KfKey &b) { return a.index < b.index; });
+			KeyframeAnim anim;
+			anim.record = index;
+			anim.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
+			anim.members = members;
+			anim.plan = kf_build_plan(std::move(keys), effect.kf_mods);
+			if (anim.plan.px.empty()) continue;
+			anim.applied = kf_sample(anim.plan, 0.0);
+			anim.start = clock;
+			keyframe_anims.push_back(std::move(anim));
+		}
+		// No one-tick delay (gd_docs animate_keyframe.md "Activation").
+		step_keyframe_anims();
+	}
+
+	void apply_keyframe_delta(const KeyframeAnim &anim, const KfState &now) {
+		const Vector2 offset(static_cast<real_t>(now.x - anim.applied.x), static_cast<real_t>(now.y - anim.applied.y));
+		const double drot = now.rot - anim.applied.rot;
+		const double kx = anim.applied.sx != 0.0 ? now.sx / anim.applied.sx : 1.0;
+		const double ky = anim.applied.sy != 0.0 ? now.sy / anim.applied.sy : 1.0;
+		const bool scaled = kx != 1.0 || ky != 1.0;
+		if (offset == Vector2() && drot == 0.0 && !scaled) return;
+		// Without a parent each target turns and scales about itself.
+		for (ObjectID id : anim.members) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+			if (!node) continue;
+			if (offset != Vector2()) node->set_global_position(node->get_global_position() + offset);
+			if (drot != 0.0) node->set_global_rotation_degrees(node->get_global_rotation_degrees() + drot);
+			if (scaled) {
+				const Vector2 scale = node->get_global_scale();
+				node->set_global_scale(Vector2(static_cast<real_t>(scale.x * kx), static_cast<real_t>(scale.y * ky)));
+			}
+		}
+	}
+
+	void step_keyframe_anims() {
+		const uint64_t epoch = structure_epoch;
+		for (size_t i = 0; i < keyframe_anims.size();) {
+			KeyframeAnim &anim = keyframe_anims[i];
+			if (anim.paused) { ++i; continue; }
+			const double t = clock - anim.start;
+			const KfState now = kf_sample(anim.plan, t);
+			apply_keyframe_delta(anim, now);
+			anim.applied = now;
+			// Spawns happen as each keyframe is reached.
+			std::vector<std::pair<int32_t, double>> spawns;
+			while (anim.next_spawn < anim.plan.px.size() && kf_point_reached(anim.plan, anim.next_spawn, t)) {
+				const int32_t group = anim.plan.spawn_group[anim.next_spawn];
+				if (group > 0) spawns.emplace_back(group, anim.plan.spawn_delay[anim.next_spawn]);
+				++anim.next_spawn;
+			}
+			const bool done = t >= anim.plan.total && anim.next_spawn >= anim.plan.px.size();
+			Object *player = ObjectDB::get_instance(anim.player);
+			if (done) keyframe_anims.erase(keyframe_anims.begin() + static_cast<std::ptrdiff_t>(i));
+			else ++i;
+			for (const auto &spawn : spawns) {
+				if (player) schedule_group(StringName(String("g_") + String::num_int64(spawn.first)), spawn.second, player);
+				if (structure_epoch != epoch) return;
+			}
+		}
+	}
+
 	// ---- Area triggers (3006-3015, 3024) ----
 	// gd_docs area_mechanics.md: effects are temporary, recomputed every
 	// tick after all other moves (Scale -> Rotate -> Move -> Fade/Tint, then
@@ -4784,6 +5254,7 @@ private:
 				if (records[remembered].x < position.x - TOUCH_HALF_EXTENT
 						|| records[remembered].x > position.x + TOUCH_HALF_EXTENT) {
 					entry = inside.erase(entry);
+					block_exit(remembered, player);
 				} else {
 					++entry;
 				}
@@ -4859,7 +5330,10 @@ private:
 					}
 				}
 				if (inside_now) inside.insert(index);
-				else if (was_inside) inside.erase(index);
+				else if (was_inside) {
+					inside.erase(index);
+					block_exit(index, player);
+				}
 			}
 		}
 	}
@@ -4887,6 +5361,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
 		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeTriggerRuntime::notify_player_death);
 		ClassDB::bind_method(D_METHOD("notify_touch", "player", "slot", "pressed"), &NativeTriggerRuntime::notify_touch);
+		ClassDB::bind_method(D_METHOD("take_touch_claim"), &NativeTriggerRuntime::take_touch_claim);
 		ClassDB::bind_method(D_METHOD("notify_event", "player", "event_id", "slot", "material"), &NativeTriggerRuntime::notify_event);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeTriggerRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeTriggerRuntime::snapshot);
@@ -4925,7 +5400,8 @@ public:
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		adv_rand_coeff.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
-		areas.clear(); area_applied.clear(); area_alpha.clear(); area_tints.clear();
+		areas.clear(); area_applied.clear(); area_alpha.clear(); area_tints.clear(); keyframe_anims.clear();
+		toggle_block_queue.clear(); touch_claimed = false;
 		item_counts.clear(); armed_counts.clear(); count_seen.clear(); paused_records.clear();
 		timers.clear(); timer_events.clear(); paused_events.clear(); sequence_states.clear(); points = 0;
 		persistent_items.clear(); persistent_timers.clear(); persist_all_items = false; persist_all_timers = false;
@@ -4946,6 +5422,12 @@ public:
 		record.spawn_delay = prop_float(properties, "63", 0.0);
 		record.spawn_delay_pm = prop_float(properties, "556", 0.0);
 		record.effect = parse_trigger_effect(gd_id, properties);
+		record.effect.keyframe.x = x;
+		record.effect.keyframe.y = y;
+		// The blocks are hitbox objects: overlap-driven, every collision.
+		if (record.effect.kind == TriggerEffectKind::STATE_BLOCK || record.effect.kind == TriggerEffectKind::TOGGLE_BLOCK)
+			record.flags |= TOUCH_ONLY | MULTI_ACTIVATE;
+		if (record.effect.kind == TriggerEffectKind::CHECKPOINT) record.flags |= TOUCH_ONLY;
 		const size_t index = records.size();
 		for (int64_t i = 0; i < groups.size(); ++i)
 			group_index[String(groups[i])].push_back(index);
@@ -4995,6 +5477,15 @@ public:
 			}
 			register_trigger(nullptr, xform[row * 6 + 4], xform[row * 6 + 5], flags[row], source_order[row], groups,
 					gd_id[row], properties);
+			if (gd_id[row] == 3032) {
+				// The converted transform is authoritative for a keyframe's
+				// rotation and scale (flips included).
+				KfKey &k = records.back().effect.keyframe;
+				const double ax = xform[row * 6], ay = xform[row * 6 + 1], bx = xform[row * 6 + 2], by = xform[row * 6 + 3];
+				k.rot = std::atan2(ay, ax) * 180.0 / 3.14159265358979323846;
+				k.sx = std::hypot(ax, ay);
+				k.sy = std::hypot(bx, by);
+			}
 		}
 		return rows;
 	}
@@ -5644,6 +6135,7 @@ public:
 			++i;
 		}
 		if (structure_epoch != epoch) return;
+		step_keyframe_anims();
 		step_areas();
 	}
 	void reset() {
@@ -5661,6 +6153,8 @@ public:
 		// Restarts rebuild transforms from level data: drop Area state
 		// without undoing offsets onto the rebuilt objects.
 		clear_areas(false);
+		keyframe_anims.clear();
+		toggle_block_queue.clear(); touch_claimed = false;
 		set_enter_effect(1);
 		// Group opacity is level state, not object state: a restart clears
 		// it (the same fades re-fire as the player crosses them again), and
@@ -5819,6 +6313,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeLevelRuntime::notify_player_death);
 		ClassDB::bind_method(D_METHOD("notify_touch", "player", "slot", "pressed"), &NativeLevelRuntime::notify_touch);
+		ClassDB::bind_method(D_METHOD("take_touch_claim"), &NativeLevelRuntime::take_touch_claim);
 		ClassDB::bind_method(D_METHOD("register_particle_group", "group", "datas"), &NativeLevelRuntime::register_particle_group);
 		ClassDB::bind_method(D_METHOD("notify_event", "player", "event_id", "slot", "material"), &NativeLevelRuntime::notify_event);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
@@ -5938,6 +6433,9 @@ public:
 	}
 	void notify_touch(Object *player, int64_t slot, bool pressed) {
 		triggers->notify_touch(player, slot, pressed);
+	}
+	bool take_touch_claim() {
+		return triggers->take_touch_claim();
 	}
 	void register_particle_group(const String &group, const PackedStringArray &datas) {
 		triggers->register_particle_group(group, datas);

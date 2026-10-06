@@ -253,6 +253,17 @@ var _just_spawned: bool = false
 @onready var _debug_trail: Line2D = $DebugTrail
 
 var _physics_params: PackedFloat64Array = PackedFloat64Array()
+## A press taken by a Claim Touch toggle block (3643) until its release.
+var _jump_claimed: bool = false
+## Enable / Disable Trail triggers (32 / 33): an afterimage of the primary
+## player, independent of player visibility (GD Editor Wiki "Player Trail
+## triggers"). Hypothesis timings: a ghost every 0.05 s, 0.6 opacity fading
+## out over 0.4 s.
+const GHOST_INTERVAL: float = 0.05
+const GHOST_OPACITY: float = 0.6
+const GHOST_FADE: float = 0.4
+var ghost_trail: bool = false
+var _ghost_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -342,6 +353,11 @@ func _physics_process(delta: float) -> void:
 		_trail.add_points = true
 	if _trail.add_points:
 		_trail.material.set_shader_parameter(&"bias", float(_trail.get_point_count()) / float(_trail.length) * 1.2)
+	if ghost_trail and dual_index == 0:
+		_ghost_timer -= delta
+		if _ghost_timer <= 0.0:
+			_ghost_timer = GHOST_INTERVAL
+			_spawn_ghost()
 
 	match displayed_gamemode:
 		Gamemode.SPIDER:
@@ -435,6 +451,8 @@ func reset() -> void:
 	$DeathEffect.stop()
 	$DeathEffect.frame = $DeathEffect.sprite_frames.get_frame_count(&"default") - 1
 	# Reset trails
+	ghost_trail = false
+	_ghost_timer = 0.0
 	$WaveTrail.clear_points()
 	%Trail.clear_points()
 	# Reset icon
@@ -768,10 +786,12 @@ func _get_jump_state() -> int:
 	var is_jump_just_released: bool = InputUtils.is_action_just_released(&"jump") if not _is_playing_back_replay() else replay.just_released_jump(replay_physics_tick)
 	# Touch (1595) sees every jump click, even with controls disabled.
 	if is_jump_just_pressed:
-		NativeTriggerBridge.notify_touch(self, dual_index + 1, true)
+		_jump_claimed = NativeTriggerBridge.notify_touch(self, dual_index + 1, true)
 	if is_jump_just_released:
 		NativeTriggerBridge.notify_touch(self, dual_index + 1, false)
-	if GDLevelOptions.are_controls_disabled(dual_index + 1):
+	if GDLevelOptions.are_controls_disabled(dual_index + 1) or _jump_claimed:
+		if is_jump_just_released:
+			_jump_claimed = false
 		is_jump_pressed = false
 		is_jump_just_pressed = false
 		is_jump_just_released = false
@@ -1698,3 +1718,60 @@ func _on_solid_overlap_check_body_exited(body: Node2D) -> void:
 	body.collision_layer = 1 << 1
 	if body.has_node(^"Hitbox"):
 		body.get_node(^"Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
+
+
+## Called by the native trigger runtime when a GD checkpoint (2063) is
+## reached: the same respawn point a level checkpoint places.
+func place_gd_checkpoint() -> void:
+	if has_just_spawned() or dead:
+		return
+	place_checkpoint().use_normal_sprite().done()
+
+
+## Called by the native trigger runtime for Enable / Disable Trail (32 / 33).
+func set_ghost_trail(enabled: bool) -> void:
+	ghost_trail = enabled
+	_ghost_timer = 0.0
+
+
+## One afterimage: copies of the icon's visible sprites at their current
+## global transforms, faded out and freed.
+func _spawn_ghost() -> void:
+	var host: Node = get_parent()
+	if host == null:
+		return
+	var ghost := Node2D.new()
+	ghost.top_level = true
+	ghost.z_index = z_index - 1
+	ghost.modulate.a = GHOST_OPACITY
+	var stack: Array[Node] = [_icon]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		var item := node as CanvasItem
+		if item != null and not item.visible:
+			continue
+		var sprite := node as Sprite2D
+		if sprite != null and sprite.texture != null:
+			var copy := Sprite2D.new()
+			copy.texture = sprite.texture
+			copy.centered = sprite.centered
+			copy.offset = sprite.offset
+			copy.flip_h = sprite.flip_h
+			copy.flip_v = sprite.flip_v
+			copy.region_enabled = sprite.region_enabled
+			copy.region_rect = sprite.region_rect
+			copy.hframes = sprite.hframes
+			copy.vframes = sprite.vframes
+			copy.frame = sprite.frame
+			copy.self_modulate = sprite.self_modulate * sprite.modulate
+			copy.material = sprite.material
+			copy.transform = sprite.global_transform
+			ghost.add_child(copy)
+		stack.append_array(node.get_children())
+	if ghost.get_child_count() == 0:
+		ghost.free()
+		return
+	host.add_child(ghost)
+	var tween: Tween = ghost.create_tween()
+	tween.tween_property(ghost, ^"modulate:a", 0.0, GHOST_FADE)
+	tween.tween_callback(ghost.queue_free)

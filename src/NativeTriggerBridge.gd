@@ -95,11 +95,16 @@ static func notify_player_death(player: Player) -> void:
 	GameplayTriggerComponent.notify_player_death(player)
 
 
-## Jump press / release for Touch triggers (1595); slot 1 = P1, 2 = P2.
-static func notify_touch(player: Player, slot: int, pressed: bool) -> void:
+## Jump press / release for Touch triggers (1595) and Toggle Blocks (3643);
+## slot 1 = P1, 2 = P2. Returns true when a Claim Touch toggle block took
+## the press, so the player must not jump or use orbs with it.
+static func notify_touch(player: Player, slot: int, pressed: bool) -> bool:
+	var claimed: bool = false
 	if current != null and current._runtime != null:
 		current._runtime.call(&"notify_touch", player, slot, pressed)
+		claimed = bool(current._runtime.call(&"take_touch_claim"))
 	GameplayTriggerComponent.notify_touch(player, slot, pressed)
+	return claimed
 
 
 ## Player events for Event triggers (3604).
