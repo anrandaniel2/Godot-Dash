@@ -7,7 +7,6 @@
 
 #include <godot_cpp/classes/camera2d.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
-#include <godot_cpp/classes/canvas_item_material.hpp>
 #include <godot_cpp/classes/canvas_layer.hpp>
 #include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/engine.hpp>
@@ -22,10 +21,7 @@
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
-#include <godot_cpp/classes/cpu_particles2d.hpp>
 #include <godot_cpp/classes/canvas_item_material.hpp>
-#include <godot_cpp/classes/gradient.hpp>
-#include <godot_cpp/classes/curve.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/classes/window.hpp>
@@ -2739,54 +2735,60 @@ public:
 	}
 private:
 	// One emitter per particle object; positions are GD units -> px.
+	// CPUParticles2D, Curve and Gradient are built through ClassDB and
+	// properties so the godot-cpp build profile (and .so size) stays unchanged.
 	void spawn_particle_burst(const std::vector<double> &f, Vector2 position, double rotation_deg, double scale, Node *parent) {
 		const int count = particle_burst_count(f);
 		if (count <= 0 || !parent) return;
 		const double px = ENGINE_CELL_SIZE / GD_CELL_SIZE;
-		CPUParticles2D *p = memnew(CPUParticles2D);
-		p->set_amount(count);
-		p->set_one_shot(true);
-		p->set_explosiveness_ratio(particle_field(f, PF_EMISSION) < 0.0 ? 1.0 : 0.0);
+		Node2D *p = Object::cast_to<Node2D>(ClassDB::instantiate("CPUParticles2D"));
+		if (!p) return;
+		p->set("amount", count);
+		p->set("one_shot", true);
+		p->set("explosiveness", particle_field(f, PF_EMISSION) < 0.0 ? 1.0 : 0.0);
 		const double lifetime = Math::max(0.01, particle_field(f, PF_LIFETIME));
-		p->set_lifetime(lifetime);
-		p->set_lifetime_randomness(Math::clamp(particle_field(f, PF_LIFETIME_RAND) / lifetime, 0.0, 1.0));
+		p->set("lifetime", lifetime);
+		p->set("lifetime_randomness", Math::clamp(particle_field(f, PF_LIFETIME_RAND) / lifetime, 0.0, 1.0));
 		// Cocos angles: degrees counter-clockwise from +X, +Y up.
 		const double angle = Math::deg_to_rad(particle_field(f, PF_ANGLE));
-		p->set_direction(Vector2(static_cast<real_t>(std::cos(angle)), static_cast<real_t>(-std::sin(angle))));
-		p->set_spread(static_cast<real_t>(particle_field(f, PF_ANGLE_RAND)));
+		p->set("direction", Vector2(static_cast<real_t>(std::cos(angle)), static_cast<real_t>(-std::sin(angle))));
+		p->set("spread", particle_field(f, PF_ANGLE_RAND));
 		const double speed = particle_field(f, PF_SPEED), speed_rand = particle_field(f, PF_SPEED_RAND);
-		p->set_param_min(CPUParticles2D::PARAM_INITIAL_LINEAR_VELOCITY, (speed - speed_rand) * px);
-		p->set_param_max(CPUParticles2D::PARAM_INITIAL_LINEAR_VELOCITY, (speed + speed_rand) * px);
-		p->set_emission_shape(CPUParticles2D::EMISSION_SHAPE_RECTANGLE);
-		p->set_emission_rect_extents(Vector2(static_cast<real_t>(particle_field(f, PF_POSVAR_X) * px), static_cast<real_t>(particle_field(f, PF_POSVAR_Y) * px)));
-		p->set_gravity(Vector2(static_cast<real_t>(particle_field(f, PF_GRAVITY_X) * px), static_cast<real_t>(-particle_field(f, PF_GRAVITY_Y) * px)));
+		p->set("initial_velocity_min", (speed - speed_rand) * px);
+		p->set("initial_velocity_max", (speed + speed_rand) * px);
+		p->set("emission_shape", 3); // EMISSION_SHAPE_RECTANGLE
+		p->set("emission_rect_extents", Vector2(static_cast<real_t>(particle_field(f, PF_POSVAR_X) * px), static_cast<real_t>(particle_field(f, PF_POSVAR_Y) * px)));
+		p->set("gravity", Vector2(static_cast<real_t>(particle_field(f, PF_GRAVITY_X) * px), static_cast<real_t>(-particle_field(f, PF_GRAVITY_Y) * px)));
 		const double rad = particle_field(f, PF_ACCEL_RAD), rad_rand = particle_field(f, PF_ACCEL_RAD_RAND);
-		p->set_param_min(CPUParticles2D::PARAM_RADIAL_ACCEL, (rad - rad_rand) * px);
-		p->set_param_max(CPUParticles2D::PARAM_RADIAL_ACCEL, (rad + rad_rand) * px);
+		p->set("radial_accel_min", (rad - rad_rand) * px);
+		p->set("radial_accel_max", (rad + rad_rand) * px);
 		const double tan = particle_field(f, PF_ACCEL_TAN), tan_rand = particle_field(f, PF_ACCEL_TAN_RAND);
-		p->set_param_min(CPUParticles2D::PARAM_TANGENTIAL_ACCEL, -(tan + tan_rand) * px);
-		p->set_param_max(CPUParticles2D::PARAM_TANGENTIAL_ACCEL, -(tan - tan_rand) * px);
+		p->set("tangential_accel_min", -(tan + tan_rand) * px);
+		p->set("tangential_accel_max", -(tan - tan_rand) * px);
 		// Size: GD start/end size in points; untextured particles are 1 px.
 		const double start_size = Math::max(0.0, particle_field(f, PF_START_SIZE)), size_rand = particle_field(f, PF_START_SIZE_RAND);
-		p->set_param_min(CPUParticles2D::PARAM_SCALE, Math::max(0.0, start_size - size_rand) * px);
-		p->set_param_max(CPUParticles2D::PARAM_SCALE, (start_size + size_rand) * px);
-		Ref<Curve> size_curve;
-		size_curve.instantiate();
-		size_curve->add_point(Vector2(0.0f, 1.0f));
-		size_curve->add_point(Vector2(1.0f, static_cast<real_t>(start_size > 0.0 ? Math::max(0.0, particle_field(f, PF_END_SIZE)) / start_size : 1.0)));
-		size_curve->set_max_value(Math::max(1.0, particle_field(f, PF_END_SIZE) / Math::max(start_size, 1e-6)));
-		p->set_param_curve(CPUParticles2D::PARAM_SCALE, size_curve);
+		p->set("scale_amount_min", Math::max(0.0, start_size - size_rand) * px);
+		p->set("scale_amount_max", (start_size + size_rand) * px);
+		const double end_ratio = start_size > 0.0 ? Math::max(0.0, particle_field(f, PF_END_SIZE)) / start_size : 1.0;
+		Variant size_curve = ClassDB::instantiate("Curve");
+		if (Object *curve = size_curve) {
+			curve->set("max_value", Math::max(1.0, end_ratio));
+			curve->call("add_point", Vector2(0.0f, 1.0f));
+			curve->call("add_point", Vector2(1.0f, static_cast<real_t>(end_ratio)));
+			p->set("scale_amount_curve", size_curve);
+		}
 		const double spin = particle_field(f, PF_START_SPIN), spin_rand = particle_field(f, PF_START_SPIN_RAND);
-		p->set_param_min(CPUParticles2D::PARAM_ANGLE, -(spin + spin_rand));
-		p->set_param_max(CPUParticles2D::PARAM_ANGLE, -(spin - spin_rand));
+		p->set("angle_min", -(spin + spin_rand));
+		p->set("angle_max", -(spin - spin_rand));
 		const double spin_speed = -(particle_field(f, PF_END_SPIN) - spin) / lifetime;
-		p->set_param_min(CPUParticles2D::PARAM_ANGULAR_VELOCITY, spin_speed);
-		p->set_param_max(CPUParticles2D::PARAM_ANGULAR_VELOCITY, spin_speed);
-		Ref<Gradient> ramp;
-		ramp.instantiate();
-		ramp->set_color(0, Color(particle_field(f, PF_START_R), particle_field(f, PF_START_G), particle_field(f, PF_START_B), particle_field(f, PF_START_A)));
-		ramp->set_color(1, Color(particle_field(f, PF_END_R), particle_field(f, PF_END_G), particle_field(f, PF_END_B), particle_field(f, PF_END_A)));
-		p->set_color_ramp(ramp);
+		p->set("angular_velocity_min", spin_speed);
+		p->set("angular_velocity_max", spin_speed);
+		Variant ramp = ClassDB::instantiate("Gradient");
+		if (Object *gradient = ramp) {
+			gradient->call("set_color", 0, Color(particle_field(f, PF_START_R), particle_field(f, PF_START_G), particle_field(f, PF_START_B), particle_field(f, PF_START_A)));
+			gradient->call("set_color", 1, Color(particle_field(f, PF_END_R), particle_field(f, PF_END_G), particle_field(f, PF_END_B), particle_field(f, PF_END_A)));
+			p->set("color_ramp", ramp);
+		}
 		if (particle_field(f, PF_ADDITIVE) != 0.0) {
 			Ref<CanvasItemMaterial> material;
 			material.instantiate();
@@ -2798,7 +2800,7 @@ private:
 		p->set_rotation(static_cast<real_t>(Math::deg_to_rad(rotation_deg)));
 		p->set_scale(Vector2(static_cast<real_t>(scale), static_cast<real_t>(scale)));
 		p->connect("finished", Callable(p, "queue_free"));
-		p->set_emitting(true);
+		p->set("emitting", true);
 	}
 	static constexpr double ADV_TICK_HZ = 240.0;
 	static constexpr double PX_PER_UNIT = ENGINE_CELL_SIZE / GD_CELL_SIZE;
