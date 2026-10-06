@@ -2411,7 +2411,7 @@ class NativeTriggerRuntime : public RefCounted {
 					delay = Math::max(0.0, delay);
 				}
 				for (const String &group : effect.target_groups) {
-					schedule_group(StringName(group), delay, player, index);
+					schedule_group_from(StringName(group), delay, player, index);
 				}
 				break;
 			}
@@ -4843,7 +4843,9 @@ public:
 		}
 	}
 	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
-	void schedule_group(const StringName &group, double delay, Object *player, size_t source = SIZE_MAX) {
+	void schedule_group(const StringName &group, double delay, Object *player) { schedule_group_from(group, delay, player, SIZE_MAX); }
+	// `source` = the spawning record, so Stop / Pause can find its delayed spawns.
+	void schedule_group_from(const StringName &group, double delay, Object *player, size_t source) {
 		if (!player || group.is_empty()) return;
 		Event event;
 		event.source = source;

@@ -95,9 +95,14 @@ jobs:
           cd native
           mkdir -p bin/web
 
+          # Raw job logs are not always downloadable; re-emit compiler errors
+          # as workflow annotations (10 max per step).
           emit_scons_error() {
             echo "scons FAILED; tail of $1:"
             tail -n 50 "$1"
+            grep -E "error|Error" "$1" | head -n 10 | cut -c1-300 | while IFS= read -r line; do
+              echo "::error::${line//%/%25}"
+            done
           }
 
           echo "Compiling template_release (threads=yes)..."
