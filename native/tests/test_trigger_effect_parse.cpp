@@ -196,6 +196,13 @@ int main() {
 		expect_true("particle infinite duration with finite emission spawns none", particle_burst_count(parse_particle_data("30a-1a1a0a10")) == 0);
 		expect_true("particle emission over duration capped", particle_burst_count(parse_particle_data("30a2a1a0a10")) == 20
 				&& particle_burst_count(parse_particle_data("15a2a1a0a10")) == 15);
+		{
+			std::string raw;
+			for (int i = 0; i < 65; ++i) raw += (i ? "a" : "") + std::string(i == 53 || i == 64 ? "1" : "0");
+			const std::vector<double> g = parse_particle_data(raw);
+			expect_true("particle additive is gmdkit field 53", particle_field(g, PF_ADDITIVE) == 1.0 && particle_field(g, 56) == 0.0);
+			expect_true("particle start size = end is gmdkit field 64", particle_field(g, PF_START_SIZE_EQ_END) == 1.0);
+		}
 		expect_true("particle empty fields read zero", parse_particle_data("5aa1").size() == 3 && parse_particle_data("5aa1")[1] == 0.0);
 	}
 	expect_true("time event due", timer_event_due(1.0, 2.0, 3.0) && timer_event_due(-1.0, -2.0, -3.0) && !timer_event_due(1.0, 2.0, 1.0));

@@ -157,7 +157,6 @@ enum class TriggerEffectKind : int32_t {
 	BG_SPEED,           // 3606 Background Speed
 	ADV_FOLLOW_RETARGET,// 3661 Re-Target Advanced Follow
 	RESET_GROUP,        // 3618 Reset
-	END_WALL,           // 1931 End Wall
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -560,8 +559,6 @@ struct TriggerEffect {
 	double particle_offset_x = 0.0, particle_offset_y = 0.0, particle_var_x = 0.0, particle_var_y = 0.0;
 	bool particle_match_rot = false;
 	double particle_rot = 0.0, particle_rot_rand = 0.0, particle_scale = 1.0, particle_scale_rand = 0.0;
-	// 1931: 59 lock Y (hypothesis: no gd_docs page).
-	bool end_wall_lock_y = false;
 	// 3641: 491 set persistent, 492 target all, 493 reset, 494 timer.
 	bool persist_set = false, persist_all = false, persist_reset = false, persist_timer = false;
 	// 3614/3615/3617: 467 start, 470 mod, 471 start paused, 468 don't override,
@@ -876,7 +873,9 @@ enum ParticleField {
 	PF_START_R, PF_START_R_RAND, PF_START_G, PF_START_G_RAND, PF_START_B, PF_START_B_RAND, PF_START_A, PF_START_A_RAND,
 	PF_END_SIZE, PF_END_SIZE_RAND, PF_END_SPIN, PF_END_SPIN_RAND,
 	PF_END_R, PF_END_R_RAND, PF_END_G, PF_END_G_RAND, PF_END_B, PF_END_B_RAND, PF_END_A, PF_END_A_RAND,
-	PF_ADDITIVE = 56,
+	// gmdkit models/prop/particle.py order: ... 51 mode, 52 mode_2, 53 additive,
+	// 54 start_spin_eq_end, ..., 64 start_size_eq_end.
+	PF_ADDITIVE = 53, PF_START_SPIN_EQ_END = 54, PF_START_SIZE_EQ_END = 64,
 };
 static double particle_field(const std::vector<double> &f, int i) { return i < static_cast<int>(f.size()) ? f[i] : 0.0; }
 // How many particles a Spawn Particle burst emits (gd_docs spawn_particle.md
@@ -1516,10 +1515,6 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.move_mod = Vector2(static_cast<real_t>(prop_float(properties, "143", 0.1)), static_cast<real_t>(prop_float(properties, "144", 0.1)));
 			break;
 		case 3618: effect.kind = TriggerEffectKind::RESET_GROUP; break;
-		case 1931:
-			effect.kind = TriggerEffectKind::END_WALL;
-			effect.end_wall_lock_y = String(properties.get("59", String("0"))) == "1";
-			break;
 		case 1812:
 			effect.kind = TriggerEffectKind::ON_DEATH;
 			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
@@ -2485,6 +2480,7 @@ class NativeTriggerRuntime : public RefCounted {
 				timer.target = effect.target_groups.empty() ? String() : effect.target_groups[0];
 				timer.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
 				timer.running = !effect.timer_paused;
+				timer.source = index;
 				break;
 			}
 			case TriggerEffectKind::TIMER_EVENT: {
@@ -2493,6 +2489,7 @@ class NativeTriggerRuntime : public RefCounted {
 				ev.time = effect.timer_stop;
 				ev.group = effect.target_groups.empty() ? String() : effect.target_groups[0];
 				ev.multi = effect.timer_multi;
+				ev.source = index;
 				ev.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
 				// gd_docs time_event.md: an already-passed target fires at
 				// once, even on a paused timer.
@@ -2635,14 +2632,6 @@ class NativeTriggerRuntime : public RefCounted {
 					if (node && node->has_method("gd_reset")) node->call("gd_reset");
 				}
 				break;
-			case TriggerEffectKind::END_WALL: {
-				Node2D *wall = effect.target_groups.empty() ? nullptr : resolve_first_member(effect.target_groups[0]);
-				Object *level = ObjectDB::get_instance(level_id);
-				if (wall && level && level->has_method("apply_gd_end_wall")) {
-					level->call("apply_gd_end_wall", wall->get_global_position(), effect.end_wall_lock_y);
-				}
-				break;
-			}
 			case TriggerEffectKind::EVENT:
 				armed_events.insert(index);
 				break;
@@ -2673,6 +2662,17 @@ class NativeTriggerRuntime : public RefCounted {
 				// gd_docs stop.md: Stop / Pause / Resume the triggers in the
 				// target group, or with that Control ID (535). Running animations
 				// freeze mid-way; delayed spawns are dropped / held / released.
+				// gd_docs item_edit.md: timers made by Item Edit clear only with
+				// a Stop using Control ID 0.
+				if (effect.stop_mode == 0 && effect.stop_use_control_id) {
+					bool zero = false;
+					for (const String &group : effect.target_groups) zero = zero || group.trim_prefix("g_").to_int() == 0;
+					if (zero || effect.target_groups.empty()) {
+						for (auto it = timers.begin(); it != timers.end();) {
+							it = it->second.source == SIZE_MAX ? timers.erase(it) : std::next(it);
+						}
+					}
+				}
 				stop_triggers(stop_targets(effect), effect.stop_mode);
 				break;
 			case TriggerEffectKind::HIDE:
@@ -2700,6 +2700,7 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::COUNT:
 				if (std::find(armed_counts.begin(), armed_counts.end(), index) == armed_counts.end()) {
 					armed_counts.push_back(index);
+					count_seen[index] = item_value(effect.item_id);
 				}
 				break;
 			case TriggerEffectKind::INSTANT_COUNT:
@@ -2763,6 +2764,8 @@ class NativeTriggerRuntime : public RefCounted {
 		double stop = 0.0;
 		String target;
 		ObjectID player;
+		size_t source = SIZE_MAX;   // Time trigger record; SIZE_MAX = Item Edit timer
+		bool stop_paused = false;   // paused by Stop (only Resume clears it)
 	};
 	struct TimerEvent {
 		int32_t timer = 0;
@@ -2770,6 +2773,7 @@ class NativeTriggerRuntime : public RefCounted {
 		String group;
 		bool multi = false;
 		ObjectID player;
+		size_t source = SIZE_MAX;
 	};
 	std::map<int32_t, GDTimer> timers;
 	std::vector<TimerEvent> timer_events;
@@ -2778,6 +2782,11 @@ class NativeTriggerRuntime : public RefCounted {
 	bool persist_all_items = false, persist_all_timers = false;
 	std::map<size_t, SequenceState> sequence_states;
 	std::set<size_t> armed_collisions, armed_deaths, armed_touches, armed_events;
+	// Records paused by Stop (mode 1); armed triggers skip them until Resume.
+	std::set<size_t> paused_records;
+	// gd_docs count.md: a Count keeps the item value it last saw; while paused
+	// it stops updating, so after Resume it fires on the next item change.
+	std::map<size_t, int64_t> count_seen;
 	std::map<size_t, bool> touch_states;
 	struct FollowPlayerY {
 		size_t record = 0;
@@ -2871,7 +2880,8 @@ private:
 		const double start_size = Math::max(0.0, particle_field(f, PF_START_SIZE)), size_rand = particle_field(f, PF_START_SIZE_RAND);
 		p->set("scale_amount_min", Math::max(0.0, start_size - size_rand) * px);
 		p->set("scale_amount_max", (start_size + size_rand) * px);
-		const double end_ratio = start_size > 0.0 ? Math::max(0.0, particle_field(f, PF_END_SIZE)) / start_size : 1.0;
+		const double end_ratio = (start_size > 0.0 && particle_field(f, PF_START_SIZE_EQ_END) == 0.0)
+				? Math::max(0.0, particle_field(f, PF_END_SIZE)) / start_size : 1.0;
 		Variant size_curve = ClassDB::instantiate("Curve");
 		if (Object *curve = size_curve) {
 			curve->set("max_value", Math::max(1.0, end_ratio));
@@ -2880,9 +2890,12 @@ private:
 			p->set("scale_amount_curve", size_curve);
 		}
 		const double spin = particle_field(f, PF_START_SPIN), spin_rand = particle_field(f, PF_START_SPIN_RAND);
-		p->set("angle_min", -(spin + spin_rand));
-		p->set("angle_max", -(spin - spin_rand));
-		const double spin_speed = -(particle_field(f, PF_END_SPIN) - spin) / lifetime;
+		// cocos2d-x ParticleSystemQuad draws at -rotation in y-up space, so a
+		// positive spin is clockwise on screen - the same sense as Godot.
+		p->set("angle_min", spin - spin_rand);
+		p->set("angle_max", spin + spin_rand);
+		const double end_spin = particle_field(f, PF_START_SPIN_EQ_END) != 0.0 ? spin : particle_field(f, PF_END_SPIN);
+		const double spin_speed = (end_spin - spin) / lifetime;
 		p->set("angular_velocity_min", spin_speed);
 		p->set("angular_velocity_max", spin_speed);
 		Variant ramp = ClassDB::instantiate("Gradient");
@@ -2963,13 +2976,31 @@ private:
 			}
 		}
 	}
+	// gd_docs stop.md "Stop Targets": kinds a Stop / Pause / Resume reaches.
+	static bool stoppable(TriggerEffectKind kind) {
+		switch (kind) {
+			case TriggerEffectKind::MOVE: case TriggerEffectKind::ROTATE: case TriggerEffectKind::SCALE:
+			case TriggerEffectKind::ALPHA: case TriggerEffectKind::COLOR: case TriggerEffectKind::PULSE:
+			case TriggerEffectKind::SPAWN: case TriggerEffectKind::FOLLOW: case TriggerEffectKind::FOLLOW_PLAYER_Y:
+			case TriggerEffectKind::ADV_FOLLOW: case TriggerEffectKind::TOUCH: case TriggerEffectKind::COUNT:
+			case TriggerEffectKind::TIMER_START: case TriggerEffectKind::TIMER_EVENT:
+			case TriggerEffectKind::CAMERA_ZOOM: case TriggerEffectKind::CAMERA_OFFSET: case TriggerEffectKind::CAMERA_ROTATE:
+			case TriggerEffectKind::SFX: case TriggerEffectKind::EVENT: case TriggerEffectKind::COLLISION:
+			case TriggerEffectKind::ON_DEATH:
+				return true;
+			default:
+				return false;
+		}
+	}
 	std::set<size_t> stop_targets(const TriggerEffect &effect) const {
 		std::set<size_t> targets;
 		if (effect.stop_use_control_id) {
 			std::set<int32_t> ids;
 			for (const String &group : effect.target_groups) ids.insert(static_cast<int32_t>(group.trim_prefix("g_").to_int()));
 			for (size_t i = 0; i < records.size(); ++i) {
-				if (records[i].effect.control_id > 0 && ids.count(records[i].effect.control_id)) targets.insert(i);
+				// gd_docs color.md: Color cannot be stopped by Control ID.
+				if (records[i].effect.control_id > 0 && ids.count(records[i].effect.control_id)
+						&& records[i].effect.kind != TriggerEffectKind::COLOR) targets.insert(i);
 			}
 		} else {
 			for (const String &group : effect.target_groups) {
@@ -2977,13 +3008,37 @@ private:
 				if (found != group_index.end()) targets.insert(found->value.begin(), found->value.end());
 			}
 		}
+		for (auto it = targets.begin(); it != targets.end();) {
+			it = (*it < records.size() && stoppable(records[*it].effect.kind)) ? std::next(it) : targets.erase(it);
+		}
 		return targets;
 	}
 	void stop_triggers(const std::set<size_t> &targets, int32_t mode) {
-		if (targets.empty()) return;
 		if (mode == 0) {
+			// gd_docs pulse.md: Pulse effects are temporary and clear once the
+			// trigger stops being active; other animations freeze mid-way.
+			std::vector<Fade> cleared;
+			for (const Fade &f : fades) {
+				if (targets.count(f.record_index) && records[f.record_index].effect.kind == TriggerEffectKind::PULSE) cleared.push_back(f);
+			}
 			fades.erase(std::remove_if(fades.begin(), fades.end(),
 					[&](const Fade &f) { return targets.count(f.record_index) > 0; }), fades.end());
+			for (size_t index : targets) {
+				armed_collisions.erase(index);
+				armed_deaths.erase(index);
+				armed_touches.erase(index);
+				armed_events.erase(index);
+				paused_records.erase(index);
+				count_seen.erase(index);
+			}
+			armed_counts.erase(std::remove_if(armed_counts.begin(), armed_counts.end(),
+					[&](size_t i) { return targets.count(i) > 0; }), armed_counts.end());
+			timer_events.erase(std::remove_if(timer_events.begin(), timer_events.end(),
+					[&](const TimerEvent &e) { return targets.count(e.source) > 0; }), timer_events.end());
+			// gd_docs time.md: stopping a timer clears its settings and value.
+			for (auto it = timers.begin(); it != timers.end();) {
+				it = targets.count(it->second.source) ? timers.erase(it) : std::next(it);
+			}
 			adv_follows.erase(std::remove_if(adv_follows.begin(), adv_follows.end(),
 					[&](const AdvFollow &f) { return targets.count(f.record) > 0; }), adv_follows.end());
 			for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
@@ -2993,9 +3048,26 @@ private:
 			events.erase(std::remove_if(events.begin(), events.end(),
 					[&](const Event &e) { return e.source != SIZE_MAX && targets.count(e.source) > 0; }), events.end());
 			if (events.size() != before) std::make_heap(events.begin(), events.end(), event_later);
+			const uint64_t epoch = structure_epoch;
+			for (const Fade &f : cleared) {
+				apply_fade(f, records[f.record_index].effect, 0.0, -f.prev_weight, 0.0);
+				if (structure_epoch != epoch) return;
+			}
 			return;
 		}
 		const bool pause = mode == 1;
+		for (size_t index : targets) {
+			if (pause) {
+				paused_records.insert(index);
+			} else {
+				paused_records.erase(index);
+			}
+		}
+		// gd_docs time.md: Resume does not resume a timer paused by Time
+		// Control or Start Paused, and Time Control does not undo Pause.
+		for (auto &entry : timers) {
+			if (targets.count(entry.second.source)) entry.second.stop_paused = pause;
+		}
 		for (Fade &fade : fades) {
 			if (!targets.count(fade.record_index) || fade.paused == pause) continue;
 			if (pause) {
@@ -3149,6 +3221,7 @@ public:
 		const uint64_t epoch = structure_epoch;
 		for (size_t index : armed) {
 			if (structure_epoch != epoch || index >= records.size()) return;
+			if (paused_records.count(index)) continue;
 			const TriggerEffect &effect = records[index].effect;
 			if (effect.touch_player != 0 && effect.touch_player != slot) continue;
 			auto state = touch_states.find(index);
@@ -3167,6 +3240,7 @@ public:
 		const uint64_t epoch = structure_epoch;
 		for (size_t index : armed) {
 			if (structure_epoch != epoch || index >= records.size()) return;
+			if (paused_records.count(index)) continue;
 			const TriggerEffect &effect = records[index].effect;
 			if (!event_matches(effect.event_ids, effect.event_material, effect.event_player, event_id, material, slot)) continue;
 			for (const String &group : effect.target_groups) spawn_named(group, player);
@@ -3204,6 +3278,7 @@ public:
 		const uint64_t epoch = structure_epoch;
 		for (size_t index : armed) {
 			if (structure_epoch != epoch || index >= records.size()) return;
+			if (paused_records.count(index)) continue;
 			fire_toggle_spawn(records[index].effect, player);
 		}
 	}
@@ -3282,7 +3357,7 @@ private:
 			const std::vector<size_t> armed(armed_collisions.begin(), armed_collisions.end());
 			for (size_t index : armed) {
 				if (structure_epoch != epoch) return;
-				if (index >= records.size()) continue;
+				if (index >= records.size() || paused_records.count(index)) continue;  // gd_docs: paused Collision triggers are skipped
 				const TriggerEffect &effect = records[index].effect;
 				if (collision_key(effect) != key || now == effect.collision_exit) continue;
 				fire_toggle_spawn(effect, player);
@@ -3327,7 +3402,7 @@ private:
 	void advance_timers(double delta) {
 		for (auto &entry : timers) {
 			GDTimer &timer = entry.second;
-			if (!timer.running) continue;
+			if (!timer.running || timer.stop_paused) continue;
 			const double before = timer.value;
 			double after = before + delta * timer.mod;
 			bool stopped = false;
@@ -3340,7 +3415,7 @@ private:
 			for (size_t i = 0; i < timer_events.size();) {
 				const TimerEvent ev = timer_events[i];
 				const bool crossed = ev.timer == entry.first && ((before < ev.time && after >= ev.time) || (before > ev.time && after <= ev.time));
-				if (crossed) {
+				if (crossed && !paused_records.count(ev.source)) {
 					spawn_named(ev.group, ObjectDB::get_instance(ev.player));
 					if (!ev.multi) {
 						timer_events.erase(timer_events.begin() + static_cast<std::ptrdiff_t>(i));
@@ -3375,6 +3450,7 @@ private:
 		armed_deaths.clear();
 		armed_touches.clear();
 		armed_events.clear(); paused_events.clear();
+		paused_records.clear(); count_seen.clear();
 		touch_states.clear();
 		follow_player_y.clear();
 		adv_follows.clear();
@@ -3407,7 +3483,11 @@ private:
 		for (size_t record_index : armed) {
 			if (record_index >= records.size()) continue;
 			const TriggerEffect effect = records[record_index].effect;
-			if (effect.item_id != item_id || !item_count_reached(previous, current, effect.item_count)) continue;
+			if (effect.item_id != item_id || paused_records.count(record_index)) continue;
+			auto seen = count_seen.find(record_index);
+			const int64_t before = seen == count_seen.end() ? previous : seen->second;
+			count_seen[record_index] = current;
+			if (!item_count_reached(before, current, effect.item_count)) continue;
 			if (!effect.item_multi) {
 				armed_counts.erase(std::remove(armed_counts.begin(), armed_counts.end(), record_index), armed_counts.end());
 			}
@@ -4337,7 +4417,7 @@ public:
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		adv_rand_coeff.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
-		item_counts.clear(); armed_counts.clear();
+		item_counts.clear(); armed_counts.clear(); count_seen.clear(); paused_records.clear();
 		timers.clear(); timer_events.clear(); paused_events.clear(); sequence_states.clear(); points = 0;
 		persistent_items.clear(); persistent_timers.clear(); persist_all_items = false; persist_all_timers = false;
 		fade_capture_count = 0; fade_capture_reports = 0;
@@ -5092,7 +5172,7 @@ public:
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
 		clock = state.get("clock", 0.0); events.clear(); paused_events.clear(); release_group_pulses(); fades.clear();
-		item_counts.clear(); armed_counts.clear();
+		item_counts.clear(); armed_counts.clear(); count_seen.clear(); paused_records.clear();
 		const Dictionary items = state.get("items", Dictionary());
 		const Array item_keys = items.keys();
 		for (int64_t k = 0; k < item_keys.size(); ++k) {

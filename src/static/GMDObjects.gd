@@ -261,7 +261,6 @@ const MAP: Dictionary[int, Dictionary] = {
 	3608: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "SpawnParticleTrigger", "components": ["GameplayTriggerComponent"] },
 	3606: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "BackgroundSpeedTrigger", "components": ["GameplayTriggerComponent"] },
 	3618: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ResetTrigger", "components": ["GameplayTriggerComponent"] },
-	1931: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "EndWallTrigger", "components": ["GameplayTriggerComponent"] },
 	# Random / Advanced Random: spawn one weighted group.
 	1912: { "scene": TRIGGERS + "RandomTrigger.tscn", "name": "RandomTrigger", "components": ["RandomTriggerComponent"] },
 	2068: { "scene": TRIGGERS + "RandomTrigger.tscn", "name": "AdvancedRandomTrigger", "components": ["RandomTriggerComponent"] },
@@ -432,7 +431,7 @@ const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1611, 1612, 1613, 1616, 1811, 1817,
 	1912, 2068,
 	1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812,
-	1595, 1814, 3604, 2899, 3016, 3618, 1931, 3660, 3661, 3608, 3606,
+	1595, 1814, 3604, 2899, 3016, 3618, 3660, 3661, 3608, 3606,
 	1913, 1916, 1935, 2015, 2067, 3022,
 	2913, 2919, 2920, 2921,
 	3613,

@@ -30,7 +30,7 @@ enum Kind {
 	BG_SPEED,
 	STOP,
 	RESET_GROUP,
-	END_WALL,
+	END_WALL, ## Retired: 1931 is a Subzero leftover with no effect in GD 2.2.
 }
 
 const KIND_BY_ID: Dictionary[int, Kind] = {
@@ -56,7 +56,6 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	3606: Kind.BG_SPEED,
 	1616: Kind.STOP,
 	3618: Kind.RESET_GROUP,
-	1931: Kind.END_WALL,
 }
 
 const ADV_TICK_HZ: float = 240.0
@@ -674,11 +673,6 @@ func _on_interacted(player: Player = null) -> void:
 			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
 				if node.has_method(&"gd_reset"):
 					node.call(&"gd_reset")
-		Kind.END_WALL:
-			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
-				if node is Node2D and LevelManager.current_level != null:
-					LevelManager.current_level.apply_gd_end_wall((node as Node2D).global_position, _b("59"))
-					break
 		Kind.OPTIONS:
 			if LevelManager.current_level != null:
 				LevelManager.current_level.apply_gd_options(properties)
