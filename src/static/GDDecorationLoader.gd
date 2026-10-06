@@ -865,10 +865,7 @@ static func _new_batch(group_key: Array, z_layer: int, additive: bool, batch_nam
 	# Joining the groups is what lets triggers move this batch.
 	for group: String in group_key:
 		batch.add_to_group(group)
-	if additive:
-		var material := CanvasItemMaterial.new()
-		material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-		batch.material = material
+	batch.material = DecorationBatch.fade_material(additive)
 	return batch
 
 

@@ -120,7 +120,7 @@ func setup(data: Dictionary) -> void:
 		add_to_group(StringName(str(group)))
 	apply_draw_order()
 	if blending:
-		material = _additive_material()
+		material = DecorationBatch.fade_material(true)
 
 
 ## Shared additive material: one per class, not per object.
@@ -140,7 +140,7 @@ func set_channel_blending(additive: bool) -> void:
 	if additive == blending:
 		return
 	blending = additive
-	material = _additive_material() if additive else null
+	material = DecorationBatch.fade_material(additive)
 	# The tint is the object's colour until a colour channel repaints it
 	# through the Base/Detail HSV watchers; objects on no channel keep it.
 	var base: Node2D = get_node_or_null(^"Base")

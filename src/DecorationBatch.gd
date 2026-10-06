@@ -598,6 +598,16 @@ func _place_monster(monster: Monster) -> void:
 
 ## Flips every item on [param channel] between normal and additive blending.
 ##
+## The edge fade / enter effect material (GDEnterEffect.gdshaderinc) for a
+## normal or additive batch. Falls back to a plain blend material when the
+## shared materials are not loaded (headless tools).
+static func fade_material(additive: bool) -> Material:
+	var shared: ShaderMaterial = AssetManager.fade_enter_effect_additive if additive else AssetManager.fade_enter_effect
+	if shared != null:
+		return shared
+	return GDObject._additive_material() if additive else null
+
+
 ## Geometry Dash colour triggers toggle a channel's Blending state at fire
 ## time; the glow in modern effect levels comes from those flips, not from
 ## classic glow sprites. The native renderer owns per-record blend modes, so
@@ -627,7 +637,7 @@ func apply_channel_blending(channel: StringName, additive: bool) -> void:
 			uniform = false
 			break
 	if uniform:
-		material = GDObject._additive_material() if additive else null
+		material = fade_material(additive)
 
 
 ## Current rendered tint, including native channel animations. Serialization

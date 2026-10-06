@@ -909,6 +909,8 @@ func _update_enter_effect_shader_parameter(parameter: StringName, value: float) 
 	if not AssetManager.fade_enter_effect_canvas_group:
 		await AssetManager.fade_enter_canvas_group_loaded
 	AssetManager.fade_enter_effect_canvas_group.set_shader_parameter(parameter, value)
+	if AssetManager.fade_enter_effect_additive:
+		AssetManager.fade_enter_effect_additive.set_shader_parameter(parameter, value)
 
 
 static func from_data(data: Dictionary) -> Level:

@@ -17,6 +17,7 @@ var game_scene_packed: PackedScene
 var menu_loop: AudioStream
 var fade_enter_effect: ShaderMaterial
 var fade_enter_effect_canvas_group: ShaderMaterial
+var fade_enter_effect_additive: ShaderMaterial
 var generated_editor_object_thumbnails: Dictionary[String, ImageTexture]
 var icon_paths: Dictionary[PreviewIcon.Icon, PackedStringArray] = {
 	PreviewIcon.Icon.CUBE: [],
@@ -40,6 +41,7 @@ func _ready() -> void:
 	ResourceLoader.load_threaded_request("res://scenes/components/game_components/Player.tscn")
 	ResourceLoader.load_threaded_request("res://resources/FadeEnterEffect.tres")
 	ResourceLoader.load_threaded_request("res://resources/FadeEnterEffectCanvasGroup.tres")
+	ResourceLoader.load_threaded_request("res://resources/FadeEnterEffectAdditive.tres")
 	title_screen_packed = ResourceLoader.load_threaded_get("res://scenes/TitleScreen.tscn")
 	editor_packed = ResourceLoader.load_threaded_get("res://scenes/EditorScene.tscn")
 	game_scene_packed = ResourceLoader.load_threaded_get("res://scenes/GameScene.tscn")
@@ -48,6 +50,7 @@ func _ready() -> void:
 	fade_enter_loaded.emit()
 	fade_enter_effect_canvas_group = ResourceLoader.load_threaded_get("res://resources/FadeEnterEffectCanvasGroup.tres")
 	fade_enter_canvas_group_loaded.emit()
+	fade_enter_effect_additive = ResourceLoader.load_threaded_get("res://resources/FadeEnterEffectAdditive.tres")
 	loaded_icons = IconCache.new()
 	mutex = Mutex.new()
 	cache_icon_paths()

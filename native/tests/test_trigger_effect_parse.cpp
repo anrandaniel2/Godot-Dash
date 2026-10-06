@@ -41,7 +41,15 @@ int main() {
 	expect_close("linear", ease_weight(0, 0.25), 0.25);
 	expect_close("quad in-out at 0.25", ease_weight(1, 0.25), 0.125);
 	expect_close("quad in at 0.5", ease_weight(2, 0.5), 0.25);
-	expect_close("quad out at 0.5", ease_weight(3, 0.5), 0.75);
+	// gd_docs easings.md: Ease Out is x^(1/rate), not 1 - (1 - x)^2.
+	expect_close("ease out at 0.5", ease_weight(3, 0.5), std::sqrt(0.5));
+	expect_close("ease in rate 3 at 0.5", ease_weight(2, 0.5, 3.0), 0.125);
+	expect_close("ease out rate 4 at 0.0625", ease_weight(3, 0.0625, 4.0), 0.5);
+	expect_close("ease in linear below 1%", ease_weight(2, 0.005, 2.0), 0.005 * 0.01);
+	expect_close("back in at 0.5", ease_weight(17, 0.5), 3.5949095 * 0.125 - 2.5949095 * 0.25);
+	expect_close("elastic in rate 2 at 0.5", ease_weight(5, 0.5), 0.0);
+	expect_close("elastic in rate 1 at 0.75", ease_weight(5, 0.75, 1.0),
+			std::pow(2.0, -2.5) * std::sin(Math::PI * (0.5 + 0.5)));
 	expect_close("quad in-out at 0.75", ease_weight(1, 0.75), 0.875);
 	expect_close("expo in at 0.5", ease_weight(11, 0.5), std::pow(2.0, -5.0));
 	expect_close("expo out at 0.5", ease_weight(12, 0.5), 1.0 - std::pow(2.0, -5.0));
@@ -50,7 +58,7 @@ int main() {
 	expect_close("bounce out at 0.5", ease_weight(9, 0.5), 7.5625 * std::pow(0.5 - 1.5 / 2.75, 2.0) + 0.75);
 	// Back out overshoots above 1 before settling at 1.
 	const double back_out_half = ease_weight(18, 0.5);
-	expect_true("back out overshoots", back_out_half > 1.0 && back_out_half < 1.15);
+	expect_close("back out overshoots", back_out_half, 1.0 - (3.5949095 * 0.125 - 2.5949095 * 0.25));
 	// Elastic out overshoots just above 1 at the midpoint (its bounce) and
 	// lands exactly on 1 at the end.
 	const double elastic_out_half = ease_weight(6, 0.5);
@@ -385,6 +393,99 @@ int main() {
 		expect_close("max y fixed", gd_max_gameplay_y(false, 4000.0), 2790.0);
 		expect_close("max y dynamic", gd_max_gameplay_y(true, 4000.0), 4390.0);
 		expect_close("max y dynamic floor", gd_max_gameplay_y(true, 100.0), 1590.0);
+	}
+
+	{
+		// Area triggers: gdsolver areaenv.hpp (GD 2.2081 getAreaObjectValue,
+		// processAreaMoveGroupAction) and gd_docs area_mechanics.md.
+		AreaParams p;
+		p.v[AF_LENGTH] = 100.0;
+		p.v[AF_MOD_FRONT] = p.v[AF_MOD_BACK] = 1.0;
+		p.v[AF_MOVE_DIST] = 30.0;
+		AreaSample radial = area_sample(p, 30.0, 40.0, 7);
+		expect_close("area radial u", radial.u, 0.5);
+		expect_close("area linear strength", area_strength(p, radial), 0.5);
+		double ox = 0.0, oy = 0.0;
+		area_move_offset(p, 0.5, 30.0, 40.0, 7, ox, oy);
+		expect_close("area angle 0 moves down x", ox, 0.0);
+		expect_close("area angle 0 moves down y", oy, -15.0);
+		p.v[AF_MOVE_ANGLE] = 90.0;
+		area_move_offset(p, 1.0, 0.0, 0.0, 7, ox, oy);
+		expect_close("area angle 90 is +x (ccw from down)", ox, 30.0);
+		expect_close("area outside has no effect", area_strength(p, area_sample(p, 150.0, 0.0, 7)), 0.0);
+		p.inwards = true;
+		expect_close("area inwards flips u", area_sample(p, 30.0, 40.0, 7).u, 0.5);
+		expect_close("area inwards centre", area_strength(p, area_sample(p, 0.0, 0.0, 7)), 0.0);
+		p.inwards = false;
+		p.v[AF_DEADZONE] = 0.5;
+		expect_close("area deadzone", area_sample(p, 75.0, 0.0, 7).u, 0.5);
+		expect_close("area inside deadzone is full", area_strength(p, area_sample(p, 40.0, 0.0, 7)), 1.0);
+		p.v[AF_DEADZONE] = 0.0;
+		p.dir_type = 1;
+		p.v[AF_MOD_BACK] = 2.0;
+		expect_close("area horizontal behind uses ModBack", area_sample(p, -25.0, 999.0, 7).u, 0.0);
+		p.mirrored = true;
+		expect_close("area mirrored behind", area_sample(p, -25.0, 0.0, 7).u, 0.5);
+		expect_close("area horizontal front", area_sample(p, 25.0, 999.0, 7).u, 0.25);
+		p.mirrored = false;
+		p.dir_type = 2;
+		expect_close("area vertical uses y", area_sample(p, 999.0, 50.0, 7).u, 0.5);
+		p.dir_type = 0;
+		p.easing = 2; // ease in, rate 2
+		p.easing2 = 3; // ease out
+		p.ease_out = true;
+		expect_close("area eased strength (Easing2 front)", area_strength(p, area_sample(p, 50.0, 0.0, 7)), 1.0 - std::sqrt(0.5));
+		p.ease_out = false;
+		expect_close("area eased strength", area_strength(p, area_sample(p, 50.0, 0.0, 7)), 0.75);
+		AreaParams rel;
+		rel.relative = true;
+		rel.v[AF_MOVE_DIST] = 40.0;
+		rel.v[AF_RFADE] = 100.0;
+		area_move_offset(rel, 1.0, 50.0, 0.0, 7, ox, oy);
+		expect_close("area relative pushes away, faded", ox, 20.0);
+		expect_close("area relative y", oy, 0.0);
+		AreaParams xy;
+		xy.xy_mode = true;
+		xy.v[AF_MOVE_X] = 10.0;
+		xy.v[AF_MOVE_Y] = -6.0;
+		area_move_offset(xy, 0.5, 1.0, 1.0, 7, ox, oy);
+		expect_close("area xy mode x", ox, 5.0);
+		expect_close("area xy mode y", oy, -3.0);
+		AreaParams sc;
+		sc.v[AF_SCALE_X] = 3.0;
+		sc.v[AF_SCALE_Y] = 1.0;
+		double kx = 0.0, ky = 0.0;
+		area_scale_factor(sc, 0.5, 7, kx, ky);
+		expect_close("area scale x", kx, 2.0);
+		expect_close("area scale y", ky, 1.0);
+		AreaParams fade;
+		fade.type = AreaType::FADE;
+		fade.v[AF_FROM_OPACITY] = 0.2;
+		fade.v[AF_TO_OPACITY] = 1.0;
+		expect_close("area fade full strength", area_opacity(fade, 1.0), 0.2);
+		expect_close("area fade none", area_opacity(fade, 0.0), 1.0);
+		// Variance: base + var * per-object coefficient in [-1, 1].
+		AreaParams var;
+		var.v[AF_MOVE_DIST] = 100.0;
+		var.v[AF_MOVE_DIST_VAR] = 10.0;
+		bool in_range = true;
+		for (uint64_t seed = 1; seed < 200; ++seed) {
+			const double c = area_coefficient(seed, 10);
+			in_range = in_range && c >= -1.0 && c <= 1.0;
+			const double d = area_field(var, AF_MOVE_DIST, seed);
+			in_range = in_range && d >= 90.0 && d <= 110.0;
+		}
+		expect_true("area variance stays in range", in_range);
+		expect_close("area coefficient is stable", area_coefficient(42, 3), area_coefficient(42, 3));
+		// Legacy enter effects (Open-GD EffectGameObject::triggerObject).
+		expect_true("enter 22 fade only", gd_enter_effect_for_trigger(22) == 1);
+		expect_true("enter 23 from bottom", gd_enter_effect_for_trigger(23) == 5);
+		expect_true("enter 24 from top", gd_enter_effect_for_trigger(24) == 4);
+		expect_true("enter 27 scale up", gd_enter_effect_for_trigger(27) == 2);
+		expect_true("enter 28 scale down", gd_enter_effect_for_trigger(28) == 3);
+		expect_true("enter 55 chaotic", gd_enter_effect_for_trigger(55) == 10);
+		expect_true("enter 59 half inverted", gd_enter_effect_for_trigger(59) == 12);
+		expect_true("enter 1915 none", gd_enter_effect_for_trigger(1915) == 0);
 	}
 
 	if (failures == 0) {

@@ -157,6 +157,10 @@ enum class TriggerEffectKind : int32_t {
 	BG_SPEED,           // 3606 Background Speed
 	ADV_FOLLOW_RETARGET,// 3661 Re-Target Advanced Follow
 	RESET_GROUP,        // 3618 Reset
+	AREA,               // 3006-3010 Area Move/Rotate/Scale/Fade/Tint
+	AREA_EDIT,          // 3011-3015 Edit Area
+	AREA_STOP,          // 3024 Area Stop
+	ENTER_PRESET,       // 22-28, 55-59, 1915 legacy enter effects
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -190,66 +194,43 @@ static double ease_bounce_out(double t) {
 	const double x = t - 2.625 / c2;
 	return c1 * x * x + 0.984375;
 }
-static double ease_weight(int gd_easing, double t) {
-	if (gd_easing <= 0 || gd_easing > 18) return Math::clamp(t, 0.0, 1.0);
-	t = Math::clamp(t, 0.0, 1.0);
-	const int family = (gd_easing - 1) / 3; // 0 quad .. 5 back
-	const int mode = (gd_easing - 1) % 3;   // 0 in-out, 1 in, 2 out
-	const bool in_out = mode == 0;
-	const bool ease_in = mode != 2;
+// gd_docs general/easings.md (GameToolbox::getEasedValue): every family is
+// built from its "in" curve; out(x) = 1 - in(1 - x) except Ease Out, which is
+// x^(1/rate); in-out(x) = in(2x)/2 below 0.5 and 1 - in(2 - 2x)/2 above.
+// Rate shapes Ease (1-3, exponent) and Elastic (4-6, period); GD's default 2.
+static double gd_ease_in(int family, double rate, double x) {
+	if (x <= 0.0) return 0.0;
+	if (x >= 1.0) return 1.0;
 	switch (family) {
-		case 0: { // quad
-			if (in_out) return t < 0.5 ? 2.0 * t * t : 1.0 - Math::pow(-2.0 * t + 2.0, 2.0) / 2.0;
-			return ease_in ? t * t : 1.0 - Math::pow(1.0 - t, 2.0);
-		}
-		case 1: { // elastic
-			const double c4 = (2.0 * Math::PI) / 3.0;
-			if (t == 0.0 || t == 1.0) return t;
-			if (in_out) {
-				return t < 0.5
-					? -Math::pow(2.0, 20.0 * t - 10.0) * Math::sin((20.0 * t - 11.125) * c4) / 2.0
-					: Math::pow(2.0, -20.0 * t + 10.0) * Math::sin((20.0 * t - 11.125) * c4) / 2.0 + 1.0;
-			}
-			return ease_in
-				? -Math::pow(2.0, 10.0 * t - 10.0) * Math::sin((10.0 * t - 10.75) * c4)
-				: Math::pow(2.0, -10.0 * t) * Math::sin((10.0 * t - 0.75) * c4) + 1.0;
-		}
-		case 2: { // bounce
-			if (in_out) {
-				return t < 0.5
-					? (1.0 - ease_bounce_out(1.0 - 2.0 * t)) / 2.0
-					: (1.0 + ease_bounce_out(2.0 * t - 1.0)) / 2.0;
-			}
-			return ease_in ? 1.0 - ease_bounce_out(1.0 - t) : ease_bounce_out(t);
-		}
-		case 3: { // expo
-			if (t == 0.0) return 0.0;
-			if (t == 1.0) return 1.0;
-			if (in_out) {
-				return t < 0.5
-					? Math::pow(2.0, 20.0 * t - 10.0) / 2.0
-					: (2.0 - Math::pow(2.0, -20.0 * t + 10.0)) / 2.0;
-			}
-			return ease_in ? Math::pow(2.0, 10.0 * t - 10.0) : 1.0 - Math::pow(2.0, -10.0 * t);
-		}
-		case 4: { // sine
-			if (in_out) return -Math::cos(t * Math::PI) * 0.5 + 0.5;
-			return ease_in ? 1.0 - Math::cos(t * Math::PI / 2.0) : Math::sin(t * Math::PI / 2.0);
-		}
-		default: { // back
-			double c1 = 1.70158;
-			const double c3 = c1 + 1.0;
-			if (in_out) {
-				c1 *= 1.525;
-				return t < 0.5
-					? (Math::pow(2.0 * t, 2.0) * ((c1 + 1.0) * 2.0 * t - c1)) / 2.0
-					: (Math::pow(2.0 * t - 2.0, 2.0) * ((c1 + 1.0) * (2.0 * t - 2.0) + c1) + 2.0) / 2.0;
-			}
-			return ease_in
-				? c3 * t * t * t - c1 * t * t
-				: 1.0 + c3 * Math::pow(t - 1.0, 3.0) + c1 * Math::pow(t - 1.0, 2.0);
-		}
+		case 0: // ease: linear below 1% (gd_docs notes)
+			return x <= 0.01 ? x * Math::pow(0.01, rate - 1.0) : Math::pow(x, rate);
+		case 1: // elastic
+			return Math::pow(2.0, 10.0 * (x - 1.0)) * Math::sin(3.14159265358979323846 * (0.5 + (2.0 - 2.0 * x) / rate));
+		case 2: // bounce
+			return 1.0 - ease_bounce_out(1.0 - x);
+		case 3: // exponential
+			return Math::pow(2.0, 10.0 * (x - 1.0));
+		case 4: // sine
+			return 1.0 - Math::cos(0.5 * 3.14159265358979323846 * x);
+		default: // back
+			return 3.5949095 * x * x * x - 2.5949095 * x * x;
 	}
+}
+static double gd_ease(int gd_easing, double rate, double t) {
+	t = Math::clamp(t, 0.0, 1.0);
+	if (gd_easing <= 0 || gd_easing > 18) return t;
+	if (!(rate > 0.0)) rate = 2.0;
+	const int family = (gd_easing - 1) / 3; // 0 ease .. 5 back
+	const int mode = (gd_easing - 1) % 3;   // 0 in-out, 1 in, 2 out
+	if (mode == 1) return gd_ease_in(family, rate, t);
+	if (mode == 2) {
+		if (family == 0) return t <= 0.0 ? 0.0 : (t >= 1.0 ? 1.0 : Math::pow(t, 1.0 / rate));
+		return 1.0 - gd_ease_in(family, rate, 1.0 - t);
+	}
+	return t < 0.5 ? gd_ease_in(family, rate, 2.0 * t) / 2.0 : 1.0 - gd_ease_in(family, rate, 2.0 - 2.0 * t) / 2.0;
+}
+static double ease_weight(int gd_easing, double t, double rate = 2.0) {
+	return gd_ease(gd_easing, rate, t);
 }
 
 // Property readers. GD serialises every value as a string, including empty
@@ -482,10 +463,200 @@ struct AdvFollowParams {
 	double rot_offset = 0.0, rot_easing = 0.0, rot_deadzone = 0.0;
 };
 
+// Area / Edit Area (3006-3015, 3024): EnterEffectObject parameters.
+// gd_docs area/area_mechanics.md + area_triggers.md, and gdsolver
+// src/solver/areaenv.hpp, read from the GD 2.2081 binary:
+// processAreaMoveGroupAction 0x22a4d0, getAreaObjectValue 0x228070 and its
+// leaf 0x227b60 = clamp((s / L - dz) / (1 - dz), 0, 1). Distances in GD units.
+enum AreaField : int32_t {
+	AF_LENGTH, AF_LENGTH_VAR, AF_OFFSET, AF_OFFSET_VAR, AF_OFFSET_Y, AF_OFFSET_Y_VAR,
+	AF_MOD_FRONT, AF_MOD_BACK, AF_DEADZONE, AF_MOVE_DIST, AF_MOVE_DIST_VAR,
+	AF_MOVE_ANGLE, AF_MOVE_ANGLE_VAR, AF_MOVE_X, AF_MOVE_X_VAR, AF_MOVE_Y, AF_MOVE_Y_VAR,
+	AF_SCALE_X, AF_SCALE_X_VAR, AF_SCALE_Y, AF_SCALE_Y_VAR, AF_ROTATION, AF_ROTATION_VAR,
+	AF_FROM_OPACITY, AF_TO_OPACITY, AF_TINT, AF_RFADE, AF_COUNT
+};
+// gmdkit data/csv/prop_table.csv trigger.effect.* keys, in AreaField order.
+static const char *const AREA_FIELD_KEYS[AF_COUNT] = {
+	"222", "223", "220", "221", "252", "253", "263", "264", "282", "218", "219",
+	"231", "232", "237", "238", "239", "240", "233", "234", "235", "236", "270", "271",
+	"286", "275", "265", "288"
+};
+// Random-coefficient slot per quantity (areaenv.hpp: len 0, offset 1,
+// offsetY 2, moveX 8, moveY 9, dist 10, angle 11; rotate/scale unlisted).
+static const int AREA_FIELD_SLOT[AF_COUNT] = {
+	0, 0, 1, 1, 2, 2, -1, -1, -1, 10, 10, 11, 11, 8, 8, 9, 9, 4, 4, 5, 5, 3, 3, -1, -1, -1, -1
+};
+enum class AreaType : int32_t { MOVE = 0, ROTATE = 1, SCALE = 2, FADE = 3, TINT = 4 };
+struct AreaParams {
+	AreaType type = AreaType::MOVE;
+	double v[AF_COUNT] = {};
+	int32_t dir_type = 0;      // 262: 1 horizontal, 2 vertical, else radial
+	int32_t easing = 0, easing2 = 0;       // 242 / 248
+	double ease_rate = 2.0, ease_rate2 = 2.0; // 243 / 249
+	int32_t priority = 0;      // 341
+	int32_t effect_id = 0;     // 225
+	int32_t special_center = 0; // 538: -1 P1, -2 P2, -3 C, -4..-11 camera edges
+	int32_t tint_channel = 0;  // 260
+	bool ease_out = false;     // 261
+	bool inwards = false;      // 276
+	bool mirrored = false;     // 283
+	bool relative = false;     // 287
+	bool xy_mode = false;      // 241
+	bool main_only = false, detail_only = false; // 65 / 66
+	bool deap = false;         // 539: the centre object is not affected
+	bool use_effect_id = false; // 355 (Edit Area)
+	bool use_hsv = false;      // 278
+	double hsv[3] = {0.0, 1.0, 1.0}; // 49
+	bool hsv_add_s = false, hsv_add_v = false;
+	// Edit Area: which fields are set (gd_docs: 99 / -99 mean "not edited").
+	uint32_t edit_mask = 0;
+};
+
+// Per-object random coefficient in [-1, 1], fixed for the attempt
+// (gd_docs "Random Values": per object, shared by every Area trigger).
+static double area_coefficient(uint64_t seed, int slot) {
+	uint64_t z = seed * 0x9E3779B97F4A7C15ULL + static_cast<uint64_t>(slot + 1) * 0xBF58476D1CE4E5B9ULL;
+	z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+	z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+	z ^= z >> 31;
+	return static_cast<double>(z >> 11) / static_cast<double>(1ULL << 52) - 1.0;
+}
+static double area_field(const AreaParams &p, AreaField base, uint64_t seed) {
+	const double var = p.v[base + 1];
+	const int slot = AREA_FIELD_SLOT[base];
+	return p.v[base] + (var != 0.0 && slot >= 0 ? var * area_coefficient(seed, slot) : 0.0);
+}
+struct AreaSample {
+	double u = 1.0;        // position inside the area, 0 centre .. 1 edge
+	bool front = false;    // target - centre >= 0 along the proximity axis
+};
+// getAreaObjectValue: d = target - centre in GD units, +Y up.
+static AreaSample area_sample(const AreaParams &p, double dx, double dy, uint64_t seed) {
+	AreaSample out;
+	double s;
+	if (p.dir_type == 1 || p.dir_type == 2) {
+		double s0 = (p.dir_type == 1 ? dx : dy) - area_field(p, AF_OFFSET, seed);
+		out.front = s0 >= 0.0;
+		// gd_docs: ModBack when the centre is past the target, ModFront
+		// otherwise; mirrored options measure |distance| both ways.
+		s = s0 * (out.front ? p.v[AF_MOD_FRONT] : p.v[AF_MOD_BACK]);
+		if (p.mirrored) s = Math::abs(s);
+	} else {
+		const double ox = dx - area_field(p, AF_OFFSET, seed);
+		const double oy = dy - area_field(p, AF_OFFSET_Y, seed);
+		s = std::sqrt(ox * ox + oy * oy);
+		out.front = true; // gd_docs: radial Ease Out uses Easing2
+	}
+	const int length = static_cast<int>(area_field(p, AF_LENGTH, seed));
+	const double dz = p.v[AF_DEADZONE];
+	double x = length != 0 ? s / static_cast<double>(length) : (s > 0.0 ? 1.0 : 0.0);
+	double r = dz == 0.0 ? x : (x - dz) / (1.0 - dz);
+	if (!(r < 1.0)) r = r > 1.0 || std::isnan(r) ? 1.0 : r;
+	if (r < 0.0) r = 0.0;
+	out.u = p.inwards ? 1.0 - r : r;
+	return out;
+}
+// Effect strength: 1 at the centre, 0 at/after the edge. Fade and Tint have
+// no easing; the others ease u (Easing2 on the front side with Ease Out).
+static double area_strength(const AreaParams &p, const AreaSample &sample) {
+	if (!(sample.u < 1.0)) return 0.0;
+	if (p.type == AreaType::FADE || p.type == AreaType::TINT) return 1.0 - sample.u;
+	const bool second = p.ease_out && sample.front;
+	return 1.0 - gd_ease(second ? p.easing2 : p.easing, second ? p.ease_rate2 : p.ease_rate, sample.u);
+}
+// Area Move displacement in GD units (+Y up). Angle 0 points down and
+// turns counter-clockwise (ccpForAngle((A - 90) deg)); Relative pushes away
+// from the centre, scaled by distance / RFade inside RFade.
+static void area_move_offset(const AreaParams &p, double strength, double dx, double dy, uint64_t seed,
+		double &out_x, double &out_y) {
+	out_x = out_y = 0.0;
+	if (p.xy_mode) {
+		out_x = strength * area_field(p, AF_MOVE_X, seed);
+		out_y = strength * area_field(p, AF_MOVE_Y, seed);
+		return;
+	}
+	const double m = area_field(p, AF_MOVE_DIST, seed);
+	if (m == 0.0) return;
+	double dir_x, dir_y, fade = 1.0;
+	if (p.relative) {
+		const double len = std::sqrt(dx * dx + dy * dy);
+		const double rfade = Math::max(0.0, p.v[AF_RFADE]);
+		if (rfade > len) fade = len / rfade;
+		dir_x = len > 0.0 ? dx / len : 0.0;
+		dir_y = len > 0.0 ? dy / len : 0.0;
+	} else {
+		const double a = (area_field(p, AF_MOVE_ANGLE, seed) - 90.0) * 0.017453292519943295;
+		dir_x = std::cos(a);
+		dir_y = std::sin(a);
+	}
+	out_x = strength * m * fade * dir_x;
+	out_y = strength * m * fade * dir_y;
+}
+// Area Scale: 1 + strength * (scale - 1) per axis (area_triggers.md).
+static void area_scale_factor(const AreaParams &p, double strength, uint64_t seed, double &kx, double &ky) {
+	kx = 1.0 + strength * (area_field(p, AF_SCALE_X, seed) - 1.0);
+	ky = 1.0 + strength * (area_field(p, AF_SCALE_Y, seed) - 1.0);
+}
+// Area Fade: From Opacity at full strength, To Opacity at none.
+static double area_opacity(const AreaParams &p, double strength) {
+	return p.v[AF_TO_OPACITY] + (p.v[AF_FROM_OPACITY] - p.v[AF_TO_OPACITY]) * strength;
+}
+
+static void parse_area_params(const Dictionary &properties, AreaParams &p, bool edit) {
+	p.v[AF_MOD_FRONT] = p.v[AF_MOD_BACK] = 1.0;
+	p.v[AF_SCALE_X] = p.v[AF_SCALE_Y] = 1.0;
+	for (int i = 0; i < AF_COUNT; ++i) {
+		const char *key = AREA_FIELD_KEYS[i];
+		if (!properties.has(key)) continue;
+		const double value = prop_float(properties, key, p.v[i]);
+		if (edit && (Math::is_equal_approx(value, 99.0) || Math::is_equal_approx(value, -99.0))) continue;
+		p.v[i] = value;
+		if (edit) p.edit_mask |= 1u << i;
+	}
+	p.dir_type = static_cast<int32_t>(prop_int(properties, "262", 0));
+	p.easing = static_cast<int32_t>(prop_int(properties, "242", 0));
+	p.ease_rate = prop_float(properties, "243", 2.0);
+	p.easing2 = static_cast<int32_t>(prop_int(properties, "248", 0));
+	p.ease_rate2 = prop_float(properties, "249", 2.0);
+	p.priority = static_cast<int32_t>(prop_int(properties, "341", 0));
+	p.effect_id = static_cast<int32_t>(prop_int(properties, "225", 0));
+	p.special_center = static_cast<int32_t>(prop_int(properties, "538", 0));
+	p.tint_channel = static_cast<int32_t>(prop_int(properties, "260", 0));
+	p.ease_out = prop_bool(properties, "261");
+	p.inwards = prop_bool(properties, "276");
+	p.mirrored = prop_bool(properties, "283");
+	p.relative = prop_bool(properties, "287");
+	p.xy_mode = prop_bool(properties, "241");
+	p.main_only = prop_bool(properties, "65");
+	p.detail_only = prop_bool(properties, "66");
+	p.deap = prop_bool(properties, "539");
+	p.use_effect_id = prop_bool(properties, "355");
+	p.use_hsv = prop_bool(properties, "278");
+	const PackedStringArray hsv = String(properties.get("49", String())).split("a");
+	if (hsv.size() >= 3) {
+		p.hsv[0] = hsv[0].to_float(); p.hsv[1] = hsv[1].to_float(); p.hsv[2] = hsv[2].to_float();
+		p.hsv_add_s = hsv.size() > 3 && hsv[3] == "1";
+		p.hsv_add_v = hsv.size() > 4 && hsv[4] == "1";
+	}
+}
+// Area Tint HSV (key 49 "h a s a v a sAdd a vAdd"): hue degrees added,
+// saturation/value multiplied unless the matching add flag is set.
+static Color area_hsv_shift(const Color &c, const AreaParams &p) {
+	if (!p.use_hsv) return c;
+	float h = c.get_h() + static_cast<float>(p.hsv[0] / 360.0);
+	h -= std::floor(h);
+	const float sat = static_cast<float>(p.hsv_add_s ? c.get_s() + p.hsv[1] : c.get_s() * p.hsv[1]);
+	const float val = static_cast<float>(p.hsv_add_v ? c.get_v() + p.hsv[2] : c.get_v() * p.hsv[2]);
+	return Color::from_hsv(h, Math::clamp(sat, 0.0f, 1.0f), Math::clamp(val, 0.0f, 1.0f), c.a);
+}
+
 struct TriggerEffect {
+	int32_t enter_effect = 1;    // ENTER_PRESET: PlayLayer::m_activeEnterEffect
+	AreaParams area;            // 3006-3015 Area / Edit Area, 3024 Area Stop
 	TriggerEffectKind kind = TriggerEffectKind::NONE;
 	double duration = 0.0;       // key 10
 	int32_t easing = 0;          // key 30
+	double ease_rate = 2.0;      // key 85 (Ease exponent / Elastic period)
 	bool pulse_envelope = false; // any of keys 45/46/47 present (pulse style)
 	bool pulse_group = false;    // 1006 key 52 = 1: target_groups are object groups
 	double fade_in = 0.0;        // key 45
@@ -1274,6 +1445,25 @@ static PulseSource classify_pulse(int64_t target_channel, int64_t target_type, i
 	return PulseSource::RGB;
 }
 
+// Legacy enter-effect trigger to PlayLayer::m_activeEnterEffect.
+static int32_t gd_enter_effect_for_trigger(int64_t gd_id) {
+	switch (gd_id) {
+		case 22: return 1;
+		case 23: return 5;
+		case 24: return 4;
+		case 25: return 6;
+		case 26: return 7;
+		case 27: return 2;
+		case 28: return 3;
+		case 55: return 10;
+		case 56: return 8;
+		case 57: return 9;
+		case 58: return 11;
+		case 59: return 12;
+		default: return 0; // 1915: no enter effect
+	}
+}
+
 static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &properties) {
 	TriggerEffect effect;
 	switch (gd_id) {
@@ -1546,6 +1736,32 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2913: effect.kind = TriggerEffectKind::SHADER_LENS_CIRCLE; break;
 		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
 		case 3613: effect.kind = TriggerEffectKind::UI; break;
+		case 3006: case 3007: case 3008: case 3009: case 3010:
+			effect.kind = TriggerEffectKind::AREA;
+			parse_area_params(properties, effect.area, false);
+			effect.area.type = static_cast<AreaType>(gd_id - 3006);
+			break;
+		case 3011: case 3012: case 3013: case 3014: case 3015:
+			// gd_docs edit_area_triggers.md: all five are functionally
+			// identical; 51 is the Area trigger's target group.
+			effect.kind = TriggerEffectKind::AREA_EDIT;
+			parse_area_params(properties, effect.area, true);
+			break;
+		// Open-GD Source/EffectGameObject.cpp triggerObject: 22 -> 1 (fade
+		// only, the level default), 23 -> 5, 24 -> 4, 25 -> 6, 26 -> 7,
+		// 27 -> 2, 28 -> 3. 55-59 by their 2.2 icons (eeFA, eeFAL, eeFAR,
+		// eeFRH, eeFRHInv) onto AlgebraDash's chaotic / half cases.
+		case 22: case 23: case 24: case 25: case 26: case 27: case 28:
+		case 55: case 56: case 57: case 58: case 59: case 1915: {
+			effect.kind = TriggerEffectKind::ENTER_PRESET;
+			effect.enter_effect = gd_enter_effect_for_trigger(gd_id);
+			return effect; // no target group or timing keys
+		}
+		case 3024:
+			effect.kind = TriggerEffectKind::AREA_STOP;
+			effect.area.effect_id = static_cast<int32_t>(prop_int(properties, "225",
+					prop_int(properties, "51", 0)));
+			break;
 		case 3602: effect.kind = TriggerEffectKind::SFX; break;
 		case 10:  // blue gravity portal (normal)
 		case 11:  // yellow gravity portal (upside down)
@@ -1555,6 +1771,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 	}
 	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
 	effect.easing = static_cast<int32_t>(prop_int(properties, "30", 0));
+	effect.ease_rate = prop_float(properties, "85", 2.0);
 	effect.target_groups = parse_group_list(properties, "51");
 	effect.control_id = static_cast<int32_t>(String(properties.get("534", String("0"))).to_int());
 	const String center = String(properties.get("71", String())).strip_edges();
@@ -2124,6 +2341,8 @@ class NativeTriggerRuntime : public RefCounted {
 		double alpha = 1.0;
 		const double *own = member_own_alpha.getptr(id);
 		if (own) alpha = *own;
+		const auto area_fade = area_alpha.find(static_cast<uint64_t>(id));
+		if (area_fade != area_alpha.end()) alpha *= area_fade->second;
 		const std::vector<String> *groups = member_groups.getptr(id);
 		if (groups) {
 			for (const String &group : *groups) {
@@ -2658,6 +2877,18 @@ class NativeTriggerRuntime : public RefCounted {
 				player->set("horizontal_direction", -direction);
 				break;
 			}
+			case TriggerEffectKind::AREA:
+				start_area(index, effect);
+				break;
+			case TriggerEffectKind::ENTER_PRESET:
+				set_enter_effect(effect.enter_effect);
+				break;
+			case TriggerEffectKind::AREA_EDIT:
+				edit_areas(effect);
+				break;
+			case TriggerEffectKind::AREA_STOP:
+				stop_areas_by_effect_id(effect.area.effect_id);
+				break;
 			case TriggerEffectKind::STOP:
 				// gd_docs stop.md: Stop / Pause / Resume the triggers in the
 				// target group, or with that Control ID (535). Running animations
@@ -2986,7 +3217,7 @@ private:
 			case TriggerEffectKind::TIMER_START: case TriggerEffectKind::TIMER_EVENT:
 			case TriggerEffectKind::CAMERA_ZOOM: case TriggerEffectKind::CAMERA_OFFSET: case TriggerEffectKind::CAMERA_ROTATE:
 			case TriggerEffectKind::SFX: case TriggerEffectKind::EVENT: case TriggerEffectKind::COLLISION:
-			case TriggerEffectKind::ON_DEATH:
+			case TriggerEffectKind::ON_DEATH: case TriggerEffectKind::AREA:
 				return true;
 			default:
 				return false;
@@ -3041,6 +3272,10 @@ private:
 			}
 			adv_follows.erase(std::remove_if(adv_follows.begin(), adv_follows.end(),
 					[&](const AdvFollow &f) { return targets.count(f.record) > 0; }), adv_follows.end());
+			// gd_docs area_mechanics.md: stopping clears Area and Edit Area
+			// effects; the next tick's recompute drops what they applied.
+			areas.erase(std::remove_if(areas.begin(), areas.end(),
+					[&](const AreaInstance &a) { return targets.count(a.record) > 0; }), areas.end());
 			for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
 				it = targets.count(it->second.record) ? follow_player_y.erase(it) : std::next(it);
 			}
@@ -3067,6 +3302,16 @@ private:
 		// Control or Start Paused, and Time Control does not undo Pause.
 		for (auto &entry : timers) {
 			if (targets.count(entry.second.source)) entry.second.stop_paused = pause;
+		}
+		for (AreaInstance &area : areas) {
+			if (!targets.count(area.record) || area.paused == pause) continue;
+			// Pausing also pauses the instance's Edit Area animations.
+			if (pause) {
+				for (AreaEditAnim &e : area.edits) e.start -= clock;
+			} else {
+				for (AreaEditAnim &e : area.edits) e.start += clock;
+			}
+			area.paused = pause;
 		}
 		for (Fade &fade : fades) {
 			if (!targets.count(fade.record_index) || fade.paused == pause) continue;
@@ -4120,6 +4365,269 @@ private:
 	// native fast path recolours every bound object in C++.
 	// Batches forward to their renderer (one pulse per batch: a batch holds
 	// a single group set); node-drawn objects tint each layer sprite.
+	// Edge fade / enter effect for every level object (GDEnterEffect.gdshaderinc).
+	bool gd_level = false;
+	static void set_enter_global(int32_t value) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server) server->global_shader_parameter_set(StringName("gd_enter_effect"), value);
+	}
+	void set_enter_effect(int32_t value) {
+		if (gd_level) set_enter_global(value);
+	}
+
+	// ---- Area triggers (3006-3015, 3024) ----
+	// gd_docs area_mechanics.md: effects are temporary, recomputed every
+	// tick after all other moves (Scale -> Rotate -> Move -> Fade/Tint, then
+	// Priority high-first, then spawn order) and undone on stop.
+	struct AreaEditAnim { int32_t field; double from, to, start, duration; int32_t easing; double rate; };
+	struct AreaInstance {
+		size_t record = 0;
+		uint64_t sequence = 0;
+		std::vector<ObjectID> members;
+		ObjectID center;
+		AreaParams params;
+		bool paused = false;
+		std::vector<AreaEditAnim> edits;
+	};
+	struct AreaApplied { Vector2 offset; double rotation = 0.0; Vector2 scale_delta; };
+	std::vector<AreaInstance> areas;
+	uint64_t area_sequence = 0;
+	std::unordered_map<uint64_t, AreaApplied> area_applied;
+	std::unordered_map<uint64_t, double> area_alpha;       // Area Fade multiplier
+	std::unordered_map<uint64_t, std::pair<Color, double>> area_tints;
+	std::vector<ObjectID> area_players;
+
+	static int area_order(AreaType type) {
+		switch (type) {
+			case AreaType::SCALE: return 0;
+			case AreaType::ROTATE: return 1;
+			case AreaType::MOVE: return 2;
+			default: return 3;
+		}
+	}
+	static Vector2 px_to_gd(const Vector2 &px) {
+		return Vector2(static_cast<real_t>(px.x / CELLS_TO_PX_X), static_cast<real_t>(px.y / CELLS_TO_PX_Y));
+	}
+	bool area_center(const AreaInstance &area, Vector2 &out_px) const {
+		const int32_t special = area.params.special_center;
+		if (special == -1 || special == -2) {
+			const size_t slot = special == -1 ? 0 : 1;
+			const ObjectID id = slot < area_players.size() ? area_players[slot]
+					: (area_players.empty() ? ObjectID() : area_players[0]);
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+			if (!node) return false;
+			out_px = node->get_global_position();
+			return true;
+		}
+		if (special <= -3 && special >= -11) {
+			Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+			if (!camera) return false;
+			const Vector2 zoom = camera->get_zoom();
+			const Vector2 half = camera->get_viewport_rect().size
+					/ Vector2(Math::max(zoom.x, static_cast<real_t>(0.001)), Math::max(zoom.y, static_cast<real_t>(0.001))) * 0.5f;
+			// EffectSpecialCenter: C, BL, CL, TL, BC, TC, BR, CR, TR.
+			static const int8_t sx[9] = { 0, -1, -1, -1, 0, 0, 1, 1, 1 };
+			static const int8_t sy[9] = { 0, 1, 0, -1, 1, -1, 1, 0, -1 };
+			const int i = -3 - special;
+			out_px = camera->get_screen_center_position() + Vector2(half.x * sx[i], half.y * sy[i]);
+			return true;
+		}
+		Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(area.center));
+		// gd_docs: no valid centre uses the level origin.
+		out_px = node ? node->get_global_position() : Vector2();
+		return true;
+	}
+	void start_area(size_t index, const TriggerEffect &effect) {
+		std::vector<ObjectID> members = resolve_effect_members(effect);
+		const ObjectID center = resolve_pivot(effect);
+		for (AreaInstance &area : areas) {
+			// Spawning an active Area again updates it and drops its edits.
+			if (area.record == index && area.members == members && area.center == center) {
+				area.params = effect.area;
+				area.edits.clear();
+				area.paused = false;
+				return;
+			}
+		}
+		if (effect.area.effect_id != 0) {
+			areas.erase(std::remove_if(areas.begin(), areas.end(), [&](const AreaInstance &a) {
+				return a.params.effect_id == effect.area.effect_id && a.params.type == effect.area.type;
+			}), areas.end());
+		}
+		AreaInstance area;
+		area.record = index;
+		area.sequence = ++area_sequence;
+		area.members = std::move(members);
+		area.center = center;
+		area.params = effect.area;
+		areas.push_back(std::move(area));
+	}
+	void edit_areas(const TriggerEffect &effect) {
+		const AreaParams &edit = effect.area;
+		for (AreaInstance &area : areas) {
+			bool match = false;
+			if (edit.use_effect_id) {
+				match = area.params.effect_id == edit.effect_id;
+			} else if (area.record < records.size()) {
+				for (const String &group : effect.target_groups) {
+					for (const String &own : records[area.record].effect.target_groups) match = match || own == group;
+				}
+			}
+			if (!match) continue;
+			for (int32_t f = 0; f < AF_COUNT; ++f) {
+				if (!(edit.edit_mask & (1u << f))) continue;
+				if (effect.duration <= 0.0) {
+					area.params.v[f] = edit.v[f];
+					area.edits.erase(std::remove_if(area.edits.begin(), area.edits.end(),
+							[&](const AreaEditAnim &e) { return e.field == f; }), area.edits.end());
+					continue;
+				}
+				// The new edit starts where the previous one stopped.
+				area.edits.erase(std::remove_if(area.edits.begin(), area.edits.end(),
+						[&](const AreaEditAnim &e) { return e.field == f; }), area.edits.end());
+				area.edits.push_back({ f, area.params.v[f], edit.v[f], clock, effect.duration, effect.easing, effect.ease_rate });
+			}
+			if (edit.use_hsv) {
+				area.params.use_hsv = true;
+				for (int i = 0; i < 3; ++i) area.params.hsv[i] = edit.hsv[i];
+				area.params.hsv_add_s = edit.hsv_add_s;
+				area.params.hsv_add_v = edit.hsv_add_v;
+			}
+		}
+	}
+	void stop_areas_by_effect_id(int32_t effect_id) {
+		areas.erase(std::remove_if(areas.begin(), areas.end(),
+				[&](const AreaInstance &a) { return a.params.effect_id == effect_id; }), areas.end());
+	}
+	void undo_area_transforms() {
+		for (const auto &entry : area_applied) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(ObjectID(entry.first)));
+			if (!node) continue;
+			const AreaApplied &a = entry.second;
+			if (a.offset != Vector2()) node->set_global_position(node->get_global_position() - a.offset);
+			if (a.rotation != 0.0) node->set_global_rotation_degrees(node->get_global_rotation_degrees() - a.rotation);
+			if (a.scale_delta != Vector2()) node->set_global_scale(node->get_global_scale() - a.scale_delta);
+		}
+		area_applied.clear();
+	}
+	void step_areas() {
+		undo_area_transforms();
+		std::unordered_map<uint64_t, std::pair<double, double>> fades_now; // strength, opacity
+		std::unordered_map<uint64_t, std::pair<Color, double>> tints_now;
+		std::vector<size_t> order;
+		for (size_t i = 0; i < areas.size(); ++i) {
+			AreaInstance &area = areas[i];
+			if (area.paused) continue;
+			for (auto it = area.edits.begin(); it != area.edits.end();) {
+				const double t = it->duration > 0.0 ? (clock - it->start) / it->duration : 1.0;
+				area.params.v[it->field] = it->from + (it->to - it->from) * gd_ease(it->easing, it->rate, t);
+				it = t >= 1.0 ? area.edits.erase(it) : std::next(it);
+			}
+			order.push_back(i);
+		}
+		std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+			const AreaParams &pa = areas[a].params, &pb = areas[b].params;
+			if (area_order(pa.type) != area_order(pb.type)) return area_order(pa.type) < area_order(pb.type);
+			if (pa.priority != pb.priority) return pa.priority > pb.priority;
+			return areas[a].sequence < areas[b].sequence;
+		});
+		for (size_t i : order) {
+			const AreaInstance &area = areas[i];
+			const AreaParams &p = area.params;
+			if (p.type == AreaType::SCALE && p.v[AF_SCALE_X] == 0.0 && p.v[AF_SCALE_Y] == 0.0) continue;
+			Vector2 center_px;
+			if (!area_center(area, center_px)) continue;
+			const Vector2 center = px_to_gd(center_px);
+			Color tint_color;
+			if (p.type == AreaType::TINT) {
+				Object *data = channel_lookup(p.tint_channel);
+				if (!data) continue;
+				tint_color = area_hsv_shift(Color(data->get("color")), p);
+			}
+			for (ObjectID id : area.members) {
+				if (p.deap && id == area.center) continue;
+				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+				if (!node) continue;
+				const uint64_t key = static_cast<uint64_t>(id);
+				const Vector2 target = px_to_gd(node->get_global_position());
+				const double dx = target.x - center.x, dy = target.y - center.y;
+				const AreaSample sample = area_sample(p, dx, dy, key);
+				const double strength = area_strength(p, sample);
+				switch (p.type) {
+					case AreaType::MOVE: {
+						if (strength <= 0.0) break;
+						double ox, oy;
+						// Relative direction includes the centre's Offset / OffsetY.
+						const bool vertical = p.dir_type == 2;
+						const double rx = dx - (vertical ? 0.0 : area_field(p, AF_OFFSET, key));
+						const double ry = dy - (vertical ? area_field(p, AF_OFFSET, key)
+								: (p.dir_type == 1 ? 0.0 : area_field(p, AF_OFFSET_Y, key)));
+						area_move_offset(p, strength, rx, ry, key, ox, oy);
+						const Vector2 offset(static_cast<real_t>(ox * CELLS_TO_PX_X), static_cast<real_t>(oy * CELLS_TO_PX_Y));
+						if (offset == Vector2()) break;
+						node->set_global_position(node->get_global_position() + offset);
+						area_applied[key].offset += offset;
+						break;
+					}
+					case AreaType::ROTATE: {
+						if (strength <= 0.0) break;
+						const double degrees = strength * area_field(p, AF_ROTATION, key);
+						node->set_global_rotation_degrees(node->get_global_rotation_degrees() + degrees);
+						area_applied[key].rotation += degrees;
+						break;
+					}
+					case AreaType::SCALE: {
+						if (strength <= 0.0) break;
+						double kx, ky;
+						area_scale_factor(p, strength, key, kx, ky);
+						const Vector2 scale = node->get_global_scale();
+						const Vector2 delta(static_cast<real_t>(scale.x * (kx - 1.0)), static_cast<real_t>(scale.y * (ky - 1.0)));
+						node->set_global_scale(scale + delta);
+						area_applied[key].scale_delta += delta;
+						break;
+					}
+					case AreaType::FADE: {
+						// Strongest Area Fade wins; ties keep the earlier one.
+						auto found = fades_now.find(key);
+						if (found == fades_now.end() || strength > found->second.first) {
+							fades_now[key] = { strength, Math::clamp(area_opacity(p, strength), 0.0, 1.0) };
+						}
+						break;
+					}
+					case AreaType::TINT: {
+						const double weight = Math::clamp(strength * p.v[AF_TINT], 0.0, 1.0);
+						tints_now[key] = { tint_color, weight };
+						break;
+					}
+				}
+			}
+		}
+		std::vector<uint64_t> refresh;
+		for (const auto &entry : area_alpha) if (!fades_now.count(entry.first)) refresh.push_back(entry.first);
+		area_alpha.clear();
+		for (const auto &entry : fades_now) {
+			area_alpha[entry.first] = entry.second.second;
+			refresh.push_back(entry.first);
+		}
+		for (uint64_t key : refresh) refresh_member_alpha(ObjectID(key));
+		for (const auto &entry : area_tints) {
+			if (!tints_now.count(entry.first)) apply_group_pulse({ ObjectID(entry.first) }, entry.second.first, 0.0);
+		}
+		for (const auto &entry : tints_now) apply_group_pulse({ ObjectID(entry.first) }, entry.second.first, entry.second.second);
+		area_tints = std::move(tints_now);
+	}
+	void clear_areas(bool undo_transforms) {
+		if (undo_transforms) undo_area_transforms();
+		area_applied.clear();
+		areas.clear();
+		std::vector<uint64_t> faded;
+		for (const auto &entry : area_alpha) faded.push_back(entry.first);
+		area_alpha.clear();
+		for (uint64_t key : faded) refresh_member_alpha(ObjectID(key));
+		for (const auto &entry : area_tints) apply_group_pulse({ ObjectID(entry.first) }, entry.second.first, 0.0);
+		area_tints.clear();
+	}
+
 	void apply_group_pulse(const std::vector<ObjectID> &members, const Color &pulse, double weight) {
 		static const StringName batch_method("apply_group_pulse");
 		for (ObjectID id : members) {
@@ -4417,6 +4925,7 @@ public:
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		adv_rand_coeff.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
+		areas.clear(); area_applied.clear(); area_alpha.clear(); area_tints.clear();
 		item_counts.clear(); armed_counts.clear(); count_seen.clear(); paused_records.clear();
 		timers.clear(); timer_events.clear(); paused_events.clear(); sequence_states.clear(); points = 0;
 		persistent_items.clear(); persistent_timers.clear(); persist_all_items = false; persist_all_timers = false;
@@ -4491,7 +5000,14 @@ public:
 	}
 	// Level, camera, Config, ShaderLayer and UILayer objects the effects read/write.
 	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
-		if (level) level_id = level->get_instance_id();
+		if (level) {
+			level_id = level->get_instance_id();
+			// Imported GD levels carry GD bounds; project levels keep their
+			// own transition settings (gd_enter_effect -1). Levels start in
+			// GD's default fade-only effect (PlayLayer init: 1).
+			gd_level = double(level->get("gd_level_end_x")) > 0.0 || double(level->get("gd_max_gameplay_y")) > 0.0;
+			set_enter_global(gd_level ? 1 : -1);
+		}
 		if (camera) camera_id = camera->get_instance_id();
 		if (config) config_id = config->get_instance_id();
 		if (shader_layer) {
@@ -5065,6 +5581,7 @@ public:
 		step_adv_follow(delta);
 		check_collisions();
 		check_touch_overlaps();
+		area_players = frame_players;
 		frame_players.clear();
 		for (size_t i = 0; i < fades.size(); ) {
 			const uint64_t fade_epoch = structure_epoch;
@@ -5099,7 +5616,7 @@ public:
 				weight = 1.0;
 				finished = true;
 			} else {
-				weight = ease_weight(effect.easing, t / effect.duration);
+				weight = ease_weight(effect.easing, t / effect.duration, effect.ease_rate);
 			}
 			const double weight_delta = weight - fades[i].prev_weight;
 			// Persist progress before any call out into the scene: a
@@ -5126,6 +5643,8 @@ public:
 			}
 			++i;
 		}
+		if (structure_epoch != epoch) return;
+		step_areas();
 	}
 	void reset() {
 		++structure_epoch;
@@ -5139,6 +5658,10 @@ public:
 		// first frame after a restart fires no crossings.
 		release_group_pulses();
 		fades.clear();
+		// Restarts rebuild transforms from level data: drop Area state
+		// without undoing offsets onto the rebuilt objects.
+		clear_areas(false);
+		set_enter_effect(1);
 		// Group opacity is level state, not object state: a restart clears
 		// it (the same fades re-fire as the player crosses them again), and
 		// every member re-renders from its own alpha until they do.
@@ -7848,6 +8371,7 @@ class NativeDecorationRenderer : public RefCounted {
 	RID canvas_item_plain;
 	RID canvas_item_add;
 	Ref<CanvasItemMaterial> additive_material;
+	Ref<Resource> fade_plain, fade_additive;
 	std::vector<Record> records;
 	// Dense indices are effectively a small SoA hot set: animation touches only
 	// transform/spin data for rotating records, never every static Record.
@@ -7997,9 +8521,13 @@ public:
 			// The two override canvas items ignore the batch's material: one
 			// always adds, one is always plain. Records only reach them after
 			// a colour trigger flips their channel's blending.
+			// Flipped records keep the edge fade / enter effect.
+			if (fade_plain.is_null()) fade_plain = ResourceLoader::get_singleton()->load("res://resources/FadeEnterEffect.tres");
+			if (fade_additive.is_null()) fade_additive = ResourceLoader::get_singleton()->load("res://resources/FadeEnterEffectAdditive.tres");
 			if (canvas_item_plain.is_valid()) {
 				server->canvas_item_set_parent(canvas_item_plain, owner_canvas->get_canvas_item());
 				server->canvas_item_set_use_parent_material(canvas_item_plain, false);
+				if (fade_plain.is_valid()) server->canvas_item_set_material(canvas_item_plain, fade_plain->get_rid());
 				server->canvas_item_set_visible(canvas_item_plain, false);
 			}
 			if (canvas_item_add.is_valid()) {
@@ -8009,7 +8537,7 @@ public:
 				}
 				server->canvas_item_set_parent(canvas_item_add, owner_canvas->get_canvas_item());
 				server->canvas_item_set_use_parent_material(canvas_item_add, false);
-				server->canvas_item_set_material(canvas_item_add, additive_material->get_rid());
+				server->canvas_item_set_material(canvas_item_add, fade_additive.is_valid() ? fade_additive->get_rid() : additive_material->get_rid());
 				server->canvas_item_set_visible(canvas_item_add, false);
 			}
 		}

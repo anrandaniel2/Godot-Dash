@@ -399,6 +399,7 @@ const MAP: Dictionary[int, Dictionary] = {
 ## and are still retained by the packed native scheduler instead of being
 ## silently discarded as decoration.
 const TRIGGER_IDS: Array[int] = [
+	22, 23, 24, 25, 26, 27, 28, 55, 56, 57, 58, 59,
 	29, 30, 104, 105, 221, 34, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
 	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1595,
 	1611, 1612, 1613, 1616, 1811, 1812, 1814, 1815, 1817, 1818, 1819,
@@ -435,6 +436,8 @@ const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	1913, 1916, 1935, 2015, 2067, 3022,
 	2913, 2919, 2920, 2921,
 	3613,
+	3006, 3007, 3008, 3009, 3010, 3011, 3012, 3013, 3014, 3015, 3024,
+	22, 23, 24, 25, 26, 27, 28, 55, 56, 57, 58, 59, 1915,
 ]
 
 
