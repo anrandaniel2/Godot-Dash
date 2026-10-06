@@ -366,6 +366,10 @@ static func import_online_level_string(level_string: String, level_name: String,
 	return _import_level_string(level_string, level_name, report, true)
 
 
+## Geometry Dash particle object; its key 145 feeds Spawn Particle (3608).
+const PARTICLE_OBJECT_ID: int = 2065
+
+
 static func _import_level_string(level_string: String, level_name: String, report: ImportReport, use_online_parser: bool) -> Dictionary:
 	if report == null:
 		report = ImportReport.new()
@@ -439,6 +443,8 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# Compact side index consumed directly by NativeTriggerBridge, avoiding a
 	# second GDScript scan across every decoration in large downloaded levels.
 	var native_trigger_records: Array[Dictionary] = []
+	# Spawn Particle (3608): particle object (2065) data, key 145, by group.
+	var gd_particle_groups: Dictionary[String, PackedStringArray] = {}
 	# Runtime imports keep native-only triggers solely as packed columns; the
 	# editor and fallback builds expand them (LevelBuildJob).
 	var packed_triggers := PackedTriggers.new()
@@ -519,6 +525,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 				object_data = _object_from_properties(gd_id, properties, chunk_idx, channel_style, used_channels)
 				kind = 2
 
+		if gd_id == PARTICLE_OBJECT_ID and properties.has("145"):
+			for group: String in _groups_from_properties(properties):
+				if not gd_particle_groups.has(group):
+					gd_particle_groups[group] = PackedStringArray()
+				gd_particle_groups[group].append(str(properties["145"]))
 		if object_data.is_empty():
 			report.note_skipped(gd_id)
 			continue
@@ -652,6 +663,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"start_freefly": gamemode not in GD_CLAMPED_GAMEMODES,
 		"gd_level_end_x": float(bounds.level_length) if not is_platformer else 0.0,
 		"gd_max_gameplay_y": float(bounds.max_gameplay_y),
+		"gd_particle_groups": gd_particle_groups,
 		"start_speed": Level.START_SPEED[clampi(start_speed_preset, 0, Level.START_SPEED.size() - 1)],
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": header.get(HeaderKey.REVERSE, "0") == "1",
@@ -1785,7 +1797,7 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
-		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899, 3016, 3618, 1931, 3660, 3661: # twins of the native gameplay arms
+		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899, 3016, 3618, 1931, 3660, 3661, 3608, 3606: # twins of the native gameplay arms
 			if "GameplayTriggerComponent" in supported:
 				var raw: Dictionary[String, String] = {}
 				for key: Variant in properties:

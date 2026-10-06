@@ -22,6 +22,10 @@
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/classes/cpu_particles2d.hpp>
+#include <godot_cpp/classes/canvas_item_material.hpp>
+#include <godot_cpp/classes/gradient.hpp>
+#include <godot_cpp/classes/curve.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/classes/window.hpp>
@@ -152,6 +156,8 @@ enum class TriggerEffectKind : int32_t {
 	OPTIONS,            // 2899 Options
 	ADV_FOLLOW,         // 3016 Advanced Follow
 	ADV_FOLLOW_EDIT,    // 3660 Edit Advanced Follow
+	SPAWN_PARTICLE,     // 3608 Spawn Particle
+	BG_SPEED,           // 3606 Background Speed
 	ADV_FOLLOW_RETARGET,// 3661 Re-Target Advanced Follow
 	RESET_GROUP,        // 3618 Reset
 	END_WALL,           // 1931 End Wall
@@ -539,6 +545,13 @@ struct TriggerEffect {
 	double adv_edit_speed_rand = 0.0, adv_edit_dir_rand = 0.0;
 	double adv_edit_mod_x = 1.0, adv_edit_mod_x_rand = 0.0, adv_edit_mod_y = 1.0, adv_edit_mod_y_rand = 0.0;
 	String adv_edit_dir_ref;
+	// 3608 (gd_docs spawn_particle.md): 51 particle group, 71 position group,
+	// 547/548 offset, 549/550 offset variance (units), 551 match rotation,
+	// 552/553 rotation +-, 554/555 scale +-.
+	String particle_position_group;
+	double particle_offset_x = 0.0, particle_offset_y = 0.0, particle_var_x = 0.0, particle_var_y = 0.0;
+	bool particle_match_rot = false;
+	double particle_rot = 0.0, particle_rot_rand = 0.0, particle_scale = 1.0, particle_scale_rand = 0.0;
 	// 1931: 59 lock Y (hypothesis: no gd_docs page).
 	bool end_wall_lock_y = false;
 	// 3641: 491 set persistent, 492 target all, 493 reset, 494 timer.
@@ -805,6 +818,44 @@ static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2
 	}
 	if (p.max_speed > 0.0 && velocity.length() > p.max_speed) velocity = velocity.normalized() * static_cast<real_t>(p.max_speed);
 	return velocity;
+}
+
+// Particle object data (key 145): 'a'-separated fields in the gmdkit
+// models/prop/particle.py order (max_particles, duration, lifetime, ...).
+static std::vector<double> parse_particle_data(const std::string &raw) {
+	std::vector<double> fields;
+	size_t start = 0;
+	while (start <= raw.size()) {
+		const size_t end = raw.find('a', start);
+		const std::string part = raw.substr(start, end == std::string::npos ? std::string::npos : end - start);
+		fields.push_back(part.empty() ? 0.0 : std::atof(part.c_str()));
+		if (end == std::string::npos) break;
+		start = end + 1;
+	}
+	return fields;
+}
+enum ParticleField {
+	PF_MAX = 0, PF_DURATION, PF_LIFETIME, PF_LIFETIME_RAND, PF_EMISSION, PF_ANGLE, PF_ANGLE_RAND, PF_SPEED, PF_SPEED_RAND,
+	PF_POSVAR_X, PF_POSVAR_Y, PF_GRAVITY_X, PF_GRAVITY_Y, PF_ACCEL_RAD, PF_ACCEL_RAD_RAND, PF_ACCEL_TAN, PF_ACCEL_TAN_RAND,
+	PF_START_SIZE, PF_START_SIZE_RAND, PF_START_SPIN, PF_START_SPIN_RAND,
+	PF_START_R, PF_START_R_RAND, PF_START_G, PF_START_G_RAND, PF_START_B, PF_START_B_RAND, PF_START_A, PF_START_A_RAND,
+	PF_END_SIZE, PF_END_SIZE_RAND, PF_END_SPIN, PF_END_SPIN_RAND,
+	PF_END_R, PF_END_R_RAND, PF_END_G, PF_END_G_RAND, PF_END_B, PF_END_B_RAND, PF_END_A, PF_END_A_RAND,
+	PF_ADDITIVE = 56,
+};
+static double particle_field(const std::vector<double> &f, int i) { return i < static_cast<int>(f.size()) ? f[i] : 0.0; }
+// How many particles a Spawn Particle burst emits (gd_docs spawn_particle.md
+// "Differences from object particles"): infinite duration counts as 0, so
+// only infinite emission (-1) spawns, as one burst of Max Particles;
+// otherwise emission per second over the duration, capped by Max Particles.
+static int particle_burst_count(const std::vector<double> &f) {
+	const double max_particles = particle_field(f, PF_MAX);
+	const double duration = particle_field(f, PF_DURATION);
+	const double emission = particle_field(f, PF_EMISSION);
+	if (max_particles <= 0.0) return 0;
+	if (emission < 0.0) return static_cast<int>(max_particles);
+	if (duration <= 0.0) return 0;
+	return static_cast<int>(Math::min(max_particles, std::ceil(emission * duration)));
 }
 
 // Touch (1595): returns 1 toggle on, 0 toggle off, -1 nothing. Hold mode
@@ -1395,6 +1446,25 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.adv_p2 = String(properties.get("200", String("0"))) == "1";
 			break;
 		}
+		case 3608: {
+			effect.kind = TriggerEffectKind::SPAWN_PARTICLE;
+			const int position_id = static_cast<int>(String(properties.get("71", String("0"))).to_int());
+			if (position_id > 0) effect.particle_position_group = String("g_") + String::num_int64(position_id);
+			effect.particle_offset_x = prop_float(properties, "547", 0.0);
+			effect.particle_offset_y = prop_float(properties, "548", 0.0);
+			effect.particle_var_x = prop_float(properties, "549", 0.0);
+			effect.particle_var_y = prop_float(properties, "550", 0.0);
+			effect.particle_match_rot = String(properties.get("551", String("0"))) == "1";
+			effect.particle_rot = prop_float(properties, "552", 0.0);
+			effect.particle_rot_rand = prop_float(properties, "553", 0.0);
+			effect.particle_scale = prop_float(properties, "554", 1.0);
+			effect.particle_scale_rand = prop_float(properties, "555", 0.0);
+			break;
+		}
+		case 3606:
+			effect.kind = TriggerEffectKind::BG_SPEED;
+			effect.move_mod = Vector2(static_cast<real_t>(prop_float(properties, "143", 0.1)), static_cast<real_t>(prop_float(properties, "144", 0.1)));
+			break;
 		case 3618: effect.kind = TriggerEffectKind::RESET_GROUP; break;
 		case 1931:
 			effect.kind = TriggerEffectKind::END_WALL;
@@ -2456,6 +2526,34 @@ class NativeTriggerRuntime : public RefCounted {
 				}
 				break;
 			}
+			case TriggerEffectKind::SPAWN_PARTICLE: {
+				// Position target: a random member of the position group.
+				auto members = member_index.find(effect.particle_position_group);
+				if (members == member_index.end() || members->value.empty()) break;
+				Node2D *target = Object::cast_to<Node2D>(ObjectDB::get_instance(members->value[std::rand() % members->value.size()]));
+				Node *parent = Object::cast_to<Node>(ObjectDB::get_instance(level_id));
+				if (!target || !parent) break;
+				auto rand_pm = []() { return static_cast<double>(std::rand() % 2000001) / 1000000.0 - 1.0; };
+				const double px = ENGINE_CELL_SIZE / GD_CELL_SIZE;
+				for (const String &group : effect.target_groups) {
+					auto specs = particle_groups.find(group);
+					if (specs == particle_groups.end()) continue;
+					for (const std::vector<double> &spec : specs->second) {
+						const Vector2 offset(static_cast<real_t>((effect.particle_offset_x + rand_pm() * effect.particle_var_x) * px),
+								static_cast<real_t>(-(effect.particle_offset_y + rand_pm() * effect.particle_var_y) * px));
+						double rotation = effect.particle_rot + rand_pm() * effect.particle_rot_rand;
+						if (effect.particle_match_rot) rotation += Math::rad_to_deg(target->get_global_rotation());
+						spawn_particle_burst(spec, target->get_global_position() + offset, rotation,
+								effect.particle_scale + rand_pm() * effect.particle_scale_rand, parent);
+					}
+				}
+				break;
+			}
+			case TriggerEffectKind::BG_SPEED: {
+				Object *level = ObjectDB::get_instance(level_id);
+				if (level && level->has_method("apply_gd_bg_speed")) level->call("apply_gd_bg_speed", effect.move_mod);
+				break;
+			}
 			case TriggerEffectKind::RESET_GROUP:
 				// gd_docs reset.md: re-arm collectibles, destroyables and
 				// checkpoints; objects opt in with a gd_reset() method.
@@ -2629,6 +2727,79 @@ class NativeTriggerRuntime : public RefCounted {
 	std::vector<AdvFollow> adv_follows;  // priority desc, then spawn order
 	uint64_t adv_follow_order = 0;
 	std::map<ObjectID, Vector2> adv_velocities;  // GD units per tick
+	// Particle group -> particle object data (key 145), from level data.
+	std::map<String, std::vector<std::vector<double>>> particle_groups;
+public:
+	void register_particle_group(const String &group, const PackedStringArray &datas) {
+		std::vector<std::vector<double>> &specs = particle_groups[group];
+		for (int64_t i = 0; i < datas.size(); ++i) {
+			const CharString raw = String(datas[i]).utf8();
+			specs.push_back(parse_particle_data(std::string(raw.get_data())));
+		}
+	}
+private:
+	// One emitter per particle object; positions are GD units -> px.
+	void spawn_particle_burst(const std::vector<double> &f, Vector2 position, double rotation_deg, double scale, Node *parent) {
+		const int count = particle_burst_count(f);
+		if (count <= 0 || !parent) return;
+		const double px = ENGINE_CELL_SIZE / GD_CELL_SIZE;
+		CPUParticles2D *p = memnew(CPUParticles2D);
+		p->set_amount(count);
+		p->set_one_shot(true);
+		p->set_explosiveness_ratio(particle_field(f, PF_EMISSION) < 0.0 ? 1.0 : 0.0);
+		const double lifetime = Math::max(0.01, particle_field(f, PF_LIFETIME));
+		p->set_lifetime(lifetime);
+		p->set_lifetime_randomness(Math::clamp(particle_field(f, PF_LIFETIME_RAND) / lifetime, 0.0, 1.0));
+		// Cocos angles: degrees counter-clockwise from +X, +Y up.
+		const double angle = Math::deg_to_rad(particle_field(f, PF_ANGLE));
+		p->set_direction(Vector2(static_cast<real_t>(std::cos(angle)), static_cast<real_t>(-std::sin(angle))));
+		p->set_spread(static_cast<real_t>(particle_field(f, PF_ANGLE_RAND)));
+		const double speed = particle_field(f, PF_SPEED), speed_rand = particle_field(f, PF_SPEED_RAND);
+		p->set_param_min(CPUParticles2D::PARAM_INITIAL_LINEAR_VELOCITY, (speed - speed_rand) * px);
+		p->set_param_max(CPUParticles2D::PARAM_INITIAL_LINEAR_VELOCITY, (speed + speed_rand) * px);
+		p->set_emission_shape(CPUParticles2D::EMISSION_SHAPE_RECTANGLE);
+		p->set_emission_rect_extents(Vector2(static_cast<real_t>(particle_field(f, PF_POSVAR_X) * px), static_cast<real_t>(particle_field(f, PF_POSVAR_Y) * px)));
+		p->set_gravity(Vector2(static_cast<real_t>(particle_field(f, PF_GRAVITY_X) * px), static_cast<real_t>(-particle_field(f, PF_GRAVITY_Y) * px)));
+		const double rad = particle_field(f, PF_ACCEL_RAD), rad_rand = particle_field(f, PF_ACCEL_RAD_RAND);
+		p->set_param_min(CPUParticles2D::PARAM_RADIAL_ACCEL, (rad - rad_rand) * px);
+		p->set_param_max(CPUParticles2D::PARAM_RADIAL_ACCEL, (rad + rad_rand) * px);
+		const double tan = particle_field(f, PF_ACCEL_TAN), tan_rand = particle_field(f, PF_ACCEL_TAN_RAND);
+		p->set_param_min(CPUParticles2D::PARAM_TANGENTIAL_ACCEL, -(tan + tan_rand) * px);
+		p->set_param_max(CPUParticles2D::PARAM_TANGENTIAL_ACCEL, -(tan - tan_rand) * px);
+		// Size: GD start/end size in points; untextured particles are 1 px.
+		const double start_size = Math::max(0.0, particle_field(f, PF_START_SIZE)), size_rand = particle_field(f, PF_START_SIZE_RAND);
+		p->set_param_min(CPUParticles2D::PARAM_SCALE, Math::max(0.0, start_size - size_rand) * px);
+		p->set_param_max(CPUParticles2D::PARAM_SCALE, (start_size + size_rand) * px);
+		Ref<Curve> size_curve;
+		size_curve.instantiate();
+		size_curve->add_point(Vector2(0.0f, 1.0f));
+		size_curve->add_point(Vector2(1.0f, static_cast<real_t>(start_size > 0.0 ? Math::max(0.0, particle_field(f, PF_END_SIZE)) / start_size : 1.0)));
+		size_curve->set_max_value(Math::max(1.0, particle_field(f, PF_END_SIZE) / Math::max(start_size, 1e-6)));
+		p->set_param_curve(CPUParticles2D::PARAM_SCALE, size_curve);
+		const double spin = particle_field(f, PF_START_SPIN), spin_rand = particle_field(f, PF_START_SPIN_RAND);
+		p->set_param_min(CPUParticles2D::PARAM_ANGLE, -(spin + spin_rand));
+		p->set_param_max(CPUParticles2D::PARAM_ANGLE, -(spin - spin_rand));
+		const double spin_speed = -(particle_field(f, PF_END_SPIN) - spin) / lifetime;
+		p->set_param_min(CPUParticles2D::PARAM_ANGULAR_VELOCITY, spin_speed);
+		p->set_param_max(CPUParticles2D::PARAM_ANGULAR_VELOCITY, spin_speed);
+		Ref<Gradient> ramp;
+		ramp.instantiate();
+		ramp->set_color(0, Color(particle_field(f, PF_START_R), particle_field(f, PF_START_G), particle_field(f, PF_START_B), particle_field(f, PF_START_A)));
+		ramp->set_color(1, Color(particle_field(f, PF_END_R), particle_field(f, PF_END_G), particle_field(f, PF_END_B), particle_field(f, PF_END_A)));
+		p->set_color_ramp(ramp);
+		if (particle_field(f, PF_ADDITIVE) != 0.0) {
+			Ref<CanvasItemMaterial> material;
+			material.instantiate();
+			material->set_blend_mode(CanvasItemMaterial::BLEND_MODE_ADD);
+			p->set_material(material);
+		}
+		parent->add_child(p);
+		p->set_global_position(position);
+		p->set_rotation(static_cast<real_t>(Math::deg_to_rad(rotation_deg)));
+		p->set_scale(Vector2(static_cast<real_t>(scale), static_cast<real_t>(scale)));
+		p->connect("finished", Callable(p, "queue_free"));
+		p->set_emitting(true);
+	}
 	static constexpr double ADV_TICK_HZ = 240.0;
 	static constexpr double PX_PER_UNIT = ENGINE_CELL_SIZE / GD_CELL_SIZE;
 
@@ -4791,6 +4962,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
 		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeLevelRuntime::notify_player_death);
 		ClassDB::bind_method(D_METHOD("notify_touch", "player", "slot", "pressed"), &NativeLevelRuntime::notify_touch);
+		ClassDB::bind_method(D_METHOD("register_particle_group", "group", "datas"), &NativeLevelRuntime::register_particle_group);
 		ClassDB::bind_method(D_METHOD("notify_event", "player", "event_id", "slot", "material"), &NativeLevelRuntime::notify_event);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
@@ -4909,6 +5081,9 @@ public:
 	}
 	void notify_touch(Object *player, int64_t slot, bool pressed) {
 		triggers->notify_touch(player, slot, pressed);
+	}
+	void register_particle_group(const String &group, const PackedStringArray &datas) {
+		triggers->register_particle_group(group, datas);
 	}
 	void notify_event(Object *player, int64_t event_id, int64_t slot, int64_t material) {
 		triggers->notify_event(player, event_id, slot, material);

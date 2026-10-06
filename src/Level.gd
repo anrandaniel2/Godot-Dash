@@ -73,6 +73,8 @@ const START_SPEED: Array[float] = [
 @export var gd_max_gameplay_y: float = 0.0
 ## Geometry Dash end portal X in GD units (imported classic levels; 0 = none).
 @export var gd_level_end_x: float = 0.0
+## Spawn Particle (3608): GD group name -> particle object data strings (key 145).
+@export var gd_particle_groups: Dictionary = {}
 @export var start_speed_preset: int = EasedSpeedChangerComponent.SpeedPreset.x1
 @export var start_speed: float = START_SPEED[2]
 @export var start_reverse: bool
@@ -421,6 +423,14 @@ func apply_gd_options(options: Dictionary) -> void:
 	GDLevelOptions.apply(options)
 
 
+## Background Speed (3606, gd_docs bg_speed.md): BGMove = CMove * (1 - speed),
+## i.e. the parallax scroll scale equals the speed.
+func apply_gd_bg_speed(speed: Vector2) -> void:
+	var parallax: Parallax2D = LevelManager.game_scene.get_node_or_null(^"BackgroundParallax") if LevelManager.game_scene != null else null
+	if parallax != null:
+		parallax.scroll_scale = speed
+
+
 ## End Wall (1931): moves the level end to the wall group's position.
 ## Hypothesis (no gd_docs page): key 59 also pins the end Y.
 func apply_gd_end_wall(wall_position: Vector2, lock_y: bool) -> void:
@@ -722,6 +732,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"start_freefly": start_freefly if isnt_practice else LevelManager.player_camera.freefly,
 		"gd_max_gameplay_y": gd_max_gameplay_y,
 		"gd_level_end_x": gd_level_end_x,
+		"gd_particle_groups": gd_particle_groups,
 		"start_speed": start_speed if isnt_practice else player.speed_multiplier,
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": start_reverse if isnt_practice else player.horizontal_direction < 0,
@@ -799,6 +810,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	start_freefly = data.start_freefly
 	gd_max_gameplay_y = float(data.get("gd_max_gameplay_y", 0.0))
 	gd_level_end_x = float(data.get("gd_level_end_x", 0.0))
+	gd_particle_groups = data.get("gd_particle_groups", {})
 	start_speed = data.start_speed
 	start_speed_preset = data.start_speed_preset
 	start_reverse = data.start_reverse

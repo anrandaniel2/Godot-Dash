@@ -177,6 +177,15 @@ int main() {
 		expect_true("edit scales then adds speed", adv_follow_edit(Vector2(2, 4), 0.5, 2.0, 1.0, 0.0, false, false).is_equal_approx(Vector2(2, 8)));
 		expect_true("edit X only keeps Y", adv_follow_edit(Vector2(2, 4), 0.0, 0.0, 0.0, 0.0, true, false).is_equal_approx(Vector2(0, 4)));
 	}
+	{
+		const std::vector<double> f = parse_particle_data("30a-1a1.5a0a-1a90");
+		expect_true("particle data splits on a", f.size() == 6 && f[0] == 30.0 && f[1] == -1.0 && f[2] == 1.5 && f[5] == 90.0);
+		expect_true("particle infinite emission bursts max", particle_burst_count(f) == 30);
+		expect_true("particle infinite duration with finite emission spawns none", particle_burst_count(parse_particle_data("30a-1a1a0a10")) == 0);
+		expect_true("particle emission over duration capped", particle_burst_count(parse_particle_data("30a2a1a0a10")) == 20
+				&& particle_burst_count(parse_particle_data("15a2a1a0a10")) == 15);
+		expect_true("particle empty fields read zero", parse_particle_data("5aa1").size() == 3 && parse_particle_data("5aa1")[1] == 0.0);
+	}
 	expect_true("time event due", timer_event_due(1.0, 2.0, 3.0) && timer_event_due(-1.0, -2.0, -3.0) && !timer_event_due(1.0, 2.0, 1.0));
 	expect_true("compare equal within tolerance", item_compare_values(1.0, 0, 1.4, 0.5));
 	expect_true("compare not-equal outside tolerance", item_compare_values(1.0, 5, 2.0, 0.5));

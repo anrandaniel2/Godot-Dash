@@ -75,6 +75,8 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	_register_packed_triggers(level_data)
 	# Build and compact the X/group indexes during level loading rather than on
 	# the first gameplay physics frame, eliminating a visible first-jump hitch.
+	for group: Variant in level.gd_particle_groups:
+		_runtime.call(&"register_particle_group", str(group), PackedStringArray(level.gd_particle_groups[group]))
 	_runtime.call(&"finalize")
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
 	current = self

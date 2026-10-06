@@ -26,6 +26,8 @@ enum Kind {
 	ADV_FOLLOW,
 	ADV_FOLLOW_EDIT,
 	ADV_FOLLOW_RETARGET,
+	SPAWN_PARTICLE,
+	BG_SPEED,
 	RESET_GROUP,
 	END_WALL,
 }
@@ -49,6 +51,8 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	3016: Kind.ADV_FOLLOW,
 	3660: Kind.ADV_FOLLOW_EDIT,
 	3661: Kind.ADV_FOLLOW_RETARGET,
+	3608: Kind.SPAWN_PARTICLE,
+	3606: Kind.BG_SPEED,
 	3618: Kind.RESET_GROUP,
 	1931: Kind.END_WALL,
 }
@@ -498,6 +502,23 @@ func _on_interacted(player: Player = null) -> void:
 					if is_instance_valid(trigger) and follow_triggers.has(trigger.parent):
 						follow["retarget"] = self
 						(follow["history"] as Array).clear()
+		Kind.SPAWN_PARTICLE:
+			var level: Level = LevelManager.current_level
+			var targets: Array[Node] = get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("71", "")))
+			if level != null and not targets.is_empty():
+				var target := targets.pick_random() as Node2D
+				var datas: Variant = level.gd_particle_groups.get(Constants.GROUP_PREFIX + properties.get("51", ""))
+				if target != null and datas != null:
+					for raw: String in datas:
+						var offset := Vector2(_f("547") + randf_range(-1.0, 1.0) * _f("549"), -(_f("548") + randf_range(-1.0, 1.0) * _f("550"))) * PX_PER_UNIT
+						var rotation: float = _f("552") + randf_range(-1.0, 1.0) * _f("553")
+						if _b("551"):
+							rotation += rad_to_deg(target.global_rotation)
+						GDParticleSpawner.spawn(GDParticleSpawner.parse(raw), target.global_position + offset, rotation,
+								_f("554", 1.0) + randf_range(-1.0, 1.0) * _f("555"), level)
+		Kind.BG_SPEED:
+			if LevelManager.current_level != null:
+				LevelManager.current_level.apply_gd_bg_speed(Vector2(_f("143", 0.1), _f("144", 0.1)))
 		Kind.RESET_GROUP:
 			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
 				if node.has_method(&"gd_reset"):
