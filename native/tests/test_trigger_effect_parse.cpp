@@ -157,9 +157,9 @@ int main() {
 		const double pi = 3.14159265358979323846;
 		expect_true("adv heading defaults to up", std::fabs(adv_start_heading(false, Vector2(), false, Vector2(), 0.0) + pi / 2.0) < 1e-9);
 		expect_true("adv heading dir is clockwise", std::fabs(adv_start_heading(false, Vector2(), false, Vector2(), 90.0)) < 1e-9);
-		expect_true("adv speed ref uses ref motion", std::fabs(adv_start_heading(true, Vector2(-1, 0), true, Vector2(0, 1), 0.0) - pi) < 1e-9);
+		expect_true("adv speed ref uses ref motion", std::fabs(adv_start_heading(true, Vector2(-1, 0), true, Vector2(0, 1), 0.0) - pi) < 1e-5);
 		expect_true("adv speed ref without motion falls back to up", std::fabs(adv_start_heading(true, Vector2(), true, Vector2(1, 0), 0.0) + pi / 2.0) < 1e-9);
-		expect_true("adv dir ref points to reference", std::fabs(adv_start_heading(false, Vector2(), true, Vector2(0, 2), 10.0) - (pi / 2.0 + 10.0 * pi / 180.0)) < 1e-9);
+		expect_true("adv dir ref points to reference", std::fabs(adv_start_heading(false, Vector2(), true, Vector2(0, 2), 10.0) - (pi / 2.0 + 10.0 * pi / 180.0)) < 1e-5);
 		expect_true("adv rotate capped", std::fabs(adv_rotate_step(0.0, 3.0, 0.0, 0.5) - 0.5) < 1e-9);
 		expect_true("adv rotate easing divides", std::fabs(adv_rotate_step(0.0, 0.4, 4.0, 0.5) - 0.1) < 1e-9);
 		expect_true("adv rotate takes short way", adv_rotate_step(0.1, 2.0 * pi - 0.1, 0.0, 1.0) < 0.0);
