@@ -1,0 +1,12 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://src/interactables/public_components/CollisionBlockComponent.gd" id="1_cblk"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="2_cblk"]
+
+[node name="CollisionBlock" type="Node2D"]
+
+[node name="CollisionBlockComponent" type="Node" parent="."]
+script = ExtResource("1_cblk")
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("2_cblk")]
+type = 0

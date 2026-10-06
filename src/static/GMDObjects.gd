@@ -247,6 +247,9 @@ const MAP: Dictionary[int, Dictionary] = {
 	3617: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "TimeControlTrigger", "components": ["GameplayTriggerComponent"] },
 	3607: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "SequenceTrigger", "components": ["GameplayTriggerComponent"] },
 	1917: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ReverseTrigger", "components": ["GameplayTriggerComponent"] },
+	1815: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "CollisionTrigger", "components": ["GameplayTriggerComponent"] },
+	3609: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "InstantCollisionTrigger", "components": ["GameplayTriggerComponent"] },
+	1812: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "OnDeathTrigger", "components": ["GameplayTriggerComponent"] },
 	# Random / Advanced Random: spawn one weighted group.
 	1912: { "scene": TRIGGERS + "RandomTrigger.tscn", "name": "RandomTrigger", "components": ["RandomTriggerComponent"] },
 	2068: { "scene": TRIGGERS + "RandomTrigger.tscn", "name": "AdvancedRandomTrigger", "components": ["RandomTriggerComponent"] },
@@ -336,9 +339,10 @@ const MAP: Dictionary[int, Dictionary] = {
 	# gameplay: they were previously skipped entirely, which emptied every
 	# trigger group built out of them ("target group doesn't contain any
 	# objects") and dropped their collision.
-	# 1816 is Geometry Dash's collision block: an invisible solid rectangle
-	# scaled to the creator's chosen size.
-	1816: { "scene": SOLIDS + "GDInvisibleBlock.tscn", "name": "CollisionBlock" },
+	# 1816 is Geometry Dash's collision block: only Collision triggers (1815,
+	# 3609) see it, it never collides with the player (gd_docs
+	# collision_trigger.md), so it is a non-solid marker.
+	1816: { "scene": TRIGGERS + "CollisionBlock.tscn", "name": "CollisionBlock", "components": ["CollisionBlockComponent"] },
 	# 1.9's invisible block (146) and plank (147): collision only. Their atlas
 	# frames (invis_square / invis_plank) are the white ghost outlines the GD
 	# editor shows - the real game never draws them - so they must never reach
@@ -415,7 +419,7 @@ const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
 	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1611, 1612, 1613, 1616, 1811, 1817,
 	1912, 2068,
-	1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641,
+	1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812,
 	1913, 1916, 1935, 2015, 2067, 3022,
 	2913, 2919, 2920, 2921,
 	3613,

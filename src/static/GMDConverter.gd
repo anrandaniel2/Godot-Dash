@@ -1785,7 +1785,7 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
-		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641: # twins of the native gameplay arms
+		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812: # twins of the native gameplay arms
 			if "GameplayTriggerComponent" in supported:
 				var raw: Dictionary[String, String] = {}
 				for key: Variant in properties:
@@ -1793,6 +1793,12 @@ static func _components_from_properties(
 				components["GameplayTriggerComponent"] = {
 					"kind": GameplayTriggerComponent.KIND_BY_ID[gd_id],
 					"properties": raw,
+				}
+		1816: # Collision block, keys 80 block id and 94 dynamic
+			if "CollisionBlockComponent" in supported:
+				components["CollisionBlockComponent"] = {
+					"block_id": int(properties.get("80", "0")),
+					"dynamic": properties.get("94", "0") == "1",
 				}
 		1912: # Random (twin of the native RANDOM arm)
 			if "RandomTriggerComponent" in supported:

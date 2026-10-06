@@ -169,9 +169,16 @@ func _ready() -> void:
 	_expect("Random without weight picks nothing", RandomTriggerComponent.pick_weighted(PackedFloat64Array([0.0]), 0.5) == -1)
 
 	# Item / Sequence twins (GDItemMath), same cases as the native test.
-	_expect("Item edit (A + B) * mod", is_equal_approx(GDItemMath.edit_rhs(true, 3.0, true, 4.0, 1, 3, 2.0, 0, 0), 14.0))
-	_expect("Item edit with no items is the mod", is_equal_approx(GDItemMath.edit_rhs(false, 0.0, false, 0.0, 1, 3, 7.0, 0, 0), 7.0))
-	_expect("Item edit floor then negative", is_equal_approx(GDItemMath.edit_rhs(true, 2.5, false, 0.0, 1, 3, 1.0, 2, 2), -2.0))
+	_expect("Item edit (A + B) * mod", is_equal_approx(GDItemMath.edit_rhs(3.0, 4.0, 1, 3, 2.0, 0, 0), 14.0))
+	_expect("Item edit with no items reads zero", is_zero_approx(GDItemMath.edit_rhs(0.0, 0.0, 0, 0, 7.0, 0, 0)))
+	_expect("Item edit floor then negative", is_equal_approx(GDItemMath.edit_rhs(2.5, 0.0, 1, 3, 1.0, 2, 2), -2.0))
+	_expect("Item divide by zero is IEEE", is_inf(GDItemMath.arith(5.0, 4, 0.0)))
+	_expect("Item int truncates and saturates", GDItemMath.to_item_int(-2.7) == -2 and GDItemMath.to_item_int(1e12) == 2147483647 and GDItemMath.to_item_int(NAN) == -2147483648)
+	_expect("Item compare side op 0 is the mod", is_equal_approx(GDItemMath.compare_side(9.0, 0, 4.0, 0, 0), 4.0))
+	_expect("Item greater widened by tolerance", GDItemMath.compare(1.8, 1, 2.0, 0.5) and not GDItemMath.compare(1.0, 1, 2.0, 0.5))
+	_expect("Collision pair is unordered", GDItemMath.collision_pair_key(3, 7, false, false, false) == GDItemMath.collision_pair_key(7, 3, false, false, false))
+	_expect("Collision pair sides round-trip", GDItemMath.collision_pair_sides(GDItemMath.collision_pair_key(5, 7, true, false, false)) == PackedInt32Array([-1, 7]))
+	_expect("Time event due", GDItemMath.timer_event_due(1.0, 2.0, 3.0) and not GDItemMath.timer_event_due(1.0, 2.0, 1.0))
 	_expect("Item compare equal within tolerance", GDItemMath.compare(1.0, 0, 1.4, 0.5))
 	var seq_state: Dictionary = {}
 	var seq_counts := PackedInt32Array([2, 1])

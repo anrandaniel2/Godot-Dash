@@ -4,6 +4,9 @@ extends Node
 ## NativeTriggerRuntime; this node only supplies player coordinates and invokes
 ## the existing component signal when C++ reports a deterministic crossing.
 
+## The bridge of the running level, for engine events such as player death.
+static var current: NativeTriggerBridge = null
+
 var _runtime: Object
 var _target_cache: Dictionary[String, Node2D] = {}
 var _level: Level
@@ -74,7 +77,20 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	# the first gameplay physics frame, eliminating a visible first-jump hitch.
 	_runtime.call(&"finalize")
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
+	current = self
 	return true
+
+
+func _exit_tree() -> void:
+	if current == self:
+		current = null
+
+
+## Fires armed On Death triggers (1812) natively and in the GDScript twin.
+static func notify_player_death(player: Player) -> void:
+	if current != null and current._runtime != null:
+		current._runtime.call(&"notify_player_death", player)
+	GameplayTriggerComponent.notify_player_death(player)
 
 
 ## Colour-family trigger ids the key diagnostics report on.

@@ -1578,6 +1578,7 @@ func _check_max_gameplay_y() -> void:
 func _player_death() -> void:
 	AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), true)
 	dead = true
+	NativeTriggerBridge.notify_player_death(self)
 	last_automatic_checkpoint_position = position
 	_icon.hide()
 	_death_effect.frame = 0

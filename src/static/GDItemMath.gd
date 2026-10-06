@@ -18,7 +18,7 @@ static func arith(a: float, op: int, b: float) -> float:
 		3:
 			return a * b
 		4:
-			return a / b if b != 0.0 else a
+			return a / b
 	return a
 
 
@@ -42,63 +42,119 @@ static func sign_op(v: float, op: int) -> float:
 	return v
 
 
+## Items are int32: truncate toward zero and saturate; NaN becomes -2^31.
+static func to_item_int(v: float) -> int:
+	if is_nan(v):
+		return -2147483648
+	if v >= 2147483647.0:
+		return 2147483647
+	if v <= -2147483648.0:
+		return -2147483648
+	return int(v)
+
+
+static func timer_clamp(v: float) -> float:
+	if is_nan(v):
+		return 0.0
+	return clampf(v, -9999999.0, 9999999.0)
+
+
+static func timer_event_due(mod: float, target: float, time: float) -> bool:
+	return (mod > 0.0 and target > 0.0 and time >= target) or (mod < 0.0 and target < 0.0 and time <= target)
+
+
+## Tolerance widens each comparison toward true (gd_docs item_compare.md).
 static func compare(l: float, op: int, r: float, tolerance: float) -> bool:
+	var d: float = l - r
 	match op:
 		1:
-			return l > r
+			return d > -tolerance
 		2:
-			return l >= r
+			return d >= -tolerance
 		3:
-			return l < r
+			return d < tolerance
 		4:
-			return l <= r
+			return d <= tolerance
 		5:
-			return absf(l - r) > tolerance
-	return absf(l - r) <= tolerance
+			return absf(d) > tolerance
+	return absf(d) <= tolerance
 
 
-static func edit_rhs(has_a: bool, a: float, has_b: bool, b: float, op2: int, op3: int, mod: float, round_1: int, sign_1: int) -> float:
-	var v: float
-	if not has_a and not has_b:
-		v = mod
-	else:
-		v = a if has_a else 0.0
-		if has_b:
-			v = arith(v, 1 if op2 == 0 else op2, b)
-		v = arith(v, 3 if op3 == 0 else op3, mod)
+## Unset item IDs read 0; op2 0 means +, op3 0 means multiply.
+static func edit_rhs(a: float, b: float, op2: int, op3: int, mod: float, round_1: int, sign_1: int) -> float:
+	var v: float = arith(a, 1 if op2 == 0 else op2, b)
+	v = arith(v, 3 if op3 == 0 else op3, mod)
 	return sign_op(round_op(v, round_1), sign_1)
 
 
-static func compare_side(has_item: bool, value: float, op: int, mod: float, round_mode: int, sign_mode: int) -> float:
-	var v: float = arith(value, 3 if op == 0 else op, mod) if has_item else mod
-	return sign_op(round_op(v, round_mode), sign_mode)
+## Op 0 makes the side equal to the mod.
+static func compare_side(value: float, op: int, mod: float, round_mode: int, sign_mode: int) -> float:
+	return sign_op(round_op(arith(value, op, mod), round_mode), sign_mode)
 
 
-## [param state] holds "step", "count", "last", "finished". Returns the step to
-## spawn or -1.
+## Counts expand into sum(counts) steps. [param state] holds "step" and
+## "last". Returns the group index to spawn or -1. A call blocked by MinInt
+## leaves "last" unchanged.
 static func sequence_advance(state: Dictionary, counts: PackedInt32Array, mode: int, min_interval: float, reset_time: float, reset_type: int, now: float) -> int:
-	if counts.is_empty():
+	var total: int = 0
+	for c: int in counts:
+		total += maxi(0, c)
+	if total <= 0:
 		return -1
 	var last: float = state.get("last", -1.0)
 	if last >= 0.0 and min_interval > 0.0 and now - last < min_interval:
 		return -1
-	if last >= 0.0 and reset_time > 0.0 and now - last >= reset_time:
-		state["count"] = 0
-		if reset_type != 1:
-			state["step"] = 0
-			state["finished"] = false
-	state["last"] = now
-	if state.get("finished", false):
-		return -1
 	var step: int = state.get("step", 0)
-	var count: int = int(state.get("count", 0)) + 1
-	if count >= maxi(1, counts[step]):
-		count = 0
-		if step + 1 < counts.size():
-			state["step"] = step + 1
-		elif mode == 1:
-			state["step"] = 0
-		elif mode == 0:
-			state["finished"] = true
-	state["count"] = count
-	return step
+	if last >= 0.0 and reset_time > 0.0 and now - last >= reset_time:
+		if reset_type == 1:
+			step = maxi(0, step - floori((now - last) / reset_time))
+		else:
+			step = 0
+	state["last"] = now
+	if step >= total:
+		state["step"] = step
+		return -1
+	var cursor: int = step
+	var group: int = 0
+	for i: int in counts.size():
+		var c: int = maxi(0, counts[i])
+		if cursor < c:
+			group = i
+			break
+		cursor -= c
+	step += 1
+	if step >= total:
+		match mode:
+			1:
+				step = 0
+			2:
+				step = total - 1
+			_:
+				step = total
+	state["step"] = step
+	return group
+
+
+## Collision pair key (1815/3609): P1 = -1, P2 = -2 replace block A; PP pairs
+## the players. Unordered.
+static func collision_pair_key(a: int, b: int, p1: bool, p2: bool, pp: bool) -> int:
+	if pp:
+		a = -1
+		b = -2
+	elif p1:
+		a = -1
+	elif p2:
+		a = -2
+	if a > b:
+		var swap: int = a
+		a = b
+		b = swap
+	return (a << 32) ^ (b & 0xffffffff)
+
+
+## Inverse of [method collision_pair_key]: [side a, side b].
+static func collision_pair_sides(key: int) -> PackedInt32Array:
+	var low: int = key & 0xffffffff
+	if low >= 0x80000000:
+		low -= 0x100000000
+	return PackedInt32Array([key >> 32, low])

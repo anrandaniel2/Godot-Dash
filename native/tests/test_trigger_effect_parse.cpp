@@ -11,6 +11,7 @@
 //       native/godot-cpp/bin/libgodot-cpp.linux.template_release.x86_64.a -lpthread -o /tmp/trigger_test
 //   /tmp/trigger_test
 
+#include <limits>
 #include "../src/gdash_native.cpp"
 
 #include <cmath>
@@ -114,12 +115,23 @@ int main() {
 	expect_true("adv random second pair", pairs.size() == 2 && pairs[1].group == 7 && pairs[1].weight == 60.0);
 
 	// Item Edit / Compare (3619/3620), gmdkit ItemOperation/RoundOp/SignOp.
-	expect_close("edit (A + B) * mod", item_edit_rhs(true, 3.0, true, 4.0, 1, 3, 2.0, 0, 0), 14.0);
-	expect_close("edit only A divides by mod", item_edit_rhs(true, 9.0, false, 0.0, 1, 4, 2.0, 0, 0), 4.5);
-	expect_close("edit with no items is the mod", item_edit_rhs(false, 0.0, false, 0.0, 1, 3, 7.0, 0, 0), 7.0);
-	expect_close("edit floor then negative", item_edit_rhs(true, 2.5, false, 0.0, 1, 3, 1.0, 2, 2), -2.0);
-	expect_close("divide by zero keeps the value", item_arith(5.0, 4, 0.0), 5.0);
-	expect_close("compare side without item is the mod", item_compare_side(false, 9.0, 3, 4.0, 0, 0), 4.0);
+	expect_close("edit (A + B) * mod", item_edit_rhs(3.0, 4.0, 1, 3, 2.0, 0, 0), 14.0);
+	expect_close("edit only A divides by mod", item_edit_rhs(9.0, 0.0, 1, 4, 2.0, 0, 0), 4.5);
+	expect_close("edit with no items reads zero", item_edit_rhs(0.0, 0.0, 0, 0, 7.0, 0, 0), 0.0);
+	expect_close("edit floor then negative", item_edit_rhs(2.5, 0.0, 1, 3, 1.0, 2, 2), -2.0);
+	expect_true("divide by zero is IEEE", std::isinf(item_arith(5.0, 4, 0.0)));
+	expect_true("item int truncates and saturates", item_to_int(-2.7) == -2 && item_to_int(1e12) == 2147483647
+			&& item_to_int(std::nan("")) == std::numeric_limits<int32_t>::min());
+	expect_close("timer clamps", timer_clamp(1e9), 9999999.0);
+	expect_close("compare side op 0 is the mod", item_compare_side(9.0, 0, 4.0, 0, 0), 4.0);
+	expect_close("compare side multiplies", item_compare_side(9.0, 3, 2.0, 0, 0), 18.0);
+	expect_true("greater widened by tolerance", item_compare_values(1.8, 1, 2.0, 0.5) && !item_compare_values(1.0, 1, 2.0, 0.5));
+	expect_true("less widened by tolerance", item_compare_values(2.2, 3, 2.0, 0.5) && !item_compare_values(3.0, 3, 2.0, 0.5));
+	expect_true("collision pair is unordered", collision_pair_key(3, 7, false, false, false) == collision_pair_key(7, 3, false, false, false));
+	expect_true("collision P1 replaces block A", collision_pair_key(5, 7, true, false, false) == collision_pair_key(-1, 7, false, false, false)
+			&& collision_pair_key(5, 7, true, false, false) != collision_pair_key(5, 7, false, true, false));
+	expect_true("collision PP ignores blocks", collision_pair_key(1, 2, false, false, true) == collision_pair_key(9, 9, false, false, true));
+	expect_true("time event due", timer_event_due(1.0, 2.0, 3.0) && timer_event_due(-1.0, -2.0, -3.0) && !timer_event_due(1.0, 2.0, 1.0));
 	expect_true("compare equal within tolerance", item_compare_values(1.0, 0, 1.4, 0.5));
 	expect_true("compare not-equal outside tolerance", item_compare_values(1.0, 5, 2.0, 0.5));
 	expect_true("compare greater-or-equal", item_compare_values(2.0, 2, 2.0, 0.0) && !item_compare_values(1.0, 2, 2.0, 0.0));
@@ -142,6 +154,19 @@ int main() {
 		sequence_advance(reset, counts, 0, 0.0, 1.0, 0, 0.0);
 		sequence_advance(reset, counts, 0, 0.0, 1.0, 0, 0.1);
 		expect_true("sequence full reset after idle", sequence_advance(reset, counts, 0, 0.0, 1.0, 0, 5.0) == 0);
+		SequenceState last;
+		sequence_advance(last, counts, 2, 0.0, 0.0, 0, 0.0);
+		sequence_advance(last, counts, 2, 0.0, 0.0, 0, 1.0);
+		sequence_advance(last, counts, 2, 0.0, 0.0, 0, 2.0);
+		expect_true("sequence last repeats final step", sequence_advance(last, counts, 2, 0.0, 0.0, 0, 3.0) == 1);
+		SequenceState stepback;
+		sequence_advance(stepback, counts, 0, 0.0, 1.0, 1, 0.0);
+		sequence_advance(stepback, counts, 0, 0.0, 1.0, 1, 0.5);
+		expect_true("sequence step reset walks back", sequence_advance(stepback, counts, 0, 0.0, 1.0, 1, 1.6) == 0);
+		SequenceState blocked;
+		sequence_advance(blocked, counts, 0, 1.0, 0.0, 0, 0.0);
+		sequence_advance(blocked, counts, 0, 1.0, 0.0, 0, 0.6);
+		expect_true("blocked call keeps last time", sequence_advance(blocked, counts, 0, 1.0, 0.0, 0, 1.1) == 0);
 	}
 
 	// Move lock to player (keys 58/59, mods 143/144): a locked axis takes the

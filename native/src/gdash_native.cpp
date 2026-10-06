@@ -53,6 +53,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -141,6 +142,9 @@ enum class TriggerEffectKind : int32_t {
 	TIMER_CONTROL,      // 3617 Time Control
 	SEQUENCE,           // 3607 Sequence
 	REVERSE,            // 1917 Reverse
+	COLLISION,          // 1815 Collision
+	INSTANT_COLLISION,  // 3609 Instant Collision
+	ON_DEATH,           // 1812 On Death
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -477,6 +481,9 @@ struct TriggerEffect {
 	int32_t item_op_1 = 0, item_op_2 = 0, item_op_3 = 0;
 	int32_t item_round_1 = 0, item_round_2 = 0, item_sign_1 = 0, item_sign_2 = 0;
 	String item_false_group;
+	// 1815/3609 (gd_docs collision_trigger.md): blocks 80/95, 138 P1, 200 P2,
+	// 201 between players, 93 trigger on exit.
+	bool collision_p1 = false, collision_p2 = false, collision_pp = false, collision_exit = false;
 	// 3641: 491 set persistent, 492 target all, 493 reset, 494 timer.
 	bool persist_set = false, persist_all = false, persist_reset = false, persist_timer = false;
 	// 3614/3615/3617: 467 start, 470 mod, 471 start paused, 468 don't override,
@@ -585,16 +592,17 @@ static int pick_weighted(const std::vector<double> &weights, double roll01) {
 	return -1;
 }
 
-// ---- Item Edit / Item Compare arithmetic (enums: gmdkit utils/enums.py).
+// ---- Item Edit / Item Compare arithmetic (enums: gmdkit utils/enums.py;
+// semantics: UHDanke/gd_docs docs/triggers/item/item_edit.md, item_compare.md).
 // ItemOperation: 0 EQUAL, 1 ADD / GT, 2 SUBTRACT / GE, 3 MULTIPLY / LT,
-// 4 DIVIDE / LE, 5 NOT_EQUAL. Division by zero leaves the value unchanged.
+// 4 DIVIDE / LE, 5 NOT_EQUAL. Division is plain IEEE (x/0 = inf or NaN).
 static double item_arith(double a, int op, double b) {
 	switch (op) {
 		case 0: return b;
 		case 1: return a + b;
 		case 2: return a - b;
 		case 3: return a * b;
-		case 4: return b != 0.0 ? a / b : a;
+		case 4: return a / b;
 		default: return a;
 	}
 }
@@ -615,70 +623,94 @@ static double item_sign(double v, int op) {
 		default: return v;
 	}
 }
+// Items are int32: truncate toward zero and saturate; NaN becomes INT32_MIN.
+static int32_t item_to_int(double v) {
+	if (std::isnan(v)) return std::numeric_limits<int32_t>::min();
+	if (v >= 2147483647.0) return std::numeric_limits<int32_t>::max();
+	if (v <= -2147483648.0) return std::numeric_limits<int32_t>::min();
+	return static_cast<int32_t>(std::trunc(v));
+}
+// Timer values saturate at +-9999999.
+static double timer_clamp(double v) {
+	if (std::isnan(v)) return 0.0;
+	return Math::clamp(v, -9999999.0, 9999999.0);
+}
+// Tolerance widens each comparison toward true (gd_docs item_compare.md).
 static bool item_compare_values(double l, int op, double r, double tolerance) {
+	const double d = l - r;
 	switch (op) {
-		case 1: return l > r;
-		case 2: return l >= r;
-		case 3: return l < r;
-		case 4: return l <= r;
-		case 5: return std::fabs(l - r) > tolerance;
-		default: return std::fabs(l - r) <= tolerance;
+		case 1: return d > -tolerance;
+		case 2: return d >= -tolerance;
+		case 3: return d < tolerance;
+		case 4: return d <= tolerance;
+		case 5: return std::fabs(d) > tolerance;
+		default: return std::fabs(d) <= tolerance;
 	}
 }
-// Item Edit right-hand side: (A op2 B) op3 mod, then round 1 and sign 1. With
-// neither item set the mod is the value; with only A it is A op3 mod.
-static double item_edit_rhs(bool has_a, double a, bool has_b, double b, int op2, int op3, double mod, int round_1, int sign_1) {
-	double v;
-	if (!has_a && !has_b) {
-		v = mod;
-	} else {
-		v = has_a ? a : 0.0;
-		if (has_b) v = item_arith(v, op2 == 0 ? 1 : op2, b);
-		v = item_arith(v, op3 == 0 ? 3 : op3, mod);
-	}
+// Item Edit right-hand side: (A op2 B) op3 mod, then round 1 and sign 1.
+// Unset item IDs read 0; op2 0 means +, op3 0 means multiply.
+static double item_edit_rhs(double a, double b, int op2, int op3, double mod, int round_1, int sign_1) {
+	double v = item_arith(a, op2 == 0 ? 1 : op2, b);
+	v = item_arith(v, op3 == 0 ? 3 : op3, mod);
 	return item_sign(item_round(v, round_1), sign_1);
 }
-// Item Compare side: (item op mod), round, sign; a side with no item is its mod.
-static double item_compare_side(bool has_item, double value, int op, double mod, int round_op, int sign_op) {
-	const double v = has_item ? item_arith(value, op == 0 ? 3 : op, mod) : mod;
-	return item_sign(item_round(v, round_op), sign_op);
+// Item Compare side: (item op mod), round, sign; op 0 makes the side the mod.
+static double item_compare_side(double value, int op, double mod, int round_op, int sign_op) {
+	return item_sign(item_round(item_arith(value, op, mod), round_op), sign_op);
 }
 
-// Sequence (3607) step state. Returns the step index to spawn or -1.
+// Collision pair key (1815/3609): P1 = -1 and P2 = -2 replace block A; PP
+// pairs the players. Unordered: the lower side goes in the high word.
+static int64_t collision_pair_key(int64_t a, int64_t b, bool p1, bool p2, bool pp) {
+	if (pp) { a = -1; b = -2; }
+	else if (p1) a = -1;
+	else if (p2) a = -2;
+	if (a > b) std::swap(a, b);
+	return static_cast<int64_t>(static_cast<uint64_t>(a) << 32) ^ (b & 0xffffffffLL);
+}
+
+// Time Event arms already past its target fire immediately.
+static bool timer_event_due(double mod, double target, double time) {
+	return (mod > 0.0 && target > 0.0 && time >= target) || (mod < 0.0 && target < 0.0 && time <= target);
+}
+
+// Sequence (3607, gd_docs docs/triggers/spawn/sequence.md). Group counts
+// expand into total = sum(counts) steps. Returns the group index to spawn or
+// -1. A call blocked by MinInt leaves the last activation time unchanged.
 struct SequenceState {
 	int32_t step = 0;
-	int32_t count = 0;
 	double last = -1.0;
-	bool finished = false;
 };
 static int sequence_advance(SequenceState &state, const std::vector<int32_t> &counts, int mode, double min_interval,
 		double reset_time, int reset_type, double now) {
-	if (counts.empty()) return -1;
+	int64_t total = 0;
+	for (int32_t c : counts) total += Math::max(0, c);
+	if (total <= 0) return -1;
 	if (state.last >= 0.0 && min_interval > 0.0 && now - state.last < min_interval) return -1;
 	if (state.last >= 0.0 && reset_time > 0.0 && now - state.last >= reset_time) {
 		if (reset_type == 1) {
-			state.count = 0;
+			const int64_t back = static_cast<int64_t>(std::floor((now - state.last) / reset_time));
+			state.step = static_cast<int32_t>(Math::max<int64_t>(0, state.step - back));
 		} else {
 			state.step = 0;
-			state.count = 0;
-			state.finished = false;
 		}
 	}
 	state.last = now;
-	if (state.finished) return -1;
-	const int spawned = state.step;
-	state.count += 1;
-	if (state.count >= Math::max(1, counts[state.step])) {
-		state.count = 0;
-		if (state.step + 1 < static_cast<int32_t>(counts.size())) {
-			state.step += 1;
-		} else if (mode == 1) {
-			state.step = 0;
-		} else if (mode == 0) {
-			state.finished = true;
-		}
+	if (state.step >= total) return -1;
+	int64_t cursor = state.step;
+	int group = 0;
+	for (size_t i = 0; i < counts.size(); ++i) {
+		const int64_t c = Math::max(0, counts[i]);
+		if (cursor < c) { group = static_cast<int>(i); break; }
+		cursor -= c;
 	}
-	return spawned;
+	state.step += 1;
+	if (state.step >= total) {
+		if (mode == 1) state.step = 0;
+		else if (mode == 2) state.step = static_cast<int32_t>(total - 1);
+		else state.step = static_cast<int32_t>(total);
+	}
+	return group;
 }
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
@@ -1088,6 +1120,24 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		}
 		case 1917: effect.kind = TriggerEffectKind::REVERSE; break;
+		case 1815:
+		case 3609: {
+			effect.kind = gd_id == 1815 ? TriggerEffectKind::COLLISION : TriggerEffectKind::INSTANT_COLLISION;
+			effect.item_a = static_cast<int32_t>(String(properties.get("80", String("0"))).to_int());
+			effect.item_b = static_cast<int32_t>(String(properties.get("95", String("0"))).to_int());
+			effect.collision_p1 = String(properties.get("138", String("0"))) == "1";
+			effect.collision_p2 = String(properties.get("200", String("0"))) == "1";
+			effect.collision_pp = String(properties.get("201", String("0"))) == "1";
+			effect.collision_exit = String(properties.get("93", String("0"))) == "1";
+			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
+			const int false_id = static_cast<int>(String(properties.get("71", String("0"))).to_int());
+			if (false_id > 0) effect.item_false_group = String("g_") + String::num_int64(false_id);
+			break;
+		}
+		case 1812:
+			effect.kind = TriggerEffectKind::ON_DEATH;
+			effect.toggle_on = String(properties.get("56", String("0"))) == "1";
+			break;
 		case 2068: {
 			effect.kind = TriggerEffectKind::RANDOM;
 			const CharString raw = String(properties.get("152", String())).utf8();
@@ -1978,10 +2028,8 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			}
 			case TriggerEffectKind::ITEM_EDIT: {
-				const bool has_a = effect.item_a > 0 || effect.item_type_a >= 3;
-				const bool has_b = effect.item_b > 0 || effect.item_type_b >= 3;
-				const double rhs = item_edit_rhs(has_a, item_read(effect.item_type_a, effect.item_a),
-						has_b, item_read(effect.item_type_b, effect.item_b), effect.item_op_2, effect.item_op_3,
+				const double rhs = item_edit_rhs(item_read(effect.item_type_a, effect.item_a),
+						item_read(effect.item_type_b, effect.item_b), effect.item_op_2, effect.item_op_3,
 						effect.item_mod_1, effect.item_round_1, effect.item_sign_1);
 				const double current = item_read(effect.item_type_target, effect.item_target);
 				const double result = item_sign(item_round(item_arith(current, effect.item_op_1, rhs), effect.item_round_2), effect.item_sign_2);
@@ -1989,9 +2037,9 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			}
 			case TriggerEffectKind::ITEM_COMPARE: {
-				const double left = item_compare_side(effect.item_a > 0 || effect.item_type_a >= 3, item_read(effect.item_type_a, effect.item_a),
+				const double left = item_compare_side(item_read(effect.item_type_a, effect.item_a),
 						effect.item_op_1, effect.item_mod_1, effect.item_round_1, effect.item_sign_1);
-				const double right = item_compare_side(effect.item_b > 0 || effect.item_type_b >= 3, item_read(effect.item_type_b, effect.item_b),
+				const double right = item_compare_side(item_read(effect.item_type_b, effect.item_b),
 						effect.item_op_2, effect.item_mod_2, effect.item_round_2, effect.item_sign_2);
 				if (item_compare_values(left, effect.item_op_3, right, effect.item_tolerance)) {
 					for (const String &group : effect.target_groups) spawn_named(group, player);
@@ -2004,18 +2052,23 @@ class NativeTriggerRuntime : public RefCounted {
 				std::set<int32_t> &ids = effect.persist_timer ? persistent_timers : persistent_items;
 				bool &all = effect.persist_timer ? persist_all_timers : persist_all_items;
 				if (effect.persist_reset) {
-					if (effect.persist_all) {
-						all = false;
-						ids.clear();
+					// Reset zeroes the value(s); persistence is left as is.
+					auto zero = [&](int32_t id) {
+						if (effect.persist_timer) {
+							auto t = timers.find(id);
+							if (t != timers.end()) t->second.value = 0.0;
+						} else if (item_value(id) != 0) {
+							change_item(id, -item_value(id), player);
+						}
+					};
+					if (!effect.persist_all) {
+						zero(effect.item_a);
+					} else if (effect.persist_timer) {
+						for (auto &t : timers) if (all || ids.count(t.first)) t.second.value = 0.0;
 					} else {
-						ids.erase(effect.item_a);
-					}
-					if (effect.persist_timer) {
-						if (effect.persist_all) timers.clear(); else timers.erase(effect.item_a);
-					} else if (effect.persist_all) {
-						item_counts.clear();
-					} else {
-						item_counts.erase(effect.item_a);
+						std::vector<int32_t> keys;
+						for (const auto &entry : item_counts) if (all || ids.count(entry.first)) keys.push_back(entry.first);
+						for (int32_t id : keys) zero(id);
 					}
 				} else if (effect.persist_all) {
 					all = effect.persist_set;
@@ -2045,6 +2098,13 @@ class NativeTriggerRuntime : public RefCounted {
 				ev.group = effect.target_groups.empty() ? String() : effect.target_groups[0];
 				ev.multi = effect.timer_multi;
 				ev.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
+				// gd_docs time_event.md: an already-passed target fires at
+				// once, even on a paused timer.
+				const auto t = timers.find(ev.timer);
+				if (t != timers.end() && timer_event_due(t->second.mod, ev.time, t->second.value)) {
+					spawn_named(ev.group, player);
+					if (!ev.multi) break;
+				}
 				timer_events.push_back(ev);
 				break;
 			}
@@ -2059,7 +2119,24 @@ class NativeTriggerRuntime : public RefCounted {
 				if (step >= 0) spawn_named(effect.sequence_groups[step], player);
 				break;
 			}
+			case TriggerEffectKind::COLLISION:
+				// Armed once; spawning it again changes nothing.
+				armed_collisions.insert(index);
+				break;
+			case TriggerEffectKind::INSTANT_COLLISION:
+				if (collision_state(collision_key(effect))) {
+					for (const String &group : effect.target_groups) spawn_named(group, player);
+				} else {
+					spawn_named(effect.item_false_group, player);
+				}
+				break;
+			case TriggerEffectKind::ON_DEATH:
+				armed_deaths.insert(index);
+				break;
 			case TriggerEffectKind::REVERSE: {
+				// gd_docs reverse.md: no effect in platformer mode.
+				Object *level = ObjectDB::get_instance(level_id);
+				if (level && bool(level->get("platformer"))) break;
 				const int64_t direction = player->get("horizontal_direction");
 				player->set("horizontal_direction", -direction);
 				break;
@@ -2172,6 +2249,134 @@ class NativeTriggerRuntime : public RefCounted {
 	std::set<int32_t> persistent_items, persistent_timers;
 	bool persist_all_items = false, persist_all_timers = false;
 	std::map<size_t, SequenceState> sequence_states;
+	std::set<size_t> armed_collisions, armed_deaths;
+	// Collision pair state, keyed by collision_key(); updated every tick.
+	std::map<int64_t, bool> collision_states;
+	struct CollisionBlockNode {
+		ObjectID node;
+		int32_t block_id = 0;
+		bool dynamic = false;
+	};
+	std::vector<CollisionBlockNode> collision_blocks;
+	uint64_t collision_blocks_epoch = UINT64_MAX;
+
+	// Pair key: P1 = -1, P2 = -2 stand in for block A; unordered for blocks.
+	static int64_t collision_key(const TriggerEffect &effect) {
+		return collision_pair_key(effect.item_a, effect.item_b, effect.collision_p1, effect.collision_p2, effect.collision_pp);
+	}
+	bool collision_state(int64_t key) const {
+		const auto it = collision_states.find(key);
+		return it != collision_states.end() && it->second;
+	}
+	// Toggle off (56 = 0) or toggle on and spawn (56 = 1): On Death and Collision.
+	void fire_toggle_spawn(const TriggerEffect &effect, Object *player) {
+		apply_toggle(effect);
+		if (effect.toggle_on) {
+			for (const String &group : effect.target_groups) spawn_named(group, player);
+		}
+	}
+public:
+	void notify_player_death(Object *player) {
+		const std::vector<size_t> armed(armed_deaths.begin(), armed_deaths.end());
+		const uint64_t epoch = structure_epoch;
+		for (size_t index : armed) {
+			if (structure_epoch != epoch || index >= records.size()) return;
+			fire_toggle_spawn(records[index].effect, player);
+		}
+	}
+private:
+	void refresh_collision_blocks() {
+		if (collision_blocks_epoch == structure_epoch) return;
+		collision_blocks_epoch = structure_epoch;
+		collision_blocks.clear();
+		SceneTree *tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+		if (!tree) return;
+		const TypedArray<Node> nodes = tree->get_nodes_in_group("gd_collision_block");
+		for (int64_t i = 0; i < nodes.size(); ++i) {
+			Node *node = Object::cast_to<Node>(nodes[i]);
+			if (!node) continue;
+			CollisionBlockNode entry;
+			entry.node = ObjectID(node->get_instance_id());
+			entry.block_id = static_cast<int32_t>(int64_t(node->get_meta("gd_block_id", 0)));
+			entry.dynamic = bool(node->get_meta("gd_block_dynamic", false));
+			collision_blocks.push_back(entry);
+		}
+	}
+	// Half extents: a collision block is one 128 px cell, a player about one cell.
+	static bool node_box(Node2D *node, Vector2 &center, Vector2 &half) {
+		if (!node || !node->is_visible_in_tree()) return false;
+		center = node->get_global_position();
+		const Vector2 scale = node->get_global_scale().abs();
+		half = Vector2(64.0f * scale.x, 64.0f * scale.y);
+		return true;
+	}
+	static bool boxes_overlap(const Vector2 &ca, const Vector2 &ha, const Vector2 &cb, const Vector2 &hb) {
+		return std::fabs(ca.x - cb.x) < ha.x + hb.x && std::fabs(ca.y - cb.y) < ha.y + hb.y;
+	}
+	bool evaluate_pair(int64_t a, int64_t b) {
+		Vector2 ca, ha, cb, hb;
+		auto player_box = [&](int64_t slot, Vector2 &c, Vector2 &h) {
+			const size_t i = slot == -1 ? 0 : 1;
+			if (i >= frame_players.size()) return false;
+			return node_box(Object::cast_to<Node2D>(ObjectDB::get_instance(frame_players[i])), c, h);
+		};
+		if (a < 0 && b < 0) {
+			return player_box(a, ca, ha) && player_box(b, cb, hb) && boxes_overlap(ca, ha, cb, hb);
+		}
+		if (a < 0) {
+			if (!player_box(a, ca, ha)) return false;
+			for (const CollisionBlockNode &block : collision_blocks) {
+				if (block.block_id != b) continue;
+				if (node_box(Object::cast_to<Node2D>(ObjectDB::get_instance(block.node)), cb, hb) && boxes_overlap(ca, ha, cb, hb)) return true;
+			}
+			return false;
+		}
+		for (const CollisionBlockNode &first : collision_blocks) {
+			if (first.block_id != a) continue;
+			if (!node_box(Object::cast_to<Node2D>(ObjectDB::get_instance(first.node)), ca, ha)) continue;
+			for (const CollisionBlockNode &second : collision_blocks) {
+				if (second.block_id != b || second.node == first.node) continue;
+				if (!first.dynamic && !second.dynamic) continue;
+				if (node_box(Object::cast_to<Node2D>(ObjectDB::get_instance(second.node)), cb, hb) && boxes_overlap(ca, ha, cb, hb)) return true;
+			}
+		}
+		return false;
+	}
+	// Runs every tick after movement (gd_docs collision_trigger.md); armed
+	// Collision triggers fire on the state change they watch.
+	void check_collisions() {
+		if (collision_pairs.empty()) return;
+		refresh_collision_blocks();
+		const uint64_t epoch = structure_epoch;
+		for (int64_t key : collision_pairs) {
+			const int64_t lo = key >> 32;
+			const int64_t hi = static_cast<int64_t>(static_cast<int32_t>(key & 0xffffffffLL));
+			const bool now = evaluate_pair(lo, hi);
+			const bool before = collision_state(key);
+			collision_states[key] = now;
+			if (now == before) continue;
+			Object *player = frame_players.empty() ? nullptr : ObjectDB::get_instance(frame_players[0]);
+			const std::vector<size_t> armed(armed_collisions.begin(), armed_collisions.end());
+			for (size_t index : armed) {
+				if (structure_epoch != epoch) return;
+				if (index >= records.size()) continue;
+				const TriggerEffect &effect = records[index].effect;
+				if (collision_key(effect) != key || now == effect.collision_exit) continue;
+				fire_toggle_spawn(effect, player);
+			}
+		}
+	}
+	std::vector<int64_t> collision_pairs;
+	void index_collision_pairs() {
+		collision_pairs.clear();
+		std::set<int64_t> keys;
+		for (const Record &record : records) {
+			if (record.effect.kind == TriggerEffectKind::COLLISION || record.effect.kind == TriggerEffectKind::INSTANT_COLLISION) {
+				keys.insert(collision_key(record.effect));
+			}
+		}
+		collision_pairs.assign(keys.begin(), keys.end());
+	}
 
 	// ItemType (gmdkit enums): 0/1 item, 2 timer, 3 points, 4 main time, 5 attempts.
 	double item_read(int32_t type, int32_t id) const {
@@ -2187,10 +2392,10 @@ class NativeTriggerRuntime : public RefCounted {
 	}
 	void item_write(int32_t type, int32_t id, double value, Object *player) {
 		switch (type) {
-			case 2: timers[id].value = value; break;
-			case 3: points = static_cast<int64_t>(value); break;
+			case 2: timers[id].value = timer_clamp(value); break;
+			case 3: points = item_to_int(value); break;
 			case 4: case 5: break; // read-only
-			default: change_item(id, static_cast<int64_t>(value) - item_value(id), player); break; // GD items are ints
+			default: change_item(id, static_cast<int64_t>(item_to_int(value)) - item_value(id), player); break;
 		}
 	}
 	void spawn_named(const String &group, Object *player) {
@@ -2236,15 +2441,17 @@ class NativeTriggerRuntime : public RefCounted {
 		std::map<int32_t, GDTimer> kept_timers;
 		for (const auto &entry : timers) {
 			if (persist_all_timers || persistent_timers.count(entry.first)) {
-				GDTimer kept;
-				kept.value = entry.second.value;
-				kept_timers[entry.first] = kept;
+				kept_timers[entry.first] = entry.second; // all settings persist
 			}
 		}
 		item_counts = kept_items;
 		timers = kept_timers;
 		timer_events.clear();
 		sequence_states.clear();
+		armed_collisions.clear();
+		armed_deaths.clear();
+		collision_states.clear();
+		collision_blocks_epoch = UINT64_MAX;
 		points = 0;
 	}
 
@@ -3172,6 +3379,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
 		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
 		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
+		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeTriggerRuntime::notify_player_death);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeTriggerRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeTriggerRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeTriggerRuntime::restore);
@@ -3581,6 +3789,7 @@ public:
 	void finalize() {
 		++structure_epoch;
 		ensure_index();
+		index_collision_pairs();
 		records.shrink_to_fit();
 		x_order.shrink_to_fit();
 		for (auto &entry : group_index) {
@@ -3844,6 +4053,7 @@ public:
 			}
 			++dispatched;
 		}
+		check_collisions();
 		check_touch_overlaps();
 		frame_players.clear();
 		for (size_t i = 0; i < fades.size(); ) {
@@ -4070,6 +4280,7 @@ protected:
 		ClassDB::bind_static_method("NativeLevelRuntime", D_METHOD("compute_ui_anchor", "offset_from_target", "xref_pos", "yref_pos", "xref_relative", "yref_relative", "viewport_size", "zoom"), &NativeLevelRuntime::compute_ui_anchor, DEFVAL(PLAYER_CAMERA_DEFAULT_ZOOM));
 		ClassDB::bind_method(D_METHOD("register_channel", "name", "data"), &NativeLevelRuntime::register_channel);
 		ClassDB::bind_method(D_METHOD("finalize"), &NativeLevelRuntime::finalize);
+		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeLevelRuntime::notify_player_death);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
@@ -4181,6 +4392,9 @@ public:
 	void finalize() {
 		snapshot_effect_groups();
 		triggers->finalize();
+	}
+	void notify_player_death(Object *player) {
+		triggers->notify_player_death(player);
 	}
 	void reset() {
 		triggers->reset();

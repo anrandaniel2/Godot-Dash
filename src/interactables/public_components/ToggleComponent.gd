@@ -49,8 +49,7 @@ static func reset_items() -> void:
 	var kept_timers: Dictionary[int, Dictionary] = {}
 	for id: int in GameplayTriggerComponent.timers:
 		if _persist_all_timers or _persistent_timers.has(id):
-			kept_timers[id] = GameplayTriggerComponent._new_timer()
-			kept_timers[id]["value"] = GameplayTriggerComponent.timers[id]["value"]
+			kept_timers[id] = GameplayTriggerComponent.timers[id]
 	GameplayTriggerComponent.reset_state()
 	GameplayTriggerComponent.timers = kept_timers
 
@@ -59,20 +58,21 @@ static func reset_items() -> void:
 static func set_persistent(id: int, persistent: bool, all: bool, reset: bool, timer: bool) -> void:
 	var ids: Dictionary[int, bool] = _persistent_timers if timer else _persistent_items
 	if reset:
+		# Reset zeroes the value(s); persistence is left as is.
+		var all_flag: bool = _persist_all_timers if timer else _persist_all_items
+		var targets: Array[int] = [id]
 		if all:
-			ids.clear()
+			targets.clear()
+			var source: Dictionary = GameplayTriggerComponent.timers if timer else item_counts
+			for key: int in source:
+				if all_flag or ids.has(key):
+					targets.append(key)
+		for target: int in targets:
 			if timer:
-				_persist_all_timers = false
-				GameplayTriggerComponent.timers.clear()
-			else:
-				_persist_all_items = false
-				item_counts.clear()
-		else:
-			ids.erase(id)
-			if timer:
-				GameplayTriggerComponent.timers.erase(id)
-			else:
-				item_counts.erase(id)
+				if GameplayTriggerComponent.timers.has(target):
+					GameplayTriggerComponent.timers[target]["value"] = 0.0
+			elif int(item_counts.get(target, 0)) != 0:
+				change_item(target, -int(item_counts[target]), null)
 	elif all:
 		if timer:
 			_persist_all_timers = persistent
