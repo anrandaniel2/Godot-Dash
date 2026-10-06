@@ -161,6 +161,22 @@ int main() {
 		Vector2 x;
 		expect_true("adv follow X only", adv_follow_tick(xo, Vector2(3, 7), x, true).is_equal_approx(Vector2(3, 0)));
 	}
+	{
+		AdvFollowParams m3; m3.mode = 2; m3.steer = 10.0; m3.accel = 0.0;
+		Vector2 v(1, 0);
+		adv_follow_tick(m3, Vector2(0, 100), v, false);
+		expect_true("mode 3 steers at most steer * 0.01 rad", std::fabs(std::atan2(v.y, v.x) - 0.1) < 1e-4 && std::fabs(v.length() - 1.0) < 1e-4);
+		AdvFollowParams br; br.mode = 2; br.break_angle = 45.0; br.break_force = 50.0;
+		Vector2 b(2, 0);
+		adv_follow_tick(br, Vector2(-100, 0), b, false);
+		expect_true("mode 3 brakes past the break angle", std::fabs(b.length() - 1.0) < 1e-4);
+		AdvFollowParams ac; ac.mode = 2; ac.accel = 100.0; ac.break_angle = 180.0;
+		Vector2 a(1, 0);
+		adv_follow_tick(ac, Vector2(100, 0), a, false);
+		expect_true("mode 3 accelerates along heading", a.is_equal_approx(Vector2(2, 0)));
+		expect_true("edit scales then adds speed", adv_follow_edit(Vector2(2, 4), 0.5, 2.0, 1.0, 0.0, false, false).is_equal_approx(Vector2(2, 8)));
+		expect_true("edit X only keeps Y", adv_follow_edit(Vector2(2, 4), 0.0, 0.0, 0.0, 0.0, true, false).is_equal_approx(Vector2(0, 4)));
+	}
 	expect_true("time event due", timer_event_due(1.0, 2.0, 3.0) && timer_event_due(-1.0, -2.0, -3.0) && !timer_event_due(1.0, 2.0, 1.0));
 	expect_true("compare equal within tolerance", item_compare_values(1.0, 0, 1.4, 0.5));
 	expect_true("compare not-equal outside tolerance", item_compare_values(1.0, 5, 2.0, 0.5));

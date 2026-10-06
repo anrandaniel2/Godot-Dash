@@ -184,6 +184,8 @@ func _ready() -> void:
 	_expect("Event matches", GDItemMath.event_matches(PackedInt32Array([4, 12]), 0, 0, 12, 0, 2) and not GDItemMath.event_matches(PackedInt32Array([4]), 0, 1, 4, 0, 2))
 	_expect("Adv follow mode 1 is distance / easing", (GDItemMath.adv_follow_tick({ "361": "2" }, Vector2(10, 0), Vector2.ZERO, true)[0] as Vector2).is_equal_approx(Vector2(5, 0)))
 	_expect("Adv follow friction then accel", (GDItemMath.adv_follow_tick({ "367": "1", "558": "50", "334": "100" }, Vector2(0, 10), Vector2(4, 0), false)[0] as Vector2).is_equal_approx(Vector2(2, 1)))
+	_expect("Adv follow edit scales then adds speed", GDItemMath.adv_follow_edit(Vector2(2, 4), 0.5, 2.0, 1.0, 0.0, false, false).is_equal_approx(Vector2(2, 8)))
+	_expect("Adv follow mode 3 steer limit", is_equal_approx(GDItemMath.adv_follow_steer({ "316": "10" }, Vector2(0, 100), Vector2(1, 0)).angle(), 0.1))
 	_expect("Time event due", GDItemMath.timer_event_due(1.0, 2.0, 3.0) and not GDItemMath.timer_event_due(1.0, 2.0, 1.0))
 	_expect("Item compare equal within tolerance", GDItemMath.compare(1.0, 0, 1.4, 0.5))
 	var seq_state: Dictionary = {}

@@ -24,6 +24,8 @@ enum Kind {
 	EVENT,
 	OPTIONS,
 	ADV_FOLLOW,
+	ADV_FOLLOW_EDIT,
+	ADV_FOLLOW_RETARGET,
 	RESET_GROUP,
 	END_WALL,
 }
@@ -45,6 +47,8 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	3604: Kind.EVENT,
 	2899: Kind.OPTIONS,
 	3016: Kind.ADV_FOLLOW,
+	3660: Kind.ADV_FOLLOW_EDIT,
+	3661: Kind.ADV_FOLLOW_RETARGET,
 	3618: Kind.RESET_GROUP,
 	1931: Kind.END_WALL,
 }
@@ -170,7 +174,8 @@ static func _step_follow_player_y(delta: float) -> void:
 		follow["remaining"] = float(follow["remaining"]) - delta
 
 
-static func _adv_center(trigger: GameplayTriggerComponent) -> Variant:
+static func _adv_center(follow: Dictionary) -> Variant:
+	var trigger: GameplayTriggerComponent = follow.get("retarget", follow["trigger"])
 	if trigger._b("138"):
 		return LevelManager.player.global_position if is_instance_valid(LevelManager.player) else null
 	if trigger._b("200"):
@@ -197,7 +202,9 @@ static func _step_adv_follow(delta: float) -> void:
 		var trigger: GameplayTriggerComponent = follow["trigger"]
 		if not is_instance_valid(trigger):
 			continue
-		var now: Variant = _adv_center(trigger)
+		if follow.has("retarget") and not is_instance_valid(follow["retarget"]):
+			follow.erase("retarget")
+		var now: Variant = _adv_center(follow)
 		if now == null:
 			continue
 		var history: Array[Vector3] = follow["history"]
@@ -467,6 +474,30 @@ func _on_interacted(player: Player = null) -> void:
 				var pa: int = (a["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(a["trigger"]) else 0
 				var pb: int = (b["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(b["trigger"]) else 0
 				return pa > pb if pa != pb else int(a["order"]) < int(b["order"]))
+		Kind.ADV_FOLLOW_EDIT:
+			var dir_ref: Node2D = null
+			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("565", ""))):
+				if node is Node2D:
+					dir_ref = node as Node2D
+					break
+			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
+				var target := node as Node2D
+				if target == null or not _adv_velocities.has(target):
+					continue
+				var base: float = -PI / 2.0
+				if dir_ref != null and dir_ref.global_position != target.global_position:
+					base = (dir_ref.global_position - target.global_position).angle()
+				_adv_velocities[target] = GDItemMath.adv_follow_edit(_adv_velocities[target],
+						_f("566", 1.0) + randf() * _f("567"), _f("568", 1.0) + randf() * _f("569"),
+						_f("300") + randf() * _f("301"), base + deg_to_rad(_f("563") + randf() * _f("564")), _b("306"), _b("307"))
+		Kind.ADV_FOLLOW_RETARGET:
+			if _i("71") > 0 or _b("138") or _b("200"):
+				var follow_triggers: Array[Node] = get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", "")))
+				for follow: Dictionary in _adv_follows:
+					var trigger: GameplayTriggerComponent = follow["trigger"]
+					if is_instance_valid(trigger) and follow_triggers.has(trigger.parent):
+						follow["retarget"] = self
+						(follow["history"] as Array).clear()
 		Kind.RESET_GROUP:
 			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
 				if node.has_method(&"gd_reset"):

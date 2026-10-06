@@ -226,9 +226,12 @@ static func adv_follow_tick(p: Dictionary, offset: Vector2, velocity: Vector2, f
 			var t: float = dist / near_dist
 			accel = lerpf(float(p.get("357", "0")), accel, t)
 			friction = lerpf(float(p.get("561", "0")), friction, t)
-		velocity *= 1.0 - friction / 100.0
-		if dist > 0.0:
-			velocity += offset / dist * accel * 0.01
+		if int(p.get("367", "0")) == 2:
+			velocity = adv_follow_steer(p, offset, velocity)
+		else:
+			velocity *= 1.0 - friction / 100.0
+			if dist > 0.0:
+				velocity += offset / dist * accel * 0.01
 		if x_only:
 			velocity.y = 0.0
 		if y_only:
@@ -237,3 +240,41 @@ static func adv_follow_tick(p: Dictionary, offset: Vector2, velocity: Vector2, f
 	if max_speed > 0.0 and velocity.length() > max_speed:
 		velocity = velocity.normalized() * max_speed
 	return [velocity, velocity]
+
+
+## Mode 3 steering / braking, twin of the native adv_follow_steer.
+static func adv_follow_steer(p: Dictionary, offset: Vector2, velocity: Vector2) -> Vector2:
+	var dist: float = offset.length()
+	var speed: float = velocity.length()
+	var accel: float = float(p.get("334", "0"))
+	if dist <= 0.0:
+		return velocity
+	var to_center: Vector2 = offset / dist
+	if speed <= 0.0:
+		return to_center * accel * 0.01
+	var heading: float = velocity.angle()
+	var diff: float = angle_difference(heading, to_center.angle())
+	var break_angle: float = float(p.get("328", "180"))
+	var braking: bool = break_angle < 0.0 or (break_angle < 180.0 and absf(diff) > deg_to_rad(break_angle))
+	var steer: float = float(p.get("316", "0"))
+	if braking:
+		steer = float(p.get("330", "0")) if speed <= float(p.get("332", "0")) else 0.0
+	elif p.get("337", "0") == "1" and speed < float(p.get("322", "0")):
+		steer = float(p.get("318", "0"))
+	elif p.get("338", "0") == "1" and speed > float(p.get("324", "0")):
+		steer = float(p.get("320", "0"))
+	var limit: float = maxf(0.0, steer) * 0.01
+	var dir: Vector2 = Vector2.from_angle(heading + clampf(diff, -limit, limit))
+	if braking:
+		return dir * speed * (1.0 - clampf(float(p.get("326", "0")), 0.0, 100.0) / 100.0)
+	return dir * speed + (to_center if p.get("305", "0") == "1" else dir) * accel * 0.01
+
+
+## Edit Advanced Follow (3660), twin of the native adv_follow_edit.
+static func adv_follow_edit(velocity: Vector2, mod_x: float, mod_y: float, speed: float, dir_rad: float, x_only: bool, y_only: bool) -> Vector2:
+	var out := Vector2(velocity.x * mod_x, velocity.y * mod_y) + Vector2.from_angle(dir_rad) * speed
+	if x_only:
+		out.y = velocity.y
+	if y_only:
+		out.x = velocity.x
+	return out
