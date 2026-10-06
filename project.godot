@@ -463,6 +463,10 @@ gd_enter_effect={
 "type": "int",
 "value": -1
 }
+gd_exit_effect={
+"type": "int",
+"value": -1
+}
 menu_blur={
 "type": "bool",
 "value": true

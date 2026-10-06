@@ -484,14 +484,16 @@ int main() {
 		expect_true("enter 27 scale up", gd_enter_effect_for_trigger(27) == 2);
 		expect_true("enter 28 scale down", gd_enter_effect_for_trigger(28) == 3);
 		expect_true("enter 55 chaotic", gd_enter_effect_for_trigger(55) == 10);
+		expect_true("enter 56 is -10 -> 9", gd_enter_effect_for_trigger(56) == 9);
+		expect_true("enter 57 is -9 -> 8", gd_enter_effect_for_trigger(57) == 8);
 		expect_true("enter 59 half inverted", gd_enter_effect_for_trigger(59) == 12);
-		expect_true("enter 1915 none", gd_enter_effect_for_trigger(1915) == 0);
+		expect_true("enter 1915 no fade no enter", gd_enter_effect_for_trigger(1915) == 13);
 	}
 
 	{
 		// Keyframes: gd_docs animate_keyframe.md / GD Creator School.
 		expect_close("kf shortest wraps", kf_segment_rotation(0.0, 270.0, 0, 0, 1.0), -90.0);
-		expect_close("kf CW keeps positive", kf_segment_rotation(0.0, 270.0, 1, 0, 1.0), 270.0);
+		expect_close("kf CW over 180 does nothing (GD bug)", kf_segment_rotation(0.0, 270.0, 1, 0, 1.0), -90.0);
 		expect_close("kf CW forces clockwise", kf_segment_rotation(90.0, 0.0, 1, 0, 1.0), 270.0);
 		expect_close("kf CCW forces counter", kf_segment_rotation(0.0, 90.0, 2, 0, 1.0), -270.0);
 		expect_close("kf x360 not scaled", kf_segment_rotation(0.0, 0.0, 0, 2, 0.5), 720.0);
@@ -538,6 +540,17 @@ int main() {
 		plan = kf_build_plan(loop, KfMods());
 		expect_close("kf close loop total", plan.total, 2.0);
 		expect_close("kf close loop returns", kf_sample(plan, 1.5).x, 30.0);
+		std::vector<KfKey> curve(3);
+		for (int i = 0; i < 3; ++i) { curve[i].index = i; curve[i].duration = 1.0; curve[i].curve = true; }
+		curve[1].x = 50.0; curve[1].y = -100.0;
+		curve[2].x = 100.0;
+		plan = kf_build_plan(curve, KfMods());
+		expect_close("kf curve passes key", kf_sample(plan, 1.0).y, -100.0);
+		expect_true("kf curve bulges past chord", kf_sample(plan, 0.5).y < -50.0);
+		expect_close("kf curve natural ends", kf_sample(plan, 2.0).y, 0.0);
+		curve[0].duration = 0.0;
+		plan = kf_build_plan(curve, KfMods());
+		expect_true("kf curve 0 duration stays bounded", std::abs(kf_sample(plan, 0.5).y) <= 100.0);
 		loop[0].easing = 2; // ease in, rate 2
 		loop[0].rate = 2.0;
 		expect_close("kf easing applies", kf_sample(kf_build_plan(loop, KfMods()), 0.5).x, 15.0);

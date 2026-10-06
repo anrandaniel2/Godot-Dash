@@ -1,20 +1,25 @@
 // Edge fade and enter effects shared by FadeEnterEffect (normal blend) and
 // FadeEnterEffectAdditive. gd_enter_effect < 0 keeps the project's own
 // transition (Level.transition_width / fade_power / move_power /
-// scale_power); 0..12 is Geometry Dash's PlayLayer::m_activeEnterEffect,
-// set by the native trigger runtime for imported levels.
+// scale_power); 1..13 is a Geometry Dash applyEnterEffect type, set by the
+// native trigger runtime for imported levels.
 //
 // GD law (cgytrus/AlgebraDash update_visibility_rewrite.cpp, a drop-in
 // rewrite of GD 2.2 PlayLayer::updateVisibility / applyEnterEffect):
 //   fade  = clamp(distance to the nearer screen edge / 70, 0, 1)
 //   enter = clamp(distance to the nearer screen edge * 0.017, 0, 1)
 // in GD units, measured at the object's centre. Effects: 2 scale up
-// (scale = enter), 3 scale down (1 + 0.75 * (1 - enter)), 4/5 from top /
-// bottom and 6/7 from left / right (100 units, Open-GD
-// EffectGameObject.cpp trigger mapping), 8..12 angled entries of 100 units
-// (half left, half right, chaotic, half, half inverted).
+// (scale = enter), 3 scale down (1 + 0.75 * (1 - enter)), 4/5 start 100
+// units below / above, 6/7 start 100 units right / left (AlgebraDash's
+// signs), 8..12 angled entries of 100 units.
 
+// GD 2.2 GJGameState m_enterChannelMap / m_exitChannelMap for channel 0, as
+// applyEnterEffect types (type = -id - 1 of GJBaseGameLayer::
+// updateActiveEnterEffect): objects right of the screen centre use the
+// enter type, objects left of it the exit type. 13 is 1915 (no fade, no
+// enter). gd_enter_effect < 0 means not a GD level.
 global uniform int gd_enter_effect;
+global uniform int gd_exit_effect;
 
 uniform bool enabled = true;
 
@@ -48,27 +53,28 @@ void vertex() {
 		float view_width = 2.0 / abs(SCREEN_MATRIX[0][0]) / px_per_unit;
 		float view_height = 2.0 / abs(SCREEN_MATRIX[1][1]) / px_per_unit;
 		float x = view_center.x / px_per_unit;
-		float edge = x <= view_width * 0.5 ? x : view_width - x;
-		gd_fade = clamp(edge / 70.0, 0.0, 1.0);
+		bool is_right = x > view_width * 0.5;
+		int effect = is_right ? gd_enter_effect : gd_exit_effect;
+		float edge = is_right ? view_width - x : x;
+		gd_fade = effect == 13 ? 1.0 : clamp(edge / 70.0, 0.0, 1.0);
 		float enter = clamp(edge * 0.017, 0.0, 1.0);
 		float scale = 1.0;
 		vec2 offset_gd = vec2(0.0); // GD units, +Y up
 		float hidden = 1.0 - enter;
 		// Height above the screen bottom; GD splits at camera y + 90.
 		bool upper = view_height - view_center.y / px_per_unit >= 90.0;
-		int effect = gd_enter_effect;
 		if (effect == 2) {
 			scale = enter;
 		} else if (effect == 3) {
 			scale = hidden * 0.75 + 1.0;
 		} else if (effect == 4) {
-			offset_gd.y = hidden * 100.0;
-		} else if (effect == 5) {
 			offset_gd.y = -hidden * 100.0;
+		} else if (effect == 5) {
+			offset_gd.y = hidden * 100.0;
 		} else if (effect == 6) {
-			offset_gd.x = -hidden * 100.0;
-		} else if (effect == 7) {
 			offset_gd.x = hidden * 100.0;
+		} else if (effect == 7) {
+			offset_gd.x = -hidden * 100.0;
 		} else if (effect >= 8 && effect <= 12) {
 			float angle = 0.0;
 			if (effect == 8) angle = upper ? 45.0 : 135.0;

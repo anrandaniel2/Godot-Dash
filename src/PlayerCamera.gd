@@ -33,6 +33,8 @@ const GD_END_APPROACH_PX: float = 50.0 / 30.0 * Constants.CELL_SIZE
 
 var player: Player
 var freefly := true
+## What the last gamemode portal set; Camera Mode Free Mode off returns here.
+var portal_freefly: bool = true
 ## Value in pixels of the gameplay offset. Smoothed over time.
 var gameplay_offset: Vector2
 var is_snapping_view: bool
@@ -213,12 +215,12 @@ func _draw() -> void:
 	draw_circle(offset.rotated(-rotation), 20.0, Color.MAGENTA, false, 4.0)
 
 
-## Camera Mode trigger (2925, gd_docs camera_mode.md): Free Mode removes the
-## borders of the bordered gamemodes (the same as a Free Mode portal), and
-## Edit Camera Settings sets the free-follow easing. Cube and robot have no
-## borders and are unaffected.
+## Camera Mode trigger (2925). geode-sdk bindings 2.2081 inline
+## GJBaseGameLayer::updateCameraMode assigns m_isFreeMode (on and off), clamps
+## easing to [1, 40] and calls updateDualGround when the mode changes. Turning
+## Free Mode off restores the borders of the last bordered portal (hypothesis:
+## GD recomputes the same band there). Cube and robot have no borders.
 func apply_gd_camera_mode(free_mode: bool, edit_settings: bool, easing: float) -> void:
-	if free_mode:
-		freefly = true
-	if edit_settings and easing > 0.0:
-		free_ease = 1.0 / easing
+	freefly = free_mode or portal_freefly
+	if edit_settings:
+		free_ease = 1.0 / clampf(easing, 1.0, 40.0)

@@ -257,11 +257,15 @@ var _physics_params: PackedFloat64Array = PackedFloat64Array()
 var _jump_claimed: bool = false
 ## Enable / Disable Trail triggers (32 / 33): an afterimage of the primary
 ## player, independent of player visibility (GD Editor Wiki "Player Trail
-## triggers"). Hypothesis timings: a ghost every 0.05 s, 0.6 opacity fading
-## out over 0.4 s.
+## triggers"). PlayerObject::toggleGhostEffect (GD 2.2): runWithTarget(icon,
+## snapshotInterval 0.05, fadeInterval 0.4, duration 0, ghostScale 0.6),
+## m_opacity 200, tinted with player colour 1 and blended additively (a black
+## colour 1 uses a normal-blend black ghost).
 const GHOST_INTERVAL: float = 0.05
-const GHOST_OPACITY: float = 0.6
+const GHOST_OPACITY: float = 200.0 / 255.0
 const GHOST_FADE: float = 0.4
+const GHOST_SCALE: float = 0.6
+static var _ghost_additive: CanvasItemMaterial
 var ghost_trail: bool = false
 var _ghost_timer: float = 0.0
 
@@ -1743,7 +1747,14 @@ func _spawn_ghost() -> void:
 	var ghost := Node2D.new()
 	ghost.top_level = true
 	ghost.z_index = z_index - 1
-	ghost.modulate.a = GHOST_OPACITY
+	var tint: Color = Config.primary_color
+	ghost.modulate = Color(tint.r, tint.g, tint.b, GHOST_OPACITY)
+	var additive: bool = tint.r > 0.0 or tint.g > 0.0 or tint.b > 0.0
+	if additive and _ghost_additive == null:
+		_ghost_additive = CanvasItemMaterial.new()
+		_ghost_additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	var centre: Vector2 = _icon.global_position
+	ghost.position = centre
 	var stack: Array[Node] = [_icon]
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
@@ -1763,15 +1774,15 @@ func _spawn_ghost() -> void:
 			copy.hframes = sprite.hframes
 			copy.vframes = sprite.vframes
 			copy.frame = sprite.frame
-			copy.self_modulate = sprite.self_modulate * sprite.modulate
-			copy.material = sprite.material
-			copy.transform = sprite.global_transform
+			copy.material = _ghost_additive if additive else null
+			copy.transform = Transform2D(0.0, -centre) * sprite.global_transform
 			ghost.add_child(copy)
 		stack.append_array(node.get_children())
 	if ghost.get_child_count() == 0:
 		ghost.free()
 		return
 	host.add_child(ghost)
-	var tween: Tween = ghost.create_tween()
+	var tween: Tween = ghost.create_tween().set_parallel()
 	tween.tween_property(ghost, ^"modulate:a", 0.0, GHOST_FADE)
-	tween.tween_callback(ghost.queue_free)
+	tween.tween_property(ghost, ^"scale", Vector2(GHOST_SCALE, GHOST_SCALE), GHOST_FADE)
+	tween.chain().tween_callback(ghost.queue_free)

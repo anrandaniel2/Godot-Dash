@@ -49,6 +49,7 @@ func _get_configuration_warnings() -> PackedStringArray:
 func _move_grounds(_player: Player) -> void:
 	if LevelManager.player_camera and get_viewport().get_camera_2d() == LevelManager.player_camera:
 		LevelManager.player_camera.freefly = freefly
+		LevelManager.player_camera.portal_freefly = freefly
 	if freefly:
 		return
 	if use_gd_band:

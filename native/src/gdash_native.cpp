@@ -674,6 +674,7 @@ struct KfKey {
 	int32_t full_rot = 0;        // x360, clockwise positive
 	int32_t key_id = 0, index = 0;
 	int32_t spawn_group = 0;
+	int32_t target_group = 0;    // used when Animate Keyframe has no target
 	double spawn_delay = 0.0;
 };
 struct KfMods {
@@ -689,6 +690,8 @@ struct KfSpan {
 struct KfPlan {
 	std::vector<double> px, py, rot, sx, sy; // per point, rot accumulated
 	std::vector<bool> curve;
+	std::vector<double> m2x, m2y;        // natural spline second derivatives
+	std::vector<double> knot;            // spline spacing of segment i -> i+1
 	std::vector<int32_t> spawn_group;
 	std::vector<double> spawn_delay;
 	std::vector<bool> prox;
@@ -706,8 +709,10 @@ struct KfState {
 // belong to the keyframe the transition arrives at.
 static double kf_segment_rotation(double from, double to, int32_t spin, int32_t full_rot, double mod) {
 	const double scaled = (to - from) * mod;
-	const double cw = spin == 1 ? 2.0 : (spin == 2 ? 0.0 : 1.0);
-	const double ccw = spin == 2 ? 2.0 : (spin == 1 ? 0.0 : 1.0);
+	// gd_docs bugs/keyframes.md: CW / CCW are 0 or 1, so above 180 degrees
+	// the chosen direction "does nothing" - reproduced, not fixed.
+	const double cw = spin == 2 ? 0.0 : 1.0;
+	const double ccw = spin == 1 ? 0.0 : 1.0;
 	double offset = 0.0;
 	if (scaled > cw * 180.0) offset = -360.0;
 	else if (-scaled > ccw * 180.0) offset = 360.0;
@@ -736,6 +741,45 @@ static KfPlan kf_build_plan(std::vector<KfKey> keys, const KfMods &mods) {
 		plan.spawn_group.push_back(k.spawn_group);
 		plan.spawn_delay.push_back(k.spawn_delay);
 		plan.prox.push_back(k.prox);
+	}
+	// Curve runs: KeyframeObject holds two tk::spline (Tino Kluge's cubic
+	// spline, natural boundary by default) for x(t) and y(t). The knots are
+	// time: gd_docs bugs/keyframes.md reports that a 0-duration curve key
+	// "sends objects out of bounds" (coincident knots). Spacing is each
+	// key's duration; 0-duration segments fall back to a straight line here
+	// instead of reproducing the blow-up.
+	plan.m2x.assign(n, 0.0);
+	plan.m2y.assign(n, 0.0);
+	plan.knot.assign(n, 0.0);
+	for (size_t i = 0; i + 1 < n; ++i) plan.knot[i] = std::max(0.0, keys[i].duration) * time_mod;
+	for (size_t a = 0; a < n;) {
+		if (!plan.curve[a]) { ++a; continue; }
+		size_t b = a;
+		while (b + 1 < n && plan.curve[b + 1]) ++b;
+		const size_t m = b - a; // segments
+		bool spaced = true;
+		for (size_t k = a; k < b; ++k) spaced = spaced && plan.knot[k] > 1e-4;
+		if (m >= 2 && spaced) {
+			for (int axis = 0; axis < 2; ++axis) {
+				const std::vector<double> &v = axis == 0 ? plan.px : plan.py;
+				std::vector<double> &out = axis == 0 ? plan.m2x : plan.m2y;
+				// h0 M[k-1] + 2 (h0 + h1) M[k] + h1 M[k+1]
+				//   = 6 ((v[k+1] - v[k]) / h1 - (v[k] - v[k-1]) / h0), M ends 0.
+				std::vector<double> c(m + 1, 0.0), d(m + 1, 0.0);
+				for (size_t k = 1; k < m; ++k) {
+					const double h0 = plan.knot[a + k - 1], h1 = plan.knot[a + k];
+					const double rhs = 6.0 * ((v[a + k + 1] - v[a + k]) / h1 - (v[a + k] - v[a + k - 1]) / h0);
+					const double denom = 2.0 * (h0 + h1) - (k > 1 ? h0 * c[k - 1] : 0.0);
+					c[k] = h1 / denom;
+					d[k] = (rhs - (k > 1 ? h0 * d[k - 1] : 0.0)) / denom;
+				}
+				for (size_t k = m - 1; k >= 1; --k) {
+					out[a + k] = d[k] - c[k] * out[a + k + 1];
+					if (k == 1) break;
+				}
+			}
+		}
+		a = b + 1;
 	}
 	plan.point_span.assign(n, 0);
 	double t = 0.0;
@@ -822,17 +866,13 @@ static KfState kf_sample(const KfPlan &plan, double t) {
 	kf_locate(span->pos_frac, e, seg, local);
 	point = static_cast<size_t>(span->first) + seg;
 	const size_t a = point, b = point + 1;
-	if (plan.curve[a] && plan.curve[b]) {
-		// Hypothesis: GD's curve is a Catmull-Rom spline through the
-		// neighbouring keyframes (the path passes through every keyframe).
-		const size_t p0 = a > 0 ? a - 1 : a;
-		const size_t p3 = b + 1 < plan.px.size() ? b + 1 : b;
-		auto cr = [local](double v0, double v1, double v2, double v3) {
-			const double s = local, s2 = s * s, s3 = s2 * s;
-			return 0.5 * (2.0 * v1 + (v2 - v0) * s + (2.0 * v0 - 5.0 * v1 + 4.0 * v2 - v3) * s2 + (3.0 * v1 - v0 - 3.0 * v2 + v3) * s3);
+	if (plan.curve[a] && plan.curve[b] && plan.knot[a] > 1e-4) {
+		const double s = local, r = 1.0 - s, h2 = plan.knot[a] * plan.knot[a];
+		auto spline = [s, r, h2](double v0, double v1, double m0, double m1) {
+			return r * v0 + s * v1 + h2 * ((r * r * r - r) * m0 + (s * s * s - s) * m1) / 6.0;
 		};
-		state.x = cr(plan.px[p0], plan.px[a], plan.px[b], plan.px[p3]);
-		state.y = cr(plan.py[p0], plan.py[a], plan.py[b], plan.py[p3]);
+		state.x = spline(plan.px[a], plan.px[b], plan.m2x[a], plan.m2x[b]);
+		state.y = spline(plan.py[a], plan.py[b], plan.m2y[a], plan.m2y[b]);
 	} else {
 		state.x = plan.px[a] + (plan.px[b] - plan.px[a]) * local;
 		state.y = plan.py[a] + (plan.py[b] - plan.py[a]) * local;
@@ -866,7 +906,8 @@ struct TriggerEffect {
 	bool block_spawn_only = false, block_claim_touch = false; // TOGGLE_BLOCK 504 / 445
 	bool cam_free_mode = false, cam_edit_settings = false; // CAMERA_MODE 111 / 112
 	double cam_easing = 10.0;    // CAMERA_MODE 113
-	int32_t enter_effect = 1;    // ENTER_PRESET: PlayLayer::m_activeEnterEffect
+	int32_t enter_effect = 1;    // ENTER_PRESET: applyEnterEffect type
+	int32_t enter_mode = 0, enter_channel = 0;
 	AreaParams area;            // 3006-3015 Area / Edit Area, 3024 Area Stop
 	TriggerEffectKind kind = TriggerEffectKind::NONE;
 	double duration = 0.0;       // key 10
@@ -1660,23 +1701,31 @@ static PulseSource classify_pulse(int64_t target_channel, int64_t target_type, i
 	return PulseSource::RGB;
 }
 
-// Legacy enter-effect trigger to PlayLayer::m_activeEnterEffect.
+// Enter preset trigger to its applyEnterEffect type. geode-sdk bindings
+// 2.2081 GJBaseGameLayer::updateActiveEnterEffect writes these channel-map
+// ids: 22 -2, 23 -6, 24 -5, 25 -7, 26 -8, 27 -3, 28 -4, 55 -11, 56 -10,
+// 57 -9, 58 -12, 59 -13, 1915 -14. The type applyEnterEffect switches on is
+// -id - 1 (AlgebraDash update_visibility_rewrite.cpp cases 1-12; 22..28 then
+// reproduce Open-GD EffectGameObject.cpp's 1, 5, 4, 6, 7, 2, 3). 13 = 1915,
+// no fade and no enter.
 static int32_t gd_enter_effect_for_trigger(int64_t gd_id) {
+	int32_t id = -2;
 	switch (gd_id) {
-		case 22: return 1;
-		case 23: return 5;
-		case 24: return 4;
-		case 25: return 6;
-		case 26: return 7;
-		case 27: return 2;
-		case 28: return 3;
-		case 55: return 10;
-		case 56: return 8;
-		case 57: return 9;
-		case 58: return 11;
-		case 59: return 12;
-		default: return 0; // 1915: no enter effect
+		case 23: id = -6; break;
+		case 24: id = -5; break;
+		case 25: id = -7; break;
+		case 26: id = -8; break;
+		case 27: id = -3; break;
+		case 28: id = -4; break;
+		case 55: id = -11; break;
+		case 56: id = -10; break;
+		case 57: id = -9; break;
+		case 58: id = -12; break;
+		case 59: id = -13; break;
+		case 1915: id = -14; break;
+		default: break;
 	}
+	return -id - 1;
 }
 
 static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &properties) {
@@ -1962,14 +2011,14 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.kind = TriggerEffectKind::AREA_EDIT;
 			parse_area_params(properties, effect.area, true);
 			break;
-		// Open-GD Source/EffectGameObject.cpp triggerObject: 22 -> 1 (fade
-		// only, the level default), 23 -> 5, 24 -> 4, 25 -> 6, 26 -> 7,
-		// 27 -> 2, 28 -> 3. 55-59 by their 2.2 icons (eeFA, eeFAL, eeFAR,
-		// eeFRH, eeFRHInv) onto AlgebraDash's chaotic / half cases.
+		// 217 enter mode (0 both, 1 enter only, 2 exit only) and 344
+		// enter channel (gmdkit prop_table enter_preset).
 		case 22: case 23: case 24: case 25: case 26: case 27: case 28:
 		case 55: case 56: case 57: case 58: case 59: case 1915: {
 			effect.kind = TriggerEffectKind::ENTER_PRESET;
 			effect.enter_effect = gd_enter_effect_for_trigger(gd_id);
+			effect.enter_mode = static_cast<int32_t>(prop_float(properties, "217", 0.0));
+			effect.enter_channel = static_cast<int32_t>(prop_float(properties, "344", 0.0));
 			return effect; // no target group or timing keys
 		}
 		case 3032: {
@@ -1992,10 +2041,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			k.time_mode = static_cast<int32_t>(prop_float(properties, "379", 0.0));
 			k.spin = static_cast<int32_t>(prop_float(properties, "536", 0.0));
 			k.full_rot = static_cast<int32_t>(prop_float(properties, "537", 0.0));
-			// Hypothesis: SpawnGID is the target slot (51); gmdkit also
-			// names 71 keyframe.SPAWN_ID, used when 51 is empty.
-			k.spawn_group = static_cast<int32_t>(prop_float(properties, "51", 0.0));
-			if (k.spawn_group <= 0) k.spawn_group = static_cast<int32_t>(prop_float(properties, "71", 0.0));
+			// SpawnGID is 71 and the keyframe's own Target is 51 (gmdbuilder
+			// obj_prop.py Keyframe, RazoomGD triggers-wiring-tool 3032).
+			k.spawn_group = static_cast<int32_t>(prop_float(properties, "71", 0.0));
+			k.target_group = static_cast<int32_t>(prop_float(properties, "51", 0.0));
 			k.spawn_delay = prop_float(properties, "557", 0.0);
 			return effect;
 		}
@@ -3174,7 +3223,7 @@ class NativeTriggerRuntime : public RefCounted {
 				start_area(index, effect);
 				break;
 			case TriggerEffectKind::ENTER_PRESET:
-				set_enter_effect(effect.enter_effect);
+				set_enter_effect(effect.enter_effect, effect.enter_mode, effect.enter_channel);
 				break;
 			case TriggerEffectKind::ANIMATE_KEYFRAME:
 				start_keyframe_anim(index, effect, player);
@@ -4697,12 +4746,39 @@ private:
 	// a single group set); node-drawn objects tint each layer sprite.
 	// Edge fade / enter effect for every level object (GDEnterEffect.gdshaderinc).
 	bool gd_level = false;
-	static void set_enter_global(int32_t value) {
+	static void set_enter_global(int32_t enter, int32_t exit) {
 		RenderingServer *server = RenderingServer::get_singleton();
-		if (server) server->global_shader_parameter_set(StringName("gd_enter_effect"), value);
+		if (!server) return;
+		server->global_shader_parameter_set(StringName("gd_enter_effect"), enter);
+		server->global_shader_parameter_set(StringName("gd_exit_effect"), exit);
 	}
-	void set_enter_effect(int32_t value) {
-		if (gd_level) set_enter_global(value);
+	// GJGameState m_enterChannelMap / m_exitChannelMap. Channel 0 is the
+	// shader globals; other channels go to the level, which keeps one
+	// material per channel.
+	std::map<int32_t, std::pair<int32_t, int32_t>> enter_channels;
+	void set_enter_effect(int32_t type, int32_t mode = 0, int32_t channel = 0) {
+		if (!gd_level) return;
+		auto found = enter_channels.find(channel);
+		std::pair<int32_t, int32_t> value = found != enter_channels.end() ? found->second : std::make_pair(1, 1);
+		if (mode == 0 || mode == 1) value.first = type;
+		if (mode == 0 || mode == 2) value.second = type;
+		enter_channels[channel] = value;
+		if (channel == 0) {
+			set_enter_global(value.first, value.second);
+			return;
+		}
+		Object *level = ObjectDB::get_instance(level_id);
+		if (level && level->has_method("set_gd_enter_channel"))
+			level->call("set_gd_enter_channel", channel, value.first, value.second);
+	}
+	void reset_enter_effects() {
+		Object *level = ObjectDB::get_instance(level_id);
+		for (const auto &entry : enter_channels) {
+			if (entry.first != 0 && level && level->has_method("set_gd_enter_channel"))
+				level->call("set_gd_enter_channel", entry.first, 1, 1);
+		}
+		enter_channels.clear();
+		if (gd_level) set_enter_global(1, 1);
 	}
 
 	// ---- State / Toggle blocks (3640, 3643) ----
@@ -4776,7 +4852,7 @@ private:
 			const int32_t id = records[r].effect.keyframe.key_id;
 			if (std::find(key_ids.begin(), key_ids.end(), id) == key_ids.end()) key_ids.push_back(id);
 		}
-		const std::vector<ObjectID> members = resolve_effect_members(effect);
+		const std::vector<ObjectID> trigger_members = resolve_effect_members(effect);
 		for (int32_t key_id : key_ids) {
 			std::vector<KfKey> keys;
 			for (const Record &record : records) {
@@ -4784,6 +4860,14 @@ private:
 					keys.push_back(record.effect.keyframe);
 			}
 			std::stable_sort(keys.begin(), keys.end(), [](const KfKey &a, const KfKey &b) { return a.index < b.index; });
+			// gd_docs animate_keyframe.md: with Target 0 the animation
+			// moves its own target (the first keyframe's key 51).
+			std::vector<ObjectID> members = trigger_members;
+			if (effect.target_groups.empty() && !keys.empty() && keys.front().target_group > 0) {
+				TriggerEffect own;
+				own.target_groups.push_back(String("g_") + String::num_int64(keys.front().target_group));
+				members = resolve_effect_members(own);
+			}
 			KeyframeAnim anim;
 			anim.record = index;
 			anim.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
@@ -5497,7 +5581,8 @@ public:
 			// own transition settings (gd_enter_effect -1). Levels start in
 			// GD's default fade-only effect (PlayLayer init: 1).
 			gd_level = double(level->get("gd_level_end_x")) > 0.0 || double(level->get("gd_max_gameplay_y")) > 0.0;
-			set_enter_global(gd_level ? 1 : -1);
+			enter_channels.clear();
+			set_enter_global(gd_level ? 1 : -1, gd_level ? 1 : -1);
 		}
 		if (camera) camera_id = camera->get_instance_id();
 		if (config) config_id = config->get_instance_id();
@@ -6155,7 +6240,7 @@ public:
 		clear_areas(false);
 		keyframe_anims.clear();
 		toggle_block_queue.clear(); touch_claimed = false;
-		set_enter_effect(1);
+		reset_enter_effects();
 		// Group opacity is level state, not object state: a restart clears
 		// it (the same fades re-fire as the player crosses them again), and
 		// every member re-renders from its own alpha until they do.
