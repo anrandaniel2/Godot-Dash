@@ -1133,8 +1133,9 @@ func _test_native_core() -> void:
 			"native smoke: severed link did not render the trigger's literal colour")
 	LevelManager.current_level = previous_level
 	watcher_level.free()
-	# Stop cancels a pending spawn, cutting spawn loops: a spawn-only member of
-	# g_9 fires from a scheduled event, then the stop trigger eats the second.
+	# Stop / Pause / Resume (gd_docs stop.md) act on the triggers in the target
+	# group: a delayed Spawn (g_9, spawns g_8 after 0.5 s) is held by Pause,
+	# released by Resume with its remaining delay, and dropped by Stop.
 	var spawn_target := Node.new()
 	spawn_target.add_user_signal(&"interacted", [{"name": "player", "type": TYPE_OBJECT}])
 	# Lambdas capture locals by value, so the counter is an array the signal
@@ -1142,16 +1143,26 @@ func _test_native_core() -> void:
 	var spawn_fired: Array[int] = []
 	spawn_target.connect(&"interacted", func(_player: Object): spawn_fired.append(1))
 	var spawn_runtime: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
-	spawn_runtime.call(&"register_trigger", spawn_target, 50.0, 0.0, 1, 0, PackedStringArray(["g_9"]), 0, {})
-	spawn_runtime.call(&"register_packed_trigger", 510.0, 0.0, 0, 1, PackedStringArray(), 1616, {"1": "1616", "51": "9"})
+	spawn_runtime.call(&"register_trigger", spawn_target, 5000.0, 0.0, 1, 0, PackedStringArray(["g_8"]), 0, {})
+	spawn_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 1, PackedStringArray(["g_9"]), 1268, {"1": "1268", "51": "8", "63": "0.5"})
+	spawn_runtime.call(&"register_packed_trigger", 200.0, 0.0, 0, 2, PackedStringArray(), 1616, {"1": "1616", "51": "9", "580": "1"})
+	spawn_runtime.call(&"register_packed_trigger", 300.0, 0.0, 0, 3, PackedStringArray(), 1616, {"1": "1616", "51": "9", "580": "2"})
+	spawn_runtime.call(&"register_packed_trigger", 400.0, 0.0, 0, 4, PackedStringArray(["g_10"]), 1268, {"1": "1268", "51": "8", "63": "0.5", "534": "77"})
+	spawn_runtime.call(&"register_packed_trigger", 450.0, 0.0, 0, 5, PackedStringArray(), 1616, {"1": "1616", "51": "77", "535": "1"})
 	spawn_runtime.call(&"finalize")
-	spawn_runtime.call(&"schedule_group", &"g_9", 0.5, effect_player)
+	spawn_runtime.call(&"advance", effect_player, 0.0, 150.0)
+	spawn_runtime.call(&"advance", effect_player, 150.0, 250.0)
 	spawn_runtime.call(&"tick", 1.0)
-	assert(spawn_fired.size() == 1, "native smoke: scheduled spawn did not fire its group member")
-	spawn_runtime.call(&"schedule_group", &"g_9", 0.5, effect_player)
-	spawn_runtime.call(&"advance", effect_player, 0.0, 600.0)
+	assert(spawn_fired.is_empty(), "native smoke: pause did not hold the delayed spawn")
+	spawn_runtime.call(&"advance", effect_player, 250.0, 350.0)
+	spawn_runtime.call(&"tick", 0.3)
+	assert(spawn_fired.is_empty(), "native smoke: resume did not keep the remaining spawn delay")
+	spawn_runtime.call(&"tick", 0.3)
+	assert(spawn_fired.size() == 1, "native smoke: resumed spawn did not fire")
+	spawn_runtime.call(&"advance", effect_player, 350.0, 420.0)
+	spawn_runtime.call(&"advance", effect_player, 420.0, 470.0)
 	spawn_runtime.call(&"tick", 1.0)
-	assert(spawn_fired.size() == 1, "native smoke: stop trigger did not cancel the pending spawn")
+	assert(spawn_fired.size() == 1, "native smoke: stop by control ID did not cancel the pending spawn")
 	spawn_target.free()
 	effect_player.free()
 	toggled.free()

@@ -257,6 +257,7 @@ const MAP: Dictionary[int, Dictionary] = {
 	3016: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "AdvancedFollowTrigger", "components": ["GameplayTriggerComponent"] },
 	3660: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "EditAdvancedFollowTrigger", "components": ["GameplayTriggerComponent"] },
 	3661: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "RetargetAdvancedFollowTrigger", "components": ["GameplayTriggerComponent"] },
+	1616: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "StopTrigger", "components": ["GameplayTriggerComponent"] },
 	3608: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "SpawnParticleTrigger", "components": ["GameplayTriggerComponent"] },
 	3606: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "BackgroundSpeedTrigger", "components": ["GameplayTriggerComponent"] },
 	3618: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ResetTrigger", "components": ["GameplayTriggerComponent"] },

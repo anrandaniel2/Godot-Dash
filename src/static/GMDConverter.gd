@@ -886,7 +886,7 @@ static func _object_from_properties(
 		# and so the object round-trips with its original identity.
 		"gd_object_id": gd_id,
 		"transform": transform,
-		"groups": _groups_from_properties(properties),
+		"groups": _groups_from_properties(properties) + _control_groups(properties),
 		"color_channels": _color_channels_from_properties(
 			gd_id, properties, description, channel_style, used_channels
 		),
@@ -1217,6 +1217,15 @@ static func _z_layer_from_properties(properties: Dictionary, gd_id: int = 0) -> 
 ## while older ones use the single group key [code]33[/code]. Both are read, so
 ## a trigger doesn't end up pointing at a group that looks empty just because
 ## its members used the legacy key.
+## Control ID (534): Stop / Edit Advanced Follow can target triggers by it.
+const CONTROL_GROUP_PREFIX: String = "gd_control_"
+
+
+static func _control_groups(properties: Dictionary) -> Array:
+	var control_id: int = int(properties.get("534", "0"))
+	return [CONTROL_GROUP_PREFIX + str(control_id)] if control_id > 0 else []
+
+
 static func _groups_from_properties(properties: Dictionary) -> Array:
 	var group_ids: Array[String] = []
 	for group_id: String in properties.get(Prop.GROUPS, "").split(".", false):
@@ -1797,7 +1806,7 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
-		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899, 3016, 3618, 1931, 3660, 3661, 3608, 3606: # twins of the native gameplay arms
+		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899, 3016, 3618, 1931, 3660, 3661, 3608, 3606, 1616: # twins of the native gameplay arms
 			if "GameplayTriggerComponent" in supported:
 				var raw: Dictionary[String, String] = {}
 				for key: Variant in properties:

@@ -28,6 +28,7 @@ enum Kind {
 	ADV_FOLLOW_RETARGET,
 	SPAWN_PARTICLE,
 	BG_SPEED,
+	STOP,
 	RESET_GROUP,
 	END_WALL,
 }
@@ -53,6 +54,7 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	3661: Kind.ADV_FOLLOW_RETARGET,
 	3608: Kind.SPAWN_PARTICLE,
 	3606: Kind.BG_SPEED,
+	1616: Kind.STOP,
 	3618: Kind.RESET_GROUP,
 	1931: Kind.END_WALL,
 }
@@ -89,6 +91,8 @@ static var _adv_velocities: Dictionary[Node2D, Vector2] = {}
 ## Speed references (560): node -> [last position, last movement], GD units.
 static var _adv_ref_motion: Dictionary[Node2D, Array] = {}
 static var _adv_speed_ref_groups: Dictionary[String, bool] = {}
+## Per-object random coefficients (-1..+1) [StartSpeed, StartDir], fixed for the level.
+static var _adv_rand_coeff: Dictionary[Node2D, Vector2] = {}
 ## Pair key -> last recorded overlap state.
 static var _collision_states: Dictionary[int, bool] = {}
 ## Pair key -> [block a, block b] for every collision trigger in the level.
@@ -209,20 +213,21 @@ static func _camera_corner() -> Variant:
 	return viewport.get_canvas_transform().affine_inverse() * Vector2(0.0, viewport.get_visible_rect().size.y)
 
 
-static func _first_node(group: String) -> Node2D:
+## Twin of native adv_ref_member: a stable per-target pick among the reference's members.
+static func _ref_member(group: String, target: Node2D) -> Node2D:
 	if group.is_empty() or group == "0":
 		return null
 	var tree := Engine.get_main_loop() as SceneTree
-	for node: Node in tree.get_nodes_in_group(StringName(Constants.GROUP_PREFIX + group)):
-		if node is Node2D:
-			return node as Node2D
-	return null
+	var members: Array[Node] = tree.get_nodes_in_group(StringName(Constants.GROUP_PREFIX + group))
+	if members.is_empty():
+		return null
+	return members[hash(target.get_instance_id()) % members.size()] as Node2D
 
 
 ## Twin of native adv_heading_velocity.
 func _adv_heading_velocity(target: Node2D, speed: float, dir_deg: float) -> Vector2:
-	var speed_ref: Node2D = _first_node(properties.get("560", ""))
-	var dir_ref: Node2D = _first_node(properties.get("565", ""))
+	var speed_ref: Node2D = _ref_member(properties.get("560", ""), target)
+	var dir_ref: Node2D = _ref_member(properties.get("565", ""), target)
 	var motion: Vector2 = _adv_ref_motion[speed_ref][1] if speed_ref != null and _adv_ref_motion.has(speed_ref) else Vector2.ZERO
 	var to_ref: Vector2 = dir_ref.global_position - target.global_position if dir_ref != null else Vector2.ZERO
 	var heading: float = GDItemMath.adv_start_heading(_i("560") > 0, motion, dir_ref != null, to_ref, dir_deg)
@@ -258,11 +263,53 @@ func _adv_rotate(target: Node2D, offset: Vector2, velocity: Vector2, ticks: floa
 		max_step = minf(max_step, maxf(0.0, _f("316")) * 0.01 * ticks)
 		easing = 0.0
 	else:
-		if offset.length() < _f("364") * 2.0 or velocity == Vector2.ZERO:
+		if offset.length() < _f("364") or velocity == Vector2.ZERO:
 			return
 		goal = velocity.angle()
 	goal += deg_to_rad(_f("340"))
 	target.global_rotation = GDItemMath.adv_rotate_step(target.global_rotation, goal, easing / maxf(1.0, ticks), max_step)
+
+
+## Twin of the native stop_targets / stop_triggers (gd_docs stop.md):
+## StopMode 0 stop, 1 pause, 2 resume; 535 targets Control IDs (534).
+func _stop_triggers(mode: int) -> void:
+	var group: String = (GMDConverter.CONTROL_GROUP_PREFIX if _b("535") else Constants.GROUP_PREFIX) + properties.get("51", "")
+	var triggers: Array[Node] = get_tree().get_nodes_in_group(StringName(group))
+	if triggers.is_empty():
+		return
+	for trigger: Node in triggers:
+		for child: Node in trigger.get_children():
+			if child is EasingComponent:
+				var easing := child as EasingComponent
+				for player: Player in easing.tweens.keys():
+					var tween: Tween = easing.tweens[player]
+					if not is_instance_valid(tween):
+						continue
+					match mode:
+						0:
+							tween.kill()
+							easing.tweens.erase(player)
+						1:
+							tween.pause()
+						2:
+							tween.play()
+			elif child is SpawnTriggerComponent:
+				var timer: Timer = (child as SpawnTriggerComponent)._timer
+				if timer != null:
+					match mode:
+						0:
+							timer.stop()
+						_:
+							timer.paused = mode == 1
+	for follow: Dictionary in _adv_follows.duplicate():
+		var source: GameplayTriggerComponent = follow["trigger"]
+		if not is_instance_valid(source) or not triggers.has(source.parent):
+			continue
+		match mode:
+			0:
+				_adv_follows.erase(follow)
+			_:
+				follow["paused"] = mode == 1
 
 
 ## Twin of the native step_adv_follow (gd_docs advanced_follow.md).
@@ -274,9 +321,11 @@ static func _step_adv_follow(delta: float) -> void:
 	var tree := Engine.get_main_loop() as SceneTree
 	var exclusive: Dictionary[Node2D, bool] = {}
 	var touched: Dictionary[Node2D, bool] = {}
+	var mode12: Dictionary[Node2D, bool] = {}
+	var mode3_rotations: Array[Array] = []
 	for follow: Dictionary in _adv_follows:
 		var trigger: GameplayTriggerComponent = follow["trigger"]
-		if not is_instance_valid(trigger):
+		if not is_instance_valid(trigger) or follow.get("paused", false):
 			continue
 		if follow.has("retarget") and not is_instance_valid(follow["retarget"]):
 			follow.erase("retarget")
@@ -291,14 +340,27 @@ static func _step_adv_follow(delta: float) -> void:
 		if _level_time - float(follow["start"]) < delay:
 			continue
 		var center := Vector2(history[0].y, history[0].z)
+		# "Due to a bug, only one object per Target GID can be affected by StartSpeed."
+		var start_used: bool = false
 		for node: Node in tree.get_nodes_in_group(StringName(Constants.GROUP_PREFIX + trigger.properties.get("51", ""))):
 			var target := node as Node2D
 			if target == null or target == follow["player"] or exclusive.has(target):
 				continue
 			var offset: Vector2 = (center - target.global_position) / PX_PER_UNIT
-			var start: Vector2 = trigger._adv_heading_velocity(target, trigger._f("300") + float(follow["speed_r"]) * trigger._f("301"),
-					trigger._f("563") + float(follow["dir_r"]) * trigger._f("564"))
-			var result: Array = GDItemMath.adv_follow_tick(trigger.properties, offset, _adv_velocities.get(target, Vector2.ZERO), not _adv_velocities.has(target), start)
+			if not _adv_rand_coeff.has(target):
+				_adv_rand_coeff[target] = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
+			var coeff: Vector2 = _adv_rand_coeff[target]
+			var params: Dictionary = trigger.properties
+			var start := Vector2.ZERO
+			if start_used:
+				params = trigger.properties.duplicate()
+				params["300"] = "0"
+			else:
+				start = trigger._adv_heading_velocity(target, trigger._f("300") + coeff.x * trigger._f("301"), trigger._f("563") + coeff.y * trigger._f("564"))
+			start_used = true
+			var result: Array = GDItemMath.adv_follow_tick(params, offset, _adv_velocities.get(target, Vector2.ZERO), not _adv_velocities.has(target), start)
+			if trigger._i("367") != 2:
+				mode12[target] = true
 			_adv_velocities[target] = result[1]
 			var step: Vector2 = result[0] * ticks
 			if trigger._i("367") == 0 and step.length_squared() > offset.length_squared():
@@ -308,7 +370,14 @@ static func _step_adv_follow(delta: float) -> void:
 				exclusive[target] = true
 			target.global_position += step * PX_PER_UNIT
 			if trigger._b("339"):
-				trigger._adv_rotate(target, offset, result[1], ticks)
+				if trigger._i("367") == 2:
+					mode3_rotations.append([trigger, target, offset, result[1]])
+				else:
+					trigger._adv_rotate(target, offset, result[1], ticks)
+	# "Having any Mode 1 or 2 Advanced Follows active on the same target will override Mode 3 rotation."
+	for pending: Array in mode3_rotations:
+		if not mode12.has(pending[1]):
+			(pending[0] as GameplayTriggerComponent)._adv_rotate(pending[1], pending[2], pending[3], ticks)
 	for target: Node2D in _adv_velocities.keys():
 		if not touched.has(target):
 			_adv_velocities.erase(target)
@@ -549,7 +618,7 @@ func _on_interacted(player: Player = null) -> void:
 		Kind.ADV_FOLLOW:
 			_adv_order += 1
 			var adv_history: Array[Vector3] = []
-			_adv_follows.append({ "trigger": self, "order": _adv_order, "start": _level_time, "player": player, "history": adv_history, "speed_r": randf(), "dir_r": randf() })
+			_adv_follows.append({ "trigger": self, "order": _adv_order, "start": _level_time, "player": player, "history": adv_history })
 			_adv_follows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 				var pa: int = (a["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(a["trigger"]) else 0
 				var pb: int = (b["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(b["trigger"]) else 0
@@ -596,6 +665,8 @@ func _on_interacted(player: Player = null) -> void:
 							rotation += rad_to_deg(target.global_rotation)
 						GDParticleSpawner.spawn(GDParticleSpawner.parse(raw), target.global_position + offset, rotation,
 								_f("554", 1.0) + randf_range(-1.0, 1.0) * _f("555"), level)
+		Kind.STOP:
+			_stop_triggers(_i("580"))
 		Kind.BG_SPEED:
 			if LevelManager.current_level != null:
 				LevelManager.current_level.apply_gd_bg_speed(Vector2(_f("143", 0.1), _f("144", 0.1)))

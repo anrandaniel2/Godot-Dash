@@ -52,6 +52,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <deque>
@@ -474,7 +475,7 @@ struct AdvFollowParams {
 	double steer = 0.0, steer_low = 0.0, steer_high = 0.0, range_low = 0.0, range_high = 0.0;
 	bool steer_low_check = false, steer_high_check = false, target_dir = false;
 	double break_force = 0.0, break_angle = 180.0, break_steer = 0.0, break_steer_limit = 0.0;
-	// 301/564 start speed/dir random (0..+), 339 rotate dir, 340 rotation
+	// 301/564 start speed/dir random (+-, per-object coefficient), 339 rotate dir, 340 rotation
 	// offset (deg), 363 rotate easing, 364 rotate deadzone (small steps),
 	// 201 camera bottom-left corner as the center.
 	double start_speed_rand = 0.0, start_dir_rand = 0.0;
@@ -542,7 +543,9 @@ struct TriggerEffect {
 	bool adv_p1 = false, adv_p2 = false, adv_exclusive = false;
 	int32_t adv_priority = 0;
 	double adv_delay = 0.0;
-	int32_t adv_control_id = 0;   // 534
+	int32_t control_id = 0;       // 534, any trigger (Stop / Edit Advanced Follow)
+	int32_t stop_mode = 0;        // 1616 key 580: StopMode 0 stop, 1 pause, 2 resume
+	bool stop_use_control_id = false;  // 1616 key 535
 	bool adv_use_control_id = false;  // 3660 key 535: 51 names Control IDs
 	String adv_speed_ref;         // 560: heading = the reference's last movement
 	// 3660: 301/564 speed/dir random (0..+), 566-569 mod X/Y (+ random),
@@ -1454,7 +1457,6 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			a.rot_easing = prop_float(properties, "363", 0.0);
 			a.rot_deadzone = prop_float(properties, "364", 0.0);
 			a.corner = String(properties.get("201", String("0"))) == "1";
-			effect.adv_control_id = static_cast<int32_t>(String(properties.get("534", String("0"))).to_int());
 			const int af_speed_ref = static_cast<int>(String(properties.get("560", String("0"))).to_int());
 			if (af_speed_ref > 0) effect.adv_speed_ref = String("g_") + String::num_int64(af_speed_ref);
 			const int af_dir_ref = static_cast<int>(String(properties.get("565", String("0"))).to_int());
@@ -1531,7 +1533,11 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			break;
 		}
-		case 1616: effect.kind = TriggerEffectKind::STOP; break;
+		case 1616:
+			effect.kind = TriggerEffectKind::STOP;
+			effect.stop_mode = static_cast<int32_t>(String(properties.get("580", String("0"))).to_int());
+			effect.stop_use_control_id = String(properties.get("535", String("0"))) == "1";
+			break;
 		case 1612: effect.kind = TriggerEffectKind::HIDE; break;
 		case 1613: effect.kind = TriggerEffectKind::SHOW; break;
 		case 1935: effect.kind = TriggerEffectKind::TIMEWARP; break;
@@ -1555,6 +1561,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 	effect.duration = Math::max(0.0, prop_float(properties, "10", 0.0));
 	effect.easing = static_cast<int32_t>(prop_int(properties, "30", 0));
 	effect.target_groups = parse_group_list(properties, "51");
+	effect.control_id = static_cast<int32_t>(String(properties.get("534", String("0"))).to_int());
 	const String center = String(properties.get("71", String())).strip_edges();
 	if (center.is_valid_int() && center.to_int() > 0) effect.center_group = String("g_") + center;
 	if (properties.has("45") || properties.has("46") || properties.has("47")) {
@@ -1812,6 +1819,8 @@ class NativeTriggerRuntime : public RefCounted {
 		uint64_t sequence = 0;
 		StringName group;
 		ObjectID player;
+		size_t source = SIZE_MAX;  // spawning record, for Stop / Pause
+		double paused_remaining = -1.0;  // >= 0 while held by Pause
 	};
 	// One running eased effect. Everything it needs was captured when the
 	// trigger fired, mirroring the components' export_storage initial values:
@@ -1820,6 +1829,8 @@ class NativeTriggerRuntime : public RefCounted {
 		size_t record_index = 0;
 		ObjectID player;
 		double start = 0.0;
+		bool paused = false;
+		double paused_at = 0.0;
 		double prev_weight = 0.0;
 		std::vector<ObjectID> members;        // union of the target groups
 		std::vector<Vector2> initial_scales;  // 2067 multiplies from these
@@ -1917,6 +1928,7 @@ class NativeTriggerRuntime : public RefCounted {
 	// Min-heap ordered by due time/source sequence. Inserting a spawn event is
 	// O(log n), replacing the old full stable_sort after every insertion.
 	std::vector<Event> events;
+	std::vector<Event> paused_events;  // delayed spawns held by Pause (1616 mode 1)
 	double clock = 0.0;
 	uint64_t event_sequence = 0;
 	bool index_dirty = false;
@@ -2399,7 +2411,7 @@ class NativeTriggerRuntime : public RefCounted {
 					delay = Math::max(0.0, delay);
 				}
 				for (const String &group : effect.target_groups) {
-					schedule_group(StringName(group), delay, player);
+					schedule_group(StringName(group), delay, player, index);
 				}
 				break;
 			}
@@ -2526,8 +2538,6 @@ class NativeTriggerRuntime : public RefCounted {
 				follow.order = ++adv_follow_order;
 				follow.start = clock;
 				follow.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
-				follow.speed_r = static_cast<double>(std::rand() % 1000000) / 1000000.0;
-				follow.dir_r = static_cast<double>(std::rand() % 1000000) / 1000000.0;
 				adv_follows.push_back(follow);
 				std::stable_sort(adv_follows.begin(), adv_follows.end(), [&](const AdvFollow &a, const AdvFollow &b) {
 					const int32_t pa = records[a.record].effect.adv_priority, pb = records[b.record].effect.adv_priority;
@@ -2547,7 +2557,7 @@ class NativeTriggerRuntime : public RefCounted {
 					std::set<ObjectID> seen;
 					for (const AdvFollow &follow : adv_follows) {
 						const TriggerEffect &af = records[follow.record].effect;
-						if (af.adv_control_id <= 0 || !ids.count(af.adv_control_id)) continue;
+						if (af.control_id <= 0 || !ids.count(af.control_id)) continue;
 						for (ObjectID id : resolve_effect_members(af)) {
 							if (seen.insert(id).second) targets.push_back(id);
 						}
@@ -2660,11 +2670,10 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			}
 			case TriggerEffectKind::STOP:
-				// Cancels pending spawns targeting each group, cutting spawn loops.
-				for (const String &group : effect.target_groups) {
-					cancel_group_events(StringName(group));
-					stop_group_follows(group);
-				}
+				// gd_docs stop.md: Stop / Pause / Resume the triggers in the
+				// target group, or with that Control ID (535). Running animations
+				// freeze mid-way; delayed spawns are dropped / held / released.
+				stop_triggers(stop_targets(effect), effect.stop_mode);
 				break;
 			case TriggerEffectKind::HIDE:
 				set_player_visible(player, false);
@@ -2783,11 +2792,10 @@ class NativeTriggerRuntime : public RefCounted {
 		double start = 0.0;
 		ObjectID player;
 		std::deque<std::pair<double, Vector2>> history;
+		bool paused = false;  // Delay keeps ticking while paused (gd_docs)
 		// Re-Target (3661) override of the follow center.
 		bool retargeted = false, center_p1 = false, center_p2 = false, center_corner = false;
 		String center_group;
-		// StartSpeed/StartDir random (0..+), picked once per activation.
-		double speed_r = 0.0, dir_r = 0.0;
 	};
 	std::vector<AdvFollow> adv_follows;  // priority desc, then spawn order
 	uint64_t adv_follow_order = 0;
@@ -2797,6 +2805,26 @@ class NativeTriggerRuntime : public RefCounted {
 	std::set<String> adv_speed_ref_groups;
 	struct RefMotion { Vector2 last; Vector2 motion; };
 	std::map<ObjectID, RefMotion> adv_ref_motion;
+	// gd_docs advanced_follow.md "Random Values" / area_mechanics.md: one
+	// coefficient in -1..+1 per object per setting, fixed until the level is
+	// reloaded (restarts keep them). [0] StartSpeed, [1] StartDir.
+	std::map<ObjectID, std::array<double, 2>> adv_rand_coeff;
+	const std::array<double, 2> &adv_coeff(ObjectID id) {
+		auto found = adv_rand_coeff.find(id);
+		if (found != adv_rand_coeff.end()) return found->second;
+		auto coeff = []() { return static_cast<double>(std::rand() % 2000001) / 1000000.0 - 1.0; };
+		return adv_rand_coeff[id] = { coeff(), coeff() };
+	}
+	// "If there are multiple objects with the same reference ID, one is picked
+	// at random for each target": a stable per-target pick.
+	Node2D *adv_ref_member(const String &group, Node2D *target) const {
+		if (group.is_empty()) return nullptr;
+		auto members = member_index.find(group);
+		if (members == member_index.end() || members->value.empty()) return nullptr;
+		const uint64_t key = target ? target->get_instance_id() : 0;
+		const size_t pick = static_cast<size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) % members->value.size();
+		return Object::cast_to<Node2D>(ObjectDB::get_instance(members->value[pick]));
+	}
 	// Particle group -> particle object data (key 145), from level data.
 	std::map<String, std::vector<std::vector<double>>> particle_groups;
 public:
@@ -2902,17 +2930,17 @@ private:
 		corner = vp->get_canvas_transform().affine_inverse().xform(Vector2(0.0f, vp->get_visible_rect().size.y));
 		return true;
 	}
-	Vector2 adv_ref_last_motion(const String &group) const {
-		Node2D *ref = resolve_first_member(group);
+	Vector2 adv_ref_last_motion(const String &group, Node2D *target) const {
+		Node2D *ref = adv_ref_member(group, target);
 		if (!ref) return Vector2();
 		auto found = adv_ref_motion.find(ObjectID(ref->get_instance_id()));
 		return found == adv_ref_motion.end() ? Vector2() : found->second.motion;
 	}
 	Vector2 adv_heading_velocity(const TriggerEffect &effect, Node2D *target, double speed, double dir_deg) const {
 		Vector2 to_ref;
-		Node2D *dir_ref = effect.adv_edit_dir_ref.is_empty() ? nullptr : resolve_first_member(effect.adv_edit_dir_ref);
+		Node2D *dir_ref = adv_ref_member(effect.adv_edit_dir_ref, target);
 		if (dir_ref && target) to_ref = dir_ref->get_global_position() - target->get_global_position();
-		const double heading = adv_start_heading(!effect.adv_speed_ref.is_empty(), adv_ref_last_motion(effect.adv_speed_ref),
+		const double heading = adv_start_heading(!effect.adv_speed_ref.is_empty(), adv_ref_last_motion(effect.adv_speed_ref, target),
 				dir_ref != nullptr, to_ref, dir_deg);
 		return Vector2(static_cast<real_t>(std::cos(heading) * speed), static_cast<real_t>(std::sin(heading) * speed));
 	}
@@ -2935,16 +2963,77 @@ private:
 			}
 		}
 	}
-	// Stop also ends Advanced Follow / Follow Player Y instances spawned
-	// from the stopped trigger group.
-	void stop_group_follows(const String &group) {
-		auto found = group_index.find(group);
-		if (found == group_index.end()) return;
-		const std::set<size_t> stopped(found->value.begin(), found->value.end());
-		adv_follows.erase(std::remove_if(adv_follows.begin(), adv_follows.end(),
-				[&](const AdvFollow &f) { return stopped.count(f.record) > 0; }), adv_follows.end());
-		for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
-			it = stopped.count(it->second.record) ? follow_player_y.erase(it) : std::next(it);
+	std::set<size_t> stop_targets(const TriggerEffect &effect) const {
+		std::set<size_t> targets;
+		if (effect.stop_use_control_id) {
+			std::set<int32_t> ids;
+			for (const String &group : effect.target_groups) ids.insert(static_cast<int32_t>(group.trim_prefix("g_").to_int()));
+			for (size_t i = 0; i < records.size(); ++i) {
+				if (records[i].effect.control_id > 0 && ids.count(records[i].effect.control_id)) targets.insert(i);
+			}
+		} else {
+			for (const String &group : effect.target_groups) {
+				auto found = group_index.find(group);
+				if (found != group_index.end()) targets.insert(found->value.begin(), found->value.end());
+			}
+		}
+		return targets;
+	}
+	void stop_triggers(const std::set<size_t> &targets, int32_t mode) {
+		if (targets.empty()) return;
+		if (mode == 0) {
+			fades.erase(std::remove_if(fades.begin(), fades.end(),
+					[&](const Fade &f) { return targets.count(f.record_index) > 0; }), fades.end());
+			adv_follows.erase(std::remove_if(adv_follows.begin(), adv_follows.end(),
+					[&](const AdvFollow &f) { return targets.count(f.record) > 0; }), adv_follows.end());
+			for (auto it = follow_player_y.begin(); it != follow_player_y.end();) {
+				it = targets.count(it->second.record) ? follow_player_y.erase(it) : std::next(it);
+			}
+			const size_t before = events.size();
+			events.erase(std::remove_if(events.begin(), events.end(),
+					[&](const Event &e) { return e.source != SIZE_MAX && targets.count(e.source) > 0; }), events.end());
+			if (events.size() != before) std::make_heap(events.begin(), events.end(), event_later);
+			return;
+		}
+		const bool pause = mode == 1;
+		for (Fade &fade : fades) {
+			if (!targets.count(fade.record_index) || fade.paused == pause) continue;
+			if (pause) {
+				fade.paused_at = clock;
+			} else {
+				fade.start += clock - fade.paused_at;
+			}
+			fade.paused = pause;
+		}
+		for (AdvFollow &follow : adv_follows) {
+			if (targets.count(follow.record)) follow.paused = pause;
+		}
+		if (pause) {
+			const size_t before = events.size();
+			for (auto it = events.begin(); it != events.end();) {
+				if (it->source != SIZE_MAX && targets.count(it->source)) {
+					Event held = *it;
+					held.paused_remaining = Math::max(0.0, held.due - clock);
+					paused_events.push_back(held);
+					it = events.erase(it);
+				} else {
+					++it;
+				}
+			}
+			if (events.size() != before) std::make_heap(events.begin(), events.end(), event_later);
+		} else {
+			for (auto it = paused_events.begin(); it != paused_events.end();) {
+				if (targets.count(it->source)) {
+					Event resumed = *it;
+					resumed.due = clock + resumed.paused_remaining;
+					resumed.paused_remaining = -1.0;
+					events.push_back(resumed);
+					std::push_heap(events.begin(), events.end(), event_later);
+					it = paused_events.erase(it);
+				} else {
+					++it;
+				}
+			}
 		}
 	}
 	// After Follow Player Y, before Follow (gd_docs advanced_follow.md).
@@ -2952,9 +3041,12 @@ private:
 		const double ticks = delta * ADV_TICK_HZ;
 		sample_adv_refs(ticks);
 		if (adv_follows.empty()) return;
-		std::set<ObjectID> exclusive, touched;
+		std::set<ObjectID> exclusive, touched, mode12;
+		struct PendingRotate { const AdvFollowParams *p; Node2D *node; ObjectID id; Vector2 offset, velocity; };
+		std::vector<PendingRotate> mode3_rotations;
 		for (AdvFollow &follow : adv_follows) {
 			if (follow.record >= records.size()) continue;
+			if (follow.paused) continue;
 			const TriggerEffect &effect = records[follow.record].effect;
 			Vector2 now;
 			if (!adv_center(follow, effect, now)) continue;
@@ -2962,6 +3054,8 @@ private:
 			while (follow.history.size() > 1 && follow.history[1].first <= clock - effect.adv_delay) follow.history.pop_front();
 			if (clock - follow.start < effect.adv_delay) continue;  // delay also delays the start
 			const Vector2 center = follow.history.front().second;
+			// "Due to a bug, only one object per Target GID can be affected by StartSpeed."
+			bool start_used = false;
 			for (ObjectID id : resolve_effect_members(effect)) {
 				if (exclusive.count(id)) continue;
 				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
@@ -2969,17 +3063,33 @@ private:
 				const Vector2 offset_units = (center - node->get_global_position()) / static_cast<real_t>(PX_PER_UNIT);
 				const bool first = adv_velocities.find(id) == adv_velocities.end();
 				Vector2 &velocity = adv_velocities[id];
-				const Vector2 start = adv_heading_velocity(effect, node,
-						effect.adv.start_speed + follow.speed_r * effect.adv.start_speed_rand,
-						effect.adv.start_dir + follow.dir_r * effect.adv.start_dir_rand);
-				Vector2 step = adv_follow_tick(effect.adv, offset_units, velocity, first, start) * static_cast<real_t>(ticks);
+				const std::array<double, 2> &coeff = adv_coeff(id);
+				const Vector2 start = start_used ? Vector2() : adv_heading_velocity(effect, node,
+						effect.adv.start_speed + coeff[0] * effect.adv.start_speed_rand,
+						effect.adv.start_dir + coeff[1] * effect.adv.start_dir_rand);
+				AdvFollowParams params = effect.adv;
+				if (start_used) params.start_speed = 0.0;
+				start_used = true;
+				Vector2 step = adv_follow_tick(params, offset_units, velocity, first, start) * static_cast<real_t>(ticks);
+				if (effect.adv.mode != 2) mode12.insert(id);
 				// Mode 1 eases toward the center: never overshoot it.
 				if (effect.adv.mode == 0 && step.length_squared() > offset_units.length_squared()) step = offset_units;
 				touched.insert(id);
 				if (effect.adv_exclusive && step != Vector2()) exclusive.insert(id);
 				if (step != Vector2()) node->set_global_position(node->get_global_position() + step * static_cast<real_t>(PX_PER_UNIT));
-				if (effect.adv.rotate_dir) adv_rotate(effect.adv, node, offset_units, velocity, ticks);
+				if (effect.adv.rotate_dir) {
+					if (effect.adv.mode == 2) {
+						mode3_rotations.push_back({ &effect.adv, node, id, offset_units, velocity });
+					} else {
+						adv_rotate(effect.adv, node, offset_units, velocity, ticks);
+					}
+				}
 			}
+		}
+		// "Having any Mode 1 or 2 Advanced Follows active on the same target
+		// will override Mode 3 rotation."
+		for (const PendingRotate &r : mode3_rotations) {
+			if (!mode12.count(r.id)) adv_rotate(*r.p, r.node, r.offset, r.velocity, ticks);
 		}
 		// Targets no longer followed lose their velocity.
 		for (auto it = adv_velocities.begin(); it != adv_velocities.end();) {
@@ -2989,7 +3099,7 @@ private:
 
 	// Rotate Dir (gd_docs advanced_follow.md "Rotation"): Modes 1/2 face the
 	// movement direction, Mode 3 aims at the center limited by steering.
-	// 0.5 rad/tick cap; deadzone in small steps (2 units, hypothesis).
+	// 0.5 rad/tick cap; deadzone in small-step units (30 per block = GD units).
 	void adv_rotate(const AdvFollowParams &p, Node2D *node, Vector2 offset_units, Vector2 velocity, double ticks) {
 		double target;
 		double max_step = 0.5 * ticks;
@@ -3000,7 +3110,7 @@ private:
 			max_step = Math::min(max_step, Math::max(0.0, p.steer) * 0.01 * ticks);
 			easing = 0.0;
 		} else {
-			if (offset_units.length() < p.rot_deadzone * 2.0 || velocity == Vector2()) return;
+			if (offset_units.length() < p.rot_deadzone || velocity == Vector2()) return;
 			target = std::atan2(velocity.y, velocity.x);
 		}
 		target += Math::deg_to_rad(p.rot_offset);
@@ -3259,12 +3369,12 @@ private:
 		}
 		item_counts = kept_items;
 		timers = kept_timers;
-		timer_events.clear();
+		timer_events.clear(); paused_events.clear();
 		sequence_states.clear();
 		armed_collisions.clear();
 		armed_deaths.clear();
 		armed_touches.clear();
-		armed_events.clear();
+		armed_events.clear(); paused_events.clear();
 		touch_states.clear();
 		follow_player_y.clear();
 		adv_follows.clear();
@@ -4039,18 +4149,6 @@ private:
 		camera->set("shake_offset", offset);
 	}
 
-	void cancel_group_events(const StringName &group) {
-		if (events.empty()) return;
-		std::vector<Event> kept;
-		kept.reserve(events.size());
-		for (Event &event : events) {
-			if (event.group != group) kept.push_back(std::move(event));
-		}
-		if (kept.size() == events.size()) return;
-		events.swap(kept);
-		std::make_heap(events.begin(), events.end(), event_later);
-	}
-
 	void check_touch_overlaps() {
 		if (frame_players.empty() || touch_order.empty()) return;
 		ensure_index();
@@ -4234,12 +4332,13 @@ public:
 		restore_ui_objects();
 		ui_triggers_applied = false;
 		release_group_pulses();
-		records.clear(); x_order.clear(); group_index.clear(); events.clear(); clock = 0.0;
+		records.clear(); x_order.clear(); group_index.clear(); events.clear(); paused_events.clear(); clock = 0.0;
 		event_sequence = 0; index_dirty = false; color_capture_count = 0; color_capture_reports = 0;
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
+		adv_rand_coeff.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
 		item_counts.clear(); armed_counts.clear();
-		timers.clear(); timer_events.clear(); sequence_states.clear(); points = 0;
+		timers.clear(); timer_events.clear(); paused_events.clear(); sequence_states.clear(); points = 0;
 		persistent_items.clear(); persistent_timers.clear(); persist_all_items = false; persist_all_timers = false;
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
@@ -4744,9 +4843,10 @@ public:
 		}
 	}
 	void activate_touch(int64_t record_index, Object *player) { activate(static_cast<size_t>(record_index), player, true); }
-	void schedule_group(const StringName &group, double delay, Object *player) {
+	void schedule_group(const StringName &group, double delay, Object *player, size_t source = SIZE_MAX) {
 		if (!player || group.is_empty()) return;
 		Event event;
+		event.source = source;
 		event.due = clock + std::max(0.0, delay);
 		event.sequence = event_sequence++;
 		event.group = group;
@@ -4892,6 +4992,10 @@ public:
 				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
 				continue;
 			}
+			if (fades[i].paused) {
+				++i;
+				continue;
+			}
 			const TriggerEffect effect = records[fades[i].record_index].effect;
 			double weight = 0.0;
 			bool finished = false;
@@ -4946,7 +5050,7 @@ public:
 		restore_ui_objects();
 		ui_triggers_applied = false;
 		for (Record &record : records) record.activated = false;
-		events.clear(); clock = 0.0; event_sequence = 0;
+		events.clear(); paused_events.clear(); clock = 0.0; event_sequence = 0;
 		// Restarts rebuild object transforms from level data; running fades
 		// must not keep mutating mid-animation state. The respawn jump is a
 		// teleport, not a crossing: forget the tracked positions so the
@@ -4985,7 +5089,7 @@ public:
 		++structure_epoch;
 		const PackedByteArray active = state.get("active", PackedByteArray());
 		for (size_t i = 0; i < records.size(); ++i) records[i].activated = i < static_cast<size_t>(active.size()) && active[i] != 0;
-		clock = state.get("clock", 0.0); events.clear(); release_group_pulses(); fades.clear();
+		clock = state.get("clock", 0.0); events.clear(); paused_events.clear(); release_group_pulses(); fades.clear();
 		item_counts.clear(); armed_counts.clear();
 		const Dictionary items = state.get("items", Dictionary());
 		const Array item_keys = items.keys();
