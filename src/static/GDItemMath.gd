@@ -194,7 +194,26 @@ static func event_matches(ids: PackedInt32Array, material: int, player: int, eve
 ## holds the raw GD keys (gmdkit prop_table adv_follow). Returns
 ## [step, velocity] in GD units per 240 Hz tick; out of range leaves the
 ## velocity unchanged and steps zero.
-static func adv_follow_tick(p: Dictionary, offset: Vector2, velocity: Vector2, first: bool) -> Array:
+## Twin of native adv_start_heading: speed reference (560) -> its last movement,
+## else direction reference (565) -> toward it, else up; plus `dir_deg` clockwise.
+static func adv_start_heading(has_speed_ref: bool, ref_motion: Vector2, has_dir_ref: bool, to_ref: Vector2, dir_deg: float) -> float:
+	var base: float = -PI / 2.0
+	if has_speed_ref:
+		if ref_motion != Vector2.ZERO:
+			base = ref_motion.angle()
+	elif has_dir_ref and to_ref != Vector2.ZERO:
+		base = to_ref.angle()
+	return base + deg_to_rad(dir_deg)
+
+
+## Twin of native adv_rotate_step (Rotate Dir easing, capped per tick).
+static func adv_rotate_step(current: float, target: float, easing: float, max_step: float) -> float:
+	var diff: float = fposmod(target - current + PI, TAU) - PI
+	var step: float = diff / easing if easing > 1.0 else diff
+	return current + clampf(step, -max_step, max_step)
+
+
+static func adv_follow_tick(p: Dictionary, offset: Vector2, velocity: Vector2, first: bool, start_override: Variant = null) -> Array:
 	var x_only: bool = p.get("306", "0") == "1"
 	var y_only: bool = p.get("307", "0") == "1"
 	if x_only:
@@ -209,7 +228,7 @@ static func adv_follow_tick(p: Dictionary, offset: Vector2, velocity: Vector2, f
 		velocity = offset / maxf(1.0, float(p.get("361", "0")))
 	else:
 		var start_speed: float = float(p.get("300", "0"))
-		var start: Vector2 = Vector2.UP.rotated(deg_to_rad(float(p.get("563", "0")))) * start_speed
+		var start: Vector2 = start_override if start_override is Vector2 else Vector2.UP.rotated(deg_to_rad(float(p.get("563", "0")))) * start_speed
 		match int(p.get("572", "0")):
 			0:
 				if first:

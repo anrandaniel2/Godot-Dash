@@ -474,6 +474,12 @@ struct AdvFollowParams {
 	double steer = 0.0, steer_low = 0.0, steer_high = 0.0, range_low = 0.0, range_high = 0.0;
 	bool steer_low_check = false, steer_high_check = false, target_dir = false;
 	double break_force = 0.0, break_angle = 180.0, break_steer = 0.0, break_steer_limit = 0.0;
+	// 301/564 start speed/dir random (0..+), 339 rotate dir, 340 rotation
+	// offset (deg), 363 rotate easing, 364 rotate deadzone (small steps),
+	// 201 camera bottom-left corner as the center.
+	double start_speed_rand = 0.0, start_dir_rand = 0.0;
+	bool rotate_dir = false, corner = false;
+	double rot_offset = 0.0, rot_easing = 0.0, rot_deadzone = 0.0;
 };
 
 struct TriggerEffect {
@@ -536,6 +542,9 @@ struct TriggerEffect {
 	bool adv_p1 = false, adv_p2 = false, adv_exclusive = false;
 	int32_t adv_priority = 0;
 	double adv_delay = 0.0;
+	int32_t adv_control_id = 0;   // 534
+	bool adv_use_control_id = false;  // 3660 key 535: 51 names Control IDs
+	String adv_speed_ref;         // 560: heading = the reference's last movement
 	// 3660: 301/564 speed/dir random (0..+), 566-569 mod X/Y (+ random),
 	// 565 direction reference group.
 	double adv_edit_speed_rand = 0.0, adv_edit_dir_rand = 0.0;
@@ -772,6 +781,28 @@ static void adv_follow_steer(const AdvFollowParams &p, const Vector2 &offset, Ve
 	}
 }
 
+// StartSpeed / Speed heading (gd_docs advanced_follow.md, edit_advanced_follow.md):
+// a speed reference (560) uses the reference's last movement direction, else a
+// direction reference (565) points from the target to the reference, else up.
+// `dir_deg` (clockwise) offsets the result. Radians, Godot y-down.
+static double adv_start_heading(bool has_speed_ref, Vector2 ref_motion, bool has_dir_ref, Vector2 to_ref, double dir_deg) {
+	double base = -3.14159265358979323846 / 2.0;
+	if (has_speed_ref) {
+		if (ref_motion != Vector2()) base = std::atan2(ref_motion.y, ref_motion.x);
+	} else if (has_dir_ref && to_ref != Vector2()) {
+		base = std::atan2(to_ref.y, to_ref.x);
+	}
+	return base + Math::deg_to_rad(dir_deg);
+}
+
+// Rotate Dir: one tick toward `target`; easing divides the remaining angle
+// (gd_docs: next = (current - target) / easing), capped at `max_step` rad.
+static double adv_rotate_step(double current, double target, double easing, double max_step) {
+	const double diff = std::remainder(target - current, 2.0 * 3.14159265358979323846);
+	const double step = easing > 1.0 ? diff / easing : diff;
+	return current + Math::clamp(step, -max_step, max_step);
+}
+
 // Edit Advanced Follow (3660): velocity = (vx * modX, vy * modY) + speed in
 // direction `dir_rad` (gd_docs edit_advanced_follow.md). X/Y only edit one axis.
 static Vector2 adv_follow_edit(Vector2 velocity, double mod_x, double mod_y, double speed, double dir_rad, bool x_only, bool y_only) {
@@ -785,7 +816,7 @@ static Vector2 adv_follow_edit(Vector2 velocity, double mod_x, double mod_y, dou
 // One tick for one target. `offset` = center - target, `velocity` in/out;
 // `first` = first action on this target. Returns the displacement to apply,
 // both in GD units (any consistent unit works, the maths is linear).
-static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2 &velocity, bool first) {
+static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2 &velocity, bool first, Vector2 start) {
 	if (p.x_only) offset.y = 0.0f;
 	if (p.y_only) offset.x = 0.0f;
 	const double dist = offset.length();
@@ -793,7 +824,6 @@ static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2
 	if (p.mode == 0) {
 		velocity = offset / static_cast<real_t>(Math::max(1.0, p.easing));
 	} else {
-		const Vector2 start = Vector2(0.0f, -1.0f).rotated(static_cast<real_t>(Math::deg_to_rad(p.start_dir))) * static_cast<real_t>(p.start_speed);
 		if (p.init == 0 && first) velocity = start;
 		else if (p.init == 1 && p.start_speed != 0.0) velocity = start;
 		else if (p.init == 2) velocity += start;
@@ -814,6 +844,12 @@ static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2
 	}
 	if (p.max_speed > 0.0 && velocity.length() > p.max_speed) velocity = velocity.normalized() * static_cast<real_t>(p.max_speed);
 	return velocity;
+}
+
+static Vector2 adv_follow_tick(const AdvFollowParams &p, Vector2 offset, Vector2 &velocity, bool first) {
+	const double heading = adv_start_heading(false, Vector2(), false, Vector2(), p.start_dir);
+	const Vector2 start(static_cast<real_t>(std::cos(heading) * p.start_speed), static_cast<real_t>(std::sin(heading) * p.start_speed));
+	return adv_follow_tick(p, offset, velocity, first, start);
 }
 
 // Particle object data (key 145): 'a'-separated fields in the gmdkit
@@ -1411,6 +1447,18 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			a.break_angle = prop_float(properties, "328", 180.0);
 			a.break_steer = prop_float(properties, "330", 0.0);
 			a.break_steer_limit = prop_float(properties, "332", 0.0);
+			a.start_speed_rand = prop_float(properties, "301", 0.0);
+			a.start_dir_rand = prop_float(properties, "564", 0.0);
+			a.rotate_dir = String(properties.get("339", String("0"))) == "1";
+			a.rot_offset = prop_float(properties, "340", 0.0);
+			a.rot_easing = prop_float(properties, "363", 0.0);
+			a.rot_deadzone = prop_float(properties, "364", 0.0);
+			a.corner = String(properties.get("201", String("0"))) == "1";
+			effect.adv_control_id = static_cast<int32_t>(String(properties.get("534", String("0"))).to_int());
+			const int af_speed_ref = static_cast<int>(String(properties.get("560", String("0"))).to_int());
+			if (af_speed_ref > 0) effect.adv_speed_ref = String("g_") + String::num_int64(af_speed_ref);
+			const int af_dir_ref = static_cast<int>(String(properties.get("565", String("0"))).to_int());
+			if (af_dir_ref > 0) effect.adv_edit_dir_ref = String("g_") + String::num_int64(af_dir_ref);
 			const int follow_id = static_cast<int>(String(properties.get("71", String("0"))).to_int());
 			if (follow_id > 0) effect.adv_follow_group = String("g_") + String::num_int64(follow_id);
 			effect.adv_p1 = String(properties.get("138", String("0"))) == "1";
@@ -1436,6 +1484,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.adv_edit_mod_y_rand = prop_float(properties, "569", 0.0);
 			const int dir_ref = static_cast<int>(String(properties.get("565", String("0"))).to_int());
 			if (dir_ref > 0) effect.adv_edit_dir_ref = String("g_") + String::num_int64(dir_ref);
+			const int speed_ref = static_cast<int>(String(properties.get("560", String("0"))).to_int());
+			if (speed_ref > 0) effect.adv_speed_ref = String("g_") + String::num_int64(speed_ref);
+			effect.adv_use_control_id = String(properties.get("535", String("0"))) == "1";
+			a.corner = String(properties.get("201", String("0"))) == "1";
 			const int follow_id = static_cast<int>(String(properties.get("71", String("0"))).to_int());
 			if (follow_id > 0) effect.adv_follow_group = String("g_") + String::num_int64(follow_id);
 			effect.adv_p1 = String(properties.get("138", String("0"))) == "1";
@@ -2474,6 +2526,8 @@ class NativeTriggerRuntime : public RefCounted {
 				follow.order = ++adv_follow_order;
 				follow.start = clock;
 				follow.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
+				follow.speed_r = static_cast<double>(std::rand() % 1000000) / 1000000.0;
+				follow.dir_r = static_cast<double>(std::rand() % 1000000) / 1000000.0;
 				adv_follows.push_back(follow);
 				std::stable_sort(adv_follows.begin(), adv_follows.end(), [&](const AdvFollow &a, const AdvFollow &b) {
 					const int32_t pa = records[a.record].effect.adv_priority, pb = records[b.record].effect.adv_priority;
@@ -2483,30 +2537,42 @@ class NativeTriggerRuntime : public RefCounted {
 			}
 			case TriggerEffectKind::ADV_FOLLOW_EDIT: {
 				// Instant; only targets that were followed last tick have a velocity.
-				Node2D *dir_ref = resolve_first_member(effect.adv_edit_dir_ref);
 				auto rand01 = []() { return static_cast<double>(std::rand() % 1000000) / 1000000.0; };
-				for (ObjectID id : resolve_effect_members(effect)) {
+				std::vector<ObjectID> targets;
+				if (effect.adv_use_control_id) {
+					// 535: key 51 names Control IDs (534) of Advanced Follow instances;
+					// edit every target of those instances.
+					std::set<int32_t> ids;
+					for (const String &group : effect.target_groups) ids.insert(static_cast<int32_t>(group.trim_prefix("g_").to_int()));
+					std::set<ObjectID> seen;
+					for (const AdvFollow &follow : adv_follows) {
+						const TriggerEffect &af = records[follow.record].effect;
+						if (af.adv_control_id <= 0 || !ids.count(af.adv_control_id)) continue;
+						for (ObjectID id : resolve_effect_members(af)) {
+							if (seen.insert(id).second) targets.push_back(id);
+						}
+					}
+				} else {
+					targets = resolve_effect_members(effect);
+				}
+				for (ObjectID id : targets) {
 					auto found = adv_velocities.find(id);
 					if (found == adv_velocities.end()) continue;
 					Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
 					if (!node) continue;
 					// Random ranges pick in 0..+ (gd_docs), per target per activation.
-					const double speed = effect.adv.start_speed + rand01() * effect.adv_edit_speed_rand;
-					const double dir_deg = effect.adv.start_dir + rand01() * effect.adv_edit_dir_rand;
-					double base = -3.14159265358979323846 / 2.0;  // default heading: up
-					if (dir_ref) {
-						const Vector2 to = dir_ref->get_global_position() - node->get_global_position();
-						if (to != Vector2()) base = std::atan2(to.y, to.x);
-					}
+					const Vector2 add = adv_heading_velocity(effect, node,
+							effect.adv.start_speed + rand01() * effect.adv_edit_speed_rand,
+							effect.adv.start_dir + rand01() * effect.adv_edit_dir_rand);
 					found->second = adv_follow_edit(found->second,
 							effect.adv_edit_mod_x + rand01() * effect.adv_edit_mod_x_rand,
 							effect.adv_edit_mod_y + rand01() * effect.adv_edit_mod_y_rand,
-							speed, base + Math::deg_to_rad(dir_deg), effect.adv.x_only, effect.adv.y_only);
+							add.length(), std::atan2(add.y, add.x), effect.adv.x_only, effect.adv.y_only);
 				}
 				break;
 			}
 			case TriggerEffectKind::ADV_FOLLOW_RETARGET: {
-				if (effect.adv_follow_group.is_empty() && !effect.adv_p1 && !effect.adv_p2) break;  // Follow GID 0: no effect
+				if (effect.adv_follow_group.is_empty() && !effect.adv_p1 && !effect.adv_p2 && !effect.adv.corner) break;  // Follow GID 0: no effect
 				std::set<size_t> triggers;
 				for (const String &group : effect.target_groups) {
 					auto found = group_index.find(group);
@@ -2518,6 +2584,7 @@ class NativeTriggerRuntime : public RefCounted {
 					follow.center_p1 = effect.adv_p1;
 					follow.center_p2 = effect.adv_p2;
 					follow.center_group = effect.adv_follow_group;
+					follow.center_corner = effect.adv.corner;
 					follow.history.clear();
 				}
 				break;
@@ -2717,12 +2784,19 @@ class NativeTriggerRuntime : public RefCounted {
 		ObjectID player;
 		std::deque<std::pair<double, Vector2>> history;
 		// Re-Target (3661) override of the follow center.
-		bool retargeted = false, center_p1 = false, center_p2 = false;
+		bool retargeted = false, center_p1 = false, center_p2 = false, center_corner = false;
 		String center_group;
+		// StartSpeed/StartDir random (0..+), picked once per activation.
+		double speed_r = 0.0, dir_r = 0.0;
 	};
 	std::vector<AdvFollow> adv_follows;  // priority desc, then spawn order
 	uint64_t adv_follow_order = 0;
 	std::map<ObjectID, Vector2> adv_velocities;  // GD units per tick
+	// Speed references (560): last position and last movement (GD units per
+	// tick) of every member of a referenced group, sampled each step.
+	std::set<String> adv_speed_ref_groups;
+	struct RefMotion { Vector2 last; Vector2 motion; };
+	std::map<ObjectID, RefMotion> adv_ref_motion;
 	// Particle group -> particle object data (key 145), from level data.
 	std::map<String, std::vector<std::vector<double>>> particle_groups;
 public:
@@ -2809,6 +2883,7 @@ private:
 		Node2D *node = nullptr;
 		const bool p1 = follow.retargeted ? follow.center_p1 : effect.adv_p1;
 		const bool p2 = follow.retargeted ? follow.center_p2 : effect.adv_p2;
+		if (follow.retargeted ? follow.center_corner : effect.adv.corner) return camera_corner(center);
 		if (p1 || p2) {
 			const size_t slot = p1 ? 0 : 1;
 			if (slot < frame_players.size()) node = Object::cast_to<Node2D>(ObjectDB::get_instance(frame_players[slot]));
@@ -2818,6 +2893,47 @@ private:
 		if (!node) return false;
 		center = node->get_global_position();
 		return true;
+	}
+	// "C": the bottom-left camera corner in world space.
+	bool camera_corner(Vector2 &corner) const {
+		Node *camera = Object::cast_to<Node>(ObjectDB::get_instance(camera_id));
+		Viewport *vp = camera ? camera->get_viewport() : nullptr;
+		if (!vp) return false;
+		corner = vp->get_canvas_transform().affine_inverse().xform(Vector2(0.0f, vp->get_visible_rect().size.y));
+		return true;
+	}
+	Vector2 adv_ref_last_motion(const String &group) const {
+		Node2D *ref = resolve_first_member(group);
+		if (!ref) return Vector2();
+		auto found = adv_ref_motion.find(ObjectID(ref->get_instance_id()));
+		return found == adv_ref_motion.end() ? Vector2() : found->second.motion;
+	}
+	Vector2 adv_heading_velocity(const TriggerEffect &effect, Node2D *target, double speed, double dir_deg) const {
+		Vector2 to_ref;
+		Node2D *dir_ref = effect.adv_edit_dir_ref.is_empty() ? nullptr : resolve_first_member(effect.adv_edit_dir_ref);
+		if (dir_ref && target) to_ref = dir_ref->get_global_position() - target->get_global_position();
+		const double heading = adv_start_heading(!effect.adv_speed_ref.is_empty(), adv_ref_last_motion(effect.adv_speed_ref),
+				dir_ref != nullptr, to_ref, dir_deg);
+		return Vector2(static_cast<real_t>(std::cos(heading) * speed), static_cast<real_t>(std::sin(heading) * speed));
+	}
+	void sample_adv_refs(double ticks) {
+		for (const String &group : adv_speed_ref_groups) {
+			auto members = member_index.find(group);
+			if (members == member_index.end()) continue;
+			for (ObjectID id : members->value) {
+				Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+				if (!node) continue;
+				const Vector2 pos = node->get_global_position() / static_cast<real_t>(PX_PER_UNIT);
+				auto found = adv_ref_motion.find(id);
+				if (found == adv_ref_motion.end()) {
+					adv_ref_motion[id] = { pos, Vector2() };
+					continue;
+				}
+				const Vector2 moved = pos - found->second.last;
+				if (moved != Vector2() && ticks > 0.0) found->second.motion = moved / static_cast<real_t>(ticks);
+				found->second.last = pos;
+			}
+		}
 	}
 	// Stop also ends Advanced Follow / Follow Player Y instances spawned
 	// from the stopped trigger group.
@@ -2833,8 +2949,9 @@ private:
 	}
 	// After Follow Player Y, before Follow (gd_docs advanced_follow.md).
 	void step_adv_follow(double delta) {
-		if (adv_follows.empty()) return;
 		const double ticks = delta * ADV_TICK_HZ;
+		sample_adv_refs(ticks);
+		if (adv_follows.empty()) return;
 		std::set<ObjectID> exclusive, touched;
 		for (AdvFollow &follow : adv_follows) {
 			if (follow.record >= records.size()) continue;
@@ -2852,18 +2969,42 @@ private:
 				const Vector2 offset_units = (center - node->get_global_position()) / static_cast<real_t>(PX_PER_UNIT);
 				const bool first = adv_velocities.find(id) == adv_velocities.end();
 				Vector2 &velocity = adv_velocities[id];
-				Vector2 step = adv_follow_tick(effect.adv, offset_units, velocity, first) * static_cast<real_t>(ticks);
+				const Vector2 start = adv_heading_velocity(effect, node,
+						effect.adv.start_speed + follow.speed_r * effect.adv.start_speed_rand,
+						effect.adv.start_dir + follow.dir_r * effect.adv.start_dir_rand);
+				Vector2 step = adv_follow_tick(effect.adv, offset_units, velocity, first, start) * static_cast<real_t>(ticks);
 				// Mode 1 eases toward the center: never overshoot it.
 				if (effect.adv.mode == 0 && step.length_squared() > offset_units.length_squared()) step = offset_units;
 				touched.insert(id);
 				if (effect.adv_exclusive && step != Vector2()) exclusive.insert(id);
 				if (step != Vector2()) node->set_global_position(node->get_global_position() + step * static_cast<real_t>(PX_PER_UNIT));
+				if (effect.adv.rotate_dir) adv_rotate(effect.adv, node, offset_units, velocity, ticks);
 			}
 		}
 		// Targets no longer followed lose their velocity.
 		for (auto it = adv_velocities.begin(); it != adv_velocities.end();) {
 			it = touched.count(it->first) ? std::next(it) : adv_velocities.erase(it);
 		}
+	}
+
+	// Rotate Dir (gd_docs advanced_follow.md "Rotation"): Modes 1/2 face the
+	// movement direction, Mode 3 aims at the center limited by steering.
+	// 0.5 rad/tick cap; deadzone in small steps (2 units, hypothesis).
+	void adv_rotate(const AdvFollowParams &p, Node2D *node, Vector2 offset_units, Vector2 velocity, double ticks) {
+		double target;
+		double max_step = 0.5 * ticks;
+		double easing = p.rot_easing;
+		if (p.mode == 2) {
+			if (offset_units == Vector2()) return;
+			target = std::atan2(offset_units.y, offset_units.x);
+			max_step = Math::min(max_step, Math::max(0.0, p.steer) * 0.01 * ticks);
+			easing = 0.0;
+		} else {
+			if (offset_units.length() < p.rot_deadzone * 2.0 || velocity == Vector2()) return;
+			target = std::atan2(velocity.y, velocity.x);
+		}
+		target += Math::deg_to_rad(p.rot_offset);
+		node->set_global_rotation(static_cast<real_t>(adv_rotate_step(node->get_global_rotation(), target, easing / Math::max(1.0, ticks), max_step)));
 	}
 
 	void step_follow_player_y(double delta) {
@@ -3128,6 +3269,7 @@ private:
 		follow_player_y.clear();
 		adv_follows.clear();
 		adv_velocities.clear();
+		adv_ref_motion.clear();
 		collision_states.clear();
 		collision_blocks_epoch = UINT64_MAX;
 		points = 0;
@@ -4470,6 +4612,10 @@ public:
 		++structure_epoch;
 		ensure_index();
 		index_collision_pairs();
+		adv_speed_ref_groups.clear();
+		for (const Record &record : records) {
+			if (!record.effect.adv_speed_ref.is_empty()) adv_speed_ref_groups.insert(record.effect.adv_speed_ref);
+		}
 		records.shrink_to_fit();
 		x_order.shrink_to_fit();
 		for (auto &entry : group_index) {

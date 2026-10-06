@@ -154,6 +154,18 @@ int main() {
 		Vector2 w;
 		expect_true("adv follow init start speed points clockwise from up", adv_follow_tick(m2, Vector2(0, 0), w, true).is_equal_approx(Vector2(2, 0)));
 		expect_true("adv follow init only on first action", adv_follow_tick(m2, Vector2(0, 0), w, false).is_equal_approx(Vector2(2, 0)));
+		const double pi = 3.14159265358979323846;
+		expect_true("adv heading defaults to up", std::fabs(adv_start_heading(false, Vector2(), false, Vector2(), 0.0) + pi / 2.0) < 1e-9);
+		expect_true("adv heading dir is clockwise", std::fabs(adv_start_heading(false, Vector2(), false, Vector2(), 90.0)) < 1e-9);
+		expect_true("adv speed ref uses ref motion", std::fabs(adv_start_heading(true, Vector2(-1, 0), true, Vector2(0, 1), 0.0) - pi) < 1e-9);
+		expect_true("adv speed ref without motion falls back to up", std::fabs(adv_start_heading(true, Vector2(), true, Vector2(1, 0), 0.0) + pi / 2.0) < 1e-9);
+		expect_true("adv dir ref points to reference", std::fabs(adv_start_heading(false, Vector2(), true, Vector2(0, 2), 10.0) - (pi / 2.0 + 10.0 * pi / 180.0)) < 1e-9);
+		expect_true("adv rotate capped", std::fabs(adv_rotate_step(0.0, 3.0, 0.0, 0.5) - 0.5) < 1e-9);
+		expect_true("adv rotate easing divides", std::fabs(adv_rotate_step(0.0, 0.4, 4.0, 0.5) - 0.1) < 1e-9);
+		expect_true("adv rotate takes short way", adv_rotate_step(0.1, 2.0 * pi - 0.1, 0.0, 1.0) < 0.0);
+		Vector2 sv;
+		AdvFollowParams sp; sp.mode = 1;
+		expect_true("adv start override used", adv_follow_tick(sp, Vector2(), sv, true, Vector2(3, 4)).is_equal_approx(Vector2(3, 4)));
 		AdvFollowParams fr; fr.mode = 1; fr.friction = 50.0; fr.accel = 100.0;
 		Vector2 f(4, 0);
 		expect_true("adv follow friction then accel", adv_follow_tick(fr, Vector2(0, 10), f, false).is_equal_approx(Vector2(2, 1)));
