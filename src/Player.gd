@@ -48,9 +48,6 @@ const FLY_MODE_SPEED: float = 1250.0
 const FLY_MODE_FAST_MULTIPLIER: float = 3.0
 ## GD caps the cube fall at 15 units per frame (15 * 230.4).
 const TERMINAL_VELOCITY := Vector2(0.0, 3456.0)
-const FLY_TERMINAL_VELOCITY := Vector2(0.0, 1800.0)
-const FLY_GRAVITY_MULTIPLIER: float = 0.5
-const UFO_GRAVITY_MULTIPLIER: float = 0.7
 const SPIDER_GRAVITY_MULTIPLIER: float = 0.65
 const PLAYER_SCALE_WAVE := Vector2(0.6, 0.6)
 const PLAYER_SCALE_MINI := Vector2(0.6, 0.6)
@@ -986,6 +983,11 @@ func _compute_velocity(
 
 	if (internal_gamemode == Gamemode.SWING or internal_gamemode == Gamemode.BALL) and jump_state == 1 and orb_queue.is_empty():
 		gravity_flip *= -1
+		if internal_gamemode == Gamemode.SWING:
+			local_velocity.y *= GDPhysics.SWING_TAP_KEEP
+	var mini: bool = player_scale == PlayerScale.MINI
+	var upside_down: bool = gravity_flip < 0
+	var up: float = -local_velocity.y * gravity_flip
 
 	_ground_collider.rotation = gameplay_rotation
 	_solid_overlap_check.rotation = gameplay_rotation
@@ -996,11 +998,13 @@ func _compute_velocity(
 	#region Apply Gravity
 	if not dash_control:
 		if internal_gamemode == Gamemode.SHIP:
-			local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1 * FLY_GRAVITY_MULTIPLIER
-			local_velocity.y = clamp(local_velocity.y, -FLY_TERMINAL_VELOCITY.y, FLY_TERMINAL_VELOCITY.y)
+			up += GDPhysics.ship_acceleration(up, jump_state == 1, mini) * gravity_multiplier * delta
+			var ship_cap: float = GDPhysics.fly_cap(false, mini, upside_down)
+			local_velocity.y = -clampf(up, -ship_cap, ship_cap) * gravity_flip
 		elif internal_gamemode == Gamemode.SWING:
-			local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier * FLY_GRAVITY_MULTIPLIER
-			local_velocity.y = clamp(local_velocity.y, -FLY_TERMINAL_VELOCITY.y, FLY_TERMINAL_VELOCITY.y)
+			up += GDPhysics.swing_acceleration(mini) * gravity_multiplier * delta
+			var swing_cap: float = GDPhysics.fly_cap(true, mini, upside_down)
+			local_velocity.y = -clampf(up, -swing_cap, swing_cap) * gravity_flip
 		elif internal_gamemode == Gamemode.WAVE:
 			local_velocity.y = SPEED.x * gravity_flip * gravity_multiplier * jump_state * -1
 			if speed_multiplier > 0:
@@ -1014,7 +1018,12 @@ func _compute_velocity(
 			local_velocity.y = clamp(local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
 		elif not is_on_floor() or portal_leave:
 			if internal_gamemode == Gamemode.UFO:
-				local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER
+				up += GDPhysics.ufo_acceleration(up, mini) * gravity_multiplier * delta
+				var ufo_cap: float = GDPhysics.fly_cap(false, mini, upside_down)
+				local_velocity.y = -clampf(up, -ufo_cap, ufo_cap) * gravity_flip
+			elif internal_gamemode == Gamemode.BALL:
+				local_velocity.y += GRAVITY * GDPhysics.BALL_GRAVITY_FACTOR * delta * gravity_flip * gravity_multiplier
+				local_velocity.y = clampf(local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
 			else:
 				local_velocity.y += GRAVITY * delta * gravity_flip * gravity_multiplier
 				local_velocity.y = clampf(local_velocity.y, -TERMINAL_VELOCITY.y, TERMINAL_VELOCITY.y)
@@ -1075,9 +1084,9 @@ func _compute_velocity(
 				_spider_dash_frames = 4
 				defer_snap_sprite_rotation()
 			Gamemode.BALL:
-				local_velocity.y = speed.y * gravity_flip * 0.5
+				local_velocity.y = GDPhysics.ball_tap_px(player_scale == PlayerScale.MINI) * gravity_flip
 			Gamemode.UFO:
-				local_velocity.y = -speed.y * gravity_flip * UFO_GRAVITY_MULTIPLIER
+				local_velocity.y = -GDPhysics.ufo_tap(-local_velocity.y * gravity_flip, player_scale == PlayerScale.MINI) * gravity_flip
 			Gamemode.CUBE:
 				local_velocity.y = -speed.y * gravity_flip
 	#endregion

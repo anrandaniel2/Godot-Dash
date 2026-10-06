@@ -238,6 +238,15 @@ const MAP: Dictionary[int, Dictionary] = {
 	1817: { "scene": TRIGGERS + "ToggleTrigger.tscn", "name": "PickupTrigger", "components": ["ToggleComponent"] },
 	# Animate: plays a monster animation (key 76) on the target group.
 	1585: { "scene": TRIGGERS + "AnimateTrigger.tscn", "name": "AnimateTrigger", "components": ["AnimateComponent"] },
+	# Gameplay triggers with a native arm and a GameplayTriggerComponent twin.
+	3619: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ItemEditTrigger", "components": ["GameplayTriggerComponent"] },
+	3620: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ItemCompareTrigger", "components": ["GameplayTriggerComponent"] },
+	3641: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "PersistentItemTrigger", "components": ["GameplayTriggerComponent"] },
+	3614: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "TimeTrigger", "components": ["GameplayTriggerComponent"] },
+	3615: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "TimeEventTrigger", "components": ["GameplayTriggerComponent"] },
+	3617: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "TimeControlTrigger", "components": ["GameplayTriggerComponent"] },
+	3607: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "SequenceTrigger", "components": ["GameplayTriggerComponent"] },
+	1917: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ReverseTrigger", "components": ["GameplayTriggerComponent"] },
 	# Random / Advanced Random: spawn one weighted group.
 	1912: { "scene": TRIGGERS + "RandomTrigger.tscn", "name": "RandomTrigger", "components": ["RandomTriggerComponent"] },
 	2068: { "scene": TRIGGERS + "RandomTrigger.tscn", "name": "AdvancedRandomTrigger", "components": ["RandomTriggerComponent"] },
@@ -406,6 +415,7 @@ const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
 	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1611, 1612, 1613, 1616, 1811, 1817,
 	1912, 2068,
+	1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641,
 	1913, 1916, 1935, 2015, 2067, 3022,
 	2913, 2919, 2920, 2921,
 	3613,

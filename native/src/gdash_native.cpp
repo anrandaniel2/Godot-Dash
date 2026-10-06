@@ -133,6 +133,14 @@ enum class TriggerEffectKind : int32_t {
 	INSTANT_COUNT,      // 1811 Instant Count (compares the item once, when passed)
 	ANIMATE,            // 1585 Animate (plays monster animation key 76 on the target group)
 	RANDOM,             // 1912 Random / 2068 Advanced Random (spawns one weighted group)
+	ITEM_EDIT,          // 3619 Item Edit
+	ITEM_COMPARE,       // 3620 Item Compare
+	ITEM_PERSIST,       // 3641 Persistent Item Setup
+	TIMER_START,        // 3614 Time
+	TIMER_EVENT,        // 3615 Time Event
+	TIMER_CONTROL,      // 3617 Time Control
+	SEQUENCE,           // 3607 Sequence
+	REVERSE,            // 1917 Reverse
 };
 
 // Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
@@ -458,6 +466,30 @@ struct TriggerEffect {
 	Vector2 move_px;             // 901: keys 28/29 in pixels
 	bool move_lock_x = false;     // 901: key 58, lock to player X
 	std::vector<String> chance_groups;  // 1912 keys 51/71, 2068 key 152 groups
+	// 3619/3620 (gmdkit prop_table.csv trigger.item_edit / item_compare; enums
+	// in gmdkit src/gmdkit/utils/enums.py ItemType/ItemOperation/ItemRoundOp/
+	// ItemSignOp): ids 80/95 (A/B), 51 (edit target, compare true group), 71
+	// (compare false group), types 476/477/478, mods 479/483, ops 480/481/482,
+	// rounds 485/486, signs 578/579, tolerance 484.
+	int32_t item_a = 0, item_b = 0, item_target = 0;
+	int32_t item_type_a = 0, item_type_b = 0, item_type_target = 0;
+	double item_mod_1 = 1.0, item_mod_2 = 1.0, item_tolerance = 0.0;
+	int32_t item_op_1 = 0, item_op_2 = 0, item_op_3 = 0;
+	int32_t item_round_1 = 0, item_round_2 = 0, item_sign_1 = 0, item_sign_2 = 0;
+	String item_false_group;
+	// 3641: 491 set persistent, 492 target all, 493 reset, 494 timer.
+	bool persist_set = false, persist_all = false, persist_reset = false, persist_timer = false;
+	// 3614/3615/3617: 467 start, 470 mod, 471 start paused, 468 don't override,
+	// 473 stop / target time, 474 stop enabled, 475 multi activate, 472 0 start 1 stop.
+	double timer_start = 0.0, timer_mod = 1.0, timer_stop = 0.0;
+	bool timer_paused = false, timer_dont_override = false, timer_has_stop = false, timer_multi = false;
+	int32_t timer_control = 0;
+	// 3607: 435 group.count pairs, 436 mode (0 stop, 1 loop, 2 last), 437 min
+	// interval, 438 reset time, 439 reset type (0 full, 1 step).
+	std::vector<String> sequence_groups;
+	std::vector<int32_t> sequence_counts;
+	int32_t sequence_mode = 0, sequence_reset_type = 0;
+	double sequence_min_interval = 0.0, sequence_reset_time = 0.0;
 	std::vector<double> chance_weights; // 1912 key 10 chance and 100 - chance, 2068 key 152 weights
 	bool move_lock_y = false;     // 901: key 59, lock to player Y
 	Vector2 move_mod = Vector2(1, 1); // 901: keys 143/144, scale the locked movement
@@ -551,6 +583,102 @@ static int pick_weighted(const std::vector<double> &weights, double roll01) {
 		if (weights[i - 1] > 0.0) return static_cast<int>(i - 1);
 	}
 	return -1;
+}
+
+// ---- Item Edit / Item Compare arithmetic (enums: gmdkit utils/enums.py).
+// ItemOperation: 0 EQUAL, 1 ADD / GT, 2 SUBTRACT / GE, 3 MULTIPLY / LT,
+// 4 DIVIDE / LE, 5 NOT_EQUAL. Division by zero leaves the value unchanged.
+static double item_arith(double a, int op, double b) {
+	switch (op) {
+		case 0: return b;
+		case 1: return a + b;
+		case 2: return a - b;
+		case 3: return a * b;
+		case 4: return b != 0.0 ? a / b : a;
+		default: return a;
+	}
+}
+// ItemRoundOp: 0 none, 1 round, 2 floor, 3 ceiling.
+static double item_round(double v, int op) {
+	switch (op) {
+		case 1: return std::round(v);
+		case 2: return std::floor(v);
+		case 3: return std::ceil(v);
+		default: return v;
+	}
+}
+// ItemSignOp: 0 none, 1 absolute, 2 negative.
+static double item_sign(double v, int op) {
+	switch (op) {
+		case 1: return std::fabs(v);
+		case 2: return -std::fabs(v);
+		default: return v;
+	}
+}
+static bool item_compare_values(double l, int op, double r, double tolerance) {
+	switch (op) {
+		case 1: return l > r;
+		case 2: return l >= r;
+		case 3: return l < r;
+		case 4: return l <= r;
+		case 5: return std::fabs(l - r) > tolerance;
+		default: return std::fabs(l - r) <= tolerance;
+	}
+}
+// Item Edit right-hand side: (A op2 B) op3 mod, then round 1 and sign 1. With
+// neither item set the mod is the value; with only A it is A op3 mod.
+static double item_edit_rhs(bool has_a, double a, bool has_b, double b, int op2, int op3, double mod, int round_1, int sign_1) {
+	double v;
+	if (!has_a && !has_b) {
+		v = mod;
+	} else {
+		v = has_a ? a : 0.0;
+		if (has_b) v = item_arith(v, op2 == 0 ? 1 : op2, b);
+		v = item_arith(v, op3 == 0 ? 3 : op3, mod);
+	}
+	return item_sign(item_round(v, round_1), sign_1);
+}
+// Item Compare side: (item op mod), round, sign; a side with no item is its mod.
+static double item_compare_side(bool has_item, double value, int op, double mod, int round_op, int sign_op) {
+	const double v = has_item ? item_arith(value, op == 0 ? 3 : op, mod) : mod;
+	return item_sign(item_round(v, round_op), sign_op);
+}
+
+// Sequence (3607) step state. Returns the step index to spawn or -1.
+struct SequenceState {
+	int32_t step = 0;
+	int32_t count = 0;
+	double last = -1.0;
+	bool finished = false;
+};
+static int sequence_advance(SequenceState &state, const std::vector<int32_t> &counts, int mode, double min_interval,
+		double reset_time, int reset_type, double now) {
+	if (counts.empty()) return -1;
+	if (state.last >= 0.0 && min_interval > 0.0 && now - state.last < min_interval) return -1;
+	if (state.last >= 0.0 && reset_time > 0.0 && now - state.last >= reset_time) {
+		if (reset_type == 1) {
+			state.count = 0;
+		} else {
+			state.step = 0;
+			state.count = 0;
+			state.finished = false;
+		}
+	}
+	state.last = now;
+	if (state.finished) return -1;
+	const int spawned = state.step;
+	state.count += 1;
+	if (state.count >= Math::max(1, counts[state.step])) {
+		state.count = 0;
+		if (state.step + 1 < static_cast<int32_t>(counts.size())) {
+			state.step += 1;
+		} else if (mode == 1) {
+			state.step = 0;
+		} else if (mode == 0) {
+			state.finished = true;
+		}
+	}
+	return spawned;
 }
 
 static std::vector<String> parse_group_list(const Dictionary &properties, const char *key) {
@@ -905,6 +1033,61 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			break;
 		}
+		case 3619:
+		case 3620: {
+			effect.kind = gd_id == 3619 ? TriggerEffectKind::ITEM_EDIT : TriggerEffectKind::ITEM_COMPARE;
+			auto iv = [&](const char *k, int def) { return static_cast<int32_t>(String(properties.get(k, String::num_int64(def))).to_int()); };
+			effect.item_a = iv("80", 0); effect.item_b = iv("95", 0); effect.item_target = iv("51", 0);
+			effect.item_type_a = iv("476", 0); effect.item_type_b = iv("477", 0); effect.item_type_target = iv("478", 0);
+			effect.item_mod_1 = prop_float(properties, "479", 1.0); effect.item_mod_2 = prop_float(properties, "483", 1.0);
+			effect.item_tolerance = prop_float(properties, "484", 0.0);
+			effect.item_op_1 = iv("480", gd_id == 3619 ? 0 : 3); effect.item_op_2 = iv("481", gd_id == 3619 ? 1 : 3);
+			effect.item_op_3 = iv("482", gd_id == 3619 ? 3 : 0);
+			effect.item_round_1 = iv("485", 0); effect.item_round_2 = iv("486", 0);
+			effect.item_sign_1 = iv("578", 0); effect.item_sign_2 = iv("579", 0);
+			const int false_id = iv("71", 0);
+			if (false_id > 0) effect.item_false_group = String("g_") + String::num_int64(false_id);
+			break;
+		}
+		case 3641: {
+			effect.kind = TriggerEffectKind::ITEM_PERSIST;
+			effect.item_a = static_cast<int32_t>(String(properties.get("80", String("0"))).to_int());
+			effect.persist_set = String(properties.get("491", String("0"))) == "1";
+			effect.persist_all = String(properties.get("492", String("0"))) == "1";
+			effect.persist_reset = String(properties.get("493", String("0"))) == "1";
+			effect.persist_timer = String(properties.get("494", String("0"))) == "1";
+			break;
+		}
+		case 3614:
+		case 3615:
+		case 3617: {
+			effect.kind = gd_id == 3614 ? TriggerEffectKind::TIMER_START
+				: (gd_id == 3615 ? TriggerEffectKind::TIMER_EVENT : TriggerEffectKind::TIMER_CONTROL);
+			effect.item_a = static_cast<int32_t>(String(properties.get("80", String("0"))).to_int());
+			effect.timer_start = prop_float(properties, "467", 0.0);
+			effect.timer_mod = prop_float(properties, "470", 1.0);
+			effect.timer_stop = prop_float(properties, "473", 0.0);
+			effect.timer_paused = String(properties.get("471", String("0"))) == "1";
+			effect.timer_dont_override = String(properties.get("468", String("0"))) == "1";
+			effect.timer_has_stop = String(properties.get("474", String("0"))) == "1";
+			effect.timer_multi = String(properties.get("475", String("0"))) == "1";
+			effect.timer_control = static_cast<int32_t>(String(properties.get("472", String("0"))).to_int());
+			break;
+		}
+		case 3607: {
+			effect.kind = TriggerEffectKind::SEQUENCE;
+			const CharString raw = String(properties.get("435", String())).utf8();
+			for (const ChancePair &pair : parse_chance_pairs(std::string(raw.get_data()))) {
+				effect.sequence_groups.push_back(String("g_") + String::num_int64(pair.group));
+				effect.sequence_counts.push_back(static_cast<int32_t>(pair.weight));
+			}
+			effect.sequence_mode = static_cast<int32_t>(String(properties.get("436", String("0"))).to_int());
+			effect.sequence_min_interval = prop_float(properties, "437", 0.0);
+			effect.sequence_reset_time = prop_float(properties, "438", 0.0);
+			effect.sequence_reset_type = static_cast<int32_t>(String(properties.get("439", String("0"))).to_int());
+			break;
+		}
+		case 1917: effect.kind = TriggerEffectKind::REVERSE; break;
 		case 2068: {
 			effect.kind = TriggerEffectKind::RANDOM;
 			const CharString raw = String(properties.get("152", String())).utf8();
@@ -1794,6 +1977,93 @@ class NativeTriggerRuntime : public RefCounted {
 				}
 				break;
 			}
+			case TriggerEffectKind::ITEM_EDIT: {
+				const bool has_a = effect.item_a > 0 || effect.item_type_a >= 3;
+				const bool has_b = effect.item_b > 0 || effect.item_type_b >= 3;
+				const double rhs = item_edit_rhs(has_a, item_read(effect.item_type_a, effect.item_a),
+						has_b, item_read(effect.item_type_b, effect.item_b), effect.item_op_2, effect.item_op_3,
+						effect.item_mod_1, effect.item_round_1, effect.item_sign_1);
+				const double current = item_read(effect.item_type_target, effect.item_target);
+				const double result = item_sign(item_round(item_arith(current, effect.item_op_1, rhs), effect.item_round_2), effect.item_sign_2);
+				item_write(effect.item_type_target, effect.item_target, result, player);
+				break;
+			}
+			case TriggerEffectKind::ITEM_COMPARE: {
+				const double left = item_compare_side(effect.item_a > 0 || effect.item_type_a >= 3, item_read(effect.item_type_a, effect.item_a),
+						effect.item_op_1, effect.item_mod_1, effect.item_round_1, effect.item_sign_1);
+				const double right = item_compare_side(effect.item_b > 0 || effect.item_type_b >= 3, item_read(effect.item_type_b, effect.item_b),
+						effect.item_op_2, effect.item_mod_2, effect.item_round_2, effect.item_sign_2);
+				if (item_compare_values(left, effect.item_op_3, right, effect.item_tolerance)) {
+					for (const String &group : effect.target_groups) spawn_named(group, player);
+				} else {
+					spawn_named(effect.item_false_group, player);
+				}
+				break;
+			}
+			case TriggerEffectKind::ITEM_PERSIST: {
+				std::set<int32_t> &ids = effect.persist_timer ? persistent_timers : persistent_items;
+				bool &all = effect.persist_timer ? persist_all_timers : persist_all_items;
+				if (effect.persist_reset) {
+					if (effect.persist_all) {
+						all = false;
+						ids.clear();
+					} else {
+						ids.erase(effect.item_a);
+					}
+					if (effect.persist_timer) {
+						if (effect.persist_all) timers.clear(); else timers.erase(effect.item_a);
+					} else if (effect.persist_all) {
+						item_counts.clear();
+					} else {
+						item_counts.erase(effect.item_a);
+					}
+				} else if (effect.persist_all) {
+					all = effect.persist_set;
+				} else if (effect.persist_set) {
+					ids.insert(effect.item_a);
+				} else {
+					ids.erase(effect.item_a);
+				}
+				break;
+			}
+			case TriggerEffectKind::TIMER_START: {
+				const bool exists = timers.count(effect.item_a) > 0;
+				GDTimer &timer = timers[effect.item_a];
+				if (!(effect.timer_dont_override && exists)) timer.value = effect.timer_start;
+				timer.mod = effect.timer_mod;
+				timer.has_stop = effect.timer_has_stop;
+				timer.stop = effect.timer_stop;
+				timer.target = effect.target_groups.empty() ? String() : effect.target_groups[0];
+				timer.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
+				timer.running = !effect.timer_paused;
+				break;
+			}
+			case TriggerEffectKind::TIMER_EVENT: {
+				TimerEvent ev;
+				ev.timer = effect.item_a;
+				ev.time = effect.timer_stop;
+				ev.group = effect.target_groups.empty() ? String() : effect.target_groups[0];
+				ev.multi = effect.timer_multi;
+				ev.player = player ? ObjectID(player->get_instance_id()) : ObjectID();
+				timer_events.push_back(ev);
+				break;
+			}
+			case TriggerEffectKind::TIMER_CONTROL: {
+				auto it = timers.find(effect.item_a);
+				if (it != timers.end()) it->second.running = effect.timer_control == 0;
+				break;
+			}
+			case TriggerEffectKind::SEQUENCE: {
+				const int step = sequence_advance(sequence_states[index], effect.sequence_counts, effect.sequence_mode,
+						effect.sequence_min_interval, effect.sequence_reset_time, effect.sequence_reset_type, clock);
+				if (step >= 0) spawn_named(effect.sequence_groups[step], player);
+				break;
+			}
+			case TriggerEffectKind::REVERSE: {
+				const int64_t direction = player->get("horizontal_direction");
+				player->set("horizontal_direction", -direction);
+				break;
+			}
 			case TriggerEffectKind::STOP:
 				// Cancels pending spawns targeting each group, cutting spawn loops.
 				for (const String &group : effect.target_groups) {
@@ -1879,6 +2149,104 @@ class NativeTriggerRuntime : public RefCounted {
 	// Item state: level state like group opacity, cleared on restart.
 	std::map<int32_t, int64_t> item_counts;
 	std::vector<size_t> armed_counts; // Count records passed so far
+	// Timers (3614/3615/3617), points, persistence (3641), sequences (3607).
+	struct GDTimer {
+		double value = 0.0;
+		double mod = 1.0;
+		bool running = false;
+		bool has_stop = false;
+		double stop = 0.0;
+		String target;
+		ObjectID player;
+	};
+	struct TimerEvent {
+		int32_t timer = 0;
+		double time = 0.0;
+		String group;
+		bool multi = false;
+		ObjectID player;
+	};
+	std::map<int32_t, GDTimer> timers;
+	std::vector<TimerEvent> timer_events;
+	int64_t points = 0;
+	std::set<int32_t> persistent_items, persistent_timers;
+	bool persist_all_items = false, persist_all_timers = false;
+	std::map<size_t, SequenceState> sequence_states;
+
+	// ItemType (gmdkit enums): 0/1 item, 2 timer, 3 points, 4 main time, 5 attempts.
+	double item_read(int32_t type, int32_t id) const {
+		switch (type) {
+			case 2: {
+				const auto it = timers.find(id);
+				return it == timers.end() ? 0.0 : it->second.value;
+			}
+			case 3: return static_cast<double>(points);
+			case 4: return clock;
+			default: return static_cast<double>(item_value(id));
+		}
+	}
+	void item_write(int32_t type, int32_t id, double value, Object *player) {
+		switch (type) {
+			case 2: timers[id].value = value; break;
+			case 3: points = static_cast<int64_t>(value); break;
+			case 4: case 5: break; // read-only
+			default: change_item(id, static_cast<int64_t>(value) - item_value(id), player); break; // GD items are ints
+		}
+	}
+	void spawn_named(const String &group, Object *player) {
+		if (!group.is_empty() && player) schedule_group(StringName(group), 0.0, player);
+	}
+	void advance_timers(double delta) {
+		for (auto &entry : timers) {
+			GDTimer &timer = entry.second;
+			if (!timer.running) continue;
+			const double before = timer.value;
+			double after = before + delta * timer.mod;
+			bool stopped = false;
+			if (timer.has_stop && ((timer.mod >= 0.0 && before < timer.stop && after >= timer.stop)
+					|| (timer.mod < 0.0 && before > timer.stop && after <= timer.stop))) {
+				after = timer.stop;
+				stopped = true;
+			}
+			timer.value = after;
+			for (size_t i = 0; i < timer_events.size();) {
+				const TimerEvent ev = timer_events[i];
+				const bool crossed = ev.timer == entry.first && ((before < ev.time && after >= ev.time) || (before > ev.time && after <= ev.time));
+				if (crossed) {
+					spawn_named(ev.group, ObjectDB::get_instance(ev.player));
+					if (!ev.multi) {
+						timer_events.erase(timer_events.begin() + static_cast<std::ptrdiff_t>(i));
+						continue;
+					}
+				}
+				++i;
+			}
+			if (stopped) {
+				timer.running = false;
+				spawn_named(timer.target, ObjectDB::get_instance(timer.player));
+			}
+		}
+	}
+	// A restart keeps persistent items and timers (3641), clears the rest.
+	void reset_gameplay_state() {
+		std::map<int32_t, int64_t> kept_items;
+		for (const auto &entry : item_counts) {
+			if (persist_all_items || persistent_items.count(entry.first)) kept_items[entry.first] = entry.second;
+		}
+		std::map<int32_t, GDTimer> kept_timers;
+		for (const auto &entry : timers) {
+			if (persist_all_timers || persistent_timers.count(entry.first)) {
+				GDTimer kept;
+				kept.value = entry.second.value;
+				kept_timers[entry.first] = kept;
+			}
+		}
+		item_counts = kept_items;
+		timers = kept_timers;
+		timer_events.clear();
+		sequence_states.clear();
+		points = 0;
+	}
 
 	int64_t item_value(int32_t item_id) const {
 		const auto it = item_counts.find(item_id);
@@ -2841,6 +3209,8 @@ public:
 		fades.clear(); member_index.clear(); channel_index.clear(); touch_order.clear();
 		group_opacity.clear(); member_own_alpha.clear(); member_groups.clear();
 		item_counts.clear(); armed_counts.clear();
+		timers.clear(); timer_events.clear(); sequence_states.clear(); points = 0;
+		persistent_items.clear(); persistent_timers.clear(); persist_all_items = false; persist_all_timers = false;
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
 		frame_players.clear(); previous_positions.clear();
@@ -3455,6 +3825,7 @@ public:
 
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
+		advance_timers(std::max(0.0, delta));
 		int64_t dispatched = 0;
 		// activate() inside the dispatch loop can reenter GDScript and
 		// rebuild this runtime; stop dispatching in that case (pending
@@ -3548,7 +3919,7 @@ public:
 		// it (the same fades re-fire as the player crosses them again), and
 		// every member re-renders from its own alpha until they do.
 		group_opacity.clear();
-		item_counts.clear();
+		reset_gameplay_state();
 		armed_counts.clear();
 		for (const KeyValue<ObjectID, std::vector<String>> &entry : member_groups) {
 			refresh_member_alpha(entry.key);
@@ -5457,23 +5828,28 @@ public:
 		// Ball or Swing gravity flip on jump press
 		if ((internal_gamemode == 7 /*SWING*/ || internal_gamemode == 3 /*BALL*/) && jump_state == 1 && orb_queue_empty) {
 			gravity_flip *= -1.0;
+			// Swing: the world velocity carries through the flip at 0.8.
+			if (internal_gamemode == 7) local_velocity.y = static_cast<real_t>(local_velocity.y * gd_physics::SWING_TAP_KEEP);
 		}
+		const bool mini = player_scale == 0;
+		const bool upside_down = gravity_flip < 0.0;
+		auto up_of = [&]() { return -static_cast<double>(local_velocity.y) * gravity_flip; };
+		auto set_up = [&](double up) { local_velocity.y = static_cast<real_t>(-up * gravity_flip); };
 
 		static constexpr double GRAVITY = gd_physics::GRAVITY_PX;
-		static constexpr double FLY_GRAVITY_MULTIPLIER = 0.5;
-		static constexpr double UFO_GRAVITY_MULTIPLIER = 0.7;
 		static constexpr double SPIDER_GRAVITY_MULTIPLIER = 0.65;
-		static constexpr double FLY_TERMINAL_VELOCITY_Y = 1800.0;
 		static constexpr double TERMINAL_VELOCITY_Y = gd_physics::TERMINAL_PX;
 		static constexpr double PLATFORMER_ACCELERATION = 5.0;
 
 		if (!has_dash_control) {
 			if (internal_gamemode == 1 /*SHIP*/) {
-				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * jump_state * -1.0 * FLY_GRAVITY_MULTIPLIER);
-				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
+				double up = up_of();
+				up += gd_physics::ship_acceleration(up, jump_state == 1, mini) * gravity_multiplier * delta;
+				set_up(gd_physics::clamp_cap(up, gd_physics::fly_cap(false, mini, upside_down)));
 			} else if (internal_gamemode == 7 /*SWING*/) {
-				local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * FLY_GRAVITY_MULTIPLIER);
-				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -FLY_TERMINAL_VELOCITY_Y, FLY_TERMINAL_VELOCITY_Y));
+				double up = up_of();
+				up += gd_physics::swing_acceleration(mini) * gravity_multiplier * delta;
+				set_up(gd_physics::clamp_cap(up, gd_physics::fly_cap(true, mini, upside_down)));
 			} else if (internal_gamemode == 4 /*WAVE*/) {
 				local_velocity.y = static_cast<real_t>(gd_physics::X_SPEED_PX * gravity_flip * gravity_multiplier * jump_state * -1.0);
 				if (speed_multiplier > 0.0) {
@@ -5489,7 +5865,12 @@ public:
 				local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 			} else if (!is_on_floor) {
 				if (internal_gamemode == 2 /*UFO*/) {
-					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier * UFO_GRAVITY_MULTIPLIER);
+					double up = up_of();
+					up += gd_physics::ufo_acceleration(up, mini) * gravity_multiplier * delta;
+					set_up(gd_physics::clamp_cap(up, gd_physics::fly_cap(false, mini, upside_down)));
+				} else if (internal_gamemode == 3 /*BALL*/) {
+					local_velocity.y += static_cast<real_t>(GRAVITY * gd_physics::BALL_GRAVITY_FACTOR * delta * gravity_flip * gravity_multiplier);
+					local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 				} else {
 					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier);
 					// GD caps the cube's fall at 15 units per frame (updateJump).
@@ -5517,9 +5898,10 @@ public:
 		if (is_instant_jump && jump_state == 1 && !colliding_pad && orb_queue_empty) {
 			instant_jump_mode = internal_gamemode;
 			if (internal_gamemode == 3 /*BALL*/) {
-				local_velocity.y = static_cast<real_t>(speed.y * gravity_flip * 0.5);
+				// Toward the new floor (gravity already flipped above).
+				local_velocity.y = static_cast<real_t>(gd_physics::ball_tap_px(mini) * gravity_flip);
 			} else if (internal_gamemode == 2 /*UFO*/) {
-				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip * UFO_GRAVITY_MULTIPLIER);
+				set_up(gd_physics::ufo_tap(up_of(), mini));
 			} else if (internal_gamemode == 0 /*CUBE*/) {
 				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip);
 			}

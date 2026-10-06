@@ -126,6 +126,16 @@ func _ready() -> void:
 		var v_wave: Vector2 = res_wave["velocity"]
 		_expect("Native physics wave ascends at the GDScript x speed", absf(v_wave.y + Player.SPEED.x) < 0.1)
 
+		var p_ship := {
+			"delta": 1.0 / 60.0,
+			"previous_velocity": Vector2(Player.SPEED.x, 0),
+			"direction": 1,
+			"jump_state": 1,
+			"internal_gamemode": 1,
+		}
+		var v_ship: Vector2 = (native.call(&"compute_player_velocity", p_ship) as Dictionary)["velocity"]
+		_expect("Native ship hold matches GDPhysics", absf(v_ship.y + GDPhysics.ship_acceleration(0.0, true, false) / 60.0) < 0.1)
+
 		var cls: Dictionary = native.call(&"classify_collision", deg_to_rad(5.0), deg_to_rad(45.0))
 		_expect("Native physics classify 5 deg as floor", bool(cls["is_floor"]))
 
@@ -157,6 +167,18 @@ func _ready() -> void:
 	_expect("Random roll at chance picks the miss group", RandomTriggerComponent.pick_weighted(random_weights, 0.30) == 1)
 	_expect("Random zero weight is never picked", RandomTriggerComponent.pick_weighted(PackedFloat64Array([0.0, 5.0]), 0.0) == 1)
 	_expect("Random without weight picks nothing", RandomTriggerComponent.pick_weighted(PackedFloat64Array([0.0]), 0.5) == -1)
+
+	# Item / Sequence twins (GDItemMath), same cases as the native test.
+	_expect("Item edit (A + B) * mod", is_equal_approx(GDItemMath.edit_rhs(true, 3.0, true, 4.0, 1, 3, 2.0, 0, 0), 14.0))
+	_expect("Item edit with no items is the mod", is_equal_approx(GDItemMath.edit_rhs(false, 0.0, false, 0.0, 1, 3, 7.0, 0, 0), 7.0))
+	_expect("Item edit floor then negative", is_equal_approx(GDItemMath.edit_rhs(true, 2.5, false, 0.0, 1, 3, 1.0, 2, 2), -2.0))
+	_expect("Item compare equal within tolerance", GDItemMath.compare(1.0, 0, 1.4, 0.5))
+	var seq_state: Dictionary = {}
+	var seq_counts := PackedInt32Array([2, 1])
+	var seq_steps: Array[int] = []
+	for t: int in 4:
+		seq_steps.append(GDItemMath.sequence_advance(seq_state, seq_counts, 0, 0.0, 0.0, 0, float(t)))
+	_expect("Sequence stop mode", seq_steps == [0, 0, 1, -1])
 
 	# HSV test on white base (preventing glow/white turning red)
 	var white_test_channel := ColorChannelData.new()

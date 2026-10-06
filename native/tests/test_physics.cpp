@@ -284,6 +284,18 @@ int main() {
 		p.previous_velocity = Vector2D(X_SPEED_PX, TERMINAL_PX);
 		PlayerPhysicsResult res = compute_player_velocity_core(p);
 		check_true("cube fall capped at 15 units per frame", std::abs(res.velocity.y - TERMINAL_PX) < 1e-6);
+		// Fly modes and ball (GucciBot physics/player.cpp, OpenGD updateJump).
+		check_true("ship hold from rest uses extraBoost 0.5", std::abs(ship_acceleration(0.0, true, false) - GRAVITY_PX * 0.5) < 1e-9);
+		check_true("ship hold while rising uses 0.4", std::abs(ship_acceleration(1000.0, true, false) - GRAVITY_PX * 0.4) < 1e-9);
+		check_true("ship release while rising uses 1.2 * 0.4", std::abs(ship_acceleration(1000.0, false, false) + GRAVITY_PX * 0.48) < 1e-9);
+		check_true("mini ship divides by 0.85", std::abs(ship_acceleration(0.0, true, true) - GRAVITY_PX * 0.5 / 0.85) < 1e-9);
+		check_true("ship cap 6.4 units upright", std::abs(fly_cap(false, false, false) - 6.4 * 230.4) < 1e-9);
+		check_true("ship cap 8 units upside down", std::abs(fly_cap(false, false, true) - 8.0 * 230.4) < 1e-9);
+		check_true("ufo tap is 7 units", std::abs(ufo_tap(0.0, false) - 7.0 * 230.4) < 1e-9);
+		check_true("ufo tap keeps a faster rise", ufo_tap(5000.0, false) == 5000.0);
+		check_true("ufo falling gravity 0.4", std::abs(ufo_acceleration(0.0, false) + GRAVITY_PX * 0.4) < 1e-9);
+		check_true("swing gravity 0.4", std::abs(swing_acceleration(false) + GRAVITY_PX * 0.4) < 1e-9);
+		check_true("ball tap is 0.3 of the jump", std::abs(ball_tap_px(false) - JUMP_PX * 0.3) < 1e-9);
 	}
 
 	// 2. Cube instant jump

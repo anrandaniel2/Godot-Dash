@@ -31,9 +31,57 @@ static var item_counts: Dictionary[int, int] = {}
 static var _armed_counts: Array[ToggleComponent] = []
 
 
+static var _persistent_items: Dictionary[int, bool] = {}
+static var _persistent_timers: Dictionary[int, bool] = {}
+static var _persist_all_items: bool = false
+static var _persist_all_timers: bool = false
+
+
+## A restart keeps persistent items and timers (3641), clears the rest. Twin
+## of the native reset_gameplay_state.
 static func reset_items() -> void:
-	item_counts.clear()
+	var kept: Dictionary[int, int] = {}
+	for id: int in item_counts:
+		if _persist_all_items or _persistent_items.has(id):
+			kept[id] = item_counts[id]
+	item_counts = kept
 	_armed_counts.clear()
+	var kept_timers: Dictionary[int, Dictionary] = {}
+	for id: int in GameplayTriggerComponent.timers:
+		if _persist_all_timers or _persistent_timers.has(id):
+			kept_timers[id] = GameplayTriggerComponent._new_timer()
+			kept_timers[id]["value"] = GameplayTriggerComponent.timers[id]["value"]
+	GameplayTriggerComponent.reset_state()
+	GameplayTriggerComponent.timers = kept_timers
+
+
+## Persistent Item Setup (3641): keys 80 id, 491 set, 492 all, 493 reset, 494 timer.
+static func set_persistent(id: int, persistent: bool, all: bool, reset: bool, timer: bool) -> void:
+	var ids: Dictionary[int, bool] = _persistent_timers if timer else _persistent_items
+	if reset:
+		if all:
+			ids.clear()
+			if timer:
+				_persist_all_timers = false
+				GameplayTriggerComponent.timers.clear()
+			else:
+				_persist_all_items = false
+				item_counts.clear()
+		else:
+			ids.erase(id)
+			if timer:
+				GameplayTriggerComponent.timers.erase(id)
+			else:
+				item_counts.erase(id)
+	elif all:
+		if timer:
+			_persist_all_timers = persistent
+		else:
+			_persist_all_items = persistent
+	elif persistent:
+		ids[id] = true
+	else:
+		ids.erase(id)
 
 
 static func change_item(changed_id: int, delta: int, player: Player) -> void:

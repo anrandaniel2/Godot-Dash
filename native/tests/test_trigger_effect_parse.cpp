@@ -113,6 +113,37 @@ int main() {
 	expect_true("adv random first pair", pairs.size() == 2 && pairs[0].group == 12 && pairs[0].weight == 40.0);
 	expect_true("adv random second pair", pairs.size() == 2 && pairs[1].group == 7 && pairs[1].weight == 60.0);
 
+	// Item Edit / Compare (3619/3620), gmdkit ItemOperation/RoundOp/SignOp.
+	expect_close("edit (A + B) * mod", item_edit_rhs(true, 3.0, true, 4.0, 1, 3, 2.0, 0, 0), 14.0);
+	expect_close("edit only A divides by mod", item_edit_rhs(true, 9.0, false, 0.0, 1, 4, 2.0, 0, 0), 4.5);
+	expect_close("edit with no items is the mod", item_edit_rhs(false, 0.0, false, 0.0, 1, 3, 7.0, 0, 0), 7.0);
+	expect_close("edit floor then negative", item_edit_rhs(true, 2.5, false, 0.0, 1, 3, 1.0, 2, 2), -2.0);
+	expect_close("divide by zero keeps the value", item_arith(5.0, 4, 0.0), 5.0);
+	expect_close("compare side without item is the mod", item_compare_side(false, 9.0, 3, 4.0, 0, 0), 4.0);
+	expect_true("compare equal within tolerance", item_compare_values(1.0, 0, 1.4, 0.5));
+	expect_true("compare not-equal outside tolerance", item_compare_values(1.0, 5, 2.0, 0.5));
+	expect_true("compare greater-or-equal", item_compare_values(2.0, 2, 2.0, 0.0) && !item_compare_values(1.0, 2, 2.0, 0.0));
+	// Sequence (3607): counts {2, 1}, mode stop: steps 0, 0, 1, then nothing.
+	{
+		SequenceState seq;
+		const std::vector<int32_t> counts = { 2, 1 };
+		const int a = sequence_advance(seq, counts, 0, 0.0, 0.0, 0, 0.0);
+		const int b = sequence_advance(seq, counts, 0, 0.0, 0.0, 0, 1.0);
+		const int c = sequence_advance(seq, counts, 0, 0.0, 0.0, 0, 2.0);
+		const int d = sequence_advance(seq, counts, 0, 0.0, 0.0, 0, 3.0);
+		expect_true("sequence stop mode", a == 0 && b == 0 && c == 1 && d == -1);
+		SequenceState loop;
+		sequence_advance(loop, { 1 }, 1, 0.0, 0.0, 0, 0.0);
+		expect_true("sequence loop restarts", sequence_advance(loop, { 1 }, 1, 0.0, 0.0, 0, 1.0) == 0);
+		SequenceState gated;
+		sequence_advance(gated, counts, 0, 0.5, 0.0, 0, 0.0);
+		expect_true("sequence min interval drops fast hits", sequence_advance(gated, counts, 0, 0.5, 0.0, 0, 0.2) == -1);
+		SequenceState reset;
+		sequence_advance(reset, counts, 0, 0.0, 1.0, 0, 0.0);
+		sequence_advance(reset, counts, 0, 0.0, 1.0, 0, 0.1);
+		expect_true("sequence full reset after idle", sequence_advance(reset, counts, 0, 0.0, 1.0, 0, 5.0) == 0);
+	}
+
 	// Move lock to player (keys 58/59, mods 143/144): a locked axis takes the
 	// player's movement times the mod and drops the eased offset.
 	const Vector2 lock_x = move_lock_step(Vector2(5.0, 7.0), Vector2(20.0, -3.0), true, false, Vector2(1.0, 1.0));

@@ -1785,6 +1785,15 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
+		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641: # twins of the native gameplay arms
+			if "GameplayTriggerComponent" in supported:
+				var raw: Dictionary[String, String] = {}
+				for key: Variant in properties:
+					raw[str(key)] = str(properties[key])
+				components["GameplayTriggerComponent"] = {
+					"kind": GameplayTriggerComponent.KIND_BY_ID[gd_id],
+					"properties": raw,
+				}
 		1912: # Random (twin of the native RANDOM arm)
 			if "RandomTriggerComponent" in supported:
 				var chance: float = clampf(float(properties.get("10", "50")), 0.0, 100.0)
