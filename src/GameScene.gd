@@ -17,6 +17,11 @@ const GD_DEFAULT_BG_SPEED: Vector2 = Vector2(0.1, 0.1)
 const GD_DEFAULT_MG_SPEED: Vector2 = Vector2(0.3, 0.5)
 const GD_GROUND_SPAN_PX: float = 24000.0
 const FLOOR_Y: float = 925.0
+## GJGroundLayer m_ground1Offset = 128 - texture height (points).
+const GD_GROUND_HEIGHT_PT: float = 128.0
+## GJMGLayer::defaultYOffsetForBG2 (geode-sdk bindings GJMGLayer.cpp): layer
+## 2's Y offset in points for middlegrounds 1-3.
+const GD_MG2_OFFSET_PT: PackedFloat32Array = [0.0, 25.0, 30.0, 30.0]
 
 @export var checkpoint_parent: Node2D
 @export var pause_menu: PauseMenu
@@ -273,8 +278,10 @@ static func get_camera_rect(camera: Camera2D, viewport: Viewport) -> Rect2:
 	return Rect2(rect_pos - rect_size * 0.5, rect_size)
 
 
+var _gd_art_ids: PackedInt32Array = [1, 1, 0]
 var _gd_mg_speed: Vector2 = GD_DEFAULT_MG_SPEED
 var _gd_mg_offset: float = 0.0
+var _gd_mg2_offset_pt: float = 0.0
 var _gd_mg_parallax: Parallax2D
 var _gd_mg_sprites: Array[Sprite2D] = []
 var _gd_ground_layers: Array[Sprite2D] = []
@@ -286,17 +293,31 @@ var _gd_ground_layers: Array[Sprite2D] = []
 func apply_gd_level_art(level: Level) -> void:
 	if level.gd_background_id < 0:
 		return
-	_gd_mg_speed = GD_DEFAULT_MG_SPEED
-	_gd_mg_offset = 0.0
-	($BackgroundParallax as Parallax2D).scroll_scale = GD_DEFAULT_BG_SPEED
-	set_gd_art(0, level.gd_background_id)
-	set_gd_art(1, level.gd_ground_id)
-	set_gd_art(2, level.gd_middleground_id)
+	var state: Dictionary = level.gd_practice_art
+	_gd_mg_speed = state.get("mg_speed", GD_DEFAULT_MG_SPEED)
+	_gd_mg_offset = state.get("mg_offset", 0.0)
+	($BackgroundParallax as Parallax2D).scroll_scale = state.get("bg_speed", GD_DEFAULT_BG_SPEED)
+	var ids: PackedInt32Array = state.get(
+			"ids", PackedInt32Array([level.gd_background_id, level.gd_ground_id, level.gd_middleground_id]),
+	)
+	for kind: int in 3:
+		set_gd_art(kind, ids[kind])
+
+
+## The art a practice checkpoint restores (see Level.gd_practice_art).
+func gd_art_state() -> Dictionary:
+	return {
+		"ids": _gd_art_ids.duplicate(),
+		"bg_speed": ($BackgroundParallax as Parallax2D).scroll_scale,
+		"mg_speed": _gd_mg_speed,
+		"mg_offset": _gd_mg_offset,
+	}
 
 
 ## [param kind] 0 background, 1 ground, 2 middleground; Change triggers
 ## 3029-3031 (key 533) and the level header.
 func set_gd_art(kind: int, id: int) -> void:
+	_gd_art_ids[clampi(kind, 0, 2)] = id
 	match kind:
 		0:
 			_set_gd_background(_gd_texture("backgrounds/game_bg_%02d_001" % clampi(maxi(id, 1), 1, GD_BG_COUNT)))
@@ -308,6 +329,7 @@ func set_gd_art(kind: int, id: int) -> void:
 			)
 		2:
 			var mg := clampi(id, 0, GD_MG_COUNT)
+			_gd_mg2_offset_pt = GD_MG2_OFFSET_PT[mg]
 			_set_gd_middleground(
 					_gd_texture("middlegrounds/fg_%02d_001" % mg) if mg > 0 else null,
 					_gd_texture("middlegrounds/fg_%02d_2_001" % mg) if mg > 0 else null,
@@ -386,9 +408,15 @@ func _set_gd_ground(texture: Texture2D, texture_2: Texture2D) -> void:
 			layer.region_enabled = true
 			layer.region_rect = Rect2(0.0, 0.0, span_px / texel, layer_texture.get_height())
 			var height_local := layer_texture.get_height() * local_scale
+			# GJGroundLayer::init / loadGroundSprites: layer-1 tiles are top
+			# anchored at -(128 - height) points, so short grounds sit on the
+			# 128-point bottom; layer-2 tiles at 0, on the surface.
+			var inset_local := 0.0
+			if layer_texture == texture:
+				inset_local = maxf(0.0, GD_GROUND_HEIGHT_PT * 2.0 * GD_PX_PER_TEXEL / texel - layer_texture.get_height()) * local_scale
 			layer.position = Vector2(
 					-span_px * 0.5 / ground.scale.x,
-					surface_y - (height_local if ground.flip_v else 0.0),
+					surface_y - height_local - inset_local if ground.flip_v else surface_y + inset_local,
 			)
 			if layer_texture == texture:
 				layer.use_parent_material = true
@@ -425,9 +453,13 @@ func _set_gd_middleground(texture: Texture2D, texture_2: Texture2D) -> void:
 		var sprite := Sprite2D.new()
 		sprite.texture = layer_texture
 		sprite.centered = false
-		sprite.offset = Vector2(0.0, -layer_texture.get_height())
+		# Layer 2 is raised by defaultYOffsetForBG2 and drawn behind layer 1:
+		# its bottom rows are transparent and only its raised peaks clear
+		# layer 1's skyline (HYPOTHESIS from the art; init is not decompiled).
+		var raise_texels := _gd_mg2_offset_pt * 2.0 * GD_PX_PER_TEXEL / texel if layer == 1 else 0.0
+		sprite.offset = Vector2(0.0, -layer_texture.get_height() - raise_texels)
 		sprite.scale = Vector2(texel, texel)
-		sprite.z_index = layer
+		sprite.z_index = -layer
 		sprite.set_meta(&"tint", 1013 + layer)
 		_gd_mg_parallax.add_child(sprite)
 		_gd_mg_sprites.append(sprite)

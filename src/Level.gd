@@ -83,6 +83,10 @@ const START_SPEED: Array[float] = [
 @export var gd_background_id: int = -1
 @export var gd_ground_id: int = -1
 @export var gd_middleground_id: int = -1
+## Live art state captured by a practice checkpoint (GD's CheckpointObject
+## keeps it in GJGameState: m_background / m_ground / m_middleground, the
+## BG / MG speeds and m_middleGroundOffsetY); empty outside practice.
+@export var gd_practice_art: Dictionary = {}
 @export var start_speed_preset: int = EasedSpeedChangerComponent.SpeedPreset.x1
 @export var start_speed: float = START_SPEED[2]
 @export var start_reverse: bool
@@ -755,6 +759,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"gd_background_id": gd_background_id,
 		"gd_ground_id": gd_ground_id,
 		"gd_middleground_id": gd_middleground_id,
+		"gd_practice_art": {} if isnt_practice or LevelManager.game_scene == null else LevelManager.game_scene.gd_art_state(),
 		"start_speed": start_speed if isnt_practice else player.speed_multiplier,
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": start_reverse if isnt_practice else player.horizontal_direction < 0,
@@ -839,6 +844,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	gd_background_id = int(data.get("gd_background_id", -1))
 	gd_ground_id = int(data.get("gd_ground_id", -1))
 	gd_middleground_id = int(data.get("gd_middleground_id", -1))
+	gd_practice_art = data.get("gd_practice_art", {})
 	start_speed = data.start_speed
 	start_speed_preset = data.start_speed_preset
 	start_reverse = data.start_reverse
