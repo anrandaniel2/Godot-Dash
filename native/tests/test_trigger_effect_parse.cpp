@@ -650,6 +650,55 @@ int main() {
 				&& gradient_z_index(12) < gradient_z_index(13) && gradient_z_index(13) < gradient_z_index(14));
 	}
 
+	{
+		// Custom enter effects (3017-3021) pack into the mat4 the enter
+		// shader reads (enter_custom_pack layout).
+		AreaParams move;
+		move.type = AreaType::MOVE;
+		move.v[AF_LENGTH] = 150.0;
+		move.v[AF_OFFSET] = 30.0;
+		move.v[AF_DEADZONE] = 0.25;
+		move.v[AF_MOD_FRONT] = 1.0;
+		move.v[AF_MOVE_DIST] = 60.0;
+		move.v[AF_MOVE_ANGLE] = 180.0; // GD angle 180: straight down (area_move_offset)
+		move.easing = 2;
+		move.ease_rate = 3.0;
+		move.ease_out = true;
+		move.easing2 = 5;
+		move.ease_rate2 = 1.5;
+		float m[16];
+		enter_custom_pack(move, m);
+		expect_close("enter custom length", m[0], 150.0);
+		expect_close("enter custom offset", m[1], 30.0);
+		expect_close("enter custom deadzone", m[2], 0.25);
+		expect_close("enter custom flags: set + ease out", m[3], 1.0 + 4.0);
+		expect_close("enter custom mod front", m[4], 1.0);
+		expect_close("enter custom easing", m[5], 2.0);
+		expect_close("enter custom rate", m[6], 3.0);
+		expect_close("enter custom easing 2", m[7], 5.0);
+		expect_close("enter custom rate 2", m[8], 1.5);
+		double ox, oy;
+		area_move_offset(move, 1.0, 0.0, 0.0, 0, ox, oy);
+		expect_close("enter custom move x = area move x", m[9], ox, 1e-3);
+		expect_close("enter custom move y = area move y", m[10], oy, 1e-3);
+		AreaParams fade;
+		fade.type = AreaType::FADE;
+		fade.inwards = true;
+		fade.v[AF_FROM_OPACITY] = 0.2;
+		fade.v[AF_TO_OPACITY] = 0.9;
+		enter_custom_pack(fade, m);
+		expect_close("enter custom fade flags: set + inwards", m[3], 1.0 + 2.0);
+		expect_close("enter custom fade from", m[9], 0.2);
+		expect_close("enter custom fade to", m[10], 0.9);
+		AreaParams tint;
+		tint.type = AreaType::TINT;
+		tint.v[AF_TINT] = 0.75;
+		enter_custom_pack(tint, m);
+		expect_close("enter custom tint amount in v3", m[12], 0.75);
+		expect_true("enter custom type ids follow 3017 + AreaType",
+				static_cast<int>(AreaType::TINT) == 3021 - 3017 && static_cast<int>(AreaType::FADE) == 3020 - 3017);
+	}
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

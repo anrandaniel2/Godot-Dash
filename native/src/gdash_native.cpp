@@ -160,6 +160,9 @@ enum class TriggerEffectKind : int32_t {
 	AREA_EDIT,          // 3011-3015 Edit Area
 	AREA_STOP,          // 3024 Area Stop
 	ENTER_PRESET,       // 22-28, 55-59, 1915 legacy enter effects
+	ENTER_CUSTOM,       // 3017-3021 Enter Move/Rotate/Scale/Fade/Tint (area params)
+	ENTER_STOP,         // 3023 Enter Stop
+	BG_EFFECT,          // 1818 BG Effect On / 1819 BG Effect Off (toggle_on)
 	KEYFRAME,           // 3032 keyframe (data only)
 	STATE_BLOCK,        // 3640
 	CAMERA_MODE,        // 2925
@@ -1546,6 +1549,52 @@ static double song_speed_multiplier(double speed) {
 	return std::pow(2.0, std::clamp(speed, -12.0, 12.0) / 12.0);
 }
 
+// Custom enter effects (3017-3021) for the enter shader (type 14 in
+// GDEnterEffect.gdshaderinc). Bindings 2.2081 inline
+// GJBaseGameLayer::updateActiveEnterEffect: 3017-3021 write channel-map id
+// -15 and addCustomEnterEffect an EnterEffectInstance - the Area trigger
+// instance - per enter / exit side. NamuWiki (Enter trigger): Length is the
+// distance from the screen border the effect spans, Offset shifts it along
+// X, and easing also applies to Fade and Tint. getEasedAreaValue: with Ease
+// Out the out easing shapes objects leaving (the exit side here).
+// Packed as a mat4 (column major):
+//   c0 = (length, offset, deadzone, flags: 1 set, 2 inwards, 4 ease out)
+//   c1 = (mod front, easing, rate, easing 2)
+//   c2 = (rate 2, v0, v1, v2)   c3 = (v3, 0, 0, 0)
+// Values: move (x, y) GD units +Y up; rotate (degrees); scale (x, y);
+// fade (from, to); tint (r, g, b, amount) filled by the runtime.
+// HYPOTHESIS: the distance is measured from the entering border along X
+// (front side, Mod Front), random variances are not applied, and Relative
+// move uses the angle form.
+static void enter_custom_pack(const AreaParams &p, float out[16]) {
+	for (int i = 0; i < 16; ++i) out[i] = 0.0f;
+	out[0] = float(p.v[AF_LENGTH]);
+	out[1] = float(p.v[AF_OFFSET]);
+	out[2] = float(p.v[AF_DEADZONE]);
+	out[3] = float(1 | (p.inwards ? 2 : 0) | (p.ease_out ? 4 : 0));
+	out[4] = float(p.v[AF_MOD_FRONT]);
+	out[5] = float(p.easing);
+	out[6] = float(p.ease_rate);
+	out[7] = float(p.easing2);
+	out[8] = float(p.ease_rate2);
+	switch (p.type) {
+		case AreaType::MOVE:
+			if (p.xy_mode) {
+				out[9] = float(p.v[AF_MOVE_X]);
+				out[10] = float(p.v[AF_MOVE_Y]);
+			} else {
+				const double a = (p.v[AF_MOVE_ANGLE] - 90.0) * 0.017453292519943295;
+				out[9] = float(p.v[AF_MOVE_DIST] * std::cos(a));
+				out[10] = float(p.v[AF_MOVE_DIST] * std::sin(a));
+			}
+			break;
+		case AreaType::ROTATE: out[9] = float(p.v[AF_ROTATION]); break;
+		case AreaType::SCALE: out[9] = float(p.v[AF_SCALE_X]); out[10] = float(p.v[AF_SCALE_Y]); break;
+		case AreaType::FADE: out[9] = float(p.v[AF_FROM_OPACITY]); out[10] = float(p.v[AF_TO_OPACITY]); break;
+		case AreaType::TINT: out[12] = float(p.v[AF_TINT]); break;
+	}
+}
+
 struct TriggerEffect {
 	KfKey keyframe;              // KEYFRAME
 	int32_t kf_anim_group = 0;   // ANIMATE_KEYFRAME (key 76)
@@ -2692,6 +2741,24 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		// 217 enter mode (0 both, 1 enter only, 2 exit only) and 344
 		// enter channel (gmdkit prop_table enter_preset).
+		case 1818: case 1819:
+			effect.kind = TriggerEffectKind::BG_EFFECT;
+			effect.toggle_on = gd_id == 1818;
+			return effect;
+		case 3017: case 3018: case 3019: case 3020: case 3021:
+			effect.kind = TriggerEffectKind::ENTER_CUSTOM;
+			parse_area_params(properties, effect.area, false);
+			effect.area.type = static_cast<AreaType>(gd_id - 3017);
+			effect.enter_effect = 14; // channel-map id -15
+			effect.enter_mode = static_cast<int32_t>(prop_float(properties, "217", 0.0));
+			effect.enter_channel = static_cast<int32_t>(prop_float(properties, "344", 0.0));
+			return effect;
+		case 3023:
+			effect.kind = TriggerEffectKind::ENTER_STOP;
+			effect.enter_mode = static_cast<int32_t>(prop_float(properties, "217", 0.0));
+			effect.enter_channel = static_cast<int32_t>(prop_float(properties, "344", 0.0));
+			effect.area.effect_id = static_cast<int32_t>(prop_int(properties, "225", 0));
+			return effect;
 		case 22: case 23: case 24: case 25: case 26: case 27: case 28:
 		case 55: case 56: case 57: case 58: case 59: case 1915: {
 			effect.kind = TriggerEffectKind::ENTER_PRESET;
@@ -3903,6 +3970,15 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			case TriggerEffectKind::ENTER_PRESET:
 				set_enter_effect(effect.enter_effect, effect.enter_mode, effect.enter_channel);
+				break;
+			case TriggerEffectKind::ENTER_CUSTOM:
+				add_custom_enter(effect);
+				break;
+			case TriggerEffectKind::ENTER_STOP:
+				stop_custom_enter(effect);
+				break;
+			case TriggerEffectKind::BG_EFFECT:
+				glitter_bg_enabled = effect.toggle_on;
 				break;
 			case TriggerEffectKind::ANIMATE_KEYFRAME:
 				start_keyframe_anim(index, effect, player);
@@ -5189,7 +5265,113 @@ private:
 		if (touched) apply_song_state();
 	}
 
+	// PlayLayer glitter: m_glitterParticles (glitterEffect.plist) resumes in
+	// the flying modes (Geometry-Dash-1.0 PlayLayer::switchToFlyMode ->
+	// toggleGlitter(true); 2.2 GJBaseGameLayer ship/ufo/wave/swing portals)
+	// and PlayLayer::toggleBGEffectVisibility (1818 / 1819) stops it;
+	// updateEffectPositions keeps the emitter at the camera centre and the
+	// particles are emitter-relative. stopSystem lets live particles finish.
+	// Plist: 30 particles, life 1 +- 0.8 s, emitter 240 x 160 half extents,
+	// speed 0 +- 20 at 270 deg, size 6 +- 2 -> 0, alpha 0.3 +- 0.15 -> 0,
+	// colour = player colour 1 (start and end). Units are GD points.
+	struct GlitterParticle { float x, y, vy, life, age, size, alpha; };
+	std::vector<GlitterParticle> glitter;
+	bool glitter_bg_enabled = true;
+	bool glitter_flying = false;
+	double glitter_emit = 0.0;
+	uint32_t glitter_seed = 12345u;
+	RID glitter_item;
+	RID glitter_material;
+	Ref<Resource> glitter_shader;
+	float glitter_rand() { // -1 .. 1
+		glitter_seed = glitter_seed * 1664525u + 1013904223u;
+		return float(glitter_seed >> 8) / 8388608.0f - 1.0f;
+	}
+	void glitter_set_mode(int64_t gamemode) {
+		glitter_flying = gamemode == 1 || gamemode == 2 || gamemode == 4 || gamemode == 7;
+	}
+	void reset_glitter() {
+		glitter.clear();
+		glitter_bg_enabled = true;
+		glitter_emit = 0.0;
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server && glitter_item.is_valid()) server->canvas_item_clear(glitter_item);
+	}
+	void glitter_step(double delta) {
+		const bool emitting = glitter_flying && glitter_bg_enabled;
+		if (!emitting && glitter.empty()) return;
+		const float dt = float(delta);
+		for (size_t i = 0; i < glitter.size();) {
+			GlitterParticle &g = glitter[i];
+			g.age += dt;
+			if (g.age >= g.life) {
+				glitter[i] = glitter.back();
+				glitter.pop_back();
+				continue;
+			}
+			g.y += g.vy * dt;
+			++i;
+		}
+		if (emitting) {
+			glitter_emit += delta * 30.0; // emissionRate = maxParticles / life
+			while (glitter_emit >= 1.0) {
+				glitter_emit -= 1.0;
+				if (glitter.size() >= 30) continue;
+				GlitterParticle g;
+				g.x = 240.0f * glitter_rand();
+				g.y = 160.0f * glitter_rand();
+				g.vy = 20.0f * glitter_rand();
+				g.life = std::max(0.0f, 1.0f + 0.8f * glitter_rand());
+				g.age = 0.0f;
+				g.size = std::max(0.0f, 6.0f + 2.0f * glitter_rand());
+				g.alpha = std::clamp(0.3f + 0.15f * glitter_rand(), 0.0f, 1.0f);
+				glitter.push_back(g);
+			}
+		} else {
+			glitter_emit = 0.0;
+		}
+		glitter_draw();
+	}
+	void glitter_draw() {
+		RenderingServer *server = RenderingServer::get_singleton();
+		Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+		CanvasItem *level = Object::cast_to<CanvasItem>(ObjectDB::get_instance(level_id));
+		if (!server || !camera || !level) return;
+		if (!glitter_item.is_valid()) {
+			glitter_item = server->canvas_item_create();
+			server->canvas_item_set_parent(glitter_item, level->get_canvas_item());
+			server->canvas_item_set_z_index(glitter_item, 31); // object layer, under P
+			glitter_shader = ResourceLoader::get_singleton()->load("res://resources/shaders/GDGlitter.gdshader");
+			if (glitter_shader.is_valid()) {
+				glitter_material = server->material_create();
+				server->material_set_shader(glitter_material, glitter_shader->get_rid());
+				server->canvas_item_set_material(glitter_item, glitter_material);
+			}
+		}
+		server->canvas_item_clear(glitter_item);
+		const Vector2 center = level->get_global_transform().affine_inverse().xform(camera->get_screen_center_position());
+		const Color base = live_special_color(1005);
+		const float unit = float(CELLS_TO_PX_X);
+		for (const GlitterParticle &g : glitter) {
+			const float t = g.age / std::max(g.life, 0.0001f);
+			const float size = g.size * (1.0f - t) * unit;
+			if (size <= 0.0f) continue;
+			const Vector2 p = center + Vector2(g.x * unit, -g.y * unit);
+			server->canvas_item_add_rect(glitter_item, Rect2(p - Vector2(size, size) * 0.5f, Vector2(size, size)),
+					Color(base.r, base.g, base.b, g.alpha * (1.0f - t)));
+		}
+	}
+	void free_glitter() {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server && glitter_item.is_valid()) server->free_rid(glitter_item);
+		if (server && glitter_material.is_valid()) server->free_rid(glitter_material);
+		glitter_item = RID();
+		glitter_material = RID();
+		glitter.clear();
+	}
+
 	void reset_shaders() {
+		reset_glitter();
 		reset_song_edits();
 		reset_gradients();
 		shader_state.reset();
@@ -5668,6 +5850,11 @@ private:
 		if (mode == 0 || mode == 1) value.first = type;
 		if (mode == 0 || mode == 2) value.second = type;
 		enter_channels[channel] = value;
+		// removeCustomEnterEffects: a preset drops the side's custom effects.
+		if (type != 14 && channel == 0) {
+			if (mode == 0 || mode == 1) clear_custom_side(0);
+			if (mode == 0 || mode == 2) clear_custom_side(1);
+		}
 		if (channel == 0) {
 			set_enter_global(value.first, value.second);
 			return;
@@ -5676,7 +5863,71 @@ private:
 		if (level && level->has_method("set_gd_enter_channel"))
 			level->call("set_gd_enter_channel", channel, value.first, value.second);
 	}
+	// Custom enter effects of channel 0, per side (0 enter, 1 exit) and
+	// AreaType; a later trigger of the same type replaces the slot.
+	struct CustomEnterSlot { AreaParams params; bool set = false; };
+	CustomEnterSlot custom_enter[2][5];
+	bool custom_enter_dirty = false;
+	void clear_custom_side(int side) {
+		for (CustomEnterSlot &slot : custom_enter[side]) slot.set = false;
+		custom_enter_dirty = true;
+	}
+	void add_custom_enter(const TriggerEffect &e) {
+		set_enter_effect(14, e.enter_mode, e.enter_channel);
+		if (!gd_level || e.enter_channel != 0) return;
+		const int type = static_cast<int>(e.area.type);
+		if (type < 0 || type > 4) return;
+		if (e.enter_mode == 0 || e.enter_mode == 1) custom_enter[0][type] = { e.area, true };
+		if (e.enter_mode == 0 || e.enter_mode == 2) custom_enter[1][type] = { e.area, true };
+		custom_enter_dirty = true;
+		upload_custom_enter();
+	}
+	// stopCustomEnterEffect(object, enter) per side of the Enter Stop's
+	// mode. HYPOTHESIS: it ends the custom effects sharing its Effect ID
+	// (225), every one when the ID is 0.
+	void stop_custom_enter(const TriggerEffect &e) {
+		if (e.enter_channel != 0) return;
+		for (int side = 0; side < 2; ++side) {
+			if (side == 0 && e.enter_mode == 2) continue;
+			if (side == 1 && e.enter_mode == 1) continue;
+			for (CustomEnterSlot &slot : custom_enter[side]) {
+				if (slot.set && (e.area.effect_id == 0 || slot.params.effect_id == e.area.effect_id)) slot.set = false;
+			}
+		}
+		custom_enter_dirty = true;
+		upload_custom_enter();
+	}
+	void upload_custom_enter() {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server) return;
+		static const char *const NAMES[2][5] = {
+			{"gd_enter_custom_move", "gd_enter_custom_rotate", "gd_enter_custom_scale", "gd_enter_custom_fade", "gd_enter_custom_tint"},
+			{"gd_exit_custom_move", "gd_exit_custom_rotate", "gd_exit_custom_scale", "gd_exit_custom_fade", "gd_exit_custom_tint"},
+		};
+		for (int side = 0; side < 2; ++side) {
+			for (int type = 0; type < 5; ++type) {
+				float m[16] = {};
+				const CustomEnterSlot &slot = custom_enter[side][type];
+				if (slot.set) {
+					enter_custom_pack(slot.params, m);
+					if (type == 4) {
+						Object *data = channel_lookup(slot.params.tint_channel);
+						const Color tint = data ? area_hsv_shift(Color(data->get("color")), slot.params) : Color(1.0f, 1.0f, 1.0f);
+						m[9] = tint.r; m[10] = tint.g; m[11] = tint.b; m[12] = float(slot.params.v[AF_TINT]);
+					}
+				}
+				const Projection value(Vector4(m[0], m[1], m[2], m[3]), Vector4(m[4], m[5], m[6], m[7]),
+						Vector4(m[8], m[9], m[10], m[11]), Vector4(m[12], m[13], m[14], m[15]));
+				server->global_shader_parameter_set(StringName(NAMES[side][type]), value);
+			}
+		}
+		custom_enter_dirty = false;
+	}
+	bool custom_tint_active() const { return custom_enter[0][4].set || custom_enter[1][4].set; }
+
 	void reset_enter_effects() {
+		for (int side = 0; side < 2; ++side) clear_custom_side(side);
+		upload_custom_enter();
 		Object *level = ObjectDB::get_instance(level_id);
 		for (const auto &entry : enter_channels) {
 			if (entry.first != 0 && level && level->has_method("set_gd_enter_channel"))
@@ -6376,6 +6627,7 @@ public:
 	}
 
 	~NativeTriggerRuntime() {
+		free_glitter();
 		restore_ui_objects();
 		reset_gradients();
 		RenderingServer *server = RenderingServer::get_singleton();
@@ -6817,6 +7069,7 @@ public:
 		if (!player) return;
 		// Touch overlap checks run from tick() for every player advanced this
 		// frame, including ones that did not move on X.
+		if (frame_players.empty()) glitter_set_mode(int64_t(player->get("internal_gamemode")));
 		frame_players.push_back(ObjectID(player->get_instance_id()));
 		if (Math::is_equal_approx(previous_x, current_x)) return;
 		ensure_index();
@@ -7046,7 +7299,9 @@ public:
 		clock += std::max(0.0, delta);
 		advance_timers(std::max(0.0, delta));
 		if (!gradients.empty()) update_gradients();
+		if (custom_tint_active()) upload_custom_enter(); // the tint channel can change
 		step_song();
+		glitter_step(std::max(0.0, delta));
 		if (shader_state.active()) {
 			shader_state.step(std::max(0.0, delta));
 			update_shader_layer(std::max(0.0, delta));
