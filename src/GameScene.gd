@@ -1,6 +1,23 @@
 class_name GameScene
 extends Node2D
 
+## Geometry Dash art sets bundled from RobTop's HD textures (gd-textures
+## 2.207 mirror): game_bg_%02d_001 (59), groundSquare_%02d_001 (22, plus a
+## _2 layer from ground 8 on, GJGroundLayer::init), fg_%02d_001 / _2 (3; 0 is
+## no middleground). Clamps: GameManager::getBGTexture / getGTexture /
+## getMGTexture (geode-sdk bindings GameManager.cpp).
+const GD_ART_DIR: String = "res://assets/textures/gd_art/"
+const GD_BG_COUNT: int = 59
+const GD_GROUND_COUNT: int = 22
+const GD_MG_COUNT: int = 3
+## Engine pixels per GD point; HD textures carry two texels per point.
+const GD_PX_PER_TEXEL: float = Constants.CELL_SIZE / 30.0 / 2.0
+## gd_docs triggers/level/bg_speed.md and mg_speed.md defaults.
+const GD_DEFAULT_BG_SPEED: Vector2 = Vector2(0.1, 0.1)
+const GD_DEFAULT_MG_SPEED: Vector2 = Vector2(0.3, 0.5)
+const GD_GROUND_SPAN_PX: float = 24000.0
+const FLOOR_Y: float = 925.0
+
 @export var checkpoint_parent: Node2D
 @export var pause_menu: PauseMenu
 @export var fade_screen: FadeScreen
@@ -46,9 +63,6 @@ func _ready() -> void:
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
 	Input.mouse_mode = InputUtils.confined_hidden_mouse_mode()
 	_probe_native_core()
-	var level_art := GDLevelArt.new()
-	level_art.name = "GDLevelArt"
-	add_child(level_art)
 	var memory_report_timer := Timer.new()
 	memory_report_timer.name = "MemoryReportTimer"
 	memory_report_timer.wait_time = 10.0
@@ -165,7 +179,7 @@ func add_loaded_level(level: Level, level_data: Dictionary = {}) -> Level:
 func start_level() -> void:
 	var level: Level = LevelManager.current_level
 	level.prepare_external_data()
-	GDLevelArt.current.apply_level(level)
+	apply_gd_level_art(level)
 	LevelManager.player_camera.snap_view()
 	AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), false)
 	if LevelManager.attempt == 0 and not Editor.in_editor:
@@ -257,3 +271,190 @@ static func get_camera_rect(camera: Camera2D, viewport: Viewport) -> Rect2:
 	var rect_pos := camera.get_screen_center_position()
 	var rect_size := (viewport.get_visible_rect().size / camera.zoom)
 	return Rect2(rect_pos - rect_size * 0.5, rect_size)
+
+
+var _gd_mg_speed: Vector2 = GD_DEFAULT_MG_SPEED
+var _gd_mg_offset: float = 0.0
+var _gd_mg_parallax: Parallax2D
+var _gd_mg_sprites: Array[Sprite2D] = []
+var _gd_ground_layers: Array[Sprite2D] = []
+
+
+## Shows the imported level's own background, ground and middleground (level
+## header kA6 / kA7 / kA25) with the default speeds; called on every start so
+## a restart undoes Change triggers. Non-GD levels (id -1) keep the scene art.
+func apply_gd_level_art(level: Level) -> void:
+	if level.gd_background_id < 0:
+		return
+	_gd_mg_speed = GD_DEFAULT_MG_SPEED
+	_gd_mg_offset = 0.0
+	($BackgroundParallax as Parallax2D).scroll_scale = GD_DEFAULT_BG_SPEED
+	set_gd_art(0, level.gd_background_id)
+	set_gd_art(1, level.gd_ground_id)
+	set_gd_art(2, level.gd_middleground_id)
+
+
+## [param kind] 0 background, 1 ground, 2 middleground; Change triggers
+## 3029-3031 (key 533) and the level header.
+func set_gd_art(kind: int, id: int) -> void:
+	match kind:
+		0:
+			_set_gd_background(_gd_texture("backgrounds/game_bg_%02d_001" % clampi(maxi(id, 1), 1, GD_BG_COUNT)))
+		1:
+			var ground := clampi(maxi(id, 1), 1, GD_GROUND_COUNT)
+			_set_gd_ground(
+					_gd_texture("grounds/groundSquare_%02d_001" % ground),
+					_gd_texture("grounds/groundSquare_%02d_2_001" % ground) if ground >= 8 else null,
+			)
+		2:
+			var mg := clampi(id, 0, GD_MG_COUNT)
+			_set_gd_middleground(
+					_gd_texture("middlegrounds/fg_%02d_001" % mg) if mg > 0 else null,
+					_gd_texture("middlegrounds/fg_%02d_2_001" % mg) if mg > 0 else null,
+			)
+
+
+func set_gd_mg_speed(speed: Vector2) -> void:
+	_gd_mg_speed = speed
+	if _gd_mg_parallax != null:
+		_gd_mg_parallax.scroll_scale.x = speed.x
+
+
+func set_gd_mg_offset(offset_gd: float) -> void:
+	_gd_mg_offset = offset_gd
+
+
+## The HD file; the normal one only if a set ever ships without HD.
+func _gd_texture(base: String) -> Texture2D:
+	for suffix: String in ["-hd.png", ".png"]:
+		var path := GD_ART_DIR + base + suffix
+		if ResourceLoader.exists(path):
+			var texture := load(path) as Texture2D
+			texture.set_meta(&"texel_px", GD_PX_PER_TEXEL * (1.0 if suffix == "-hd.png" else 2.0))
+			return texture
+	return null
+
+
+## Tiled horizontally with its bottom edge on the floor; the flipped copy
+## mirrors it below.
+func _set_gd_background(texture: Texture2D) -> void:
+	if texture == null:
+		return
+	var parallax := $BackgroundParallax as Parallax2D
+	var texel: float = texture.get_meta(&"texel_px")
+	var size := texture.get_size()
+	var height := size.y * texel
+	parallax.repeat_size = Vector2(size.x * texel, height * 2.0)
+	parallax.repeat_times = maxi(3, ceili(GD_GROUND_SPAN_PX / (size.x * texel)))
+	for sprite: Sprite2D in LevelManager.background_sprites:
+		sprite.texture = texture
+		sprite.scale = Vector2(texel, texel)
+		sprite.region_enabled = true
+		sprite.region_rect = Rect2(Vector2.ZERO, size)
+		sprite.position.y = FLOOR_Y + (height * 0.5 if sprite.flip_v else -height * 0.5)
+
+
+## The ground art goes on child sprites: the Ground sprites carry the floor
+## and ceiling colliders, so their transform must not change. Layer 2 is
+## tinted by G2 (1009) and hugs the surface.
+func _set_gd_ground(texture: Texture2D, texture_2: Texture2D) -> void:
+	if texture == null:
+		return
+	for layer: Sprite2D in _gd_ground_layers:
+		layer.queue_free()
+	_gd_ground_layers.clear()
+	var texel: float = texture.get_meta(&"texel_px")
+	var tile_px := texture.get_width() * texel
+	var span_px := tile_px * ceilf(GD_GROUND_SPAN_PX / tile_px)
+	for parallax: Parallax2D in [$GroundDownParallax as Parallax2D, $GroundUpParallax as Parallax2D]:
+		parallax.repeat_size.x = span_px
+	for ground: Sprite2D in [LevelManager.ground_down.get_node(^"Ground"), LevelManager.ground_up.get_node(^"Ground")]:
+		var surface_y := ground.region_rect.size.y * 0.5 * (1.0 if ground.flip_v else -1.0)
+		# The bundled art stops drawing; the colliders below stay put.
+		ground.texture = null
+		for layer_texture: Texture2D in [texture, texture_2]:
+			if layer_texture == null:
+				continue
+			var layer := Sprite2D.new()
+			layer.name = "GDGround" if layer_texture == texture else "GDGround2"
+			layer.texture = layer_texture
+			layer.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+			layer.centered = false
+			layer.flip_v = ground.flip_v
+			var local_scale := texel / ground.scale.x
+			layer.scale = Vector2(local_scale, local_scale)
+			layer.region_enabled = true
+			layer.region_rect = Rect2(0.0, 0.0, span_px / texel, layer_texture.get_height())
+			var height_local := layer_texture.get_height() * local_scale
+			layer.position = Vector2(
+					-span_px * 0.5 / ground.scale.x,
+					surface_y - (height_local if ground.flip_v else 0.0),
+			)
+			if layer_texture == texture:
+				layer.use_parent_material = true
+				layer.self_modulate = Color(ground.self_modulate, 1.0)
+				layer.set_meta(&"tint", -1)
+			else:
+				layer.z_index = 1
+				layer.set_meta(&"tint", 1009)
+			ground.add_child(layer)
+			_gd_ground_layers.append(layer)
+
+
+## Middleground layers (MG 1013, MG2 1014) between the background and B5.
+func _set_gd_middleground(texture: Texture2D, texture_2: Texture2D) -> void:
+	for sprite: Sprite2D in _gd_mg_sprites:
+		sprite.queue_free()
+	_gd_mg_sprites.clear()
+	if texture == null:
+		return
+	if _gd_mg_parallax == null:
+		_gd_mg_parallax = Parallax2D.new()
+		_gd_mg_parallax.name = "MiddlegroundParallax"
+		_gd_mg_parallax.z_index = -4095
+		add_child(_gd_mg_parallax)
+	var texel: float = texture.get_meta(&"texel_px")
+	var tile := texture.get_width() * texel
+	_gd_mg_parallax.scroll_scale = Vector2(_gd_mg_speed.x, 1.0)
+	_gd_mg_parallax.repeat_size = Vector2(tile, 0.0)
+	_gd_mg_parallax.repeat_times = maxi(3, ceili(GD_GROUND_SPAN_PX / tile))
+	for layer: int in 2:
+		var layer_texture: Texture2D = texture if layer == 0 else texture_2
+		if layer_texture == null:
+			continue
+		var sprite := Sprite2D.new()
+		sprite.texture = layer_texture
+		sprite.centered = false
+		sprite.offset = Vector2(0.0, -layer_texture.get_height())
+		sprite.scale = Vector2(texel, texel)
+		sprite.z_index = layer
+		sprite.set_meta(&"tint", 1013 + layer)
+		_gd_mg_parallax.add_child(sprite)
+		_gd_mg_sprites.append(sprite)
+
+
+func _process(_delta: float) -> void:
+	if _gd_ground_layers.is_empty() and _gd_mg_sprites.is_empty():
+		return
+	var bridge := NativeTriggerBridge.current
+	for layer: Sprite2D in _gd_ground_layers:
+		var channel: int = layer.get_meta(&"tint")
+		if channel < 0:
+			layer.self_modulate = Color((layer.get_parent() as Sprite2D).self_modulate, 1.0)
+		elif bridge != null:
+			layer.self_modulate = bridge.live_channel_color(channel)
+	var camera: Camera2D = LevelManager.player_camera
+	if _gd_mg_sprites.is_empty() or camera == null:
+		return
+	# MGPosY = CPosY * (1 - SpeedY) + OffsetY (gd_docs mg_speed.md), GD units
+	# with the floor at 0 and CPosY the bottom of the view. HYPOTHESIS: the
+	# middleground's bottom edge sits at that height.
+	var zoom := camera.get_zoom()
+	var bottom_px := camera.get_screen_center_position().y + camera.get_viewport_rect().size.y * 0.5 / maxf(zoom.y, 0.001)
+	var px_per_point := GD_PX_PER_TEXEL * 2.0
+	var camera_gd := (FLOOR_Y - bottom_px) / px_per_point
+	var mg_gd := camera_gd * (1.0 - _gd_mg_speed.y) + _gd_mg_offset
+	for sprite: Sprite2D in _gd_mg_sprites:
+		sprite.position.y = FLOOR_Y - mg_gd * px_per_point
+		if bridge != null:
+			sprite.self_modulate = bridge.live_channel_color(int(sprite.get_meta(&"tint")))

@@ -78,7 +78,7 @@ const START_SPEED: Array[float] = [
 ## Groups linked by Link Visible (3662): each entry stays drawn while any
 ## member is on screen.
 @export var gd_link_visible_groups: Array[PackedStringArray] = []
-## Geometry Dash art sets (kA6 / kA7 / kA25), drawn by GDLevelArt; -1 on
+## Geometry Dash art sets (kA6 / kA7 / kA25), drawn by GameScene; -1 on
 ## levels that were not imported from Geometry Dash.
 @export var gd_background_id: int = -1
 @export var gd_ground_id: int = -1
@@ -442,20 +442,20 @@ func apply_gd_bg_speed(speed: Vector2) -> void:
 ## Change Background / Ground / Middleground (3029-3031), from the native
 ## ART_CHANGE arm; [param kind] 0 BG, 1 ground, 2 MG.
 func apply_gd_art(kind: int, id: int) -> void:
-	if GDLevelArt.current != null:
-		GDLevelArt.current.set_art(kind, id)
+	if LevelManager.game_scene != null:
+		LevelManager.game_scene.set_gd_art(kind, id)
 
 
 ## Middleground Speed (3612).
 func apply_gd_mg_speed(speed: Vector2) -> void:
-	if GDLevelArt.current != null:
-		GDLevelArt.current.set_mg_speed(speed)
+	if LevelManager.game_scene != null:
+		LevelManager.game_scene.set_gd_mg_speed(speed)
 
 
 ## Offset Middleground Y (2999), eased by the native runtime; GD units.
 func set_gd_mg_offset(offset_gd: float) -> void:
-	if GDLevelArt.current != null:
-		GDLevelArt.current.set_mg_offset(offset_gd)
+	if LevelManager.game_scene != null:
+		LevelManager.game_scene.set_gd_mg_offset(offset_gd)
 
 
 func stop_level() -> void:
