@@ -621,6 +621,35 @@ int main() {
 		expect_close("follow ease eases by ease / dt", st.motion_speed_x, 300.0 - 300.0 / 4.0);
 	}
 
+	// Gradient trigger 2903: cocos2d CCLayerGradient compressed weights,
+	// vector (1, 0) rotated clockwise; base (start) on the left unrotated.
+	{
+		double w[4];
+		gradient_start_weights(0.0, w); // BL, BR, TL, TR
+		expect_close("gradient 0deg: BL is base", w[0], 1.0);
+		expect_close("gradient 0deg: BR is detail", w[1], 0.0);
+		expect_close("gradient 0deg: TL is base", w[2], 1.0);
+		expect_close("gradient 0deg: TR is detail", w[3], 0.0);
+		gradient_start_weights(90.0, w);
+		expect_close("gradient 90deg cw: TL is base", w[2], 1.0);
+		expect_close("gradient 90deg cw: BL is detail", w[0], 0.0);
+		gradient_start_weights(45.0, w);
+		expect_close("gradient 45deg: TL corner is base", w[2], 1.0);
+		expect_close("gradient 45deg: BR corner is detail", w[1], 0.0);
+		expect_close("gradient 45deg: BL midway", w[0], 0.5);
+		expect_true("gradient BG under every object layer", gradient_z_index(1) < -5 * 64);
+		expect_true("gradient B1 tops key-24 layer 3", gradient_z_index(7) == (3 - 4) * 64 + 31);
+		expect_true("gradient P above the player, below T1", gradient_z_index(8) > 0 && gradient_z_index(8) < (5 - 4) * 64 - 31);
+		expect_true("gradient T4 tops key-24 layer 11", gradient_z_index(12) == (11 - 4) * 64 + 31);
+		expect_close("edit song speed 12 = 2x", song_speed_multiplier(12.0), 2.0);
+		expect_close("edit song speed -12 = 0.5x", song_speed_multiplier(-12.0), 0.5);
+		expect_close("edit song speed clamps to 12", song_speed_multiplier(30.0), 2.0);
+		expect_close("edit song speed 0 = 1x", song_speed_multiplier(0.0), 1.0);
+		expect_true("gradient layers stack in GD order", gradient_z_index(1) < gradient_z_index(2) && gradient_z_index(2) < gradient_z_index(3)
+				&& gradient_z_index(7) < gradient_z_index(8) && gradient_z_index(8) < gradient_z_index(9)
+				&& gradient_z_index(12) < gradient_z_index(13) && gradient_z_index(13) < gradient_z_index(14));
+	}
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

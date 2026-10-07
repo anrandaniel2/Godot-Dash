@@ -19,6 +19,11 @@ const GD_LOCKED_EASE: float = 1.0 / 30.0
 ## Camera Mode (2925) Edit Camera Settings: the free-follow ease is 1 / Easing
 ## (hypothesis: GD's default Easing 10 is updateCamera's 1/10 law).
 static var free_ease: float = GD_FREE_EASE
+## Camera Mode padding dead zone in px: half-height around the view centre
+## the player may move in before a free-mode bordered camera follows.
+## Negative = the cube margins. gd_docs camera_mode.md: OffsetY = 130 - 128 *
+## Padding (GD points); reading it as that dead zone is a hypothesis.
+static var free_deadzone_px: float = -1.0
 ## GD 1.0 updateCamera: within 50 units of the end clamp the camera moves to
 ## the end portal's height.
 const GD_END_APPROACH_PX: float = 50.0 / 30.0 * Constants.CELL_SIZE
@@ -89,6 +94,7 @@ func _process(delta: float) -> void:
 		freefly,
 		player.gravity_flip < 0,
 		framerate_compensation,
+		free_deadzone_px if not portal_freefly else -1.0,
 	)
 	# GD 1.0 updateCamera: after landing on the floor, a cube-style camera
 	# whose player is not past the top margin settles back onto the floor.
@@ -141,6 +147,7 @@ func _apply_gd_level_end(framerate_compensation: float) -> void:
 func reset() -> void:
 	_last_ground_was_floor = false
 	free_ease = GD_FREE_EASE
+	free_deadzone_px = -1.0
 	limit_left = -10000000
 	limit_top = -10000000
 	limit_right = 10000000
@@ -151,6 +158,11 @@ func reset() -> void:
 	zoom = PlayerCamera.DEFAULT_ZOOM
 	offset = PlayerCamera.DEFAULT_OFFSET
 	rotation = 0.0
+
+
+## gd_docs camera_mode.md: OffsetY = 130 - 128 * Padding, in GD points.
+static func gd_padding_deadzone_px(padding: float) -> float:
+	return maxf(0.0, 130.0 - 128.0 * clampf(padding, 0.0, 1.0)) / 30.0 * Constants.CELL_SIZE
 
 
 func local_target_distance_axis(distance: float, max_distance: float, framerate_compensation: float) -> float:
@@ -166,9 +178,13 @@ func local_target_distance_axis(distance: float, max_distance: float, framerate_
 ## in fly modes, the portal centre's) rotation-local offset from the view
 ## centre, +y down; half_height is half the visible height in px.
 ## Free mode closes [member free_ease] of the gap per 60 Hz frame.
-static func gd_vertical_step(distance: float, half_height: float, is_freefly: bool, flipped: bool, framerate_compensation: float) -> float:
+static func gd_vertical_step(distance: float, half_height: float, is_freefly: bool, flipped: bool, framerate_compensation: float, deadzone_px: float = -1.0) -> float:
 	if not is_freefly:
 		return distance * GD_LOCKED_EASE * framerate_compensation
+	if deadzone_px >= 0.0:
+		if absf(distance) <= deadzone_px:
+			return 0.0
+		return (distance - signf(distance) * deadzone_px) * free_ease * framerate_compensation
 	var top_margin: float = (GD_BOTTOM_MARGIN_CELLS if flipped else GD_TOP_MARGIN_CELLS) * Constants.CELL_SIZE
 	var bottom_margin: float = (GD_TOP_MARGIN_CELLS if flipped else GD_BOTTOM_MARGIN_CELLS) * Constants.CELL_SIZE
 	var upper_limit: float = top_margin - half_height
@@ -220,7 +236,8 @@ func _draw() -> void:
 ## easing to [1, 40] and calls updateDualGround when the mode changes. Turning
 ## Free Mode off restores the borders of the last bordered portal (hypothesis:
 ## GD recomputes the same band there). Cube and robot have no borders.
-func apply_gd_camera_mode(free_mode: bool, edit_settings: bool, easing: float) -> void:
+func apply_gd_camera_mode(free_mode: bool, edit_settings: bool, easing: float, padding: float) -> void:
 	freefly = free_mode or portal_freefly
 	if edit_settings:
 		free_ease = 1.0 / clampf(easing, 1.0, 40.0)
+		free_deadzone_px = gd_padding_deadzone_px(padding)

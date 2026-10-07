@@ -125,6 +125,8 @@ enum class TriggerEffectKind : int32_t {
 	TELEPORT,      // 3022 Teleport
 	SHADER,             // 2904-2924 shader triggers (GDShaderState)
 	UI,                 // 3613 UI Trigger
+	GRADIENT,           // 2903 Gradient (GradientParams)
+	EDIT_SONG,          // 3605 Edit Song (channel 0 = the level song player)
 	SFX,                // 3602 SFX Trigger
 	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
 	FOLLOW,             // 1347 Follow (target group tracks the follow group's movement)
@@ -1487,6 +1489,63 @@ static bool kf_point_reached(const KfPlan &plan, size_t p, double t) {
 	return kf_span_progress(span, t) >= target - 1e-9;
 }
 
+// Gradient trigger 2903 (bindings 2.2081 GradientTriggerObject: 202 layer,
+// 174 blending, 209 gradient ID, 203-206 U/BL, D/BR, L/TL, R/TR, 207 vertex
+// mode, 208 disable, 508 disable all). The layer is a cocos2d
+// CCLayerGradient (GJGradientLayer) whose start colour is the trigger's base
+// channel and end colour its detail channel, along vector (1, 0) - base on
+// the left when unrotated - turned by the trigger's rotation (NamuWiki
+// "rotating the trigger changes the gradient direction").
+struct GradientParams {
+	int32_t layer = 0, blending = 0, id = 0;
+	int32_t edge_ids[4] = {}; // U/BL, D/BR, L/TL, R/TR
+	bool vertex_mode = false, disable = false, disable_all = false;
+	int32_t base_channel = 0, detail_channel = 0;
+	double rotation_degrees = 0.0; // GD key 6, clockwise
+};
+
+// cocos2d-x CCLayerGradient::updateColor with compressed interpolation (the
+// default): corner p in {-1, 1}^2 (BL, BR, TL, TR) gets the start colour
+// with weight (c - u.p) / 2c, u = v / (|v.x| + |v.y|) * c, c = sqrt(2).
+// The vector is (1, 0) rotated clockwise by the trigger's rotation, y up.
+static void gradient_start_weights(double rotation_degrees, double out[4]) {
+	const double r = rotation_degrees * 3.14159265358979323846 / 180.0;
+	double vx = std::cos(r), vy = -std::sin(r);
+	const double c = std::sqrt(2.0);
+	const double norm = std::abs(vx) + std::abs(vy);
+	vx = vx / norm * c;
+	vy = vy / norm * c;
+	const double px[4] = {-1.0, 1.0, -1.0, 1.0};
+	const double py[4] = {-1.0, -1.0, 1.0, 1.0};
+	for (int i = 0; i < 4; ++i) out[i] = std::clamp((c - (vx * px[i] + vy * py[i])) / (2.0 * c), 0.0, 1.0);
+}
+
+// Godot z index for a gradient layer (gmdkit GradientLayer: 1 BG, 2 MG,
+// 3-7 B5-B1, 8 P, 9-12 T1-T4, 13 G, 14 UI; gd_docs rendering_order.md lists
+// them bottom to top). The quad draws at the top of its layer, so it covers
+// everything up to and including it. Object layers use GDObject.z_index_for
+// ((key 24 - 4) * 64 + z order, z order within +-31).
+// HYPOTHESIS: layer 0 ("DEFAULT" in the editor) draws like P; a creator
+// tutorial uses DEFAULT to put a gradient over the player.
+static int32_t gradient_z_index(int32_t layer) {
+	static const int32_t KEY24[5] = {-5, -3, -1, 1, 3}; // B5..B1
+	switch (layer) {
+		case 1: return -4096;          // BG: right above the background sprites
+		case 2: return -4095;          // MG
+		case 3: case 4: case 5: case 6: case 7: return (KEY24[layer - 3] - 4) * 64 + 31;
+		case 9: case 10: case 11: case 12: return ((5 + (layer - 9) * 2) - 4) * 64 + 31;
+		case 13: return (11 - 4) * 64 + 32; // G: above T4
+		case 14: return 4096;          // UI / Max
+		default: return 32;            // P (and 0): above the player plane, below T1
+	}
+}
+
+// gd_docs pitch_speed.md: Speed uses the pitch scale, multiplier =
+// 2^(speed / 12), limited to [-12, 12].
+static double song_speed_multiplier(double speed) {
+	return std::pow(2.0, std::clamp(speed, -12.0, 12.0) / 12.0);
+}
+
 struct TriggerEffect {
 	KfKey keyframe;              // KEYFRAME
 	int32_t kf_anim_group = 0;   // ANIMATE_KEYFRAME (key 76)
@@ -1495,6 +1554,7 @@ struct TriggerEffect {
 	bool block_spawn_only = false, block_claim_touch = false; // TOGGLE_BLOCK 504 / 445
 	bool cam_free_mode = false, cam_edit_settings = false; // CAMERA_MODE 111 / 112
 	double cam_easing = 10.0;    // CAMERA_MODE 113
+	double cam_padding = 0.5;    // CAMERA_MODE 114
 	int32_t enter_effect = 1;    // ENTER_PRESET: applyEnterEffect type
 	int32_t enter_mode = 0, enter_channel = 0;
 	AreaParams area;            // 3006-3015 Area / Edit Area, 3024 Area Stop
@@ -1620,6 +1680,12 @@ struct TriggerEffect {
 	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
 	double camera_rotation_degrees = 0.0; // 2015: key 68
 	ShaderProps shader;          // SHADER: trigger.shader.* keys present on the object
+	GradientParams gradient;     // GRADIENT
+	// EDIT_SONG (gmdkit: 432 channel, 417 stop, 418 change volume, 406 volume,
+	// 419 change speed, 404 speed, 10 duration).
+	int32_t song_channel = 0;
+	bool song_stop = false, song_change_volume = false, song_change_speed = false;
+	double song_volume = 1.0, song_speed = 0.0, song_duration = 0.0;
 	int64_t shader_gd_id = 0;
 	int32_t xref_pos = 0;        // 3613: key 385 (UIRef enum)
 	int32_t yref_pos = 0;        // 3613: key 386 (UIRef enum)
@@ -2595,6 +2661,24 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			}
 			return effect; // timing and centres are GDShaderState's
 		case 3613: effect.kind = TriggerEffectKind::UI; break;
+		case 2903: {
+			effect.kind = TriggerEffectKind::GRADIENT;
+			GradientParams &g = effect.gradient;
+			g.layer = int32_t(prop_int(properties, "202", 0));
+			g.blending = int32_t(prop_int(properties, "174", 0));
+			g.id = std::min(int32_t(prop_int(properties, "209", 0)), int32_t(999)); // controlGradientTrigger: min(id, 999)
+			g.edge_ids[0] = int32_t(prop_int(properties, "203", 0));
+			g.edge_ids[1] = int32_t(prop_int(properties, "204", 0));
+			g.edge_ids[2] = int32_t(prop_int(properties, "205", 0));
+			g.edge_ids[3] = int32_t(prop_int(properties, "206", 0));
+			g.vertex_mode = prop_int(properties, "207", 0) != 0;
+			g.disable = prop_int(properties, "208", 0) != 0;
+			g.disable_all = prop_int(properties, "508", 0) != 0;
+			g.base_channel = int32_t(prop_int(properties, "21", 0));
+			g.detail_channel = int32_t(prop_int(properties, "22", 0));
+			g.rotation_degrees = prop_float(properties, "6", 0.0);
+			break;
+		}
 		case 3006: case 3007: case 3008: case 3009: case 3010:
 			effect.kind = TriggerEffectKind::AREA;
 			parse_area_params(properties, effect.area, false);
@@ -2660,6 +2744,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.cam_free_mode = prop_float(properties, "111", 0.0) != 0.0;
 			effect.cam_edit_settings = prop_float(properties, "112", 0.0) != 0.0;
 			effect.cam_easing = prop_float(properties, "113", 10.0);
+			effect.cam_padding = prop_float(properties, "114", 0.5);
 			return effect;
 		}
 		case 3640: {
@@ -2700,6 +2785,16 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 					prop_int(properties, "51", 0)));
 			break;
 		case 3602: effect.kind = TriggerEffectKind::SFX; break;
+		case 3605:
+			effect.kind = TriggerEffectKind::EDIT_SONG;
+			effect.song_channel = int32_t(prop_int(properties, "432", 0));
+			effect.song_stop = prop_int(properties, "417", 0) != 0;
+			effect.song_change_volume = prop_int(properties, "418", 0) != 0;
+			effect.song_change_speed = prop_int(properties, "419", 0) != 0;
+			effect.song_volume = prop_float(properties, "406", 1.0);
+			effect.song_speed = prop_float(properties, "404", 0.0);
+			effect.song_duration = std::max(0.0, prop_float(properties, "10", 0.0));
+			break;
 		case 10:  // blue gravity portal (normal)
 		case 11:  // yellow gravity portal (upside down)
 		case 2926: // green gravity portal (toggle)
@@ -3824,7 +3919,7 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::CAMERA_MODE: {
 				Object *camera = ObjectDB::get_instance(camera_id);
 				if (camera && camera->has_method("apply_gd_camera_mode"))
-					camera->call("apply_gd_camera_mode", effect.cam_free_mode, effect.cam_edit_settings, effect.cam_easing);
+					camera->call("apply_gd_camera_mode", effect.cam_free_mode, effect.cam_edit_settings, effect.cam_easing, effect.cam_padding);
 				break;
 			}
 			case TriggerEffectKind::STATE_BLOCK:
@@ -3921,6 +4016,12 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::CAMERA_ROTATE:
 			case TriggerEffectKind::SHAKE:
 				start_fade(index, effect, player);
+				break;
+			case TriggerEffectKind::GRADIENT:
+				trigger_gradient(index);
+				break;
+			case TriggerEffectKind::EDIT_SONG:
+				edit_song(effect);
 				break;
 			case TriggerEffectKind::SHADER:
 				shader_state.apply(effect.shader_gd_id, effect.shader);
@@ -4199,6 +4300,22 @@ private:
 		return targets;
 	}
 	void stop_triggers(const std::set<size_t> &targets, int32_t mode) {
+		// GJBaseGameLayer::controlGradientTrigger (bindings inline): Resume
+		// re-triggers the gradient, Stop and Pause remove its layer.
+		for (size_t index : targets) {
+			if (index >= records.size() || records[index].effect.kind != TriggerEffectKind::GRADIENT) continue;
+			const int32_t id = records[index].effect.gradient.id;
+			if (mode == 2) {
+				if (gradients_paused.count(index)) trigger_gradient(index);
+				continue;
+			}
+			bool had = false;
+			for (const GradientLayer &layer : gradients) had = had || layer.id == id;
+			if (had) {
+				remove_gradient_id(id);
+				gradients_paused.insert(index);
+			}
+		}
 		if (mode == 0) {
 			// gd_docs pulse.md: Pulse effects are temporary and clear once the
 			// trigger stops being active; other animations freeze mid-way.
@@ -4836,7 +4953,245 @@ private:
 	// One post-process ColorRect (ShaderLayer/GDPost, GDPostProcess.gdshader)
 	// carries every shader trigger; hidden while no effect is active.
 	GDShaderState shader_state;
+	// Gradient layers (GJBaseGameLayer::m_gradientLayers keyed by gradient
+	// ID). Each is one RenderingServer canvas item under the level, later
+	// layers drawn on top (NamuWiki: "the most created later is the top").
+	struct GradientLayer {
+		int32_t id = 0;
+		size_t record = 0;
+		RID item;
+		GradientParams params;
+	};
+	std::vector<GradientLayer> gradients;
+	std::set<size_t> gradients_paused; // removed by Pause; Resume re-triggers
+	Rect2 gradient_screen;             // the level-load screen, in level space
+	bool gradient_screen_valid = false;
+	RID gradient_materials[4];
+
+	void free_gradient(GradientLayer &layer) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server && layer.item.is_valid()) server->free_rid(layer.item);
+		layer.item = RID();
+	}
+	void remove_gradient_id(int32_t id) {
+		for (auto it = gradients.begin(); it != gradients.end();) {
+			if (it->id == id) {
+				free_gradient(*it);
+				it = gradients.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+	void reset_gradients() {
+		for (GradientLayer &layer : gradients) free_gradient(layer);
+		gradients.clear();
+		gradients_paused.clear();
+		gradient_screen_valid = false;
+	}
+	RID gradient_material(int32_t blending) {
+		const int32_t mode = (blending >= 0 && blending < 4) ? blending : 0;
+		if (gradient_materials[mode].is_valid()) return gradient_materials[mode];
+		static const char *PATHS[4] = {
+			"res://resources/shaders/GDGradientNormal.gdshader", "res://resources/shaders/GDGradientAdditive.gdshader",
+			"res://resources/shaders/GDGradientMultiply.gdshader", "res://resources/shaders/GDGradientInvert.gdshader",
+		};
+		RenderingServer *server = RenderingServer::get_singleton();
+		Ref<Resource> shader = ResourceLoader::get_singleton()->load(PATHS[mode]);
+		if (!server || shader.is_null()) return RID();
+		gradient_shaders[mode] = shader;
+		gradient_materials[mode] = server->material_create();
+		server->material_set_shader(gradient_materials[mode], shader->get_rid());
+		return gradient_materials[mode];
+	}
+	Ref<Resource> gradient_shaders[4];
+
+	// GJBaseGameLayer::triggerGradientCommand: Disable All clears every
+	// layer, Disable clears the ID, otherwise a new layer replaces the ID.
+	void trigger_gradient(size_t index) {
+		const GradientParams &g = records[index].effect.gradient;
+		gradients_paused.erase(index);
+		if (g.disable_all) {
+			reset_gradients_keep_screen();
+			return;
+		}
+		remove_gradient_id(g.id);
+		if (g.disable) return;
+		CanvasItem *level = Object::cast_to<CanvasItem>(ObjectDB::get_instance(level_id));
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!level || !server) return;
+		GradientLayer layer;
+		layer.id = g.id;
+		layer.record = index;
+		layer.params = g;
+		layer.item = server->canvas_item_create();
+		server->canvas_item_set_parent(layer.item, level->get_canvas_item());
+		server->canvas_item_set_z_index(layer.item, gradient_z_index(g.layer));
+		const RID material = gradient_material(g.blending);
+		if (material.is_valid()) server->canvas_item_set_material(layer.item, material);
+		gradients.push_back(layer);
+		update_gradients();
+	}
+	void reset_gradients_keep_screen() {
+		const Rect2 screen = gradient_screen;
+		const bool valid = gradient_screen_valid;
+		reset_gradients();
+		gradient_screen = screen;
+		gradient_screen_valid = valid;
+	}
+
+	// gd_docs bugs/gradient.md: references with ID 0 use the screen edges
+	// captured when the level loads (they do not follow the camera).
+	void capture_gradient_screen() {
+		if (gradient_screen_valid) return;
+		Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+		CanvasItem *level = Object::cast_to<CanvasItem>(ObjectDB::get_instance(level_id));
+		if (!camera || !level) return;
+		const Vector2 zoom = camera->get_zoom();
+		const Vector2 half = camera->get_viewport_rect().size
+				/ Vector2(Math::max(zoom.x, static_cast<real_t>(0.001)), Math::max(zoom.y, static_cast<real_t>(0.001))) * 0.5f;
+		const Transform2D to_level = level->get_global_transform().affine_inverse();
+		const Vector2 a = to_level.xform(camera->get_screen_center_position() - half);
+		const Vector2 b = to_level.xform(camera->get_screen_center_position() + half);
+		gradient_screen = Rect2(a, Vector2()).expand(b);
+		gradient_screen_valid = true;
+	}
+
+	Color gradient_channel_color(int32_t channel) const {
+		if (channel <= 0) return Color(1.0f, 1.0f, 1.0f, 1.0f);
+		const Dictionary resolved = resolve_copied_channel(channel);
+		Color color = resolved.has("color") ? Color(resolved["color"]) : Color(1.0f, 1.0f, 1.0f);
+		color.a = resolved.has("alpha") ? float(double(resolved["alpha"])) : 1.0f;
+		return color;
+	}
+
+	// Rebuilt every tick: reference objects move and channels change
+	// (GJGradientLayer keeps base / detail as channel IDs).
+	void update_gradients() {
+		if (gradients.empty()) return;
+		capture_gradient_screen();
+		CanvasItem *level = Object::cast_to<CanvasItem>(ObjectDB::get_instance(level_id));
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!level || !server) return;
+		const Transform2D to_level = level->get_global_transform().affine_inverse();
+		auto ref_pos = [&](int32_t group, bool &found) -> Vector2 {
+			found = false;
+			if (group <= 0) return Vector2();
+			Node2D *node = resolve_first_member(String("g_") + String::num_int64(group));
+			if (!node) return Vector2();
+			found = true;
+			return to_level.xform(node->get_global_position());
+		};
+		// Level space is y down: screen top = position.y.
+		const Rect2 sc = gradient_screen;
+		const Vector2 screen_corner[4] = {
+			Vector2(sc.position.x, sc.get_end().y), sc.get_end(), sc.position, Vector2(sc.get_end().x, sc.position.y),
+		}; // BL, BR, TL, TR
+		for (GradientLayer &layer : gradients) {
+			const GradientParams &g = layer.params;
+			Vector2 corner[4];
+			if (g.vertex_mode) {
+				// 203 BL, 204 BR, 205 TL, 206 TR.
+				for (int i = 0; i < 4; ++i) {
+					bool found = false;
+					const Vector2 pos = ref_pos(g.edge_ids[i], found);
+					corner[i] = found ? pos : screen_corner[i];
+				}
+			} else {
+				bool fu = false, fd = false, fl = false, fr = false;
+				const Vector2 u = ref_pos(g.edge_ids[0], fu), d = ref_pos(g.edge_ids[1], fd);
+				const Vector2 l = ref_pos(g.edge_ids[2], fl), r = ref_pos(g.edge_ids[3], fr);
+				const real_t top = fu ? u.y : sc.position.y;
+				const real_t bottom = fd ? d.y : sc.get_end().y;
+				const real_t left = fl ? l.x : sc.position.x;
+				const real_t right = fr ? r.x : sc.get_end().x;
+				corner[0] = Vector2(left, bottom); corner[1] = Vector2(right, bottom);
+				corner[2] = Vector2(left, top); corner[3] = Vector2(right, top);
+			}
+			double w[4];
+			gradient_start_weights(g.rotation_degrees, w);
+			const Color start = gradient_channel_color(g.base_channel);
+			const Color end = gradient_channel_color(g.detail_channel);
+			PackedVector2Array points;
+			PackedColorArray colors;
+			PackedInt32Array indices;
+			const int order[4] = {0, 1, 3, 2}; // BL, BR, TR, TL
+			for (int k = 0; k < 4; ++k) {
+				points.push_back(corner[order[k]]);
+				colors.push_back(end.lerp(start, float(w[order[k]])));
+			}
+			indices.push_back(0); indices.push_back(1); indices.push_back(2);
+			indices.push_back(0); indices.push_back(2); indices.push_back(3);
+			server->canvas_item_clear(layer.item);
+			server->canvas_item_add_triangle_array(layer.item, indices, points, colors);
+		}
+	}
+
+	// Edit Song (gd_docs edit_song.md): Speed / Volume transition over
+	// Duration; a new call overrides the running transition of what it
+	// changes. Only channel 0 exists here: the level's song player.
+	// Godot's pitch_scale also shifts pitch, where FMOD time-stretches.
+	struct SongTween { double from = 1.0, to = 1.0, start = 0.0, duration = 0.0; bool active = false; };
+	SongTween song_volume_tween, song_speed_tween;
+	double song_volume_now = 1.0, song_speed_now = 1.0;
+	bool song_edited = false;
+
+	Object *song_player() const {
+		Node *manager = level_manager();
+		if (!manager) return nullptr;
+		const Variant player = manager->get("song_player");
+		return player.get_type() == Variant::OBJECT ? static_cast<Object *>(player) : nullptr;
+	}
+	static double song_tween_value(const SongTween &t, double now) {
+		if (!t.active) return t.to;
+		if (t.duration <= 0.0) return t.to;
+		const double k = std::clamp((now - t.start) / t.duration, 0.0, 1.0);
+		return t.from + (t.to - t.from) * k;
+	}
+	void apply_song_state() {
+		Object *player = song_player();
+		if (!player) return;
+		player->set("volume_db", song_volume_now > 0.0 ? 20.0 * std::log10(song_volume_now) : -80.0);
+		player->set("pitch_scale", std::max(0.01, song_speed_now));
+	}
+	void edit_song(const TriggerEffect &e) {
+		if (e.song_channel != 0) return;
+		if (e.song_stop) {
+			Object *player = song_player();
+			if (player) player->call("stop");
+		}
+		if (e.song_change_volume) song_volume_tween = SongTween{song_volume_now, std::max(0.0, e.song_volume), clock, e.song_duration, true};
+		if (e.song_change_speed) song_speed_tween = SongTween{song_speed_now, song_speed_multiplier(e.song_speed), clock, e.song_duration, true};
+		song_edited = song_edited || e.song_change_volume || e.song_change_speed;
+		step_song();
+	}
+	void step_song() {
+		if (!song_edited) return;
+		song_volume_now = song_tween_value(song_volume_tween, clock);
+		song_speed_now = song_tween_value(song_speed_tween, clock);
+		apply_song_state();
+		if ((!song_volume_tween.active || clock - song_volume_tween.start >= song_volume_tween.duration)
+				&& (!song_speed_tween.active || clock - song_speed_tween.start >= song_speed_tween.duration)) {
+			song_volume_tween.active = false;
+			song_speed_tween.active = false;
+			song_volume_tween.to = song_volume_now;
+			song_speed_tween.to = song_speed_now;
+			song_edited = false;
+		}
+	}
+	void reset_song_edits() {
+		const bool touched = song_volume_now != 1.0 || song_speed_now != 1.0;
+		song_volume_tween = SongTween();
+		song_speed_tween = SongTween();
+		song_volume_now = 1.0;
+		song_speed_now = 1.0;
+		song_edited = false;
+		if (touched) apply_song_state();
+	}
+
 	void reset_shaders() {
+		reset_song_edits();
+		reset_gradients();
 		shader_state.reset();
 		CanvasItem *post = get_shader_node(StringName("GDPost"));
 		if (post) post->set_visible(false);
@@ -6022,6 +6377,11 @@ public:
 
 	~NativeTriggerRuntime() {
 		restore_ui_objects();
+		reset_gradients();
+		RenderingServer *server = RenderingServer::get_singleton();
+		for (RID &material : gradient_materials) {
+			if (server && material.is_valid()) server->free_rid(material);
+		}
 	}
 
 	void clear() {
@@ -6685,6 +7045,8 @@ public:
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
 		advance_timers(std::max(0.0, delta));
+		if (!gradients.empty()) update_gradients();
+		step_song();
 		if (shader_state.active()) {
 			shader_state.step(std::max(0.0, delta));
 			update_shader_layer(std::max(0.0, delta));

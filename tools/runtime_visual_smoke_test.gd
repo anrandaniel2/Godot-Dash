@@ -599,6 +599,10 @@ func _test_native_core() -> void:
 	assert(is_equal_approx(PlayerCamera.gd_vertical_step(upper_edge - 100.0, half_view, true, false, 1.0), -10.0), "camera: above the band eases 1/10")
 	assert(is_zero_approx(PlayerCamera.gd_vertical_step(lower_edge + 100.0, half_view, true, true, 1.0)), "camera: flipped gravity swaps the margins")
 	assert(is_equal_approx(PlayerCamera.gd_vertical_step(300.0, half_view, false, false, 1.0), 10.0), "camera: fly modes ease 1/30")
+	var padding_half: float = PlayerCamera.gd_padding_deadzone_px(0.5)
+	assert(is_equal_approx(padding_half, 66.0 / 30.0 * Constants.CELL_SIZE), "camera mode: padding 0.5 is a 66-point dead zone")
+	assert(is_zero_approx(PlayerCamera.gd_vertical_step(padding_half - 1.0, half_view, true, false, 1.0, padding_half)), "camera mode: inside the padding dead zone holds")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(padding_half + 100.0, half_view, true, false, 1.0, padding_half), 10.0), "camera mode: past the padding eases")
 	# Colour triggers must keep their colour source: an explicit RGB, a copied
 	# channel (key 50, with the copy HSV of key 49 and the opacity copy of key
 	# 60), a player colour (keys 15/16), or the channel's own colour when the
