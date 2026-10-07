@@ -90,7 +90,6 @@ duration = 0.25
 easing_type = 1
 easing_transition = 5
 _use_physics_process = true
-_can_be_previewed = false
 _can_change_action = false
 metadata/_custom_type_script = "uid://tfriwfc7uruu"
 

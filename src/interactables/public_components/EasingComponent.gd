@@ -10,7 +10,6 @@ enum Action {
 	PULSE,
 }
 
-@export_custom(PROPERTY_HINT_TOOL_BUTTON, "Preview,Play") var preview: Callable = start_preview
 @export var action: Action:
 	set(value):
 		action = value
@@ -39,12 +38,10 @@ enum Action {
 @export var prevent_restart_during_animation: bool = true
 @export var ignore_time_scale: bool = false
 @export var _use_physics_process: bool = false
-@export var _can_be_previewed: bool = true
 @export var _can_change_action: bool = true
 
 @export_storage var elapsed_time: Dictionary[NodePath, float]
 
-var is_previewing: bool = false
 var tweens: Dictionary[Player, Tween]
 var weights: Dictionary[Player, float]
 var _previous_weights: Dictionary[Player, float]
@@ -104,10 +101,6 @@ func _validate_property(property: Dictionary) -> void:
 		property.usage |= PROPERTY_USAGE_READ_ONLY
 		trigger_for_one_player = true
 		ignore_time_scale = true
-	if property.name == "preview" and is_previewing:
-		property.hint_string = "Preview,Stop"
-	if property.name == "preview" and not _can_be_previewed:
-		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if property.name == "action" and not _can_change_action:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if property.name in ["duration", "easing_type", "easing_transition"] and action != Action.CHANGE:
@@ -152,8 +145,6 @@ func _get_property_default_value(property: String) -> Variant:
 
 
 func _field_to_data(field_name: String, reason: Serialize.Reason) -> Variant:
-	if is_previewing:
-		stop_preview(LevelManager.player)
 	match field_name:
 		"elapsed_time":
 			if reason != Serialize.Reason.PRACTICE:
@@ -178,8 +169,6 @@ func _field_from_data(field_name: String, field_data: Variant) -> void:
 
 
 func start(player: Player) -> void:
-	if LevelManager.level_playing and is_previewing:
-		stop_preview(player)
 	if trigger_for_one_player and tweens.size() == 1 and tweens[tweens.keys()[0]] != player:
 		return
 	if prevent_restart_during_animation and not tweens.is_empty():
@@ -259,25 +248,6 @@ func reset_player(player: Player) -> void:
 		_set_processing_active(false)
 
 
-func start_preview() -> void:
-	var player: Player = LevelManager.player
-	if is_previewing:
-		stop_preview(player)
-		return
-	is_previewing = true
-	notify_property_list_changed()
-	finished.connect(_on_preview_end, CONNECT_ONE_SHOT)
-	parent.interacted.emit(player)
-
-
-func stop_preview(player: Player) -> void:
-	is_previewing = false
-	if player in tweens:
-		_on_preview_end(player)
-		tweens[player].kill()
-		tweens.erase(player)
-
-
 func get_elapsed_time() -> Dictionary[NodePath, float]:
 	var _elapsed_time: Dictionary[NodePath, float] = { }
 	for player in tweens:
@@ -305,11 +275,3 @@ func restore_from_elapsed_time() -> void:
 		# to run like it just started from 0
 		tweens[player].custom_step(elapsed_time[player_path])
 		get_weight_delta(player)
-
-
-func _on_preview_end(player: Player) -> void:
-	var reverse_weight: float = -weights[player]
-	reset_player(player)
-	progressed.emit(player, reverse_weight)
-	is_previewing = false
-	notify_property_list_changed()
