@@ -25,6 +25,12 @@ const LOCKEDFLY_GAMEMODE_GRID_HEIGHTS: Dictionary = {
 @export var gd_band_ceiling_y: float = 0.0
 
 
+## Global Y of a level-space band line.
+static func gd_band_global_y(level_y: float) -> float:
+	var level: Level = LevelManager.current_level
+	return level.to_global(Vector2(0.0, level_y)).y if level != null and level.is_inside_tree() else level_y
+
+
 func _ready() -> void:
 	parent.body_entered.connect(_move_grounds)
 
@@ -53,8 +59,12 @@ func _move_grounds(_player: Player) -> void:
 	if freefly:
 		return
 	if use_gd_band:
-		GroundData.center = Vector2(parent.global_position.x, (gd_band_floor_y + gd_band_ceiling_y) * 0.5)
-		GroundData.distance = absf(gd_band_floor_y - gd_band_ceiling_y) * 0.5
+		# The band is in level coordinates; GroundObject places the grounds
+		# from GroundData in global ones (the level sits at y = 925).
+		var floor_y: float = gd_band_global_y(gd_band_floor_y)
+		var ceiling_y: float = gd_band_global_y(gd_band_ceiling_y)
+		GroundData.center = Vector2(parent.global_position.x, (floor_y + ceiling_y) * 0.5)
+		GroundData.distance = absf(floor_y - ceiling_y) * 0.5
 		GroundData.offset = 0
 		return
 	GroundData.center = parent.global_position

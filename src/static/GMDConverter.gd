@@ -1483,11 +1483,15 @@ const GD_CLAMPED_GAMEMODES: Array[int] = [
 const PORTAL_FREE_MODE_KEY: String = "111"
 
 
-## GD band: floor = max(90, floor30(portal y - H/2)), ceiling = floor + H; a
+## GD band: floor = max(0, floor30(portal y - H/2)), ceiling = floor + H; a
 ## Free Mode portal writes no band and leaves every mode unclamped
 ## (updateDualGround / checkCollisions, gdsolver bands.hpp).
 static func gd_portal_band(portal_gd_y: float, band_height: float) -> Vector2:
-	var band_floor: float = maxf(90.0, floorf((portal_gd_y - band_height * 0.5) / GD_CELL_SIZE) * GD_CELL_SIZE)
+	# GD clamps the floor to the ground line, 90 in its internal coordinates;
+	# level-string Y is internal Y - 90 (OpenGD PlayLayer.cpp loads objects with
+	# setPositionY(y + 90)), so the line is 0 here. 90 is a multiple of 30, so
+	# the floor30 term is the same in both systems.
+	var band_floor: float = maxf(0.0, floorf((portal_gd_y - band_height * 0.5) / GD_CELL_SIZE) * GD_CELL_SIZE)
 	return Vector2(band_floor, band_floor + band_height)
 
 
