@@ -415,8 +415,8 @@ const TRIGGER_IDS: Array[int] = [
 	3605, 3606, 3607, 3608, 3609, 3612, 3613, 3614, 3615, 3617, 3618,
 	3619, 3620, 3640, 3641, 3642, 3643, 3655, 3660, 3661, 3662,
 	# 3662 Link Visible keeps a group drawn while any member is on screen
-	# (NamuWiki trigger list 4.2.14). FrustumCuller never culls grouped
-	# objects, so every group it can target is always drawn already.
+	# (NamuWiki trigger list 4.2.14). The converter records its groups in
+	# Level.gd_link_visible_groups and FrustumCuller links their visibility.
 ]
 const GENERIC_TRIGGER: Dictionary = {
 	"scene": TRIGGERS + "NativeGenericTrigger.tscn",
@@ -443,7 +443,8 @@ const NATIVE_EFFECT_TRIGGER_IDS: Array[int] = [
 	3613,
 	3006, 3007, 3008, 3009, 3010, 3011, 3012, 3013, 3014, 3015, 3024,
 	22, 23, 24, 25, 26, 27, 28, 55, 56, 57, 58, 59, 1915,
-	3017, 3018, 3019, 3020, 3021, 3023, 1818, 1819,
+	3017, 3018, 3019, 3020, 3021, 3023, 1818, 1819, 3602, 3603,
+	2999, 3029, 3030, 3031, 3612,
 	3032, 3033, 3640, 3643, 2925, 32, 33, 2063,
 ]
 

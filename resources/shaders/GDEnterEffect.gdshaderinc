@@ -34,6 +34,17 @@ global uniform mat4 gd_exit_custom_fade;
 global uniform mat4 gd_exit_custom_tint;
 
 uniform bool enabled = true;
+// Per-object enter settings, set on keyed copies of the shared material
+// (EnterMaterials): 1 Don't Fade (key 64), 2 Don't Enter (key 67).
+// NamuWiki trigger list (Enter triggers): Don't Fade drops the enter fade,
+// Don't Enter drops every enter effect.
+uniform int gd_object_flags = 0;
+// Enter channel (key 343). Non-zero channels follow the Enter triggers of
+// that channel (key 344) instead of the global ones; until one fires the
+// channel has the level default (type 1, as the native reset sets).
+uniform int gd_object_channel = 0;
+uniform int gd_channel_enter = 1;
+uniform int gd_channel_exit = 1;
 
 uniform float transition_width: hint_range(0.0, 100.0, 1.0) = 15.0;
 uniform float fade_power = 1.0;
@@ -118,8 +129,10 @@ void vertex() {
 		float x = view_center.x / px_per_unit;
 		bool is_right = x > view_width * 0.5;
 		int effect = is_right ? gd_enter_effect : gd_exit_effect;
+		if (gd_object_channel != 0) effect = is_right ? gd_channel_enter : gd_channel_exit;
+		if ((gd_object_flags & 2) != 0) effect = 13; // no motion, no fade
 		float edge = is_right ? view_width - x : x;
-		gd_fade = effect == 13 ? 1.0 : clamp(edge / 70.0, 0.0, 1.0);
+		gd_fade = (effect == 13 || (gd_object_flags & 1) != 0) ? 1.0 : clamp(edge / 70.0, 0.0, 1.0);
 		float enter = clamp(edge * 0.017, 0.0, 1.0);
 		float scale = 1.0;
 		vec2 offset_gd = vec2(0.0); // GD units, +Y up

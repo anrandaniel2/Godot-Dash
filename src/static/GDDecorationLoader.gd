@@ -270,6 +270,9 @@ static func _native_packed_batch(builder: Object, index: int) -> DecorationBatch
 	var batch: DecorationBatch = _new_batch(
 			group_key, int(info.get("z_layer", 0)), bool(info.get("additive", false)), "PackedDecorationBatch%d" % index
 	)
+	var enter_key: int = int(info.get("enter_key", 0))
+	if enter_key != 0:
+		batch.material = EnterMaterials.material(batch.gd_blending, enter_key)
 	var renderer: Object = ClassDB.instantiate(&"NativeDecorationRenderer")
 	if renderer == null:
 		batch.free()

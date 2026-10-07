@@ -75,6 +75,14 @@ const START_SPEED: Array[float] = [
 @export var gd_level_end_x: float = 0.0
 ## Spawn Particle (3608): GD group name -> particle object data strings (key 145).
 @export var gd_particle_groups: Dictionary = {}
+## Groups linked by Link Visible (3662): each entry stays drawn while any
+## member is on screen.
+@export var gd_link_visible_groups: Array[PackedStringArray] = []
+## Geometry Dash art sets (kA6 / kA7 / kA25), drawn by GDLevelArt; -1 on
+## levels that were not imported from Geometry Dash.
+@export var gd_background_id: int = -1
+@export var gd_ground_id: int = -1
+@export var gd_middleground_id: int = -1
 @export var start_speed_preset: int = EasedSpeedChangerComponent.SpeedPreset.x1
 @export var start_speed: float = START_SPEED[2]
 @export var start_reverse: bool
@@ -431,6 +439,25 @@ func apply_gd_bg_speed(speed: Vector2) -> void:
 		parallax.scroll_scale = speed
 
 
+## Change Background / Ground / Middleground (3029-3031), from the native
+## ART_CHANGE arm; [param kind] 0 BG, 1 ground, 2 MG.
+func apply_gd_art(kind: int, id: int) -> void:
+	if GDLevelArt.current != null:
+		GDLevelArt.current.set_art(kind, id)
+
+
+## Middleground Speed (3612).
+func apply_gd_mg_speed(speed: Vector2) -> void:
+	if GDLevelArt.current != null:
+		GDLevelArt.current.set_mg_speed(speed)
+
+
+## Offset Middleground Y (2999), eased by the native runtime; GD units.
+func set_gd_mg_offset(offset_gd: float) -> void:
+	if GDLevelArt.current != null:
+		GDLevelArt.current.set_mg_offset(offset_gd)
+
+
 func stop_level() -> void:
 	song_player.stop()
 	LevelManager.player_duals.clear()
@@ -724,6 +751,10 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"gd_max_gameplay_y": gd_max_gameplay_y,
 		"gd_level_end_x": gd_level_end_x,
 		"gd_particle_groups": gd_particle_groups,
+		"gd_link_visible_groups": gd_link_visible_groups,
+		"gd_background_id": gd_background_id,
+		"gd_ground_id": gd_ground_id,
+		"gd_middleground_id": gd_middleground_id,
 		"start_speed": start_speed if isnt_practice else player.speed_multiplier,
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": start_reverse if isnt_practice else player.horizontal_direction < 0,
@@ -802,6 +833,12 @@ func _use_data_fields(data: Dictionary) -> void:
 	gd_max_gameplay_y = float(data.get("gd_max_gameplay_y", 0.0))
 	gd_level_end_x = float(data.get("gd_level_end_x", 0.0))
 	gd_particle_groups = data.get("gd_particle_groups", {})
+	gd_link_visible_groups.clear()
+	for linked: Variant in data.get("gd_link_visible_groups", []):
+		gd_link_visible_groups.append(PackedStringArray(linked))
+	gd_background_id = int(data.get("gd_background_id", -1))
+	gd_ground_id = int(data.get("gd_ground_id", -1))
+	gd_middleground_id = int(data.get("gd_middleground_id", -1))
 	start_speed = data.start_speed
 	start_speed_preset = data.start_speed_preset
 	start_reverse = data.start_reverse
@@ -911,6 +948,13 @@ func _update_enter_effect_shader_parameter(parameter: StringName, value: float) 
 	AssetManager.fade_enter_effect_canvas_group.set_shader_parameter(parameter, value)
 	if AssetManager.fade_enter_effect_additive:
 		AssetManager.fade_enter_effect_additive.set_shader_parameter(parameter, value)
+	EnterMaterials.set_parameter(parameter, value)
+
+
+## Enter triggers on a non-zero enter channel (key 344), from the native
+## set_enter_effect; objects on that channel (key 343) follow them.
+func set_gd_enter_channel(channel: int, enter_type: int, exit_type: int) -> void:
+	EnterMaterials.set_channel(channel, enter_type, exit_type)
 
 
 static func from_data(data: Dictionary) -> Level:
@@ -1086,7 +1130,9 @@ static func _configure_gd_object(object: GDObject, object_data: Dictionary, leve
 	# parent's material, so setting it once on the root covers them all;
 	# additive objects keep their blend material instead.
 	if object.material == null:
-		object.material = AssetManager.fade_enter_effect
+		object.material = EnterMaterials.material(false, int(object_data.get("enter_key", 0)))
+	elif int(object_data.get("enter_key", 0)) != 0 and object.material == DecorationBatch.fade_material(true):
+		object.material = EnterMaterials.material(true, int(object_data.get("enter_key", 0)))
 	# Attributes behave exactly as they do on hand-made gameplay scenes.
 	if "attributes" in object_data:
 		var attributes: Array[String]

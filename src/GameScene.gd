@@ -46,6 +46,9 @@ func _ready() -> void:
 	LevelManager.player.process_mode = Node.PROCESS_MODE_DISABLED
 	Input.mouse_mode = InputUtils.confined_hidden_mouse_mode()
 	_probe_native_core()
+	var level_art := GDLevelArt.new()
+	level_art.name = "GDLevelArt"
+	add_child(level_art)
 	var memory_report_timer := Timer.new()
 	memory_report_timer.name = "MemoryReportTimer"
 	memory_report_timer.wait_time = 10.0
@@ -162,6 +165,7 @@ func add_loaded_level(level: Level, level_data: Dictionary = {}) -> Level:
 func start_level() -> void:
 	var level: Level = LevelManager.current_level
 	level.prepare_external_data()
+	GDLevelArt.current.apply_level(level)
 	LevelManager.player_camera.snap_view()
 	AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), false)
 	if LevelManager.attempt == 0 and not Editor.in_editor:

@@ -42,6 +42,8 @@ extends Node
 const OVERSIZE_CELLS: float = 64.0
 ## Cells per bucket.
 const BUCKET_CELLS: int = 8
+## Slack around grouped objects, whose span scale/rotate triggers can grow.
+const DYNAMIC_MARGIN_CELLS: float = 4.0
 ## How far past the camera's trailing edge objects stay visible. The leading
 ## edge keeps the full [member Config.culling_buffer_cells] buffer so nothing
 ## pops in ahead of a fast camera; trailing objects have already been played
@@ -93,6 +95,14 @@ func rebuild() -> void:
 		var objects: Array = []
 		var lefts := PackedFloat32Array()
 		var rights := PackedFloat32Array()
+		var dynamic_objects: Array = []
+		var dynamic_lefts := PackedFloat32Array()
+		var dynamic_rights := PackedFloat32Array()
+		var dynamic_links := PackedInt32Array()
+		var link_of_group: Dictionary[StringName, int] = { }
+		for link: int in level.gd_link_visible_groups.size():
+			for group: String in level.gd_link_visible_groups[link]:
+				link_of_group[StringName(Constants.GROUP_PREFIX + group)] = link
 		for current_layer: Layer in level.layers:
 			for child: Node in current_layer.get_children():
 				if child is not Node2D or not is_cullable(child):
@@ -102,12 +112,27 @@ func rebuild() -> void:
 				if span.y - span.x > OVERSIZE_CELLS * Constants.CELL_SIZE:
 					_oversize.append(child)
 					continue
+				if is_grouped(child):
+					var link: int = -1
+					for group: StringName in child.get_groups():
+						link = link_of_group.get(group, link)
+					# Scale and rotate triggers can grow the span after load.
+					var margin: float = DYNAMIC_MARGIN_CELLS * Constants.CELL_SIZE
+					dynamic_objects.append(child)
+					dynamic_lefts.append(span.x - margin)
+					dynamic_rights.append(span.y + margin)
+					dynamic_links.append(link)
+					continue
 				objects.append(child)
 				lefts.append(span.x)
 				rights.append(span.y)
 		_native_index.call(
 				&"configure", objects, lefts, rights,
 				BUCKET_CELLS * Constants.CELL_SIZE,
+		)
+		_native_index.call(
+				&"configure_dynamic", dynamic_objects, dynamic_lefts, dynamic_rights,
+				dynamic_links, level.gd_link_visible_groups.size(),
 		)
 	else:
 		for current_layer: Layer in level.layers:
@@ -120,7 +145,8 @@ func rebuild() -> void:
 
 ## Adds one object, unless it is one the manager must not touch.
 func track(object: Node2D) -> void:
-	if not is_cullable(object):
+	# The bucket fallback has no live-position test, so grouped objects stay.
+	if not is_cullable(object) or is_grouped(object):
 		return
 	var span: Vector2 = _horizontal_span(object)
 	if span.y - span.x > OVERSIZE_CELLS * Constants.CELL_SIZE:
@@ -147,12 +173,16 @@ static func is_cullable(object: Node2D) -> bool:
 		return false
 	if object is SolidObject and object.physics_object:
 		return false
-	# Anything a trigger can address may move, so its load-time bucket
-	# would go stale.
+	return true
+
+
+## Whether a trigger can address [param object]: it may move, so it is tested
+## at its live position every frame instead of from a load-time bucket.
+static func is_grouped(object: Node) -> bool:
 	for group: StringName in object.get_groups():
 		if str(group).begins_with(Constants.GROUP_PREFIX):
-			return false
-	return true
+			return true
+	return false
 
 
 func _bucket_of(x: float) -> int:
@@ -269,6 +299,7 @@ func _update() -> void:
 		# the player remain until their last pixel exits and already-offscreen
 		# objects are not retained by a coarse eight-cell bucket.
 		_native_index.call(&"set_view", view.position.x, view.end.x)
+		_native_index.call(&"update_dynamic", view.position.x, view.end.x)
 		_last_first = _bucket_of(view.position.x)
 		_last_last = _bucket_of(view.end.x)
 		return

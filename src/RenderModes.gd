@@ -134,6 +134,7 @@ func toggle_enter_effect(value: bool):
 	AssetManager.fade_enter_effect_canvas_group.set_shader_parameter(&"enabled", value)
 	if AssetManager.fade_enter_effect_additive:
 		AssetManager.fade_enter_effect_additive.set_shader_parameter(&"enabled", value)
+	EnterMaterials.set_parameter(&"enabled", value)
 
 
 func toggle_render_mode_options(value: bool, animate: bool = true, time: float = 0.25) -> void:

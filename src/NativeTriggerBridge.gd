@@ -78,6 +78,8 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	for group: Variant in level.gd_particle_groups:
 		_runtime.call(&"register_particle_group", str(group), PackedStringArray(level.gd_particle_groups[group]))
 	_runtime.call(&"finalize")
+	# Download every SFX the level's SFX triggers use before they fire.
+	SFXManager.preload_sfx(_runtime.call(&"level_sfx_ids") as PackedInt32Array)
 	print("[gdash] native trigger runtime packed %d records" % int(_runtime.call(&"trigger_count")))
 	current = self
 	return true
@@ -250,6 +252,13 @@ func _configure_runtime_targets(trigger: TriggerInteractable) -> void:
 		if static_component != null:
 			static_component.mode = CameraStaticComponent.Mode.EXIT if properties.get("110", "0") == "1" else CameraStaticComponent.Mode.ENTER
 			static_component.axis = clampi(int(properties.get("101", "0")), Constants.Axis.BOTH, Constants.Axis.Y)
+
+
+## Live colour of a channel id from the native colour state (GDLevelArt).
+func live_channel_color(channel: int) -> Color:
+	if _runtime == null or not _runtime.has_method(&"live_channel_color"):
+		return Color.WHITE
+	return _runtime.call(&"live_channel_color", channel)
 
 
 func reset_runtime() -> void:

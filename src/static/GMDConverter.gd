@@ -84,7 +84,8 @@ const Prop := {
 ## onto [enum Constants.SpecialColorChannel].
 ##
 ## The remaining reserved IDs - 1003 (3DL), 1004 (Obj), 1007 (LBG), 1010
-## (Black), 1011 (White), 1012 (Lighter), 1013/1014 (MG) - are literal colours
+## (Black), 1011 (White), 1012 (Lighter), 1009 (G2), 1013/1014 (MG) - are
+## literal colours
 ## rather than level properties. They are synthesised into the channel table by
 ## [method _resolve_channel_styles] and imported as ordinary static channels, so
 ## an object bound to them is tinted correctly instead of being left white.
@@ -94,7 +95,6 @@ const SPECIAL_CHANNELS: Dictionary[int, int] = {
 	1002: Constants.SpecialColorChannel.LINE,
 	1005: Constants.SpecialColorChannel.P1,
 	1006: Constants.SpecialColorChannel.P2,
-	1009: Constants.SpecialColorChannel.GROUND,
 }
 
 ## Reserved channel IDs, by name, for the code below.
@@ -132,6 +132,7 @@ const HeaderKey := {
 	COLORS = "kS38",
 	BACKGROUND = "kA6",
 	GROUND = "kA7",
+	MIDDLEGROUND = "kA25",
 	GAMEMODE = "kA2",
 	MINI = "kA3",
 	SPEED = "kA4",
@@ -367,6 +368,8 @@ static func import_online_level_string(level_string: String, level_name: String,
 
 
 ## Geometry Dash particle object; its key 145 feeds Spawn Particle (3608).
+## Link Visible (NamuWiki trigger list 4.2.14): key 51 names the linked group.
+const LINK_VISIBLE_TRIGGER_ID: int = 3662
 const PARTICLE_OBJECT_ID: int = 2065
 
 
@@ -445,6 +448,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var native_trigger_records: Array[Dictionary] = []
 	# Spawn Particle (3608): particle object (2065) data, key 145, by group.
 	var gd_particle_groups: Dictionary[String, PackedStringArray] = {}
+	var gd_link_visible_groups: Array[PackedStringArray] = []
 	# Runtime imports keep native-only triggers solely as packed columns; the
 	# editor and fallback builds expand them (LevelBuildJob).
 	var packed_triggers := PackedTriggers.new()
@@ -524,6 +528,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 			if object_data.is_empty() and GMDObjects.is_fallback_block(gd_id):
 				object_data = _object_from_properties(gd_id, properties, chunk_idx, channel_style, used_channels)
 				kind = 2
+
+		if gd_id == LINK_VISIBLE_TRIGGER_ID:
+			var linked: PackedStringArray = _group_list_from_property(properties.get("51"))
+			if not linked.is_empty():
+				gd_link_visible_groups.append(linked)
 
 		if gd_id == PARTICLE_OBJECT_ID and properties.has("145"):
 			for group: String in _groups_from_properties(properties):
@@ -625,6 +634,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# gets a ColorChannelData, including the reserved 1000+ ones, so the
 	# watcher that recolours the object at load actually exists. Channels no
 	# object uses are left out, as Geometry Dash's own renderer does.
+	# The ground's second layer and the middleground art are tinted by G2 and
+	# MG / MG2, so those channels always exist for colour triggers to reach.
+	for art_channel: int in [CHANNEL_G2, CHANNEL_MG, CHANNEL_MG2]:
+		if _is_colorable_channel(channel_style, art_channel):
+			used_channels[art_channel] = true
 	var color_channels: Array = _build_color_channels(channel_style, used_channels)
 
 	var is_platformer: bool = header.get(HeaderKey.PLATFORMER, "0") == "1"
@@ -664,6 +678,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"gd_level_end_x": float(bounds.level_length) if not is_platformer else 0.0,
 		"gd_max_gameplay_y": float(bounds.max_gameplay_y),
 		"gd_particle_groups": gd_particle_groups,
+		"gd_link_visible_groups": gd_link_visible_groups,
 		"start_speed": Level.START_SPEED[clampi(start_speed_preset, 0, Level.START_SPEED.size() - 1)],
 		"start_speed_preset": start_speed_preset,
 		"start_reverse": header.get(HeaderKey.REVERSE, "0") == "1",
@@ -673,6 +688,11 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"default_background_color": _background_color(header, color_channels),
 		"default_ground_color": _ground_color(header, color_channels),
 		"default_line_color": _line_color(header, color_channels),
+		# Art set indices (gmdkit member_table: LevelSettingsObject kA6 / kA7 /
+		# kA25); 0 means the default set 1 for BG and ground, none for MG.
+		"gd_background_id": int(header.get(HeaderKey.BACKGROUND, "0")),
+		"gd_ground_id": int(header.get(HeaderKey.GROUND, "0")),
+		"gd_middleground_id": int(header.get(HeaderKey.MIDDLEGROUND, "0")),
 		"transition_width": 15.0,
 		"fade_power": 1.0,
 		"move_power": 0.0,
@@ -904,6 +924,14 @@ static func _object_from_properties(
 			"alpha": 1.0,
 		},
 	}
+	# Per-object enter settings (Don't Fade 64, Don't Enter 67, Enter Channel
+	# 343); see EnterMaterials.
+	var enter_key: int = EnterMaterials.key(
+			(EnterMaterials.FLAG_DONT_FADE if properties.get("64", "0") == "1" else 0)
+			| (EnterMaterials.FLAG_DONT_ENTER if properties.get("67", "0") == "1" else 0),
+			int(properties.get("343", "0")))
+	if enter_key != 0:
+		object_data["enter_key"] = enter_key
 
 	# Keep the complete trigger record. The packed native scheduler consumes the
 	# activation flags directly, while family adapters can read new 2.2 fields

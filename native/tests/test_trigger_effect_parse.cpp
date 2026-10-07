@@ -699,6 +699,25 @@ int main() {
 				static_cast<int>(AreaType::TINT) == 3021 - 3017 && static_cast<int>(AreaType::FADE) == 3020 - 3017);
 	}
 
+	{
+		// Per-object enter settings key (EnterMaterials.key in GDScript).
+		expect_true("enter key: plain object keeps the shared material", decoration_enter_key(false, false, 0) == 0);
+		expect_true("enter key: don't fade = 1", decoration_enter_key(true, false, 0) == 1);
+		expect_true("enter key: don't enter = 2", decoration_enter_key(false, true, 0) == 2);
+		expect_true("enter key: channel above the flags", decoration_enter_key(true, true, 5) == (5 << 2 | 3));
+		expect_true("enter key: negative channel clamps to 0", decoration_enter_key(false, false, -3) == 0);
+		// SFX: unique needs Is Unique and an ID; Min Interval cooldown.
+		SfxParams sfx;
+		sfx.unique_id = 7;
+		expect_true("sfx not unique without Is Unique", sfx_effective_unique(sfx) == 0);
+		sfx.unique = true;
+		expect_true("sfx unique id when Is Unique", sfx_effective_unique(sfx) == 7);
+		expect_true("sfx first play always ready", sfx_cooldown_ready(-1.0, 0.0, 1.0));
+		expect_true("sfx blocked inside min interval", !sfx_cooldown_ready(1.0, 1.5, 1.0));
+		expect_true("sfx ready after min interval", sfx_cooldown_ready(1.0, 2.0, 1.0));
+		expect_true("sfx no min interval never blocks", sfx_cooldown_ready(1.0, 1.0, 0.0));
+	}
+
 	if (failures == 0) {
 		std::printf("trigger easing curves & shader effects: all checks passed\n");
 		return 0;

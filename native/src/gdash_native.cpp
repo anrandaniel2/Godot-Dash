@@ -127,6 +127,7 @@ enum class TriggerEffectKind : int32_t {
 	UI,                 // 3613 UI Trigger
 	GRADIENT,           // 2903 Gradient (GradientParams)
 	EDIT_SONG,          // 3605 Edit Song (channel 0 = the level song player)
+	EDIT_SFX,           // 3603 Edit SFX
 	SFX,                // 3602 SFX Trigger
 	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
 	FOLLOW,             // 1347 Follow (target group tracks the follow group's movement)
@@ -154,6 +155,9 @@ enum class TriggerEffectKind : int32_t {
 	ADV_FOLLOW_EDIT,    // 3660 Edit Advanced Follow
 	SPAWN_PARTICLE,     // 3608 Spawn Particle
 	BG_SPEED,           // 3606 Background Speed
+	MG_SPEED,           // 3612 Middleground Speed
+	ART_CHANGE,         // 3029 / 3030 / 3031 Change Background / Ground / Middleground
+	MG_OFFSET,          // 2999 Edit (Offset) Middleground Y
 	ADV_FOLLOW_RETARGET,// 3661 Re-Target Advanced Follow
 	RESET_GROUP,        // 3618 Reset
 	AREA,               // 3006-3010 Area Move/Rotate/Scale/Fade/Tint
@@ -1595,6 +1599,40 @@ static void enter_custom_pack(const AreaParams &p, float out[16]) {
 	}
 }
 
+// SFXTriggerGameObject fields (gmdkit member_table.csv save keys).
+struct SfxParams {
+	int32_t id = 0;              // 392 m_soundID
+	double volume = 1.0;         // 406 m_volume
+	int32_t speed = 0;           // 404 m_speed (semitones)
+	int32_t pitch = 0;           // 405 m_pitchIndex (semitones)
+	int32_t start_ms = 0, end_ms = 0, fade_in_ms = 0, fade_out_ms = 0; // 408 / 410 / 409 / 411
+	bool loop = false, stop_loop = false; // 413 / 414
+	bool unique = false;         // 415
+	int32_t unique_id = 0;       // 416
+	bool stop = false, change_volume = false, change_speed = false; // 417 / 418 / 419
+	bool override_unique = false; // 420
+	double min_interval = 0.0;   // 434
+	int32_t sfx_group = 0;       // 455
+	int32_t group_id = 0;        // 457
+	bool ignore_volume_test = false; // 489
+	int32_t speed_variance = 0, pitch_variance = 0; // 596 / 597
+	double volume_variance = 0.0; // 598
+	bool pitch_steps = false;    // 599
+	double duration = 0.0;       // 10 (Edit SFX)
+};
+// Per-object enter settings as one batch key (EnterMaterials.key): Don't
+// Fade (64) bit 0, Don't Enter (67) bit 1, Enter Channel (343) above.
+static int32_t decoration_enter_key(bool dont_fade, bool dont_enter, int32_t channel) {
+	return (std::max<int32_t>(channel, 0) << 2) | (dont_fade ? 1 : 0) | (dont_enter ? 2 : 0);
+}
+
+// Unique SFX need Is Unique and a non-zero Unique ID (gd_docs sfx.md).
+static int32_t sfx_effective_unique(const SfxParams &p) { return p.unique ? p.unique_id : 0; }
+// MinInterval: a cooldown in level time (timewarp-affected, sfx.md).
+static bool sfx_cooldown_ready(double last, double now, double min_interval) {
+	return min_interval <= 0.0 || last < 0.0 || now - last >= min_interval;
+}
+
 struct TriggerEffect {
 	KfKey keyframe;              // KEYFRAME
 	int32_t kf_anim_group = 0;   // ANIMATE_KEYFRAME (key 76)
@@ -1740,10 +1778,9 @@ struct TriggerEffect {
 	int32_t yref_pos = 0;        // 3613: key 386 (UIRef enum)
 	bool xref_relative = false;  // 3613: key 387
 	bool yref_relative = false;  // 3613: key 388
-	int32_t sfx_id = 0;          // 3602: key 392 (SFX ID)
-	double sfx_volume = 1.0;     // 3602: key 406 (Volume)
-	double sfx_pitch = 1.0;      // 3602: key 407 (Pitch)
-	bool sfx_loop = false;       // 3602: key 404 (Loop)
+	SfxParams sfx;               // 3602 SFX / 3603 Edit SFX
+	int32_t art_kind = 0, art_id = 0; // ART_CHANGE: 0 BG, 1 ground, 2 MG; key 533
+	double mg_offset = 0.0;      // MG_OFFSET: key 29, GD units
 	int32_t gravity_mode = GRAVITY_PORTAL_DOWN; // 10/11/2926, or "gravity_mode"
 };
 
@@ -2320,7 +2357,7 @@ static void parse_color_source(const Dictionary &properties, TriggerEffect &effe
 // representation (matching TargetColorChannelComponent.Type.LEVEL no-ops).
 static String level_color_property_for_channel(int32_t channel) {
 	if (channel == 1000) return String("background_color");
-	if (channel == 1001 || channel == 1009) return String("ground_color");
+	if (channel == 1001) return String("ground_color");
 	if (channel == 1002) return String("line_color");
 	return String();
 }
@@ -2672,6 +2709,22 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.kind = TriggerEffectKind::BG_SPEED;
 			effect.move_mod = Vector2(static_cast<real_t>(prop_float(properties, "143", 0.1)), static_cast<real_t>(prop_float(properties, "144", 0.1)));
 			break;
+		// gd_docs triggers/level/mg_speed.md: defaults 0.3 / 0.5.
+		case 3612:
+			effect.kind = TriggerEffectKind::MG_SPEED;
+			effect.move_mod = Vector2(static_cast<real_t>(prop_float(properties, "143", 0.3)), static_cast<real_t>(prop_float(properties, "144", 0.5)));
+			break;
+		case 3029: case 3030: case 3031:
+			effect.kind = TriggerEffectKind::ART_CHANGE;
+			effect.art_kind = gd_id - 3029;
+			effect.art_id = int32_t(prop_int(properties, "533", 0));
+			break;
+		// gd_docs offset_mg_y.md: eased over Move Time. Offset is key 29:
+		// gmdkit defaults/objects.py 2999 = "...,29,0,10,0.5,30,0,85,2".
+		case 2999:
+			effect.kind = TriggerEffectKind::MG_OFFSET;
+			effect.mg_offset = prop_float(properties, "29", 0.0);
+			break;
 		case 3618: effect.kind = TriggerEffectKind::RESET_GROUP; break;
 		case 1812:
 			effect.kind = TriggerEffectKind::ON_DEATH;
@@ -2852,6 +2905,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 					prop_int(properties, "51", 0)));
 			break;
 		case 3602: effect.kind = TriggerEffectKind::SFX; break;
+		case 3603: effect.kind = TriggerEffectKind::EDIT_SFX; break;
 		case 3605:
 			effect.kind = TriggerEffectKind::EDIT_SONG;
 			effect.song_channel = int32_t(prop_int(properties, "432", 0));
@@ -3018,11 +3072,35 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.yref_relative = prop_bool(properties, "388", false);
 			break;
 		case TriggerEffectKind::SFX:
-			effect.sfx_id = static_cast<int32_t>(prop_int(properties, "392", 0));
-			effect.sfx_volume = Math::clamp(prop_float(properties, "406", 1.0), 0.0, 2.0);
-			effect.sfx_pitch = Math::clamp(prop_float(properties, "407", 1.0), 0.01, 5.0);
-			effect.sfx_loop = prop_bool(properties, "404", false);
+		case TriggerEffectKind::EDIT_SFX: {
+			SfxParams &x = effect.sfx;
+			x.id = int32_t(prop_int(properties, "392", 0));
+			x.volume = std::max(0.0, prop_float(properties, "406", 1.0));
+			x.speed = int32_t(prop_int(properties, "404", 0));
+			x.pitch = int32_t(prop_int(properties, "405", 0));
+			x.start_ms = int32_t(prop_int(properties, "408", 0));
+			x.fade_in_ms = int32_t(prop_int(properties, "409", 0));
+			x.end_ms = int32_t(prop_int(properties, "410", 0));
+			x.fade_out_ms = int32_t(prop_int(properties, "411", 0));
+			x.loop = prop_bool(properties, "413");
+			x.stop_loop = prop_bool(properties, "414");
+			x.unique = prop_bool(properties, "415");
+			x.unique_id = int32_t(prop_int(properties, "416", 0));
+			x.stop = prop_bool(properties, "417");
+			x.change_volume = prop_bool(properties, "418");
+			x.change_speed = prop_bool(properties, "419");
+			x.override_unique = prop_bool(properties, "420");
+			x.min_interval = std::max(0.0, prop_float(properties, "434", 0.0));
+			x.sfx_group = int32_t(prop_int(properties, "455", 0));
+			x.group_id = int32_t(prop_int(properties, "457", 0));
+			x.ignore_volume_test = prop_bool(properties, "489");
+			x.speed_variance = int32_t(prop_int(properties, "596", 0));
+			x.pitch_variance = int32_t(prop_int(properties, "597", 0));
+			x.volume_variance = prop_float(properties, "598", 0.0);
+			x.pitch_steps = prop_bool(properties, "599");
+			x.duration = effect.duration;
 			break;
+		}
 		case TriggerEffectKind::TELEPORT:
 			effect.teleport_save_offset = prop_bool(properties, "351");
 			effect.teleport_ignore_x = prop_bool(properties, "352");
@@ -3506,9 +3584,12 @@ class NativeTriggerRuntime : public RefCounted {
 		}
 		if (channel == 1010) return Color(0.0f, 0.0f, 0.0f);
 		if (channel == 1011) return Color(1.0f, 1.0f, 1.0f);
-		if (channel == 1003 || channel == 1004 || channel == 1012 || channel == 1013 || channel == 1014) {
+		if (channel == 1003 || channel == 1004 || channel == 1009 || channel == 1012 || channel == 1013 || channel == 1014) {
 			Object *data = channel_lookup(channel);
 			if (data) return resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET);
+			// G2 is its own channel (GJGroundLayer::updateGround02Color); an
+			// unset one starts as the ground colour.
+			if (channel == 1009 && level) return level->get("ground_color");
 			if (channel == 1012) {
 				Object *obj_data = channel_lookup(1004);
 				if (obj_data) return resolve_channel_data_color(obj_data, COPY_RESOLUTION_BUDGET).lightened(0.2f);
@@ -3926,6 +4007,31 @@ class NativeTriggerRuntime : public RefCounted {
 				}
 				break;
 			}
+			case TriggerEffectKind::MG_SPEED: {
+				Object *level = ObjectDB::get_instance(level_id);
+				if (level && level->has_method("apply_gd_mg_speed")) level->call("apply_gd_mg_speed", effect.move_mod);
+				break;
+			}
+			case TriggerEffectKind::ART_CHANGE: {
+				// One change per kind per frame; later ones that frame are ignored.
+				const int k = std::clamp(effect.art_kind, 0, 2);
+				if (art_change_frame[k] == art_frame) break;
+				art_change_frame[k] = art_frame;
+				Object *level = ObjectDB::get_instance(level_id);
+				if (level && level->has_method("apply_gd_art")) level->call("apply_gd_art", k, effect.art_id);
+				break;
+			}
+			case TriggerEffectKind::MG_OFFSET:
+				// A new activation stops the previous one.
+				mg_offset_from = mg_offset_now;
+				mg_offset_to = effect.mg_offset;
+				mg_offset_time = 0.0;
+				mg_offset_duration = effect.duration;
+				mg_offset_easing = effect.easing;
+				mg_offset_rate = effect.ease_rate;
+				mg_offset_active = true;
+				step_mg_offset(0.0);
+				break;
 			case TriggerEffectKind::BG_SPEED: {
 				Object *level = ObjectDB::get_instance(level_id);
 				if (level && level->has_method("apply_gd_bg_speed")) level->call("apply_gd_bg_speed", effect.move_mod);
@@ -4067,16 +4173,11 @@ class NativeTriggerRuntime : public RefCounted {
 				apply_teleport(index, record, player);
 				break;
 			case TriggerEffectKind::SFX: {
-				if (effect.sfx_id > 0) {
-					MainLoop *main_loop = Engine::get_singleton()->get_main_loop();
-					SceneTree *tree = Object::cast_to<SceneTree>(main_loop);
-					if (tree && tree->get_root()) {
-						Node *sfx_mgr = tree->get_root()->find_child("SFXManager", true, false);
-						if (sfx_mgr) {
-							sfx_mgr->call("play_sfx_id", effect.sfx_id, effect.sfx_volume, effect.sfx_pitch);
-						}
-					}
-				}
+				play_sfx(effect.sfx, index);
+				break;
+			}
+			case TriggerEffectKind::EDIT_SFX: {
+				edit_sfx(effect.sfx);
 				break;
 			}
 			case TriggerEffectKind::MOVE:
@@ -4983,6 +5084,95 @@ private:
 		player->set("velocity", new_local.rotated(static_cast<real_t>(rotation)));
 	}
 
+	Node *sfx_manager() const {
+		Node *level = level_id.is_valid() ? Object::cast_to<Node>(ObjectDB::get_instance(level_id)) : nullptr;
+		if (!level || !level->is_inside_tree()) return nullptr;
+		return level->get_tree()->get_root()->get_node_or_null(NodePath("SFXManager"));
+	}
+	std::unordered_map<size_t, double> sfx_last_play;
+	std::unordered_map<int32_t, double> sfx_unique_last_play;
+	uint32_t sfx_seed = 2463534242u;
+	double sfx_rand() { // -1 .. 1
+		sfx_seed ^= sfx_seed << 13; sfx_seed ^= sfx_seed >> 17; sfx_seed ^= sfx_seed << 5;
+		return double(sfx_seed) / 2147483647.5 - 1.0;
+	}
+	// SFX trigger (3602): Min Interval per trigger and per Unique ID, the
+	// random variances (596-598), then SFXManager.trigger_sfx plays it.
+	void play_sfx(const SfxParams &x, size_t index) {
+		if (x.id <= 0) return;
+		const int32_t unique_id = sfx_effective_unique(x);
+		auto last = sfx_last_play.find(index);
+		if (!sfx_cooldown_ready(last == sfx_last_play.end() ? -1.0 : last->second, clock, x.min_interval)) return;
+		if (unique_id != 0) {
+			auto ulast = sfx_unique_last_play.find(unique_id);
+			if (!sfx_cooldown_ready(ulast == sfx_unique_last_play.end() ? -1.0 : ulast->second, clock, x.min_interval)) return;
+			sfx_unique_last_play[unique_id] = clock;
+		}
+		sfx_last_play[index] = clock;
+		Node *manager = sfx_manager();
+		if (!manager) return;
+		double speed = x.speed + x.speed_variance * sfx_rand();
+		double pitch = x.pitch + x.pitch_variance * sfx_rand();
+		if (x.pitch_steps) { speed = std::round(speed); pitch = std::round(pitch); }
+		Dictionary p;
+		p["id"] = x.id;
+		p["volume"] = std::max(0.0, x.volume + x.volume_variance * sfx_rand());
+		p["speed"] = speed;
+		p["pitch"] = int32_t(std::lround(pitch));
+		p["start_ms"] = x.start_ms;
+		p["end_ms"] = x.end_ms;
+		p["fade_in_ms"] = x.fade_in_ms;
+		p["fade_out_ms"] = x.fade_out_ms;
+		p["loop"] = x.loop;
+		p["unique_id"] = unique_id;
+		p["override"] = x.override_unique;
+		p["sfx_group"] = x.sfx_group;
+		p["group_id"] = x.group_id;
+		p["ignore_volume_test"] = x.ignore_volume_test;
+		manager->call("trigger_sfx", p);
+	}
+	// Edit SFX (3603). HYPOTHESIS: Is Unique selects the Unique ID target,
+	// otherwise SFX Group (455) and Group ID (457) match the values the SFX
+	// trigger was given.
+	void edit_sfx(const SfxParams &x) {
+		Node *manager = sfx_manager();
+		if (!manager) return;
+		Dictionary p;
+		p["unique_id"] = x.unique ? x.unique_id : 0;
+		p["sfx_group"] = x.unique ? 0 : x.sfx_group;
+		p["group_id"] = x.unique ? 0 : x.group_id;
+		p["stop"] = x.stop;
+		p["stop_loop"] = x.stop_loop;
+		p["change_volume"] = x.change_volume;
+		p["volume"] = x.volume;
+		p["change_speed"] = x.change_speed;
+		p["speed"] = x.speed;
+		p["duration"] = x.duration;
+		manager->call("edit_sfx", p);
+	}
+	// Live colour of any channel (special ids follow the level / player).
+	Color live_channel_color(int64_t channel) const {
+		if (channel >= 1000) return live_special_color(int32_t(channel));
+		Object *data = channel_lookup(int32_t(channel));
+		return data ? resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET) : Color(1.0f, 1.0f, 1.0f);
+	}
+	// Every SFX the level's triggers can play, for download at level start.
+	PackedInt32Array level_sfx_ids() const {
+		PackedInt32Array out;
+		std::unordered_set<int32_t> seen;
+		for (const Record &r : records) {
+			if (r.effect.kind != TriggerEffectKind::SFX || r.effect.sfx.id <= 0) continue;
+			if (seen.insert(r.effect.sfx.id).second) out.push_back(r.effect.sfx.id);
+		}
+		return out;
+	}
+	void reset_sfx() {
+		sfx_last_play.clear();
+		sfx_unique_last_play.clear();
+		Node *manager = sfx_manager();
+		if (manager) manager->call("reset_level_sfx");
+	}
+
 	Node *level_manager() const {
 		Node *level = level_id.is_valid() ? Object::cast_to<Node>(ObjectDB::get_instance(level_id)) : nullptr;
 		if (!level || !level->is_inside_tree()) return nullptr;
@@ -5370,8 +5560,31 @@ private:
 		glitter.clear();
 	}
 
+	int64_t art_frame = 0;
+	int64_t art_change_frame[3] = {-1, -1, -1};
+	double mg_offset_now = 0.0, mg_offset_from = 0.0, mg_offset_to = 0.0;
+	double mg_offset_time = 0.0, mg_offset_duration = 0.0, mg_offset_rate = 2.0;
+	int32_t mg_offset_easing = 0;
+	bool mg_offset_active = false;
+	void step_mg_offset(double delta) {
+		if (!mg_offset_active) return;
+		mg_offset_time += delta;
+		const double t = mg_offset_duration > 0.0 ? std::min(1.0, mg_offset_time / mg_offset_duration) : 1.0;
+		mg_offset_now = mg_offset_from + (mg_offset_to - mg_offset_from) * gd_ease(mg_offset_easing, mg_offset_rate, t);
+		if (t >= 1.0) mg_offset_active = false;
+		Object *level = ObjectDB::get_instance(level_id);
+		if (level && level->has_method("set_gd_mg_offset")) level->call("set_gd_mg_offset", mg_offset_now);
+	}
+	void reset_art_state() {
+		art_change_frame[0] = art_change_frame[1] = art_change_frame[2] = -1;
+		mg_offset_now = mg_offset_from = mg_offset_to = 0.0;
+		mg_offset_active = false;
+	}
+
 	void reset_shaders() {
+		reset_art_state();
 		reset_glitter();
+		reset_sfx();
 		reset_song_edits();
 		reset_gradients();
 		shader_state.reset();
@@ -6599,6 +6812,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("activate_touch", "record_index", "player"), &NativeTriggerRuntime::activate_touch);
 		ClassDB::bind_method(D_METHOD("schedule_group", "group", "delay", "player"), &NativeTriggerRuntime::schedule_group);
 		ClassDB::bind_method(D_METHOD("tick", "delta"), &NativeTriggerRuntime::tick);
+		ClassDB::bind_method(D_METHOD("level_sfx_ids"), &NativeTriggerRuntime::level_sfx_ids);
+		ClassDB::bind_method(D_METHOD("live_channel_color", "channel"), &NativeTriggerRuntime::live_channel_color);
 		ClassDB::bind_method(D_METHOD("notify_player_death", "player"), &NativeTriggerRuntime::notify_player_death);
 		ClassDB::bind_method(D_METHOD("notify_touch", "player", "slot", "pressed"), &NativeTriggerRuntime::notify_touch);
 		ClassDB::bind_method(D_METHOD("take_touch_claim"), &NativeTriggerRuntime::take_touch_claim);
@@ -6654,6 +6869,7 @@ public:
 		fade_capture_count = 0; fade_capture_reports = 0;
 		touch_inside_players.clear(); gravity_portal_order.clear(); gravity_inside_players.clear();
 		frame_players.clear(); previous_positions.clear();
+		reset_sfx(); // needs level_id to reach SFXManager
 		level_id = ObjectID(); camera_id = ObjectID(); config_id = ObjectID(); shader_layer_id = ObjectID();
 		ui_layer_id = ObjectID(); ui_root_id = ObjectID();
 		reset_shaders();
@@ -7302,6 +7518,8 @@ public:
 		if (custom_tint_active()) upload_custom_enter(); // the tint channel can change
 		step_song();
 		glitter_step(std::max(0.0, delta));
+		++art_frame;
+		step_mg_offset(std::max(0.0, delta));
 		if (shader_state.active()) {
 			shader_state.step(std::max(0.0, delta));
 			update_shader_layer(std::max(0.0, delta));
@@ -8427,6 +8645,7 @@ public:
 		std::vector<float> col_xform, col_base_alpha, col_spin, col_base_hsv, col_detail_hsv, col_object_hsv;
 		std::vector<Color> col_tint, col_detail_tint;
 		std::vector<uint8_t> col_flags;
+		std::vector<int32_t> col_enter_channel; // key 343, with FLAG 32 / 64 = keys 64 / 67
 		std::map<int32_t, int64_t> decoration_ids, hidden_ids;
 		std::map<int32_t, int64_t> populated_groups, targeted_groups;
 
@@ -8575,6 +8794,9 @@ public:
 			if (p.equals(103, "1")) row_flags |= 4;
 			if (has_base_hsv) row_flags |= 8;
 			if (has_detail_hsv) row_flags |= 16;
+			if (p.equals(64, "1")) row_flags |= 32;  // Don't Fade
+			if (p.equals(67, "1")) row_flags |= 64;  // Don't Enter
+			col_enter_channel.push_back(static_cast<int32_t>(p.value_or(343, "0").to_int()));
 			col_gd_id.push_back(gd_id);
 			col_source_index.push_back(chunk_index);
 			const real_t m[6] = {transform.columns[0].x, transform.columns[0].y, transform.columns[1].x,
@@ -8630,6 +8852,7 @@ public:
 		packed["base_alpha"] = to_packed<float, PackedFloat32Array>(col_base_alpha);
 		packed["spin"] = to_packed<float, PackedFloat32Array>(col_spin);
 		packed["flags"] = to_packed<uint8_t, PackedByteArray>(col_flags);
+		packed["enter_channels"] = to_packed<int32_t, PackedInt32Array>(col_enter_channel);
 		packed["base_channel"] = to_packed<int32_t, PackedInt32Array>(col_base_channel);
 		packed["detail_channel"] = to_packed<int32_t, PackedInt32Array>(col_detail_channel);
 		packed["base_hsv"] = to_packed<float, PackedFloat32Array>(col_base_hsv);
@@ -9120,6 +9343,9 @@ public:
 				if (chunk.begins_with("kS") || chunk.begins_with("kA")) continue;
 			}
 
+			// Key 392 is also the Song trigger's (1934) song ID; only SFX
+			// triggers (3602) name SFX (gmdkit prop_table.csv).
+			if (!chunk.begins_with("1,3602,") && chunk.find(",1,3602,") == -1) continue;
 			int64_t idx = 0;
 			while ((idx = chunk.find("392,", idx)) != -1) {
 				if (idx == 0 || chunk[idx - 1] == ',') {
@@ -9661,6 +9887,18 @@ class NativeFrustumIndex : public RefCounted {
 		int64_t last = 0;
 	};
 	std::vector<Entry> entries;
+	// Grouped objects: triggers move them, so their span is kept relative to
+	// their own x and tested at the live position every frame. Link Visible
+	// (3662, NamuWiki trigger list 4.2.14) keeps every object sharing a link
+	// id shown while any one of them is on screen.
+	struct DynamicEntry {
+		uint64_t id = 0;
+		double local_left = 0.0;
+		double local_right = 0.0;
+		int32_t link = -1;
+	};
+	std::vector<DynamicEntry> dynamic_entries;
+	std::vector<uint8_t> link_on_screen;
 	// OpenGD also partitions the level into fixed horizontal sections. Keep an
 	// index from section to entry here so normal camera motion touches only the
 	// sections leaving/entering the view instead of scanning the full level.
@@ -9718,6 +9956,8 @@ protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "objects", "lefts", "rights", "bucket_width"), &NativeFrustumIndex::configure);
 		ClassDB::bind_method(D_METHOD("set_view", "left", "right"), &NativeFrustumIndex::set_view);
+		ClassDB::bind_method(D_METHOD("configure_dynamic", "objects", "lefts", "rights", "links", "link_count"), &NativeFrustumIndex::configure_dynamic);
+		ClassDB::bind_method(D_METHOD("update_dynamic", "left", "right"), &NativeFrustumIndex::update_dynamic);
 		ClassDB::bind_method(D_METHOD("show_all"), &NativeFrustumIndex::show_all);
 		ClassDB::bind_method(D_METHOD("tracked_count"), &NativeFrustumIndex::tracked_count);
 		ClassDB::bind_method(D_METHOD("hidden_count"), &NativeFrustumIndex::hidden_count);
@@ -9792,7 +10032,60 @@ public:
 		current_right = -INFINITY;
 	}
 
-	int64_t tracked_count() const { return static_cast<int64_t>(entries.size()); }
+	// lefts / rights are world spans at configure time; links are link ids
+	// (-1 none, else < link_count).
+	void configure_dynamic(const Array &objects, const PackedFloat32Array &lefts, const PackedFloat32Array &rights,
+			const PackedInt32Array &links, int64_t link_count) {
+		dynamic_entries.clear();
+		const int64_t count = std::min({objects.size(), lefts.size(), rights.size(), links.size()});
+		dynamic_entries.reserve(static_cast<size_t>(std::max<int64_t>(count, 0)));
+		for (int64_t i = 0; i < count; ++i) {
+			Node2D *node = Object::cast_to<Node2D>(static_cast<Object *>(objects[i]));
+			if (!node) continue;
+			const double x = node->get_global_position().x;
+			DynamicEntry entry;
+			entry.id = node->get_instance_id();
+			entry.local_left = std::min<double>(lefts[i], rights[i]) - x;
+			entry.local_right = std::max<double>(lefts[i], rights[i]) - x;
+			entry.link = links[i];
+			dynamic_entries.push_back(entry);
+		}
+		link_on_screen.assign(static_cast<size_t>(std::max<int64_t>(link_count, 0)), 0);
+	}
+
+	void update_dynamic(double left, double right) {
+		if (dynamic_entries.empty()) return;
+		if (right < left) std::swap(left, right);
+		std::vector<uint8_t> desired(dynamic_entries.size(), 0);
+		std::fill(link_on_screen.begin(), link_on_screen.end(), 0);
+		for (size_t i = 0; i < dynamic_entries.size(); ++i) {
+			const DynamicEntry &entry = dynamic_entries[i];
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(ObjectID(entry.id)));
+			if (!node) continue;
+			const double x = node->get_global_position().x;
+			desired[i] = (x + entry.local_right >= left && x + entry.local_left <= right) ? 1 : 0;
+			if (desired[i] && entry.link >= 0 && size_t(entry.link) < link_on_screen.size()) link_on_screen[size_t(entry.link)] = 1;
+		}
+		for (size_t i = 0; i < dynamic_entries.size(); ++i) {
+			const DynamicEntry &entry = dynamic_entries[i];
+			const bool shown = desired[i] || (entry.link >= 0 && size_t(entry.link) < link_on_screen.size() && link_on_screen[size_t(entry.link)]);
+			CanvasItem *canvas = canvas_for(entry.id);
+			if (!canvas) continue;
+			if (shown) {
+				auto found = hidden.find(entry.id);
+				if (found != hidden.end()) {
+					Node *node = Object::cast_to<Node>(canvas);
+					if (!node || node->get_process_mode() != Node::PROCESS_MODE_DISABLED) canvas->set_visible(true);
+					hidden.erase(found);
+				}
+			} else if (canvas->is_visible()) {
+				canvas->set_visible(false);
+				hidden.insert(entry.id);
+			}
+		}
+	}
+
+	int64_t tracked_count() const { return static_cast<int64_t>(entries.size() + dynamic_entries.size()); }
 	int64_t hidden_count() const { return static_cast<int64_t>(hidden.size()); }
 };
 
@@ -10495,6 +10788,7 @@ public:
 	static constexpr uint32_t NEEDS_GLOW = 16u; // only when the placement asks for glow (key 96)
 	// PackedDecorations.FLAG_*.
 	static constexpr uint8_t FLAG_BLENDING = 1, FLAG_GLOW = 2, FLAG_HIGH_DETAIL = 4, FLAG_BASE_HSV = 8, FLAG_DETAIL_HSV = 16;
+	static constexpr uint8_t FLAG_DONT_FADE = 32, FLAG_DONT_ENTER = 64;
 
 private:
 	struct Recipe {
@@ -10517,12 +10811,13 @@ private:
 		std::vector<int32_t> groups;
 		int32_t z_layer = 0;
 		bool additive = false;
+		int32_t enter_key = 0; // decoration_enter_key; 0 = the shared material
 		std::vector<Sprite> sprites;
 		Rect2 bounds;
 		std::map<int32_t, std::vector<int32_t>> channels;
 		std::map<int32_t, std::vector<int32_t>> blend_channels;
 	};
-	using BatchKey = std::tuple<std::vector<int32_t>, int32_t, bool, bool>;
+	using BatchKey = std::tuple<std::vector<int32_t>, int32_t, bool, bool, int32_t>;
 
 	std::vector<Ref<Texture2D>> textures;
 	std::vector<uint64_t> texture_ids;
@@ -10630,14 +10925,18 @@ public:
 		const int64_t group_count = group_ids.size();
 		std::map<BatchKey, size_t> index_by_key;
 		std::vector<int32_t> fallback;
+		const PackedInt32Array enter_channels = field(table, "enter_channels");
+		const bool has_enter_channels = enter_channels.size() >= rows;
+		int32_t row_enter_key = 0;
 		auto batch_for = [&](const std::vector<int32_t> &groups, int32_t layer, bool additive, bool dynamic) -> size_t {
-			BatchKey key(groups, layer, additive, dynamic);
+			BatchKey key(groups, layer, additive, dynamic, row_enter_key);
 			auto found = index_by_key.find(key);
 			if (found != index_by_key.end()) return found->second;
 			const size_t created = batches.size();
 			index_by_key.emplace(std::move(key), created);
 			Batch batch;
 			batch.groups = groups; batch.z_layer = layer; batch.additive = additive;
+			batch.enter_key = row_enter_key;
 			batches.push_back(std::move(batch));
 			return created;
 		};
@@ -10647,6 +10946,8 @@ public:
 			const uint8_t row_flags = flags[row];
 			if (fallback_ids.count(id)) { fallback.push_back(static_cast<int32_t>(row)); continue; }
 			if (drop_high_detail && (row_flags & FLAG_HIGH_DETAIL)) continue;
+			row_enter_key = decoration_enter_key((row_flags & FLAG_DONT_FADE) != 0, (row_flags & FLAG_DONT_ENTER) != 0,
+					has_enter_channels ? enter_channels[row] : 0);
 			auto range = recipe_ranges.find(id);
 			if (range == recipe_ranges.end() || range->second.first == range->second.second) continue;
 
@@ -10773,6 +11074,7 @@ public:
 		info["groups"] = groups;
 		info["z_layer"] = batch.z_layer;
 		info["additive"] = batch.additive;
+		info["enter_key"] = batch.enter_key;
 		info["sort_key"] = batch.sprites.empty() ? 0 : batch.sprites.front().z_order;
 		info["bounds"] = batch.bounds;
 		info["count"] = static_cast<int64_t>(batch.sprites.size());
