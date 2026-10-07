@@ -286,12 +286,20 @@ enum ShaderTag : int32_t {
 	TAG_COUNT = 50,
 };
 
-// A shader effect centre: player 1/2 (keys 138/200), a group (key 51), or
-// the screen centre, plus a screen offset in GD points.
+// A shader effect centre (NamuWiki trigger list, shader section): with
+// Target (key 188) the centre is player 1/2 (keys 138/200) or the Center ID
+// group (key 51), else the camera centre; Lens Circle uses its Center ID
+// directly. Follow (190) keeps tracking a moving centre (bindings
+// updateShockWaveCenter: m_shockWaveCenterMoving), otherwise it is captured
+// once. Relative (514) "follows the camera": a screen-anchored centre;
+// without it the captured point stays in the world.
 struct ShaderCenter {
 	int32_t group = 0;
 	bool player1 = false, player2 = false;
+	bool follow = true, screen_anchored = true;
 	double offset_x = 0.0, offset_y = 0.0;
+	uint32_t epoch = 0; // bumped per trigger: the runtime re-captures
+	bool has_target() const { return player1 || player2 || group > 0; }
 };
 
 struct GDShaderTween {
@@ -341,7 +349,24 @@ struct GDShaderState {
 	bool lens_relative = false, bulge_relative = false;
 	int32_t lens_tint_channel = 0, gray_tint_channel = 0, blur_ref_channel = 0;
 	double radial_fade = 0.0;
-	bool blur_only_empty = false, motion_dual = false, motion_relative = false;
+	bool blur_only_empty = false, motion_dual = false, motion_relative = false, motion_camera = false;
+	ShaderCenter motion_target;          // P1 / P2 / Center ID; C (key 201) = camera
+	double motion_follow_ease = 1.0, motion_speed_x = 0.0, motion_speed_y = 0.0;
+
+	// ShaderLayer::updateMotionBlurSpeedX/Y (bindings inline, exact): ease
+	// toward the target's speed by follow ease / dt, else snap to it.
+	void update_motion_speed(double x, double y, double dt) {
+		double divisor = motion_follow_ease;
+		if (divisor > 1.0) {
+			if (dt > 0.0) divisor /= dt;
+			motion_speed_x += (x - motion_speed_x) / divisor;
+			motion_speed_y += (y - motion_speed_y) / divisor;
+		} else {
+			motion_speed_x = x;
+			motion_speed_y = y;
+		}
+	}
+	bool motion_has_target() const { return motion_camera || motion_target.has_target(); }
 	bool gray_use_lum = false, invert_clamp = false;
 	int32_t layer_min = 0, layer_max = 0;
 
@@ -419,16 +444,22 @@ struct GDShaderState {
 				|| value[TAG_SEPIA] > 0.0 || value[TAG_INVERT] > 0.0 || value[TAG_HUE] != 0.0
 				|| value[TAG_CC_R] != 1.0 || value[TAG_CC_G] != 1.0 || value[TAG_CC_B] != 1.0
 				|| value[TAG_CB_R] != 0.0 || value[TAG_CB_G] != 0.0 || value[TAG_CB_B] != 0.0
-				|| value[TAG_SPLIT_ROWS] > 1.0 || value[TAG_SPLIT_COLS] > 1.0;
+				|| value[TAG_SPLIT_ROWS] > 0.0 || value[TAG_SPLIT_COLS] > 0.0;
 	}
 
-	static ShaderCenter read_center(const ShaderProps &p, bool has_y_offset) {
+	static ShaderCenter read_center(const ShaderProps &p, bool has_y_offset, bool needs_target_flag,
+			bool has_follow, bool has_relative, uint32_t epoch) {
 		ShaderCenter c;
-		c.group = int32_t(p.get(51, 0.0));
-		c.player1 = p.flag(138);
-		c.player2 = p.flag(200);
+		if (!needs_target_flag || p.flag(188)) {
+			c.group = int32_t(p.get(51, 0.0));
+			c.player1 = p.flag(138);
+			c.player2 = p.flag(200);
+		}
+		c.follow = !has_follow || p.flag(190);
+		c.screen_anchored = !has_relative || p.flag(514);
 		c.offset_x = p.get(290, 0.0);
 		c.offset_y = has_y_offset ? p.get(291, 0.0) : 0.0;
+		c.epoch = epoch + 1;
 		return c;
 	}
 
@@ -454,7 +485,7 @@ struct GDShaderState {
 				sw_width = p.get(179, 1.0); sw_thickness = p.get(180, 1.0); sw_fade_in = p.get(181, 1.0);
 				sw_fade_out = p.get(182, 1.0); sw_inner = p.get(183, 0.0); sw_invert = p.flag(184);
 				sw_outer = p.get(191, 1.0); sw_max_size = p.get(512, 0.0); sw_relative = p.flag(514);
-				centers[SC_SHOCKWAVE] = read_center(p, true);
+				centers[SC_SHOCKWAVE] = read_center(p, true, true, true, true, centers[SC_SHOCKWAVE].epoch);
 				break;
 			case 2907: // Shockline
 				sl_start = time;
@@ -462,7 +493,7 @@ struct GDShaderState {
 				sl_width = p.get(179, 1.0); sl_thickness = p.get(180, 1.0); sl_fade_in = p.get(181, 1.0);
 				sl_fade_out = p.get(182, 1.0); sl_invert = p.flag(184); sl_flip = p.flag(185);
 				sl_axis = p.flag(186); sl_dual = p.flag(187); sl_max_size = p.get(512, 0.0); sl_relative = p.flag(514);
-				centers[SC_SHOCKLINE] = read_center(p, false);
+				centers[SC_SHOCKLINE] = read_center(p, false, true, true, true, centers[SC_SHOCKLINE].epoch);
 				break;
 			case 2909: // Glitch: triggerGlitch(fade, strength, speed, slice, sliceX, colX, colY, relative)
 				tween(TAG_GLITCH, p.get(176, 1.0), fade, 0, 0.0);
@@ -510,7 +541,7 @@ struct GDShaderState {
 				tween(TAG_LENS_OFF_Y, p.get(291, 0.0), fade, easing, rate);
 				lens_tint_channel = int32_t(p.get(71, 0.0));
 				lens_relative = p.flag(514);
-				centers[SC_LENS] = read_center(p, false);
+				centers[SC_LENS] = read_center(p, false, false, false, false, centers[SC_LENS].epoch);
 				break;
 			case 2914: // Radial blur
 				tween(TAG_RADIAL_SIZE, p.get(179, 1.0), fade, easing, rate);
@@ -520,7 +551,7 @@ struct GDShaderState {
 				radial_fade = p.get(181, 1.0);
 				blur_ref_channel = int32_t(p.get(71, 0.0));
 				blur_only_empty = p.flag(515);
-				centers[SC_RADIAL] = read_center(p, false);
+				centers[SC_RADIAL] = read_center(p, false, true, false, false, centers[SC_RADIAL].epoch);
 				break;
 			case 2915: // Motion blur: triggerMotionBlurX/Y
 				blur_ref_channel = int32_t(p.get(71, 0.0));
@@ -531,6 +562,11 @@ struct GDShaderState {
 				blur_only_empty = p.flag(515);
 				motion_dual = p.flag(194);
 				motion_relative = p.flag(514);
+				motion_follow_ease = p.get(191, 1.0);
+				motion_target.group = int32_t(p.get(51, 0.0));
+				motion_target.player1 = p.flag(138);
+				motion_target.player2 = p.flag(200);
+				motion_camera = p.flag(201);
 				break;
 			case 2916: // Bulge: triggerBulge(fade, bulge, offX, offY, radius, target, ...)
 				tween(TAG_BULGE, p.get(176, 1.0), fade, easing, rate);
@@ -538,7 +574,7 @@ struct GDShaderState {
 				tween(TAG_BULGE_OFF_Y, p.get(291, 0.0), fade, easing, rate);
 				tween(TAG_BULGE_RADIUS, p.get(180, 1.0), fade, easing, rate);
 				bulge_relative = p.flag(514);
-				centers[SC_BULGE] = read_center(p, false);
+				centers[SC_BULGE] = read_center(p, false, true, false, true, centers[SC_BULGE].epoch);
 				break;
 			case 2917: // Pinch
 				if (p.flag(190)) tween(TAG_PINCH_X, p.get(180, 1.0), fade, easing, rate);
@@ -548,7 +584,7 @@ struct GDShaderState {
 				tween(TAG_PINCH_RADIUS, p.get(512, 0.0), fade, easing, rate);
 				tween(TAG_PINCH_MOD_X, p.get(179, 1.0), fade, easing, rate);
 				tween(TAG_PINCH_MOD_Y, p.get(179, 1.0), fade, easing, rate);
-				centers[SC_PINCH] = read_center(p, false);
+				centers[SC_PINCH] = read_center(p, false, true, false, false, centers[SC_PINCH].epoch);
 				break;
 			case 2919: // Grayscale: triggerGrayscale(fade, target, useLum, tint, ...)
 				if (p.flag(190)) gray_tint_channel = int32_t(p.get(51, 0.0));
@@ -631,7 +667,7 @@ struct GDShaderState {
 			put("_shockWaveTime2", float(radius - half));
 			put("_shockWaveTime3", float(radius + half));
 			put("_shockWaveTime4", float(radius + half * (1.0 + sw_fade_out)));
-			put("_shockWaveStrength", float(sq(sw_strength) * (sw_relative ? zoom : 1.0)));
+			put("_shockWaveStrength", float(sq(sw_strength)));
 			put("_shockWaveWaves", float(2.0 * 3.14159265 / sq(std::max(0.1, sw_width) * 10.0)));
 			put2("_shockWaveCenter", sq(f.center_x[SC_SHOCKWAVE]), sq(f.center_y[SC_SHOCKWAVE]));
 			put("_shockWaveInvert", sw_invert ? 1.0f : 0.0f);
@@ -659,7 +695,7 @@ struct GDShaderState {
 			put("_shockLineDirection", sl_flip ? 1.0f : 0.0f);
 			put("_shockLineDual", sl_dual ? 1.0f : 0.0f);
 			put("_shockLineWaves", float(waves));
-			const double s = sq(sl_strength) * (sl_relative ? zoom : 1.0) * (sl_invert ? -1.0 : 1.0);
+			const double s = sq(sl_strength) * (sl_invert ? -1.0 : 1.0);
 			put2("_shockLineStrength", sl_axis ? 0.0 : s, sl_axis ? s : 0.0);
 			put("_shockLineCenter", float(sq(sl_axis ? f.center_y[SC_SHOCKLINE] : f.center_x[SC_SHOCKLINE])));
 			put("_shockLineMaxDistVal", float(max_size > 0.0 ? 1.0 / max_size : 0.0));
@@ -709,7 +745,7 @@ struct GDShaderState {
 		// Bulge. HYPOTHESIS: radius in GD points; the tan mapping is
 		// continuous at the radius (value2 = R / tan(R * value)); bulge 1
 		// bends R * value to 1 radian.
-		const double bulge_r = sq(std::max(0.0, value[TAG_BULGE_RADIUS]) * (bulge_relative ? zoom : 1.0));
+		const double bulge_r = sq(std::max(0.0, value[TAG_BULGE_RADIUS]));
 		const double bulge_v = bulge_r > 0.0 ? std::min(1.5, std::max(0.0, value[TAG_BULGE])) / bulge_r : 0.0;
 		put("_bulgeValue", float(bulge_r > 0.0 ? bulge_v : 0.0));
 		put("_bulgeValue2", float(bulge_v > 0.0 ? bulge_r / std::tan(bulge_r * bulge_v) : 0.0));
@@ -750,8 +786,14 @@ struct GDShaderState {
 			put("_motionBlurMult", float(1.0 / std::max(0.001, sum)));
 		}
 		put("_blurFade", float(blur_fade));
+		// Motion blur "leaves an afterimage according to the target's
+		// movement" (NamuWiki): HYPOTHESIS - the blur vector is target X/Y
+		// times the eased target speed over one 60 Hz frame, opposite the
+		// motion; without a target the targets are a fixed offset in points.
 		const double mz = motion_relative ? zoom : 1.0;
-		put2("_motionBlurValue", sq(value[TAG_MOTION_X]) * mz, sq(value[TAG_MOTION_Y]) * mz);
+		const double mvx = motion_has_target() ? -motion_speed_x / 60.0 : 1.0;
+		const double mvy = motion_has_target() ? -motion_speed_y / 60.0 : 1.0;
+		put2("_motionBlurValue", sq(value[TAG_MOTION_X] * mvx) * mz, sq(value[TAG_MOTION_Y] * mvy) * mz);
 		put("_motionBlurDual", motion_dual ? 1.0f : 0.0f);
 
 		// Colour effects (exact).
@@ -770,10 +812,11 @@ struct GDShaderState {
 		put("_colorChangeC", cc ? float(std::max(value[TAG_CC_R], 0.001)) : 0.0f, cc ? float(value[TAG_CC_G]) : 0.0f, cc ? float(value[TAG_CC_B]) : 0.0f, 0.0f, 3);
 		put("_colorChangeB", float(value[TAG_CB_R]), float(value[TAG_CB_G]), float(value[TAG_CB_B]), 0.0f, 3);
 
-		// Split screen. HYPOTHESIS: the range is the visible screen, so
-		// fract tiles it cols x rows times; calc 0.
-		put("_colmod", float(std::max(1.0, value[TAG_SPLIT_COLS])));
-		put("_rowmod", float(std::max(1.0, value[TAG_SPLIT_ROWS])));
+		// Split screen: "1 divides the screen into two" (NamuWiki), so the
+		// tile count is target + 1. HYPOTHESIS: the range is the visible
+		// screen and calc is 0 (plain tiling).
+		put("_colmod", float(1.0 + std::max(0.0, value[TAG_SPLIT_COLS])));
+		put("_rowmod", float(1.0 + std::max(0.0, value[TAG_SPLIT_ROWS])));
 		put("_colmodCalc", 0.0f);
 		put("_rowmodCalc", 0.0f);
 		put("_splitXStart", 0.0f);
@@ -3881,7 +3924,7 @@ class NativeTriggerRuntime : public RefCounted {
 				break;
 			case TriggerEffectKind::SHADER:
 				shader_state.apply(effect.shader_gd_id, effect.shader);
-				update_shader_layer();
+				update_shader_layer(0.0);
 				break;
 			default:
 				break;
@@ -4807,7 +4850,20 @@ private:
 
 	// GD's screen is 320 points tall whatever the zoom; world positions map
 	// onto it through the camera's visible rect (GL convention, y up).
-	void update_shader_layer() {
+	Vector2 shader_anchor[SC_COUNT];
+	uint32_t shader_anchor_epoch[SC_COUNT] = {};
+	Vector2 motion_prev_world;
+	bool motion_prev_valid = false;
+
+	Node2D *shader_target_node(const ShaderCenter &c) const {
+		if (c.player1 || c.player2) {
+			const size_t index = c.player2 ? 1 : 0;
+			return index < frame_players.size() ? Object::cast_to<Node2D>(ObjectDB::get_instance(frame_players[index])) : nullptr;
+		}
+		return c.group > 0 ? resolve_first_member(String("g_") + String::num_int64(c.group)) : nullptr;
+	}
+
+	void update_shader_layer(double delta) {
 		CanvasItem *post = get_shader_node(StringName("GDPost"));
 		if (!post) return;
 		if (!shader_state.active()) {
@@ -4836,14 +4892,16 @@ private:
 		for (int slot = 0; slot < SC_COUNT; ++slot) {
 			const ShaderCenter &c = shader_state.centers[slot];
 			double x = frame.width * 0.5, y = frame.height * 0.5;
-			Node2D *node = nullptr;
-			if (c.player1 || c.player2) {
-				const size_t index = c.player2 ? 1 : 0;
-				if (index < frame_players.size()) node = Object::cast_to<Node2D>(ObjectDB::get_instance(frame_players[index]));
-			} else if (c.group > 0) {
-				node = resolve_first_member(String("g_") + String::num_int64(c.group));
+			Node2D *node = c.has_target() ? shader_target_node(c) : nullptr;
+			const bool recapture = shader_anchor_epoch[slot] != c.epoch;
+			if (node) {
+				if (recapture || c.follow) shader_anchor[slot] = node->get_global_position();
+				to_screen(shader_anchor[slot], x, y);
+			} else if (!c.screen_anchored) {
+				if (recapture) shader_anchor[slot] = center_px;
+				to_screen(shader_anchor[slot], x, y);
 			}
-			if (node) to_screen(node->get_global_position(), x, y);
+			shader_anchor_epoch[slot] = c.epoch;
 			double ox = c.offset_x, oy = c.offset_y;
 			if (slot == SC_LENS) { ox = shader_state.value[lens_off[0]]; oy = shader_state.value[lens_off[1]]; }
 			if (slot == SC_RADIAL) { ox = shader_state.value[TAG_RADIAL_OFF_X]; oy = shader_state.value[TAG_RADIAL_OFF_Y]; }
@@ -4851,6 +4909,18 @@ private:
 			if (slot == SC_PINCH) { ox = shader_state.value[TAG_PINCH_OFF_X]; oy = shader_state.value[TAG_PINCH_OFF_Y]; }
 			frame.center_x[slot] = x + ox;
 			frame.center_y[slot] = y + oy;
+		}
+		if (shader_state.motion_has_target()) {
+			Node2D *mnode = shader_state.motion_camera ? nullptr : shader_target_node(shader_state.motion_target);
+			const Vector2 world = mnode ? mnode->get_global_position() : center_px;
+			if (motion_prev_valid && delta > 0.0) {
+				const Vector2 v = (world - motion_prev_world) / float(delta) * float(30.0 / 128.0);
+				shader_state.update_motion_speed(double(v.x), -double(v.y), delta);
+			}
+			motion_prev_world = world;
+			motion_prev_valid = true;
+		} else {
+			motion_prev_valid = false;
 		}
 		const Color lens = shader_channel_color(shader_state.lens_tint_channel, Color(0.0f, 0.0f, 0.0f));
 		const Color gray = shader_channel_color(shader_state.gray_tint_channel, Color(1.0f, 1.0f, 1.0f));
@@ -6617,7 +6687,7 @@ public:
 		advance_timers(std::max(0.0, delta));
 		if (shader_state.active()) {
 			shader_state.step(std::max(0.0, delta));
-			update_shader_layer();
+			update_shader_layer(std::max(0.0, delta));
 		}
 		int64_t dispatched = 0;
 		// activate() inside the dispatch loop can reenter GDScript and

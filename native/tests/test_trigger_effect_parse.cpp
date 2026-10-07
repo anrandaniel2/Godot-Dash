@@ -596,6 +596,29 @@ int main() {
 		expect_true("shockwave active", st.active());
 		for (int i = 0; i < 200; ++i) st.step(0.05), st.uniforms(frame);
 		expect_true("shockwave ends off screen", !st.active());
+		// Centre ID only counts with Target (key 188); Follow is key 190.
+		st.apply(2905, props({{51, 7.0}}));
+		expect_true("shockwave centre ID ignored without Target", !st.centers[SC_SHOCKWAVE].has_target());
+		const uint32_t epoch = st.centers[SC_SHOCKWAVE].epoch;
+		st.apply(2905, props({{51, 7.0}, {188, 1.0}}));
+		expect_true("shockwave Target uses the centre ID", st.centers[SC_SHOCKWAVE].group == 7);
+		expect_true("no Follow captures once", !st.centers[SC_SHOCKWAVE].follow);
+		expect_true("each trigger re-captures", st.centers[SC_SHOCKWAVE].epoch == epoch + 1);
+		expect_true("no Relative anchors in the world", !st.centers[SC_SHOCKWAVE].screen_anchored);
+		st.apply(2913, props({{51, 3.0}}));
+		expect_true("lens circle uses its centre ID directly", st.centers[SC_LENS].group == 3);
+		// Split screen: "1 divides the screen into two".
+		st.apply(2924, props({{188, 1.0}, {180, 1.0}}));
+		u = st.uniforms(frame);
+		expect_close("split target 1 -> 2 columns", find(u, "_colmod")->v[0], 2.0);
+		expect_close("split rows untouched -> 1", find(u, "_rowmod")->v[0], 1.0);
+		// Motion blur speed easing: updateMotionBlurSpeedX/Y.
+		st.apply(2915, props({{201, 1.0}, {191, 1.0}}));
+		st.update_motion_speed(300.0, 0.0, 1.0 / 60.0);
+		expect_close("follow ease <= 1 snaps", st.motion_speed_x, 300.0);
+		st.motion_follow_ease = 2.0;
+		st.update_motion_speed(0.0, 0.0, 0.5);
+		expect_close("follow ease eases by ease / dt", st.motion_speed_x, 300.0 - 300.0 / 4.0);
 	}
 
 	if (failures == 0) {
