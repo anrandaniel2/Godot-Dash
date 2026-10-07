@@ -14,8 +14,6 @@ var _level: Level
 
 func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	_level = level
-	if not NativeCore.available() or not ClassDB.class_exists(&"NativeLevelRuntime"):
-		return false
 	_runtime = ClassDB.instantiate(&"NativeLevelRuntime")
 	if _runtime == null or _runtime is not Node:
 		return false

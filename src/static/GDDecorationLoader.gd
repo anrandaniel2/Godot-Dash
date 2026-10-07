@@ -185,9 +185,7 @@ static func build_batches_packed(objects: Array, packed: Dictionary, art_scale_f
 	var batches := new_batches()
 	for object_data: Dictionary in objects:
 		add_object(batches, object_data, art_scale_factor)
-	if builder == null:
-		add_packed(batches, packed, art_scale_factor)
-	else:
+	if builder != null:
 		# Animated monsters keep the Item path; everything else was expanded
 		# in C++.
 		var fallback_rows: PackedInt32Array = builder.call(&"get_fallback_rows")
@@ -237,16 +235,11 @@ static var _recipe_opacities := PackedFloat32Array()
 static var _recipe_fallback_ids := PackedInt32Array()
 
 
-## Expands [param packed] in C++, or returns null when the native builder is
-## unavailable (the caller then uses [method add_packed]).
+## Expands [param packed] in C++, or returns null for an empty table.
 static func _native_packed_builder(packed: Dictionary, art_scale_factor: float) -> Object:
-	if PackedDecorations.size_of(packed) == 0 or NativeCore.backend() == null:
-		return null
-	if not ClassDB.class_exists(&"NativePackedDecorationBuilder") or not ClassDB.class_exists(&"NativeDecorationRenderer"):
+	if PackedDecorations.size_of(packed) == 0:
 		return null
 	var builder: Object = ClassDB.instantiate(&"NativePackedDecorationBuilder")
-	if builder == null:
-		return null
 	var ids: PackedInt32Array = builder.call(&"unique_ids", packed)
 	_ensure_recipes(ids, art_scale_factor)
 	builder.call(

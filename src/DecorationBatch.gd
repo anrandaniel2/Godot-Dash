@@ -35,12 +35,6 @@ const BUCKET_WIDTH: float = 256.0
 ## cells. Godot clips edge-cell quads exactly before rasterization.
 const CULL_MARGIN: float = 0.0
 
-## Every runtime batch is spatially filtered. Dense effect levels often have
-## thousands of small group-specific batches; exempting batches below 256
-## items caused almost the entire level to remain in the Canvas draw list even
-## when only one screen was visible. The native canvas makes this cheap.
-const CULL_THRESHOLD: int = 1
-
 ## Prefix for the group a batch joins for each colour channel it draws, so a
 ## channel update can find exactly the batches it affects.
 const CHANNEL_GROUP_PREFIX: String = "decobatch_"
@@ -156,20 +150,10 @@ var gd_z_layer: int = 0
 ## "blending" flag.
 var gd_blending: bool = false
 
-## Bucket index -> items whose origin falls in that column.
-var _buckets: Dictionary[int, Array] = { }
-## Colour channel -> the items that follow it.
-##
-## Without this, every channel update scans every item: a level with 171
-## channels and 186,000 sprites would do ~32 million comparisons just to finish
-## loading, because each channel's watcher fires once on ready.
-var _by_channel: Dictionary[StringName, Array] = { }
 ## Last blend state applied per channel, so repeated colour-trigger refreshes
 ## do not push the same blend update through the native boundary again.
 var _channel_blend: Dictionary[StringName, bool] = { }
-var _last_visible := PackedInt32Array()
 var _built: bool = false
-var _cull: bool = false
 ## Local-space bounds of every item, used for a cheap whole-batch visibility
 ## test before any per-bucket work.
 var _bounds: Rect2 = Rect2()
@@ -183,10 +167,6 @@ var _native_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 var _native_blend_by_channel: Dictionary[StringName, PackedInt32Array] = {}
 ## Batches drawing a monster join this group so a restart can reset them.
 const MONSTER_BATCH_GROUP: StringName = &"gd_monster_batches"
-
-## Group pulse state for the portable draw path (see apply_group_pulse).
-var _pulse_color: Color = Color.WHITE
-var _pulse_weight: float = 0.0
 
 
 func _init() -> void:
@@ -211,8 +191,6 @@ func _ready() -> void:
 	# request the first draw once the batch has entered a viewport.
 	if _native_canvas != null:
 		_native_canvas.queue_redraw()
-	else:
-		queue_redraw()
 
 
 ## Adds an item, returning it so the caller can keep configuring it.
@@ -232,7 +210,7 @@ func build() -> void:
 	# detail), so within a z order the object's draw order comes before texture
 	# locality; the stable index keeps equal keys in insertion order.
 	var native := NativeCore.backend()
-	if native != null and items.size() > 1:
+	if items.size() > 1:
 		var z_orders := PackedInt32Array()
 		var draw_orders := PackedInt32Array()
 		var texture_ids := PackedInt64Array()
@@ -252,28 +230,7 @@ func build() -> void:
 		for index in order.size():
 			sorted[index] = items[order[index]]
 		items = sorted
-	else:
-		var keyed: Array = []
-		keyed.resize(items.size())
-		for index in items.size():
-			var item: Item = items[index]
-			keyed[index] = [item.z_order, item.draw_order, item.texture.get_instance_id(), index, item]
-		keyed.sort_custom(
-				func(a: Array, b: Array) -> bool:
-					if a[0] != b[0]:
-						return a[0] < b[0]
-					if a[1] != b[1]:
-						return a[1] < b[1]
-					if a[2] != b[2]:
-						return a[2] < b[2]
-					return a[3] < b[3]
-		)
-		for index in keyed.size():
-			items[index] = keyed[index][4]
 
-	_cull = items.size() >= CULL_THRESHOLD
-	_buckets.clear()
-	_by_channel.clear()
 	_channel_blend.clear()
 	_spinning.clear()
 	_bounds = Rect2()
@@ -286,27 +243,14 @@ func build() -> void:
 		if not is_zero_approx(item.spin):
 			_spinning.append(item)
 		if not item.channel.is_empty():
-			if not _by_channel.has(item.channel):
-				_by_channel[item.channel] = []
-				add_to_group(CHANNEL_GROUP_PREFIX + item.channel)
-			_by_channel[item.channel].append(item)
-		if _cull and native == null:
-			var bucket: int = int(floor(item.origin_x / BUCKET_WIDTH))
-			if not _buckets.has(bucket):
-				_buckets[bucket] = []
-			_buckets[bucket].append(item)
+			add_to_group(CHANNEL_GROUP_PREFIX + item.channel)
 
 	_build_native_canvas(native)
-	if _native_canvas != null:
-		# Native channel indices supersede the Item-reference arrays. Retaining
-		# both duplicates one reference for every coloured sprite layer.
-		_by_channel.clear()
-		_release_items()
+	_release_items()
 	_built = true
-	_last_visible = PackedInt32Array()
 	# Native canvases poll their camera in C++; keep this GDScript callback only
 	# when individual spinning records need transform updates.
-	set_process(not _spinning.is_empty() if _native_canvas != null else _cull or not _spinning.is_empty())
+	set_process(not _spinning.is_empty())
 	_request_redraw()
 
 
@@ -358,8 +302,6 @@ func _build_native_canvas(native: Object) -> void:
 	_native_canvas = null
 	for item: Item in items:
 		item.render_index = -1
-	if native == null or not ClassDB.class_exists(&"NativeDecorationRenderer"):
-		return
 	_native_canvas = ClassDB.instantiate(&"NativeDecorationRenderer")
 	if _native_canvas == null:
 		return
@@ -419,8 +361,6 @@ func _build_native_canvas(native: Object) -> void:
 func _request_redraw() -> void:
 	if _native_canvas != null:
 		_native_canvas.queue_redraw()
-	else:
-		queue_redraw()
 
 
 ## Recolours every item bound to [param channel].
@@ -430,52 +370,9 @@ func _request_redraw() -> void:
 func apply_channel_color(channel: StringName, color: Color) -> void:
 	# Native records use packed integer channel indices; do not retain or consult
 	# a parallel Array of Item references in that path.
-	if _native_canvas != null:
-		if _native_by_channel.has(channel):
-			_native_canvas.call(&"apply_channel_color", _native_by_channel[channel], color)
-		return
-	# GDScript fallback: only items on this channel are touched.
-	var affected: Array = _by_channel.get(channel, [])
-	if affected.is_empty():
-		return
-	var changed: bool = false
-	for item: Item in affected:
-		# The channel supplies the base colour; the object's own HSV shift and
-		# opacity are reapplied on top so a channel update refines the tint
-		# rather than flattening every object to the same value.
-		var tinted: Color = color
-		if item.hsv_shift.size() >= 3:
-			# An all-zero shift with multiplicative sliders is Geometry
-			# Dash's "HSV enabled but untouched" encoding; multiplying by
-			# those zeros paints the item black (GDRweb's shiftColor guard).
-			var is_zero_shift: bool = (
-				is_zero_approx(item.hsv_shift[0])
-				and is_zero_approx(item.hsv_shift[1])
-				and is_zero_approx(item.hsv_shift[2])
-			)
-			var is_neutral_shift: bool = (
-				is_zero_approx(item.hsv_shift[0])
-				and is_equal_approx(item.hsv_shift[1], 0.0 if item.hsv_shift[3] > 0.5 else 1.0)
-				and is_equal_approx(item.hsv_shift[2], 0.0 if item.hsv_shift[4] > 0.5 else 1.0)
-			)
-			if not is_zero_shift and not is_neutral_shift:
-				var sat_val: float = tinted.s + item.hsv_shift[1] if item.hsv_shift[3] > 0.5 else tinted.s * item.hsv_shift[1]
-				var val_val: float = tinted.v + item.hsv_shift[2] if item.hsv_shift[4] > 0.5 else tinted.v * item.hsv_shift[2]
-				tinted = Color.from_hsv(
-					fposmod(tinted.h + item.hsv_shift[0], 1.0),
-					clampf(sat_val, 0.0, 1.0),
-					clampf(val_val, 0.0, 1.0),
-				)
-		# color.a already carries the channel's opacity; base_alpha is only the
-		# object's own. Multiplying the channel alpha in twice squares it and
-		# makes faint scenery vanish.
-		tinted.a = color.a * item.base_alpha
-		item.modulate = tinted
-		if _native_canvas != null and item.render_index >= 0:
-			_native_canvas.call(&"set_item_color", item.render_index, tinted)
-		changed = true
-	if changed:
-		_request_redraw()
+	if _native_canvas != null and _native_by_channel.has(channel):
+		_native_canvas.call(&"apply_channel_color", _native_by_channel[channel], color)
+
 
 
 ## Group pulse (1006, key 52 = 1) on this batch: every item lerps from its
@@ -484,13 +381,6 @@ func apply_channel_color(channel: StringName, color: Color) -> void:
 func apply_group_pulse(pulse: Color, weight: float) -> void:
 	if _native_canvas != null:
 		_native_canvas.call(&"set_group_pulse", pulse, weight)
-		return
-	var clamped: float = clampf(weight, 0.0, 1.0)
-	if is_equal_approx(clamped, _pulse_weight) and (is_zero_approx(clamped) or pulse == _pulse_color):
-		return
-	_pulse_color = pulse
-	_pulse_weight = clamped
-	_request_redraw()
 
 
 ## Registers a monster whose sprites this batch draws. [param sprites] holds
@@ -611,9 +501,7 @@ static func fade_material(additive: bool) -> Material:
 ## Geometry Dash colour triggers toggle a channel's Blending state at fire
 ## time; the glow in modern effect levels comes from those flips, not from
 ## classic glow sprites. The native renderer owns per-record blend modes, so
-## this only forwards the affected indices; the portable path can switch a
-## single material per node, which is only correct when the whole batch sits
-## on the one channel - mixed batches there keep their import-time blend.
+## this only forwards the affected indices.
 func apply_channel_blending(channel: StringName, additive: bool) -> void:
 	if _channel_blend.has(channel) and _channel_blend[channel] == additive:
 		return
@@ -630,14 +518,6 @@ func apply_channel_blending(channel: StringName, additive: bool) -> void:
 		# black shapes instead of additive glow.
 		if _native_blend_by_channel.has(channel):
 			_native_canvas.call(&"set_channel_blending", _native_blend_by_channel[channel], additive)
-		return
-	var uniform := not items.is_empty()
-	for item: Item in items:
-		if item.layer == "glow" or item.channel != channel:
-			uniform = false
-			break
-	if uniform:
-		material = fade_material(additive)
 
 
 ## Current rendered tint, including native channel animations. Serialization
@@ -672,92 +552,3 @@ func _process(delta: float) -> void:
 		return
 	if not monsters.is_empty():
 		_advance_monsters(delta)
-
-	# Rotating objects - sawblades and the like - carry a degrees-per-second
-	# speed in Geometry Dash's key 97.
-	# Native renderers retain spin state and advance the dense animated index in
-	# C++; do not cross the Variant boundary once per sprite per frame.
-	if _native_canvas == null and not _spinning.is_empty():
-		for item: Item in _spinning:
-			var angle := deg_to_rad(item.spin * delta)
-			var old_origin := item.transform.origin
-			item.transform = item.transform.rotated_local(angle)
-			# Rotate the trimmed sprite's placement around the complete object's
-			# centre as well as rotating its basis. This keeps all duplicated saw
-			# wedges locked together around one shared axle.
-			item.transform.origin = item.spin_pivot + (old_origin - item.spin_pivot).rotated(angle)
-		_request_redraw()
-
-	if _native_canvas != null or not _cull:
-		return
-	var visible_buckets: PackedInt32Array = _visible_buckets()
-	if visible_buckets != _last_visible:
-		_last_visible = visible_buckets
-		if _native_canvas != null:
-			var first: int = visible_buckets[0] if not visible_buckets.is_empty() else 1
-			var last: int = visible_buckets[-1] if not visible_buckets.is_empty() else 0
-			_native_canvas.call(&"set_visible_buckets", first, last)
-		else:
-			queue_redraw()
-
-
-## Bucket indices overlapping the current camera view.
-func _visible_buckets() -> PackedInt32Array:
-	var result := PackedInt32Array()
-	var camera: Camera2D = get_viewport().get_camera_2d() if is_inside_tree() else null
-	if camera == null:
-		var all: Array = _buckets.keys()
-		all.sort()
-		for bucket: int in all:
-			result.append(bucket)
-		return result
-
-	var half: Vector2 = get_viewport_rect().size * 0.5 / camera.zoom
-	var centre: Vector2 = to_local(camera.get_screen_center_position())
-	var first: int = int(floor((centre.x - half.x - CULL_MARGIN) / BUCKET_WIDTH))
-	var last: int = int(floor((centre.x + half.x + CULL_MARGIN) / BUCKET_WIDTH))
-	for bucket in range(first, last + 1):
-		if _buckets.has(bucket):
-			result.append(bucket)
-	return result
-
-
-func _draw() -> void:
-	# The child owns the retained command list on native builds. Keeping this
-	# method as the fallback preserves editor/source compatibility.
-	if _native_canvas != null or items.is_empty():
-		return
-
-	if not _cull:
-		for item: Item in items:
-			_draw_item(item)
-		draw_set_transform_matrix(Transform2D.IDENTITY)
-		return
-
-	var buckets: PackedInt32Array = _last_visible
-	if buckets.is_empty():
-		buckets = _visible_buckets()
-	for bucket: int in buckets:
-		for item: Item in _buckets.get(bucket, []):
-			_draw_item(item)
-	draw_set_transform_matrix(Transform2D.IDENTITY)
-
-
-func _draw_item(item: Item) -> void:
-	draw_set_transform_matrix(item.transform)
-	# Geometry Dash positions objects by their centre, so the quad is drawn
-	# centred on the transform origin rather than from its top-left corner.
-	draw_texture_rect_region(
-			item.texture,
-			Rect2(-item.region.size * 0.5, item.region.size),
-			item.region,
-			_pulsed(item.modulate),
-	)
-
-
-func _pulsed(tint: Color) -> Color:
-	if _pulse_weight <= 0.0:
-		return tint
-	var pulsed: Color = tint.lerp(_pulse_color, _pulse_weight)
-	pulsed.a = tint.a
-	return pulsed

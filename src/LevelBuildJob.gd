@@ -42,7 +42,7 @@ var _native_job: Object
 func _init(data: Dictionary) -> void:
 	_data = data
 	_drop_decoration = Config.ldm and not Editor.in_editor
-	var native_build: bool = not Editor.in_editor and NativeCore.available() and ClassDB.class_exists(&"NativeLevelBuildJob")
+	var native_build: bool = not Editor.in_editor
 	if Editor.in_editor:
 		_expand_packed_decorations(_data)
 	if not native_build:

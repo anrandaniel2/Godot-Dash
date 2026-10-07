@@ -392,10 +392,10 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var object_chunks := PackedInt32Array()
 	if use_online_parser:
 		var native := NativeCore.backend()
-		if native != null and use_native_packed_import and native.has_method(&"import_online_level_packed"):
+		if use_native_packed_import:
 			header = native.call(&"parse_online_header", level_string).get("header", { })
 			native_packed = true
-		elif native != null and native.has_method(&"parse_online_level"):
+		else:
 			var parsed: Dictionary = native.call(&"parse_online_level", level_string)
 			header = parsed.get("header", { })
 			native_objects = parsed.get("objects", [])
@@ -452,7 +452,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	# Runtime imports keep native-only triggers solely as packed columns; the
 	# editor and fallback builds expand them (LevelBuildJob).
 	var packed_triggers := PackedTriggers.new()
-	var pack_triggers: bool = NativeCore.available() and not Editor.in_editor
+	var pack_triggers: bool = not Editor.in_editor
 	# Which groups actually ended up with a member object, and which groups
 	# triggers point at, so the report can explain empty triggers.
 	var populated_groups: Dictionary[String, int] = { }
@@ -1433,12 +1433,11 @@ static func _easing_from_property(easing: int) -> Array:
 
 ## Whether a trigger family's effect should be executed by the C++ runtime
 ## for this import. Only runtime builds with the native library available pack
-## effect families as records; editor and fallback imports keep their scene so
-## the components stay editable and playable without the extension.
+## effect families as records; editor imports keep their scene so the
+## components stay editable.
 static func _native_trigger_execution(gd_id: int) -> bool:
 	return (
 		gd_id in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS
-		and NativeCore.available()
 		and not Editor.in_editor
 	)
 
@@ -1526,38 +1525,10 @@ const LEVEL_END_GD_Y: float = 225.0
 const LEVEL_END_LINE_CELLS: float = 1024.0
 
 
-## GD level end and kill height (GD units). Twin of GdashNative.level_bounds
+## GD level end and kill height (GD units), from GdashNative.level_bounds
 ## (gd_level_length / gd_max_gameplay_y in native/src/gdash_native.cpp).
 static func _level_bounds(level_string: String, dynamic_level_height: bool) -> Dictionary:
-	var native := NativeCore.backend()
-	if native != null and native.has_method(&"level_bounds"):
-		return native.call(&"level_bounds", level_string, dynamic_level_height)
-	var max_x: float = 0.0
-	var max_y: float = 0.0
-	var seen: bool = false
-	var chunks: PackedStringArray = level_string.split(";", false)
-	for chunk_idx: int in range(1, chunks.size()):
-		var pairs: PackedStringArray = chunks[chunk_idx].split(",")
-		var has_x: bool = false
-		var x: float = 0.0
-		var y: float = 0.0
-		for pair_idx: int in range(0, pairs.size() - 1, 2):
-			if pairs[pair_idx] == Prop.X:
-				x = pairs[pair_idx + 1].to_float()
-				has_x = true
-			elif pairs[pair_idx] == Prop.Y:
-				y = pairs[pair_idx + 1].to_float()
-		if not has_x:
-			continue
-		max_x = x if not seen else maxf(max_x, x)
-		max_y = y if not seen else maxf(max_y, y)
-		seen = true
-	return {
-		"max_object_x": max_x,
-		"max_object_y": max_y,
-		"level_length": gd_level_length(max_x),
-		"max_gameplay_y": gd_max_gameplay_y(dynamic_level_height, max_y),
-	}
+	return NativeCore.backend().call(&"level_bounds", level_string, dynamic_level_height)
 
 
 ## PlayLayer: m_levelLength = max(screenRight + 300, m_realLevelLength + 340)
@@ -2292,14 +2263,7 @@ static func _line_color(header: Dictionary, _channels: Array) -> Color:
 
 
 static func _parse_pairs(chunk: String) -> Dictionary:
-	var native := NativeCore.backend()
-	if native != null:
-		return native.call(&"parse_gd_pairs", chunk)
-	var pairs: Dictionary[String, String] = { }
-	var fields: PackedStringArray = chunk.split(",", true)
-	for i in range(0, fields.size() - 1, 2):
-		pairs[fields[i]] = fields[i + 1]
-	return pairs
+	return NativeCore.backend().call(&"parse_gd_pairs", chunk)
 
 #endregion
 

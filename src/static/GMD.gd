@@ -47,8 +47,6 @@ const Key := {
 # constructor isn't a constant expression in GDScript.
 const _GZIP_MAGIC_0: int = 0x1F
 const _GZIP_MAGIC_1: int = 0x8B
-## Official levels are stored without their common gzip header prefix.
-const _OFFICIAL_LEVEL_PREFIX := "H4sIAAAAAAAAA"
 
 
 ## Result of reading a `.gmd` file.
@@ -155,68 +153,15 @@ static func parse(text: String) -> Document:
 ## Decodes the base64 + gzip level string stored under [code]k4[/code].
 ## Returns an empty string on failure rather than throwing.
 static func decode_level_string(encoded: String) -> String:
-	var native := NativeCore.backend()
-	if native != null:
-		var native_result: String = native.call(&"decode_level_string", encoded)
-		if not native_result.is_empty() or encoded.strip_edges().is_empty():
-			return native_result
-		# Malformed input and a native decode failure both return empty. Run the
-		# fallback so its detailed validation error reaches the importer log.
-	var data: String = encoded.strip_edges()
-	if data.is_empty():
-		return ""
-	# Already plain text (some editors save uncompressed level strings).
-	if data.begins_with("kS") or data.begins_with("kA") or data.begins_with("1,") or data.contains(";1,"):
-		return data
-
-	# Downloaded user levels contain the complete URL-safe Base64 payload. The
-	# H4sIAAAAAAAAA prefix is omitted only by bundled official levels. Decode the
-	# payload as supplied first and inspect its binary wrapper; otherwise valid
-	# zlib streams and gzip streams with a nonzero timestamp get corrupted.
-	var plain := _decode_level_payload(data)
-	if not plain.is_empty():
-		return plain
-	if not data.begins_with("H4sI"):
-		plain = _decode_level_payload(_OFFICIAL_LEVEL_PREFIX + data)
-	if plain.is_empty():
+	var plain: String = NativeCore.backend().call(&"decode_level_string", encoded)
+	if plain.is_empty() and not encoded.strip_edges().is_empty():
 		push_error("GMD: level data is neither plain text nor valid Base64 zlib/gzip")
-	return plain
-
-
-static func _decode_level_payload(data: String) -> String:
-	var bytes: PackedByteArray = Marshalls.base64_to_raw(_to_standard_base64(data))
-	if bytes.is_empty():
-		return ""
-	var inflated := PackedByteArray()
-	if bytes.size() >= 2 and bytes[0] == _GZIP_MAGIC_0 and bytes[1] == _GZIP_MAGIC_1:
-		inflated = bytes.decompress_dynamic(-1, FileAccess.COMPRESSION_GZIP)
-	elif bytes.size() >= 2 and (bytes[0] & 0x0f) == 8 and (((bytes[0] << 8) | bytes[1]) % 31) == 0:
-		# The documented inflateInit2(15 | 32) accepts either zlib or gzip.
-		inflated = bytes.decompress_dynamic(-1, FileAccess.COMPRESSION_DEFLATE)
-	else:
-		inflated = bytes
-	if inflated.is_empty():
-		return ""
-	var plain := inflated.get_string_from_utf8()
-	if not plain.contains(";") and not plain.begins_with("k") and not plain.begins_with("1,"):
-		return ""
 	return plain
 
 
 ## Encodes a plain level string the way GDShare expects it in [code]k4[/code].
 static func encode_level_string(plain: String) -> String:
-	var native := NativeCore.backend()
-	if native != null:
-		var native_result: String = native.call(&"encode_level_string", plain)
-		if not native_result.is_empty():
-			return native_result
-	var raw: PackedByteArray = plain.to_utf8_buffer()
-	var compressed: PackedByteArray = raw.compress(FileAccess.COMPRESSION_GZIP)
-	# Godot's COMPRESSION_GZIP produces a bare deflate stream in some versions,
-	# so make sure a gzip header/trailer is present.
-	if compressed.size() < 2 or compressed[0] != _GZIP_MAGIC_0 or compressed[1] != _GZIP_MAGIC_1:
-		compressed = _wrap_gzip(raw, compressed)
-	return _to_url_safe_base64(Marshalls.raw_to_base64(compressed))
+	return NativeCore.backend().call(&"encode_level_string", plain)
 
 
 ## Serializes a document back into `.gmd` text.
@@ -251,16 +196,6 @@ static func write_file(path: String, entries: Dictionary, level_string: String) 
 	return OK
 
 
-static func _to_standard_base64(data: String) -> String:
-	var standard: String = data.replace("-", "+").replace("_", "/")
-	var padding: int = (4 - standard.length() % 4) % 4
-	return standard + "=".repeat(padding)
-
-
-static func _to_url_safe_base64(data: String) -> String:
-	return data.replace("+", "-").replace("/", "_")
-
-
 static func _escape(text: String) -> String:
 	return text \
 			.replace("&", "&amp;") \
@@ -277,34 +212,7 @@ static func _unescape(text: String) -> String:
 			.replace("&amp;", "&")
 
 
-## Adds a gzip header and trailer around a raw deflate stream.
-static func _wrap_gzip(original: PackedByteArray, deflated: PackedByteArray) -> PackedByteArray:
-	var out := PackedByteArray([0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xFF])
-	out.append_array(deflated)
-	var crc: int = _crc32(original)
-	for shift in [0, 8, 16, 24]:
-		out.append((crc >> shift) & 0xFF)
-	var size: int = original.size()
-	for shift in [0, 8, 16, 24]:
-		out.append((size >> shift) & 0xFF)
-	return out
-
-
 static var _crc_table: PackedInt64Array
-
-
-static func _crc32(bytes: PackedByteArray) -> int:
-	if _crc_table.is_empty():
-		_crc_table.resize(256)
-		for i in 256:
-			var c: int = i
-			for _bit in 8:
-				c = (0xEDB88320 ^ (c >> 1)) if c & 1 else (c >> 1)
-			_crc_table[i] = c
-	var crc: int = 0xFFFFFFFF
-	for byte in bytes:
-		crc = _crc_table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
-	return crc ^ 0xFFFFFFFF
 
 
 #region GMD2

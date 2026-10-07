@@ -100,14 +100,7 @@ static func _reenable_shapes(level: Level) -> void:
 	var container := level.get_node_or_null(CONTAINER_NAME)
 	if container == null:
 		return
-	var native := NativeCore.backend()
-	if native != null:
-		native.call(&"reenable_collision_shapes", container)
-		return
-	for body in container.get_children():
-		for shape in _shape_nodes_of(body):
-			if shape.disabled:
-				shape.disabled = false
+	NativeCore.backend().call(&"reenable_collision_shapes", container)
 
 
 ## Undoes merging and frees the shared bodies. Called when a level stops being
@@ -191,21 +184,7 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 			bodies, container, int(geometry.collision_layer),
 			_chunk_of(object.global_position.x),
 	)
-	var added: Array = []
-	var native := NativeCore.backend()
-	if native != null:
-		added = native.call(&"commit_collision_shapes", body, object, geometry.descriptors)
-	else:
-		for descriptor in geometry.descriptors:
-			var shape_node: CollisionShape2D = CollisionShape2D.new()
-			shape_node.shape = descriptor.resource
-			shape_node.debug_color = descriptor.debug_color
-			body.add_child(shape_node)
-			# Position the shape where the source shape is in the world: body is at
-			# the container's origin (identity), so applying the object's own global
-			# transform reproduces the shape exactly, including scale/rotation/flip.
-			shape_node.global_transform = object.global_transform * descriptor.local_xform
-			added.append(shape_node)
+	var added: Array = NativeCore.backend().call(&"commit_collision_shapes", body, object, geometry.descriptors)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
 	# Native online/static artwork lives in RenderingServer RIDs and this
@@ -290,31 +269,7 @@ static func _dynamic_transform_groups(level: Level) -> Dictionary:
 static func _object_geometry(object: Node2D) -> Dictionary:
 	if object.has_meta(DESCRIPTORS_META):
 		return object.get_meta(DESCRIPTORS_META)
-	var native := NativeCore.backend()
-	if native != null:
-		return native.call(&"extract_object_geometry", object)
-	var geometry := {
-		"collision_layer": 0,
-		"descriptors": [],
-	}
-	var body := _own_body(object)
-	if body == null:
-		return geometry
-	geometry.collision_layer = int(body.collision_layer)
-	var descriptors: Array = []
-	var inverse := object.global_transform.affine_inverse()
-	for shape_node in _shape_nodes_of(body):
-		if shape_node.shape == null:
-			continue
-		descriptors.append({
-			"resource": shape_node.shape,
-			"local_xform": inverse * shape_node.global_transform,
-			"debug_color": shape_node.debug_color,
-		})
-	geometry.descriptors = descriptors
-	if not descriptors.is_empty():
-		object.set_meta(DESCRIPTORS_META, geometry)
-	return geometry
+	return NativeCore.backend().call(&"extract_object_geometry", object)
 
 
 static func _own_body(object: Node2D) -> CollisionObject2D:

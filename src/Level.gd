@@ -808,7 +808,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 	# The native runtime omitted these nodes. Put their records back into the
 	# serialized layer so switching to the editor/non-native fallback remains
 	# lossless; the top-level side index avoids rediscovering them later.
-	if not Editor.in_editor and NativeCore.available() and not native_trigger_records.is_empty() and not data.layers.is_empty():
+	if not Editor.in_editor and not native_trigger_records.is_empty() and not data.layers.is_empty():
 		data.layers[0].objects.append_array(native_trigger_records)
 	return data
 

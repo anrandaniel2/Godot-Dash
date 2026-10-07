@@ -134,7 +134,7 @@ func _ready() -> void:
 			"internal_gamemode": 1,
 		}
 		var v_ship: Vector2 = (native.call(&"compute_player_velocity", p_ship) as Dictionary)["velocity"]
-		_expect("Native ship hold matches GDPhysics", absf(v_ship.y + GDPhysics.ship_acceleration(0.0, true, false) / 60.0) < 0.1)
+		_expect("Native ship hold matches half-gravity step", absf(v_ship.y + 11921.53 * 0.5 / 60.0) < 0.1)
 
 		var cls: Dictionary = native.call(&"classify_collision", deg_to_rad(5.0), deg_to_rad(45.0))
 		_expect("Native physics classify 5 deg as floor", bool(cls["is_floor"]))

@@ -71,12 +71,6 @@ enum ParticlePreprocessing {
 ## FrustumCuller). Cheap to leave on; turn it off only to rule it out when
 ## debugging a level.
 @export var culling_enabled: bool = true
-## How far beyond the screen edges, in cells, objects stay visible. A speed
-## change or camera trigger can move the view a long way in one frame, and the
-## buffer keeps objects on screen from popping in late. Native span-aware
-## culling makes a tight five-cell look-ahead safe and keeps dense levels from
-## retaining several extra screens of objects.
-@export_range(4, 200, 1, "suffix:cells") var culling_buffer_cells: int = 5
 
 @export_subgroup("Level open")
 ## Build the level progressively across frames instead of blocking the main
@@ -243,7 +237,6 @@ func _init():
 	enable_title_screen_icons = config_file.get_value("Performance", "enable_title_screen_icons", enable_title_screen_icons)
 	ldm = config_file.get_value("Performance", "ldm", ldm)
 	culling_enabled = config_file.get_value("Performance", "culling_enabled", culling_enabled)
-	culling_buffer_cells = config_file.get_value("Performance", "culling_buffer_cells", culling_buffer_cells)
 	# Migrate only values equal to the former shipped defaults. This makes the
 	# optimized defaults effective for existing installations without replacing
 	# intentional custom settings.
@@ -252,11 +245,8 @@ func _init():
 			max_fps = refresh_rate
 		if anti_aliasing == Viewport.MSAA.MSAA_4X:
 			anti_aliasing = Viewport.MSAA.MSAA_DISABLED
-		if culling_buffer_cells == 40:
-			culling_buffer_cells = 5
 		config_file.set_value("Graphics", "max_fps", max_fps)
 		config_file.set_value("Graphics", "anti_aliasing", anti_aliasing)
-		config_file.set_value("Performance", "culling_buffer_cells", culling_buffer_cells)
 		config_file.set_value("Performance", "defaults_version", 1)
 	# Version 2: installs on displays without a readable refresh rate saved the
 	# old 60 fallback as their cap; clear it so the display paces frames.
@@ -379,7 +369,6 @@ func save() -> void:
 	config_file.set_value("Performance", "enable_title_screen_icons", enable_title_screen_icons)
 	config_file.set_value("Performance", "ldm", ldm)
 	config_file.set_value("Performance", "culling_enabled", culling_enabled)
-	config_file.set_value("Performance", "culling_buffer_cells", culling_buffer_cells)
 	config_file.set_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	config_file.set_value("Performance", "particles_visibility", particles_visibility)
 	config_file.set_value("Performance", "preprocess_particles_in_editor", preprocess_particles_in_editor)

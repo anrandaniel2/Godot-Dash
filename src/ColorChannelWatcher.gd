@@ -326,7 +326,7 @@ static func _special_color(channel: Constants.SpecialColorChannel) -> Color:
 ## nothing) whenever the portable path must run: the editor, explicit watcher
 ## subsets, resets, or builds without the extension.
 func _refresh_native(_data: ColorChannelData) -> bool:
-	if Editor.in_editor or _data != data or not NativeCore.available():
+	if Editor.in_editor or _data != data:
 		return false
 	if _native_index == null:
 		if not ClassDB.class_exists(&"NativeColorChannelIndex"):

@@ -169,7 +169,7 @@ func add_loaded_level(level: Level, level_data: Dictionary = {}) -> Level:
 	TextComponent.DEFAULT_TEXT_SETTINGS.set_font_path()
 	if level.get_parent() != $Level:
 		$Level.add_child(level, true)
-	if not Editor.in_editor and NativeCore.available():
+	if not Editor.in_editor:
 		if native_trigger_bridge != null:
 			native_trigger_bridge.queue_free()
 		native_trigger_bridge = NativeTriggerBridge.new()
