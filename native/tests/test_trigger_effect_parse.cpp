@@ -11,6 +11,7 @@
 //       native/godot-cpp/bin/libgodot-cpp.linux.template_release.x86_64.a -lpthread -o /tmp/trigger_test
 //   /tmp/trigger_test
 
+#include <cstring>
 #include <limits>
 #include "../src/gdash_native.cpp"
 
@@ -269,15 +270,6 @@ int main() {
 	expect_true("count ignores staying at target", !item_count_reached(3, 3, 3));
 	expect_true("count ignores passing by", !item_count_reached(2, 4, 3));
 	expect_true("count fires arriving from above", item_count_reached(4, 3, 3));
-
-	// is_shader_kind helper test
-	expect_true("gray is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_GRAYSCALE));
-	expect_true("sepia is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_SEPIA));
-	expect_true("lens is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_LENS_CIRCLE));
-	expect_true("invert is shader kind", NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::SHADER_INVERT_COLOR));
-	expect_true("move is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::MOVE));
-	expect_true("color is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::COLOR));
-	expect_true("ui is not shader kind", !NativeTriggerRuntime::is_shader_kind(TriggerEffectKind::UI));
 
 	// UI Trigger (ID 3613) compute_ui_anchor alignment math tests
 	const Vector2 vp_16_9(1920.0, 1080.0);
@@ -554,6 +546,56 @@ int main() {
 		loop[0].easing = 2; // ease in, rate 2
 		loop[0].rate = 2.0;
 		expect_close("kf easing applies", kf_sample(kf_build_plan(loop, KfMods()), 0.5).x, 15.0);
+	}
+
+	// GD shader triggers (GDShaderState).
+	{
+		auto props = [](std::initializer_list<std::pair<int32_t, double>> kv) {
+			ShaderProps p;
+			for (const auto &e : kv) p.values.push_back(e);
+			return p;
+		};
+		auto find = [](const std::vector<ShaderUniform> &list, const char *name) -> const ShaderUniform * {
+			for (const ShaderUniform &u : list) if (std::strcmp(u.name, name) == 0) return &u;
+			return nullptr;
+		};
+		ShaderFrame frame; // 569 x 320 points, D = 652
+		GDShaderState st;
+		expect_true("shader idle by default", !st.active());
+		st.apply(2919, props({{176, 1.0}, {10, 1.0}}));
+		st.step(0.5);
+		expect_close("grayscale reads key 176, fades linearly", st.value[TAG_GRAYSCALE], 0.5);
+		st.step(0.5);
+		expect_close("grayscale reaches target", st.value[TAG_GRAYSCALE], 1.0);
+		st.apply(2920, props({{176, 0.7}}));
+		expect_close("duration 0 sets at once (tweenValue)", st.value[TAG_SEPIA], 0.7);
+		st.apply(2914, props({{179, 9.0}, {181, 3.0}}));
+		auto u = st.uniforms(frame);
+		expect_close("radial blur = size / 45", find(u, "_radialBlurValue")->v[0], 0.2);
+		expect_close("radial blur fade clamp(fade * 0.2, 0, 0.2)", find(u, "_blurFade")->v[0], 0.2);
+		st.apply(2921, props({{176, 1.0}, {188, 1.0}, {179, 2.0}, {180, 0.5}, {189, 1.0}, {194, 1.0}}));
+		u = st.uniforms(frame);
+		expect_close("invert clamp RGB", find(u, "_invertColorValue")->v[0], 1.0);
+		expect_close("invert edit G", find(u, "_invertColorValue")->v[1], 0.5);
+		st.apply(2922, props({{176, 90.0}}));
+		u = st.uniforms(frame);
+		expect_close("hue cos", find(u, "_hueShiftCosA")->v[0], 0.0);
+		expect_close("hue sin", find(u, "_hueShiftSinA")->v[0], 1.0);
+		expect_close("colour change off -> C.r 0", find(u, "_colorChangeC")->v[0], 0.0);
+		st.apply(2923, props({{176, 0.0}, {191, 1.0}, {175, 1.0}}));
+		u = st.uniforms(frame);
+		expect_close("colour change C.r floor .001", find(u, "_colorChangeC")->v[0], 0.001);
+		st.apply(2912, props({{188, 1.0}, {180, 4.0}}));
+		u = st.uniforms(frame);
+		expect_close("pixelate block = 1 / round(D / target)", find(u, "_pixelSize")->v[0], 1.0 / 163.0, 1e-6);
+		expect_close("pixelate Y untouched", find(u, "_pixelSize")->v[1], 0.0);
+		st.apply(2904, props({{192, 1.0}}));
+		expect_true("setup shader disable all resets", st.value[TAG_GRAYSCALE] == 0.0 && st.value[TAG_PIXELATE_X] == 1.0);
+		expect_true("disable all leaves nothing active", !st.active());
+		st.apply(2905, props({{175, 1.0}}));
+		expect_true("shockwave active", st.active());
+		for (int i = 0; i < 200; ++i) st.step(0.05), st.uniforms(frame);
+		expect_true("shockwave ends off screen", !st.active());
 	}
 
 	if (failures == 0) {

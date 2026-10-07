@@ -10,9 +10,7 @@
 [ext_resource type="PackedScene" uid="uid://dxcgyea560vmr" path="res://scenes/components/game_components/PlayerCamera.tscn" id="9_e8rlm"]
 [ext_resource type="Shader" uid="uid://dghfnabjmw7js" path="res://resources/shaders/Ground.gdshader" id="9_qitmq"]
 [ext_resource type="PackedScene" uid="uid://th7jwdop3hdv" path="res://scenes/components/game_components/PauseMenu.tscn" id="9_vv033"]
-[ext_resource type="Shader" uid="uid://c37wfprwryexl" path="res://resources/shaders/Grayscale.gdshader" id="10_tgbxk"]
-[ext_resource type="Shader" uid="uid://bmo5oa3f8elxu" path="res://resources/shaders/LensCircle.gdshader" id="11_bdlmb"]
-[ext_resource type="Shader" uid="uid://g502tst55eft" path="res://resources/shaders/Sepia.gdshader" id="11_yix40"]
+[ext_resource type="Shader" path="res://resources/shaders/GDPostProcess.gdshader" id="10_gdpost"]
 [ext_resource type="Script" uid="uid://md5b1qxtkghp" path="res://src/PercentageLayer.gd" id="14_21xg8"]
 [ext_resource type="FontFile" uid="uid://8e1lxpyo40t5" path="res://assets/fonts/Pusab.otf" id="14_kxqg4"]
 [ext_resource type="Script" uid="uid://df58p5n7dllpj" path="res://src/WorldEnvironment.gd" id="17_21xg8"]
@@ -32,21 +30,8 @@ shader_parameter/ground_color = Color(1, 1, 1, 1)
 [sub_resource type="WorldBoundaryShape2D" id="WorldBoundaryShape2D_icif4"]
 normal = Vector2(0, 1)
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_fr71x"]
-shader = ExtResource("10_tgbxk")
-shader_parameter/grayscale_factor = 0.0
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_ussf4"]
-shader = ExtResource("11_bdlmb")
-shader_parameter/scale = Vector2(1, 1)
-shader_parameter/alpha = 0.0
-shader_parameter/inner_radius = 0.0
-shader_parameter/outer_radius = 0.25
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_yg2l0"]
-shader = ExtResource("11_yix40")
-shader_parameter/base = Color(0.952941, 0.666667, 0.364706, 1)
-shader_parameter/sepia_factor = 0.0
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_gdpost"]
+shader = ExtResource("10_gdpost")
 
 [sub_resource type="LabelSettings" id="LabelSettings_21xg8"]
 font = ExtResource("14_kxqg4")
@@ -238,33 +223,15 @@ editor_draw_drag_margin = true
 [node name="ShaderLayer" type="CanvasLayer" parent="." unique_id=936641481]
 layer = 50
 
-[node name="Grayscale" type="ColorRect" parent="ShaderLayer" unique_id=923832439]
+[node name="GDPost" type="ColorRect" parent="ShaderLayer" unique_id=923832439]
 visible = false
-material = SubResource("ShaderMaterial_fr71x")
+material = SubResource("ShaderMaterial_gdpost")
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-
-[node name="LensCircle" type="ColorRect" parent="ShaderLayer" unique_id=1312516884]
-visible = false
-material = SubResource("ShaderMaterial_ussf4")
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-pivot_offset = Vector2(960, 540)
-
-[node name="Sepia" type="ColorRect" parent="ShaderLayer" unique_id=1561036995]
-visible = false
-material = SubResource("ShaderMaterial_yg2l0")
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+mouse_filter = 2
 
 [node name="UILayer" type="CanvasLayer" parent="." unique_id=4189283741]
 layer = 60

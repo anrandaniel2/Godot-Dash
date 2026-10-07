@@ -123,10 +123,7 @@ enum class TriggerEffectKind : int32_t {
 	CAMERA_ROTATE, // 2015 Rotate Camera
 	SHAKE,         // 1520 Shake
 	TELEPORT,      // 3022 Teleport
-	SHADER_GRAYSCALE,   // 2919 Grayscale
-	SHADER_SEPIA,       // 2920 Sepia
-	SHADER_LENS_CIRCLE, // 2913 Lens Circle
-	SHADER_INVERT_COLOR,// 2921 Invert Color
+	SHADER,             // 2904-2924 shader triggers (GDShaderState)
 	UI,                 // 3613 UI Trigger
 	SFX,                // 3602 SFX Trigger
 	GRAVITY_PORTAL,     // 10 / 11 / 2926 player gravity portals
@@ -239,6 +236,555 @@ static double gd_ease(int gd_easing, double rate, double t) {
 static double ease_weight(int gd_easing, double t, double rate = 2.0) {
 	return gd_ease(gd_easing, rate, t);
 }
+
+// ---- GD shader triggers (2904-2924) ----
+// State and uniforms of GD's ShaderLayer. Sources:
+// - geode-sdk bindings 2.2081 inline ShaderLayer.cpp: trigger* -> tween tags,
+//   preChromatic/Grayscale/Sepia/InvertColor/HueShift/ColorChange/RadialBlur/
+//   Common uniform maths, updateMotionBlurSpeedX/Y.
+// - inline GJShaderState.cpp: defaults, reset(), tweenValue (duration <= 0
+//   sets the value at once; a new tween replaces the tag's running one).
+// - CallocGD GD-2.206-Decompiled GJShaderState::updateTweenAction: tag ->
+//   field (1/2 chromatic, 9/10 pixelate, 11-15 lens, 16-18 radial, 19/20
+//   motion, 21-24 bulge, 25-31 pinch, 32 gray, 33 sepia, 34-37 invert,
+//   38 hue; 39-49 continue in member order).
+// - gmdkit prop_table.csv trigger.shader.*: object keys.
+// - cgytrus/LevelShadersFix: pixelate block size round(D / target) of the
+//   diagonal-sized target D, chromatic's 1.2018504 = |480x320| / 480.
+// The pre* maths of shockwave, shockline, glitch, chromatic glitch, lens
+// circle, bulge, pinch, motion blur and split screen are not public; those
+// uniforms below are HYPOTHESES, marked at each site.
+struct ShaderProps {
+	std::vector<std::pair<int32_t, double>> values;
+	double get(int32_t key, double fallback) const {
+		for (const auto &entry : values) if (entry.first == key) return entry.second;
+		return fallback;
+	}
+	bool flag(int32_t key) const { return get(key, 0.0) != 0.0; }
+};
+
+// Every key a shader trigger reads (gmdkit trigger.shader.*).
+static const int32_t SHADER_KEYS[] = {
+	10, 30, 51, 71, 85, 138, 175, 176, 177, 179, 180, 181, 182, 183, 184, 185, 186,
+	187, 188, 189, 190, 191, 192, 194, 196, 197, 200, 201, 290, 291, 512, 513, 514, 515,
+};
+
+enum ShaderTag : int32_t {
+	TAG_CHROMATIC_X = 1, TAG_CHROMATIC_Y = 2,
+	TAG_CG_RGB = 3, TAG_CG_STRENGTH = 4, TAG_CG_LINE_THICK = 5, TAG_CG_LINE_STRENGTH = 6,
+	TAG_CG_SEGMENT = 7, TAG_CG_SPEED = 8,
+	TAG_PIXELATE_X = 9, TAG_PIXELATE_Y = 10,
+	TAG_LENS_SIZE = 11, TAG_LENS_FADE = 12, TAG_LENS_STRENGTH = 13, TAG_LENS_OFF_X = 14, TAG_LENS_OFF_Y = 15,
+	TAG_RADIAL_SIZE = 16, TAG_RADIAL_OFF_X = 17, TAG_RADIAL_OFF_Y = 18,
+	TAG_MOTION_X = 19, TAG_MOTION_Y = 20,
+	TAG_BULGE = 21, TAG_BULGE_OFF_X = 22, TAG_BULGE_OFF_Y = 23, TAG_BULGE_RADIUS = 24,
+	TAG_PINCH_X = 25, TAG_PINCH_Y = 26, TAG_PINCH_OFF_X = 27, TAG_PINCH_OFF_Y = 28, TAG_PINCH_RADIUS = 29,
+	TAG_PINCH_MOD_X = 30, TAG_PINCH_MOD_Y = 31,
+	TAG_GRAYSCALE = 32, TAG_SEPIA = 33, TAG_INVERT = 34, TAG_INVERT_R = 35, TAG_INVERT_G = 36, TAG_INVERT_B = 37,
+	TAG_HUE = 38, TAG_CC_R = 39, TAG_CC_G = 40, TAG_CC_B = 41, TAG_CB_R = 42, TAG_CB_G = 43, TAG_CB_B = 44,
+	TAG_SPLIT_ROWS = 45, TAG_SPLIT_COLS = 46, TAG_BLUR_INTENSITY = 47, TAG_BLUR_FADE = 48, TAG_GLITCH = 49,
+	TAG_COUNT = 50,
+};
+
+// A shader effect centre: player 1/2 (keys 138/200), a group (key 51), or
+// the screen centre, plus a screen offset in GD points.
+struct ShaderCenter {
+	int32_t group = 0;
+	bool player1 = false, player2 = false;
+	double offset_x = 0.0, offset_y = 0.0;
+};
+
+struct GDShaderTween {
+	double from = 0.0, to = 0.0, duration = 0.0, elapsed = 0.0, rate = 2.0;
+	int32_t easing = 0;
+};
+
+// Resolved per frame by the runtime: screen size in GD points and every
+// centre in GD screen points (origin bottom-left, y up, like GL).
+struct ShaderFrame {
+	double width = 569.0, height = 320.0;
+	double center_x[6] = {}, center_y[6] = {}; // ShaderCenterSlot order
+	double camera_y = 0.0;
+	double zoom = 1.0;
+	float lens_tint[3] = {0.0f, 0.0f, 0.0f};
+	float gray_tint[3] = {1.0f, 1.0f, 1.0f};
+};
+enum ShaderCenterSlot { SC_SHOCKWAVE, SC_SHOCKLINE, SC_LENS, SC_RADIAL, SC_BULGE, SC_PINCH, SC_COUNT };
+
+struct ShaderUniform {
+	const char *name;
+	int32_t size; // 1-4 floats; bools are 1 float != 0
+	float v[4];
+};
+
+struct GDShaderState {
+	double value[TAG_COUNT] = {};
+	std::map<int32_t, GDShaderTween> tweens;
+	double time = 0.0;
+	ShaderCenter centers[SC_COUNT];
+	// Shockwave / shockline (not tweened)
+	double sw_start = -1.0, sw_speed = 1.0, sw_strength = 1.0, sw_time_offset = 0.0, sw_width = 1.0;
+	double sw_thickness = 1.0, sw_fade_in = 1.0, sw_fade_out = 1.0, sw_inner = 0.0, sw_outer = 1.0, sw_max_size = 0.0;
+	bool sw_invert = false, sw_relative = false;
+	double sl_start = -1.0, sl_speed = 1.0, sl_strength = 1.0, sl_time_offset = 0.0, sl_width = 1.0;
+	double sl_thickness = 1.0, sl_fade_in = 1.0, sl_fade_out = 1.0, sl_max_size = 0.0;
+	bool sl_axis = false, sl_flip = false, sl_dual = false, sl_invert = false, sl_relative = false;
+	// Glitch
+	double glitch_speed = 0.0, glitch_slice = 0.0, glitch_slice_x = 0.0, glitch_col_x = 0.0, glitch_col_y = 0.0;
+	double glitch_next = 0.0, glitch_bot = 0.0, glitch_top = 0.0, glitch_xoff = 0.0, glitch_colx = 0.0, glitch_coly = 0.0, glitch_rnd = 0.0;
+	bool glitch_relative = false;
+	// Chromatic glitch
+	bool cg_enable = false, cg_relative = false, cg_relative_pos = false;
+	double cg_start = 0.0;
+	// Misc
+	bool chromatic_relative = false, pixelate_snap = false, pixelate_hard = false, pixelate_relative = false;
+	bool lens_relative = false, bulge_relative = false;
+	int32_t lens_tint_channel = 0, gray_tint_channel = 0, blur_ref_channel = 0;
+	double radial_fade = 0.0;
+	bool blur_only_empty = false, motion_dual = false, motion_relative = false;
+	bool gray_use_lum = false, invert_clamp = false;
+	int32_t layer_min = 0, layer_max = 0;
+
+	GDShaderState() { reset(); }
+
+	void reset() {
+		for (double &v : value) v = 0.0;
+		value[TAG_PIXELATE_X] = 1.0; value[TAG_PIXELATE_Y] = 1.0;
+		value[TAG_LENS_SIZE] = 1.0; value[TAG_CG_SEGMENT] = 1.0;
+		value[TAG_INVERT_R] = value[TAG_INVERT_G] = value[TAG_INVERT_B] = 1.0;
+		value[TAG_CC_R] = value[TAG_CC_G] = value[TAG_CC_B] = 1.0;
+		tweens.clear();
+		time = 0.0;
+		for (ShaderCenter &c : centers) c = ShaderCenter();
+		sw_start = sl_start = -1.0;
+		cg_enable = false;
+		glitch_next = 0.0;
+		lens_tint_channel = gray_tint_channel = blur_ref_channel = 0;
+		invert_clamp = false;
+		layer_min = layer_max = 0;
+	}
+
+	// GJShaderState::tweenValue: stop the tag's tween; duration <= 0 sets now.
+	void tween(int32_t tag, double to, double duration, int32_t easing, double rate) {
+		tweens.erase(tag);
+		if (!(duration > 0.0)) {
+			value[tag] = to;
+			return;
+		}
+		GDShaderTween t;
+		t.from = value[tag];
+		t.to = to;
+		t.duration = duration;
+		t.easing = easing;
+		t.rate = rate;
+		tweens[tag] = t;
+	}
+
+	void step(double dt) {
+		time += std::max(0.0, dt);
+		for (auto it = tweens.begin(); it != tweens.end();) {
+			GDShaderTween &t = it->second;
+			t.elapsed += std::max(0.0, dt);
+			const double w = gd_ease(t.easing, t.rate, t.elapsed / t.duration);
+			value[it->first] = t.from + (t.to - t.from) * w;
+			if (t.elapsed >= t.duration) {
+				value[it->first] = t.to;
+				it = tweens.erase(it);
+			} else {
+				++it;
+			}
+		}
+		// HYPOTHESIS: glitch re-rolls its slice at speed re-rolls per
+		// 1/10 s (GJShaderState m_glitchSpeed), uniform random in GD.
+		if (value[TAG_GLITCH] > 0.0 && time >= glitch_next) {
+			auto r = []() { return double(std::rand()) / double(RAND_MAX); };
+			const double h = std::max(0.0, glitch_slice) * value[TAG_GLITCH];
+			glitch_bot = r();
+			glitch_top = glitch_bot + h / 320.0;
+			glitch_xoff = (r() * 2.0 - 1.0) * glitch_slice_x * value[TAG_GLITCH];
+			glitch_colx = (r() * 2.0 - 1.0) * glitch_col_x * value[TAG_GLITCH];
+			glitch_coly = (r() * 2.0 - 1.0) * glitch_col_y * value[TAG_GLITCH];
+			glitch_rnd = r();
+			glitch_next = time + 0.1 / std::max(0.01, glitch_speed);
+		}
+	}
+
+	bool active() const {
+		if (!tweens.empty()) return true;
+		return sw_start >= 0.0 || sl_start >= 0.0 || value[TAG_GLITCH] > 0.0 || value[TAG_CHROMATIC_X] != 0.0
+				|| value[TAG_CHROMATIC_Y] != 0.0 || cg_enable || value[TAG_PIXELATE_X] > 1.0
+				|| value[TAG_PIXELATE_Y] > 1.0 || value[TAG_LENS_STRENGTH] > 0.0 || value[TAG_RADIAL_SIZE] != 0.0
+				|| value[TAG_MOTION_X] != 0.0 || value[TAG_MOTION_Y] != 0.0 || value[TAG_BULGE] > 0.0
+				|| value[TAG_PINCH_X] != 0.0 || value[TAG_PINCH_Y] != 0.0 || value[TAG_GRAYSCALE] > 0.0
+				|| value[TAG_SEPIA] > 0.0 || value[TAG_INVERT] > 0.0 || value[TAG_HUE] != 0.0
+				|| value[TAG_CC_R] != 1.0 || value[TAG_CC_G] != 1.0 || value[TAG_CC_B] != 1.0
+				|| value[TAG_CB_R] != 0.0 || value[TAG_CB_G] != 0.0 || value[TAG_CB_B] != 0.0
+				|| value[TAG_SPLIT_ROWS] > 1.0 || value[TAG_SPLIT_COLS] > 1.0;
+	}
+
+	static ShaderCenter read_center(const ShaderProps &p, bool has_y_offset) {
+		ShaderCenter c;
+		c.group = int32_t(p.get(51, 0.0));
+		c.player1 = p.flag(138);
+		c.player2 = p.flag(200);
+		c.offset_x = p.get(290, 0.0);
+		c.offset_y = has_y_offset ? p.get(291, 0.0) : 0.0;
+		return c;
+	}
+
+	// ShaderGameObject defaults: speed, strength, outer, wave width, target
+	// X/Y, fade in/out are 1 (bindings inline ShaderGameObject ctor).
+	void apply(int64_t gd_id, const ShaderProps &p) {
+		const double fade = std::max(0.0, p.get(10, 0.0));
+		const int32_t easing = int32_t(p.get(30, 0.0));
+		const double rate = p.get(85, 2.0);
+		switch (gd_id) {
+			case 2904: // Setup shader
+				if (p.flag(192)) {
+					const double keep_time = time;
+					reset();
+					time = keep_time;
+				}
+				layer_min = int32_t(p.get(196, 0.0));
+				layer_max = int32_t(p.get(197, 0.0));
+				break;
+			case 2905: // Shockwave
+				sw_start = time;
+				sw_speed = p.get(175, 1.0); sw_strength = p.get(176, 1.0); sw_time_offset = p.get(177, 0.0);
+				sw_width = p.get(179, 1.0); sw_thickness = p.get(180, 1.0); sw_fade_in = p.get(181, 1.0);
+				sw_fade_out = p.get(182, 1.0); sw_inner = p.get(183, 0.0); sw_invert = p.flag(184);
+				sw_outer = p.get(191, 1.0); sw_max_size = p.get(512, 0.0); sw_relative = p.flag(514);
+				centers[SC_SHOCKWAVE] = read_center(p, true);
+				break;
+			case 2907: // Shockline
+				sl_start = time;
+				sl_speed = p.get(175, 1.0); sl_strength = p.get(176, 1.0); sl_time_offset = p.get(177, 0.0);
+				sl_width = p.get(179, 1.0); sl_thickness = p.get(180, 1.0); sl_fade_in = p.get(181, 1.0);
+				sl_fade_out = p.get(182, 1.0); sl_invert = p.flag(184); sl_flip = p.flag(185);
+				sl_axis = p.flag(186); sl_dual = p.flag(187); sl_max_size = p.get(512, 0.0); sl_relative = p.flag(514);
+				centers[SC_SHOCKLINE] = read_center(p, false);
+				break;
+			case 2909: // Glitch: triggerGlitch(fade, strength, speed, slice, sliceX, colX, colY, relative)
+				tween(TAG_GLITCH, p.get(176, 1.0), fade, 0, 0.0);
+				glitch_speed = p.get(175, 1.0); glitch_slice = p.get(179, 1.0); glitch_slice_x = p.get(191, 0.0);
+				glitch_col_x = p.get(181, 1.0); glitch_col_y = p.get(182, 1.0); glitch_relative = p.flag(514);
+				break;
+			case 2910: // Chromatic: triggerChromaticX/Y
+				if (p.flag(188)) tween(TAG_CHROMATIC_X, p.get(180, 1.0), fade, easing, rate);
+				if (p.flag(190)) tween(TAG_CHROMATIC_Y, p.get(189, 1.0), fade, easing, rate);
+				chromatic_relative = p.flag(514);
+				break;
+			case 2911: // Chromatic glitch
+				if (p.flag(192)) {
+					cg_enable = false;
+					tween(TAG_CG_RGB, 0.0, fade, easing, rate);
+					tween(TAG_CG_STRENGTH, 0.0, fade, easing, rate);
+					break;
+				}
+				if (!cg_enable) cg_start = time;
+				cg_enable = true;
+				tween(TAG_CG_SPEED, p.get(175, 1.0), fade, easing, rate);
+				tween(TAG_CG_STRENGTH, p.get(176, 1.0), fade, easing, rate);
+				tween(TAG_CG_LINE_THICK, p.get(179, 1.0), fade, easing, rate);
+				tween(TAG_CG_RGB, p.get(180, 1.0), fade, easing, rate);
+				tween(TAG_CG_SEGMENT, p.get(189, 1.0), fade, easing, rate);
+				tween(TAG_CG_LINE_STRENGTH, p.get(191, 0.0), fade, easing, rate);
+				cg_relative = p.flag(514); cg_relative_pos = p.flag(194);
+				break;
+			case 2912: // Pixelate: triggerPixelateX/Y clamp the start to >= 1
+				pixelate_snap = p.flag(194); pixelate_hard = p.flag(515); pixelate_relative = p.flag(514);
+				if (p.flag(188)) {
+					value[TAG_PIXELATE_X] = std::max(1.0, value[TAG_PIXELATE_X]);
+					tween(TAG_PIXELATE_X, p.get(180, 1.0), fade, easing, rate);
+				}
+				if (p.flag(190)) {
+					value[TAG_PIXELATE_Y] = std::max(1.0, value[TAG_PIXELATE_Y]);
+					tween(TAG_PIXELATE_Y, p.get(189, 1.0), fade, easing, rate);
+				}
+				break;
+			case 2913: // Lens circle
+				tween(TAG_LENS_SIZE, p.get(179, 1.0), fade, easing, rate);
+				tween(TAG_LENS_FADE, p.get(181, 1.0), fade, easing, rate);
+				tween(TAG_LENS_STRENGTH, p.get(176, 1.0), fade, easing, rate);
+				tween(TAG_LENS_OFF_X, p.get(290, 0.0), fade, easing, rate);
+				tween(TAG_LENS_OFF_Y, p.get(291, 0.0), fade, easing, rate);
+				lens_tint_channel = int32_t(p.get(71, 0.0));
+				lens_relative = p.flag(514);
+				centers[SC_LENS] = read_center(p, false);
+				break;
+			case 2914: // Radial blur
+				tween(TAG_RADIAL_SIZE, p.get(179, 1.0), fade, easing, rate);
+				tween(TAG_RADIAL_OFF_X, p.get(290, 0.0), fade, easing, rate);
+				tween(TAG_RADIAL_OFF_Y, p.get(291, 0.0), fade, easing, rate);
+				tween(TAG_BLUR_INTENSITY, p.get(176, 1.0), fade, 0, 0.0);
+				radial_fade = p.get(181, 1.0);
+				blur_ref_channel = int32_t(p.get(71, 0.0));
+				blur_only_empty = p.flag(515);
+				centers[SC_RADIAL] = read_center(p, false);
+				break;
+			case 2915: // Motion blur: triggerMotionBlurX/Y
+				blur_ref_channel = int32_t(p.get(71, 0.0));
+				tween(TAG_BLUR_FADE, p.get(181, 1.0), fade, 0, 0.0);
+				tween(TAG_BLUR_INTENSITY, p.get(176, 1.0), fade, 0, 0.0);
+				if (p.flag(188)) tween(TAG_MOTION_X, p.get(180, 1.0), fade, easing, rate);
+				if (p.flag(190)) tween(TAG_MOTION_Y, p.get(189, 1.0), fade, easing, rate);
+				blur_only_empty = p.flag(515);
+				motion_dual = p.flag(194);
+				motion_relative = p.flag(514);
+				break;
+			case 2916: // Bulge: triggerBulge(fade, bulge, offX, offY, radius, target, ...)
+				tween(TAG_BULGE, p.get(176, 1.0), fade, easing, rate);
+				tween(TAG_BULGE_OFF_X, p.get(290, 0.0), fade, easing, rate);
+				tween(TAG_BULGE_OFF_Y, p.get(291, 0.0), fade, easing, rate);
+				tween(TAG_BULGE_RADIUS, p.get(180, 1.0), fade, easing, rate);
+				bulge_relative = p.flag(514);
+				centers[SC_BULGE] = read_center(p, false);
+				break;
+			case 2917: // Pinch
+				if (p.flag(190)) tween(TAG_PINCH_X, p.get(180, 1.0), fade, easing, rate);
+				if (p.flag(194)) tween(TAG_PINCH_Y, p.get(189, 1.0), fade, easing, rate);
+				tween(TAG_PINCH_OFF_X, p.get(290, 0.0), fade, easing, rate);
+				tween(TAG_PINCH_OFF_Y, p.get(291, 0.0), fade, easing, rate);
+				tween(TAG_PINCH_RADIUS, p.get(512, 0.0), fade, easing, rate);
+				tween(TAG_PINCH_MOD_X, p.get(179, 1.0), fade, easing, rate);
+				tween(TAG_PINCH_MOD_Y, p.get(179, 1.0), fade, easing, rate);
+				centers[SC_PINCH] = read_center(p, false);
+				break;
+			case 2919: // Grayscale: triggerGrayscale(fade, target, useLum, tint, ...)
+				if (p.flag(190)) gray_tint_channel = int32_t(p.get(51, 0.0));
+				gray_use_lum = p.flag(188);
+				tween(TAG_GRAYSCALE, p.get(176, 1.0), fade, easing, rate);
+				break;
+			case 2920: // Sepia
+				tween(TAG_SEPIA, p.get(176, 1.0), fade, easing, rate);
+				break;
+			case 2921: { // Invert color
+				tween(TAG_INVERT, p.get(176, 1.0), fade, easing, rate);
+				if (p.flag(188)) {
+					const double rgb_fade = p.flag(190) ? fade : 0.0;
+					tween(TAG_INVERT_R, p.get(179, 1.0), rgb_fade, easing, rate);
+					tween(TAG_INVERT_G, p.get(180, 1.0), rgb_fade, easing, rate);
+					tween(TAG_INVERT_B, p.get(189, 1.0), rgb_fade, easing, rate);
+				}
+				invert_clamp = p.flag(194);
+				break;
+			}
+			case 2922: // Hue
+				tween(TAG_HUE, p.get(176, 0.0), fade, easing, rate);
+				break;
+			case 2923: // Edit color
+				tween(TAG_CC_R, p.get(176, 1.0), fade, easing, rate);
+				tween(TAG_CC_G, p.get(191, 1.0), fade, easing, rate);
+				tween(TAG_CC_B, p.get(175, 1.0), fade, easing, rate);
+				tween(TAG_CB_R, p.get(179, 0.0), fade, easing, rate);
+				tween(TAG_CB_G, p.get(180, 0.0), fade, easing, rate);
+				tween(TAG_CB_B, p.get(189, 0.0), fade, easing, rate);
+				break;
+			case 2924: // Split screen: triggerSplitScreenCols/Rows
+				if (p.flag(188)) tween(TAG_SPLIT_COLS, p.get(180, 1.0), fade, easing, rate);
+				if (p.flag(190)) tween(TAG_SPLIT_ROWS, p.get(189, 1.0), fade, easing, rate);
+				break;
+			default:
+				break;
+		}
+	}
+
+	// Shader uniforms for one frame. D is the diagonal-sized target of
+	// ShaderLayer::setupShader (floor(|visible size|)); square units are
+	// GD points / D.
+	std::vector<ShaderUniform> uniforms(const ShaderFrame &f) {
+		std::vector<ShaderUniform> out;
+		auto put = [&out](const char *name, float a, float b = 0.0f, float c = 0.0f, float d = 0.0f, int32_t size = 1) {
+			out.push_back(ShaderUniform{name, size, {a, b, c, d}});
+		};
+		auto put2 = [&put](const char *name, double a, double b) { put(name, float(a), float(b), 0.0f, 0.0f, 2); };
+		const double D = std::max(1.0, std::floor(std::sqrt(f.width * f.width + f.height * f.height)));
+		auto sq = [D](double points) { return points / D; };
+		const double zoom = std::max(0.001, f.zoom);
+		put2("_robHack", f.width / D, f.height / D);
+		put2("_camRot", 1.0, 0.0);
+		put2("_textureScale", 1.0, 1.0);
+		put2("_textureScaleInv", 1.0, 1.0);
+
+		// Pixelate (LevelShadersFix prePixelateShader): block = D / round(D / target) points.
+		auto block = [&](double target) {
+			if (target <= 1.0) return 0.0;
+			const double scaled = (pixelate_relative ? zoom : 1.0) * target;
+			return 1.0 / std::max(1.0, std::round(D / scaled));
+		};
+		put2("_pixelSize", block(value[TAG_PIXELATE_X]), block(value[TAG_PIXELATE_Y]));
+
+		// Shockwave. HYPOTHESIS: the ring radius grows by speed * 100 GD
+		// points per second (m_shockWaveTimeMult only rescales for aspect),
+		// thickness is the ring's half width in points, fade in/out widen the
+		// inner/outer smoothstep, wave width is the ripple wavelength in
+		// points, strength the displacement in points / 100.
+		if (sw_start >= 0.0) {
+			const double t = time - sw_start + sw_time_offset;
+			const double radius = sq(t * sw_speed * 100.0);
+			const double half = sq(std::max(0.1, sw_thickness) * 5.0);
+			const double max_size = sw_max_size > 0.0 ? sq(sw_max_size) : 0.0;
+			// Ends past its max size, or once the inner edge leaves the screen.
+			if (radius - half * (1.0 + sw_fade_in) > (max_size > 0.0 ? max_size : 1.5)) sw_start = -1.0;
+			put("_shockWaveTime", float(sw_start >= 0.0 ? std::max(0.0001, radius * 2.0 * 3.14159265 / sq(std::max(0.1, sw_width) * 10.0)) : 0.0));
+			put("_shockWaveTime1", float(radius - half * (1.0 + sw_fade_in)));
+			put("_shockWaveTime2", float(radius - half));
+			put("_shockWaveTime3", float(radius + half));
+			put("_shockWaveTime4", float(radius + half * (1.0 + sw_fade_out)));
+			put("_shockWaveStrength", float(sq(sw_strength) * (sw_relative ? zoom : 1.0)));
+			put("_shockWaveWaves", float(2.0 * 3.14159265 / sq(std::max(0.1, sw_width) * 10.0)));
+			put2("_shockWaveCenter", sq(f.center_x[SC_SHOCKWAVE]), sq(f.center_y[SC_SHOCKWAVE]));
+			put("_shockWaveInvert", sw_invert ? 1.0f : 0.0f);
+			put("_shockWaveMinSize", float(sq(sw_inner * 100.0)));
+			put("_shockWaveMaxSize", float(max_size > 0.0 ? max_size : sq(sw_outer * D)));
+			put("_shockWaveMaxDistVal", float(max_size > 0.0 ? 1.0 / max_size : 0.0));
+		} else {
+			put("_shockWaveTime", 0.0f);
+		}
+		// Shockline: the same HYPOTHESIS along one axis; flip runs it from
+		// the far side (shader's 1 - dis), rotate = y axis.
+		if (sl_start >= 0.0) {
+			const double t = time - sl_start + sl_time_offset;
+			const double pos = sq(t * sl_speed * 100.0);
+			const double half = sq(std::max(0.1, sl_thickness) * 5.0);
+			const double max_size = sl_max_size > 0.0 ? sq(sl_max_size) : 0.0;
+			if (pos - half * (1.0 + sl_fade_in) > (max_size > 0.0 ? max_size : 1.5)) sl_start = -1.0;
+			const double waves = 2.0 * 3.14159265 / sq(std::max(0.1, sl_width) * 10.0);
+			put("_shockLineTime", float(sl_start >= 0.0 ? std::max(0.0001, pos * waves) : 0.0));
+			put("_shockLineTime1", float(pos - half * (1.0 + sl_fade_in)));
+			put("_shockLineTime2", float(pos - half));
+			put("_shockLineTime3", float(pos + half));
+			put("_shockLineTime4", float(pos + half * (1.0 + sl_fade_out)));
+			put("_shockLineAxis", sl_axis ? 1.0f : 0.0f);
+			put("_shockLineDirection", sl_flip ? 1.0f : 0.0f);
+			put("_shockLineDual", sl_dual ? 1.0f : 0.0f);
+			put("_shockLineWaves", float(waves));
+			const double s = sq(sl_strength) * (sl_relative ? zoom : 1.0) * (sl_invert ? -1.0 : 1.0);
+			put2("_shockLineStrength", sl_axis ? 0.0 : s, sl_axis ? s : 0.0);
+			put("_shockLineCenter", float(sq(sl_axis ? f.center_y[SC_SHOCKLINE] : f.center_x[SC_SHOCKLINE])));
+			put("_shockLineMaxDistVal", float(max_size > 0.0 ? 1.0 / max_size : 0.0));
+		} else {
+			put("_shockLineTime", 0.0f);
+		}
+
+		// Glitch. HYPOTHESIS (step()): offsets in GD points.
+		const bool glitching = value[TAG_GLITCH] > 0.0;
+		const double gscale = glitch_relative ? zoom : 1.0;
+		put("_glitchBot", float(glitching ? glitch_bot : 0.0));
+		put("_glitchTop", float(glitching ? std::max(glitch_top, glitch_bot + 0.0001) : 0.0));
+		put("_glitchXOffset", float(sq(glitch_xoff) * gscale));
+		put2("_glitchColOffset", sq(glitch_colx) * gscale, sq(glitch_coly) * gscale);
+		put("_glitchRnd", float(glitch_rnd));
+
+		// Chromatic (exact form): (m_scaleFactor / 1.2018504) * target *
+		// textureScale * zoom-if-relative. HYPOTHESIS: m_scaleFactor makes
+		// the offset GD points, i.e. target / D.
+		const double cz = chromatic_relative ? zoom : 1.0;
+		put("_chromaticXOff", float(sq(value[TAG_CHROMATIC_X]) * cz));
+		put("_chromaticYOff", float(sq(value[TAG_CHROMATIC_Y]) * cz));
+
+		// Chromatic glitch. HYPOTHESIS: speed scales the noise clock, RGB
+		// offset in GD points, strength 1 = the shader's nominal 0.02.
+		const bool cg = cg_enable || value[TAG_CG_RGB] != 0.0;
+		put("_cGTime", float((time - cg_start) * value[TAG_CG_SPEED] * 10.0));
+		put("_cGRGBOffset", float(cg ? std::max(1e-6, sq(value[TAG_CG_RGB]) * (cg_relative ? zoom : 1.0)) : 0.0));
+		put("_cGYOffset", float(cg_relative_pos ? sq(f.camera_y) : 0.0));
+		put("_cGStrength", float(value[TAG_CG_STRENGTH] * 0.02));
+		put("_cGHeight", float(value[TAG_CG_SEGMENT]));
+		put("_cGLineThick", float(value[TAG_CG_LINE_THICK]));
+		put("_cGLineStrength", float(value[TAG_CG_LINE_STRENGTH]));
+
+		// Lens circle. HYPOTHESIS: size is the clear radius in GD points
+		// (End), fade 0..1 the soft fraction inside it (Start = End * (1 -
+		// fade)); offsets already folded into the centre by the runtime.
+		const double lens_scale = lens_relative ? zoom : 1.0;
+		const double lens_end = sq(std::max(0.0, value[TAG_LENS_SIZE]) * lens_scale);
+		put2("_lensCircleOrigin", sq(f.center_x[SC_LENS]), sq(f.center_y[SC_LENS]));
+		put("_lensCircleEnd", float(lens_end));
+		put("_lensCircleStart", float(lens_end * (1.0 - std::clamp(value[TAG_LENS_FADE], 0.0, 1.0))));
+		put("_lensCircleStrength", float(std::max(0.0, value[TAG_LENS_STRENGTH])));
+		put("_lensCircleTint", f.lens_tint[0], f.lens_tint[1], f.lens_tint[2], 0.0f, 3);
+		put("_lensCircleAdditive", 0.0f);
+
+		// Bulge. HYPOTHESIS: radius in GD points; the tan mapping is
+		// continuous at the radius (value2 = R / tan(R * value)); bulge 1
+		// bends R * value to 1 radian.
+		const double bulge_r = sq(std::max(0.0, value[TAG_BULGE_RADIUS]) * (bulge_relative ? zoom : 1.0));
+		const double bulge_v = bulge_r > 0.0 ? std::min(1.5, std::max(0.0, value[TAG_BULGE])) / bulge_r : 0.0;
+		put("_bulgeValue", float(bulge_r > 0.0 ? bulge_v : 0.0));
+		put("_bulgeValue2", float(bulge_v > 0.0 ? bulge_r / std::tan(bulge_r * bulge_v) : 0.0));
+		put("_bulgeRadius", float(bulge_r));
+		put2("_bulgeOrigin", sq(f.center_x[SC_BULGE]), sq(f.center_y[SC_BULGE]));
+
+		// Pinch. HYPOTHESIS: radius in GD points (0 = the half diagonal),
+		// continuity at the radius per axis (calc1 = R / atan(R * -value * 20)).
+		const double pinch_r = value[TAG_PINCH_RADIUS] > 0.0 ? sq(value[TAG_PINCH_RADIUS]) : 0.5;
+		auto pinch_calc = [pinch_r](double v) {
+			const double k = std::abs(v) < 1e-4 ? (v < 0.0 ? -1e-4 : 1e-4) : v;
+			return pinch_r / std::atan(pinch_r * -k * 20.0);
+		};
+		const double px = value[TAG_PINCH_X] * value[TAG_PINCH_MOD_X], py = value[TAG_PINCH_Y] * value[TAG_PINCH_MOD_Y];
+		put2("_pinchValue", px, py);
+		put2("_pinchCalc1", pinch_calc(px), pinch_calc(py));
+		put("_pinchRadius", float(pinch_r));
+		put2("_pinchCenterPos", sq(f.center_x[SC_PINCH]), sq(f.center_y[SC_PINCH]));
+
+		// Blur common (exact): ref colour only for layer ranges above 1.
+		put("_blurUseRef", layer_min > 1 ? 1.0f : 0.0f);
+		put("_blurRefColor", 0.0f, 0.0f, 0.0f, 0.0f, 3);
+		put("_blurIntensity", float(value[TAG_BLUR_INTENSITY] + 1.0));
+		put("_blurOnlyEmpty", layer_min > 1 && blur_only_empty ? 1.0f : 0.0f);
+		// Radial blur (exact): size / 45, fade clamp(fade * 0.2, 0, 0.2).
+		put("_radialBlurValue", float(value[TAG_RADIAL_SIZE] / 45.0));
+		put2("_radialBlurCenter", sq(f.center_x[SC_RADIAL]), sq(f.center_y[SC_RADIAL]));
+		double blur_fade = std::clamp(radial_fade * 0.2, 0.0, 0.2);
+		// Motion blur. HYPOTHESIS: target in GD points; fade spreads the
+		// sample weights down to 0 at the last sample; the multiplier
+		// normalises the weights (the shader's own note: 1/(9 - 20 fade)
+		// for the dual loop).
+		if (value[TAG_RADIAL_SIZE] == 0.0) {
+			const double samples = motion_dual ? 4.0 : 8.0;
+			blur_fade = std::clamp(value[TAG_BLUR_FADE], 0.0, 1.0) / samples;
+			double sum = 1.0;
+			for (int i = 1; i <= int(samples); ++i) sum += (motion_dual ? 2.0 : 1.0) * (1.0 - i * blur_fade);
+			put("_motionBlurMult", float(1.0 / std::max(0.001, sum)));
+		}
+		put("_blurFade", float(blur_fade));
+		const double mz = motion_relative ? zoom : 1.0;
+		put2("_motionBlurValue", sq(value[TAG_MOTION_X]) * mz, sq(value[TAG_MOTION_Y]) * mz);
+		put("_motionBlurDual", motion_dual ? 1.0f : 0.0f);
+
+		// Colour effects (exact).
+		put("_grayscaleValue", float(value[TAG_GRAYSCALE]));
+		put("_grayscaleUseLum", gray_use_lum ? 1.0f : 0.0f);
+		put("_grayscaleTint", f.gray_tint[0], f.gray_tint[1], f.gray_tint[2], 0.0f, 3);
+		put("_sepiaValue", float(value[TAG_SEPIA]));
+		double ir = value[TAG_INVERT] * value[TAG_INVERT_R], ig = value[TAG_INVERT] * value[TAG_INVERT_G], ib = value[TAG_INVERT] * value[TAG_INVERT_B];
+		if (invert_clamp) { ir = std::min(ir, 1.0); ig = std::min(ig, 1.0); ib = std::min(ib, 1.0); }
+		put("_invertColorValue", float(ir), float(ig), float(ib), float(value[TAG_INVERT]), 4);
+		const double hue = value[TAG_HUE] * 3.14159265358979323846 / 180.0;
+		put("_hueShiftCosA", float(std::cos(hue)));
+		put("_hueShiftSinA", float(std::sin(hue)));
+		const bool cc = value[TAG_CC_R] != 1.0 || value[TAG_CC_G] != 1.0 || value[TAG_CC_B] != 1.0
+				|| value[TAG_CB_R] != 0.0 || value[TAG_CB_G] != 0.0 || value[TAG_CB_B] != 0.0;
+		put("_colorChangeC", cc ? float(std::max(value[TAG_CC_R], 0.001)) : 0.0f, cc ? float(value[TAG_CC_G]) : 0.0f, cc ? float(value[TAG_CC_B]) : 0.0f, 0.0f, 3);
+		put("_colorChangeB", float(value[TAG_CB_R]), float(value[TAG_CB_G]), float(value[TAG_CB_B]), 0.0f, 3);
+
+		// Split screen. HYPOTHESIS: the range is the visible screen, so
+		// fract tiles it cols x rows times; calc 0.
+		put("_colmod", float(std::max(1.0, value[TAG_SPLIT_COLS])));
+		put("_rowmod", float(std::max(1.0, value[TAG_SPLIT_ROWS])));
+		put("_colmodCalc", 0.0f);
+		put("_rowmodCalc", 0.0f);
+		put("_splitXStart", 0.0f);
+		put("_splitYStart", 0.0f);
+		put("_splitXRange", float(f.width / D));
+		put("_splitYRange", float(f.height / D));
+		put("_splitXRangeMult", float(D / f.width));
+		put("_splitYRangeMult", float(D / f.height));
+		return out;
+	}
+};
 
 // Property readers. GD serialises every value as a string, including empty
 // ones that must round-trip untouched (see the converter's lossless pairs).
@@ -1030,8 +1576,8 @@ struct TriggerEffect {
 	double camera_zoom = 1.0;    // 1913: key 371 (multiplier of the default zoom)
 	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
 	double camera_rotation_degrees = 0.0; // 2015: key 68
-	double shader_value = 1.0;   // 2913/2919/2920/2921: key 35
-	bool shader_use_lum = false; // 2919: key 138
+	ShaderProps shader;          // SHADER: trigger.shader.* keys present on the object
+	int64_t shader_gd_id = 0;
 	int32_t xref_pos = 0;        // 3613: key 385 (UIRef enum)
 	int32_t yref_pos = 0;        // 3613: key 386 (UIRef enum)
 	bool xref_relative = false;  // 3613: key 387
@@ -1995,10 +2541,16 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 2015: effect.kind = TriggerEffectKind::CAMERA_ROTATE; break;
 		case 1520: effect.kind = TriggerEffectKind::SHAKE; break;
 		case 3022: effect.kind = TriggerEffectKind::TELEPORT; break;
-		case 2919: effect.kind = TriggerEffectKind::SHADER_GRAYSCALE; break;
-		case 2920: effect.kind = TriggerEffectKind::SHADER_SEPIA; break;
-		case 2913: effect.kind = TriggerEffectKind::SHADER_LENS_CIRCLE; break;
-		case 2921: effect.kind = TriggerEffectKind::SHADER_INVERT_COLOR; break;
+		case 2904: case 2905: case 2907: case 2909: case 2910: case 2911: case 2912:
+		case 2913: case 2914: case 2915: case 2916: case 2917: case 2919: case 2920:
+		case 2921: case 2922: case 2923: case 2924:
+			effect.kind = TriggerEffectKind::SHADER;
+			effect.shader_gd_id = gd_id;
+			for (int32_t key : SHADER_KEYS) {
+				const std::string name = std::to_string(key);
+				if (properties.has(String(name.c_str()))) effect.shader.values.emplace_back(key, prop_float(properties, name.c_str(), 0.0));
+			}
+			return effect; // timing and centres are GDShaderState's
 		case 3613: effect.kind = TriggerEffectKind::UI; break;
 		case 3006: case 3007: case 3008: case 3009: case 3010:
 			effect.kind = TriggerEffectKind::AREA;
@@ -2254,15 +2806,6 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case TriggerEffectKind::CAMERA_ZOOM:
 			effect.camera_zoom = gd_camera_zoom_factor(prop_float(properties, "371", 1.0));
 			break;
-		case TriggerEffectKind::SHADER_GRAYSCALE:
-			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
-			effect.shader_use_lum = prop_int(properties, "138", 0) != 0;
-			break;
-		case TriggerEffectKind::SHADER_SEPIA:
-		case TriggerEffectKind::SHADER_LENS_CIRCLE:
-		case TriggerEffectKind::SHADER_INVERT_COLOR:
-			effect.shader_value = Math::clamp(prop_float(properties, "35", 1.0), 0.0, 1.0);
-			break;
 		case TriggerEffectKind::UI:
 			effect.xref_pos = static_cast<int32_t>(prop_int(properties, "385", 0));
 			effect.yref_pos = static_cast<int32_t>(prop_int(properties, "386", 0));
@@ -2405,8 +2948,6 @@ class NativeTriggerRuntime : public RefCounted {
 		double initial_time_scale = 1.0;
 		double linear_eased_weight = 0.0;     // shake noise position
 		Ref<FastNoiseLite> noise;
-		double initial_shader_value = 0.0;
-		double target_shader_value = 1.0;
 	};
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
@@ -3336,11 +3877,11 @@ class NativeTriggerRuntime : public RefCounted {
 			case TriggerEffectKind::CAMERA_OFFSET:
 			case TriggerEffectKind::CAMERA_ROTATE:
 			case TriggerEffectKind::SHAKE:
-			case TriggerEffectKind::SHADER_GRAYSCALE:
-			case TriggerEffectKind::SHADER_SEPIA:
-			case TriggerEffectKind::SHADER_LENS_CIRCLE:
-			case TriggerEffectKind::SHADER_INVERT_COLOR:
 				start_fade(index, effect, player);
+				break;
+			case TriggerEffectKind::SHADER:
+				shader_state.apply(effect.shader_gd_id, effect.shader);
+				update_shader_layer();
 				break;
 			default:
 				break;
@@ -4217,15 +4758,6 @@ private:
 		if (camera && camera->has_method("snap_view")) camera->call("snap_view");
 	}
 
-public:
-	static bool is_shader_kind(TriggerEffectKind kind) {
-		return kind == TriggerEffectKind::SHADER_GRAYSCALE
-			|| kind == TriggerEffectKind::SHADER_SEPIA
-			|| kind == TriggerEffectKind::SHADER_LENS_CIRCLE
-			|| kind == TriggerEffectKind::SHADER_INVERT_COLOR;
-	}
-
-private:
 
 	CanvasItem *get_shader_node(const StringName &name) {
 		Node *sl = nullptr;
@@ -4250,15 +4782,6 @@ private:
 		return Object::cast_to<CanvasItem>(child);
 	}
 
-	static double get_shader_param(CanvasItem *item, const StringName &param, double default_val = 0.0) {
-		if (!item) return default_val;
-		Ref<Material> mat = item->get_material();
-		if (mat.is_null()) return default_val;
-		Variant val = mat->call("get_shader_parameter", param);
-		if (val.get_type() == Variant::NIL) return default_val;
-		return static_cast<double>(val);
-	}
-
 	static void set_shader_param(CanvasItem *item, const StringName &param, const Variant &val) {
 		if (!item) return;
 		Ref<Material> mat = item->get_material();
@@ -4267,27 +4790,85 @@ private:
 		}
 	}
 
+	// One post-process ColorRect (ShaderLayer/GDPost, GDPostProcess.gdshader)
+	// carries every shader trigger; hidden while no effect is active.
+	GDShaderState shader_state;
 	void reset_shaders() {
-		CanvasItem *gray = get_shader_node(StringName("Grayscale"));
-		if (gray) {
-			gray->set_visible(false);
-			set_shader_param(gray, StringName("grayscale_factor"), 0.0);
+		shader_state.reset();
+		CanvasItem *post = get_shader_node(StringName("GDPost"));
+		if (post) post->set_visible(false);
+	}
+
+	Color shader_channel_color(int32_t channel, const Color &fallback) const {
+		if (channel <= 0) return fallback;
+		const Dictionary resolved = resolve_copied_channel(channel);
+		return resolved.has("color") ? Color(resolved["color"]) : fallback;
+	}
+
+	// GD's screen is 320 points tall whatever the zoom; world positions map
+	// onto it through the camera's visible rect (GL convention, y up).
+	void update_shader_layer() {
+		CanvasItem *post = get_shader_node(StringName("GDPost"));
+		if (!post) return;
+		if (!shader_state.active()) {
+			post->set_visible(false);
+			return;
 		}
-		CanvasItem *sepia = get_shader_node(StringName("Sepia"));
-		if (sepia) {
-			sepia->set_visible(false);
-			set_shader_param(sepia, StringName("sepia_factor"), 0.0);
+		Camera2D *camera = Object::cast_to<Camera2D>(ObjectDB::get_instance(camera_id));
+		ShaderFrame frame;
+		Vector2 center_px, half_px(1.0f, 1.0f);
+		if (camera) {
+			const Vector2 zoom = camera->get_zoom();
+			half_px = camera->get_viewport_rect().size
+					/ Vector2(Math::max(zoom.x, static_cast<real_t>(0.001)), Math::max(zoom.y, static_cast<real_t>(0.001))) * 0.5f;
+			center_px = camera->get_screen_center_position();
 		}
-		CanvasItem *lens = get_shader_node(StringName("LensCircle"));
-		if (lens) {
-			lens->set_visible(false);
-			set_shader_param(lens, StringName("alpha"), 0.0);
+		frame.height = 320.0;
+		frame.width = 320.0 * double(half_px.x) / Math::max(double(half_px.y), 0.001);
+		const double world_gd_height = double(half_px.y) * 2.0 * 30.0 / 128.0; // Constants.CELL_SIZE
+		frame.zoom = 320.0 / Math::max(world_gd_height, 0.001);
+		auto to_screen = [&](const Vector2 &world, double &out_x, double &out_y) {
+			out_x = (double(world.x - center_px.x) / double(half_px.x) * 0.5 + 0.5) * frame.width;
+			out_y = (0.5 - double(world.y - center_px.y) / double(half_px.y) * 0.5) * frame.height;
+		};
+		frame.camera_y = (-double(center_px.y)) * 30.0 / 128.0;
+		const int lens_off[2] = {TAG_LENS_OFF_X, TAG_LENS_OFF_Y};
+		for (int slot = 0; slot < SC_COUNT; ++slot) {
+			const ShaderCenter &c = shader_state.centers[slot];
+			double x = frame.width * 0.5, y = frame.height * 0.5;
+			Node2D *node = nullptr;
+			if (c.player1 || c.player2) {
+				const size_t index = c.player2 ? 1 : 0;
+				if (index < frame_players.size()) node = Object::cast_to<Node2D>(ObjectDB::get_instance(frame_players[index]));
+			} else if (c.group > 0) {
+				node = resolve_first_member(String("g_") + String::num_int64(c.group));
+			}
+			if (node) to_screen(node->get_global_position(), x, y);
+			double ox = c.offset_x, oy = c.offset_y;
+			if (slot == SC_LENS) { ox = shader_state.value[lens_off[0]]; oy = shader_state.value[lens_off[1]]; }
+			if (slot == SC_RADIAL) { ox = shader_state.value[TAG_RADIAL_OFF_X]; oy = shader_state.value[TAG_RADIAL_OFF_Y]; }
+			if (slot == SC_BULGE) { ox = shader_state.value[TAG_BULGE_OFF_X]; oy = shader_state.value[TAG_BULGE_OFF_Y]; }
+			if (slot == SC_PINCH) { ox = shader_state.value[TAG_PINCH_OFF_X]; oy = shader_state.value[TAG_PINCH_OFF_Y]; }
+			frame.center_x[slot] = x + ox;
+			frame.center_y[slot] = y + oy;
 		}
-		CanvasItem *invert = get_shader_node(StringName("InvertColor"));
-		if (invert) {
-			invert->set_visible(false);
-			set_shader_param(invert, StringName("invert_factor"), 0.0);
+		const Color lens = shader_channel_color(shader_state.lens_tint_channel, Color(0.0f, 0.0f, 0.0f));
+		const Color gray = shader_channel_color(shader_state.gray_tint_channel, Color(1.0f, 1.0f, 1.0f));
+		frame.lens_tint[0] = lens.r; frame.lens_tint[1] = lens.g; frame.lens_tint[2] = lens.b;
+		frame.gray_tint[0] = gray.r; frame.gray_tint[1] = gray.g; frame.gray_tint[2] = gray.b;
+		Ref<Material> material = post->get_material();
+		if (material.is_null()) return;
+		for (const ShaderUniform &u : shader_state.uniforms(frame)) {
+			Variant value;
+			switch (u.size) {
+				case 2: value = Vector2(u.v[0], u.v[1]); break;
+				case 3: value = Vector3(u.v[0], u.v[1], u.v[2]); break;
+				case 4: value = Color(u.v[0], u.v[1], u.v[2], u.v[3]); break;
+				default: value = u.v[0]; break;
+			}
+			material->call("set_shader_parameter", StringName(u.name), value);
 		}
+		post->set_visible(true);
 	}
 
 	void start_fade(size_t index, const TriggerEffect &effect, Object *player) {
@@ -4296,16 +4877,6 @@ private:
 		const ObjectID player_id = ObjectID(player->get_instance_id());
 		for (const Fade &existing : fades) {
 			if (existing.record_index == index && existing.player == player_id) return;
-		}
-		// If another shader fade of the same kind is active, remove it so the new trigger smoothly takes over
-		if (is_shader_kind(effect.kind)) {
-			for (size_t fi = 0; fi < fades.size(); ) {
-				if (fades[fi].record_index < records.size() && records[fades[fi].record_index].effect.kind == effect.kind) {
-					fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(fi));
-				} else {
-					++fi;
-				}
-			}
 		}
 		Fade fade;
 		fade.record_index = index;
@@ -4388,45 +4959,6 @@ private:
 				fade.noise.instantiate();
 				if (fade.noise.is_valid()) fade.noise->set_seed(static_cast<int64_t>(std::rand()));
 				break;
-			case TriggerEffectKind::SHADER_GRAYSCALE: {
-				CanvasItem *node = get_shader_node(StringName("Grayscale"));
-				if (node) {
-					fade.initial_shader_value = get_shader_param(node, StringName("grayscale_factor"), 0.0);
-					if (effect.duration > 0.0) node->set_visible(true);
-					if (effect.shader_use_lum) {
-						set_shader_param(node, StringName("use_lum"), true);
-					}
-				}
-				fade.target_shader_value = effect.shader_value;
-				break;
-			}
-			case TriggerEffectKind::SHADER_SEPIA: {
-				CanvasItem *node = get_shader_node(StringName("Sepia"));
-				if (node) {
-					fade.initial_shader_value = get_shader_param(node, StringName("sepia_factor"), 0.0);
-					if (effect.duration > 0.0) node->set_visible(true);
-				}
-				fade.target_shader_value = effect.shader_value;
-				break;
-			}
-			case TriggerEffectKind::SHADER_LENS_CIRCLE: {
-				CanvasItem *node = get_shader_node(StringName("LensCircle"));
-				if (node) {
-					fade.initial_shader_value = get_shader_param(node, StringName("alpha"), 0.0);
-					if (effect.duration > 0.0) node->set_visible(true);
-				}
-				fade.target_shader_value = effect.shader_value;
-				break;
-			}
-			case TriggerEffectKind::SHADER_INVERT_COLOR: {
-				CanvasItem *node = get_shader_node(StringName("InvertColor"));
-				if (node) {
-					fade.initial_shader_value = get_shader_param(node, StringName("invert_factor"), 0.0);
-					if (effect.duration > 0.0) node->set_visible(true);
-				}
-				fade.target_shader_value = effect.shader_value;
-				break;
-			}
 			default:
 				break;
 		}
@@ -4680,58 +5212,6 @@ private:
 			case TriggerEffectKind::SHAKE:
 				apply_shake(fade, effect, weight);
 				break;
-			case TriggerEffectKind::SHADER_GRAYSCALE: {
-				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
-				CanvasItem *node = get_shader_node(StringName("Grayscale"));
-				if (node) {
-					set_shader_param(node, StringName("grayscale_factor"), val);
-					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
-						node->set_visible(false);
-					} else if (val > 0.001) {
-						node->set_visible(true);
-					}
-				}
-				break;
-			}
-			case TriggerEffectKind::SHADER_SEPIA: {
-				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
-				CanvasItem *node = get_shader_node(StringName("Sepia"));
-				if (node) {
-					set_shader_param(node, StringName("sepia_factor"), val);
-					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
-						node->set_visible(false);
-					} else if (val > 0.001) {
-						node->set_visible(true);
-					}
-				}
-				break;
-			}
-			case TriggerEffectKind::SHADER_LENS_CIRCLE: {
-				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
-				CanvasItem *node = get_shader_node(StringName("LensCircle"));
-				if (node) {
-					set_shader_param(node, StringName("alpha"), val);
-					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
-						node->set_visible(false);
-					} else if (val > 0.001) {
-						node->set_visible(true);
-					}
-				}
-				break;
-			}
-			case TriggerEffectKind::SHADER_INVERT_COLOR: {
-				const double val = fade.initial_shader_value + (fade.target_shader_value - fade.initial_shader_value) * weight;
-				CanvasItem *node = get_shader_node(StringName("InvertColor"));
-				if (node) {
-					set_shader_param(node, StringName("invert_factor"), val);
-					if (weight >= 1.0 && fade.target_shader_value <= 0.001) {
-						node->set_visible(false);
-					} else if (val > 0.001) {
-						node->set_visible(true);
-					}
-				}
-				break;
-			}
 			default:
 				break;
 		}
@@ -6135,6 +6615,10 @@ public:
 	void tick(double delta) {
 		clock += std::max(0.0, delta);
 		advance_timers(std::max(0.0, delta));
+		if (shader_state.active()) {
+			shader_state.step(std::max(0.0, delta));
+			update_shader_layer();
+		}
 		int64_t dispatched = 0;
 		// activate() inside the dispatch loop can reenter GDScript and
 		// rebuild this runtime; stop dispatching in that case (pending
