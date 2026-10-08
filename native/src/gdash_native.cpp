@@ -7664,6 +7664,11 @@ public:
 			const Fade fade = fades[i];
 			apply_fade(fade, effect, weight, weight_delta, delta, finished);
 			if (structure_epoch != fade_epoch) return;
+			// Lock-to-player (901 keys 58/59) and Follow (1347) track the last
+			// position on the snapshot; carry it back, or every tick re-adds the
+			// whole distance travelled since the trigger fired (the credits text
+			// of Amethyst flew millions of pixels off-screen).
+			fades[i].follow_last = fade.follow_last;
 			if (finished) {
 				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
 				continue;
