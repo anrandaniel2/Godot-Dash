@@ -57,6 +57,43 @@ def pairs(chunk: str, sep: str = ",") -> dict:
     return dict(zip(fields[0::2], fields[1::2]))
 
 
+def big_report(objects: list) -> str:
+    """Large rotated objects by id: channels, groups, flags and x range."""
+    def num(o, k, d):
+        try:
+            return float(o.get(k, d) or d)
+        except ValueError:
+            return d
+    rows = collections.defaultdict(list)
+    for o in objects:
+        oid = o.get("1", "")
+        if not oid.isdigit() or int(oid) in TRIGGER_IDS:
+            continue
+        scale = max(num(o, "32", 1.0) * max(num(o, "128", 1.0), num(o, "129", 1.0)), num(o, "32", 1.0))
+        rot = num(o, "6", 0.0) % 90.0
+        if scale >= 2.5 and rot not in (0.0,):
+            rows[oid].append(o)
+    lines = []
+    for oid, objs in sorted(rows.items(), key=lambda kv: -len(kv[1]))[:25]:
+        keys = collections.Counter()
+        chans = collections.Counter()
+        groups = collections.Counter()
+        for o in objs:
+            keys.update(k for k in o if k not in ("1", "2", "3", "6", "32", "128", "129", "57", "21", "22", "155", "20", "24", "25"))
+            chans["%s/%s" % (o.get("21", "-"), o.get("22", "-"))] += 1
+            for g in o.get("57", "").split("."):
+                if g:
+                    groups[g] += 1
+        xs = sorted(num(o, "2", 0.0) for o in objs)
+        lines.append("id %s n=%d x=%.0f..%.0f chans=%s groups=%s keys=%s" % (
+            oid, len(objs), xs[0], xs[-1],
+            " ".join("%s:%d" % kv for kv in chans.most_common(5)),
+            " ".join("%s:%d" % kv for kv in groups.most_common(8)),
+            " ".join("%s:%d" % kv for kv in keys.most_common(14))))
+        lines.append("  e.g. " + ",".join("%s=%s" % kv for kv in objs[0].items()))
+    return "\n".join(lines)
+
+
 def channel_report(channels: list, defined: dict, objects: list) -> str:
     """Definition, users, writers and copiers of each listed colour channel."""
     lines = []
@@ -142,6 +179,9 @@ def main() -> int:
     xs = [float(o.get("2", "0") or 0) for o in objects if o.get("1", "").isdigit() and int(o["1"]) not in TRIGGER_IDS]
     max_x = max(xs) if xs else 0.0
     out.append("max_x(non-trigger)=%.1f focus_from=%.1f" % (max_x, max_x * focus))
+    if "--big" in sys.argv:
+        print("=====BIG ROTATED OBJECTS=====")
+        print(big_report(objects))
     if "--channels" in sys.argv:
         print("=====CHANNELS=====")
         print(channel_report(sys.argv[sys.argv.index("--channels") + 1].split(","), defined, objects))

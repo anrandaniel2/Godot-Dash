@@ -256,6 +256,14 @@ func _init():
 		config_file.set_value("Graphics", "max_fps", max_fps)
 		config_file.set_value("Performance", "defaults_version", 2)
 		config_file.save("user://config.cfg")
+	# Version 3: Web reports no refresh rate, and browsers already pace frames
+	# to the display; a saved 60 cap held 90/120/144 Hz screens at 60.
+	if int(config_file.get_value("Performance", "defaults_version", 0)) < 3:
+		if OS.has_feature("web") and max_fps == 60:
+			max_fps = 0
+		config_file.set_value("Graphics", "max_fps", max_fps)
+		config_file.set_value("Performance", "defaults_version", 3)
+		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
 	preprocess_particles_in_editor = config_file.get_value("Performance", "preprocess_particles_in_editor", preprocess_particles_in_editor)

@@ -12,7 +12,10 @@ name: Build Web HTML5
 #     Cross-Origin Isolation headers for SharedArrayBuffer support.
 #   - The game draws at the browser's resolution. Do not force a fixed
 #     1920x1080 viewport scale.
-#   - Rendering is WebGPU, not WebGL. Official Godot 4.7 web templates only
+#   - WebGL 2 fallback: the template is also built with opengl3=yes and
+#     misc/web/shell.html starts the Compatibility renderer when the browser
+#     cannot create the WebGPU device (tablets/browsers without WebGPU).
+#   - Rendering is WebGPU first, not WebGL. Official Godot 4.7 web templates only
 #     ship the Compatibility renderer, so this job exports with hogdot
 #     cg-v4.7.2-r19 (Godot 4.7.2 + dwalter's GodotWebGPU driver). That pin
 #     matches this project's 4.7.2 / Mobile renderer and ships threaded dlink
@@ -148,7 +151,7 @@ jobs:
         id: cache-webgpu-template
         with:
           path: hogdot-templates/web_dlink_release.zip
-          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-threads-dlink-release-maxmem4g
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-maxmem4g
 
       - name: Build unstripped WebGPU template
         if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
@@ -173,7 +176,7 @@ jobs:
           # No build_profile. The published profile disables Line2D, physics
           # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
           scons platform=web target=template_release arch=wasm32 \
-            webgpu=yes vulkan=no opengl3=no \
+            webgpu=yes vulkan=no opengl3=yes \
             production=yes optimize=speed threads=yes dlink_enabled=yes \
             initial_memory=256 linkflags="-sMAXIMUM_MEMORY=4GB" -j"$(nproc)"
           test -f bin/godot.web.template_release.wasm32.dlink.zip
@@ -317,6 +320,14 @@ jobs:
           fi
           if ! grep -a -q 'AudioStreamMP3' "$WEB_DIR/index.side.wasm"; then
             echo "::error::WebGPU template is missing AudioStreamMP3."
+            exit 1
+          fi
+          if ! grep -a -q 'RasterizerGLES3\|WebGL 2' "$WEB_DIR/index.side.wasm" "$WEB_DIR/index.wasm"; then
+            echo "::error::Web template has no GLES3 driver; the WebGL fallback cannot start."
+            exit 1
+          fi
+          if ! grep -q 'godotPickRenderingDriver' "$WEB_DIR/index.html"; then
+            echo "::error::index.html is not the WebGL-fallback shell (misc/web/shell.html)."
             exit 1
           fi
           echo "Verified WebGPU export files exist."
