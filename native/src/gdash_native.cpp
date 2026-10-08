@@ -3588,8 +3588,13 @@ class NativeTriggerRuntime : public RefCounted {
 		if (channel == 1005 && config) return config->get("primary_color");
 		if (channel == 1006 && config) return config->get("secondary_color");
 		if (channel == 1007 && level) {
-			const Color p1 = config ? Color(config->get("primary_color")) : Color(1.0f, 1.0f, 1.0f);
-			return gd_light_bg_color(level->get("background_color"), p1);
+			Color p1(1.0f, 1.0f, 1.0f);
+			if (config) {
+				const Color primary = config->get("primary_color");
+				p1 = primary;
+			}
+			const Color bg = level->get("background_color");
+			return gd_light_bg_color(bg, p1);
 		}
 		if (channel == 1010) return Color(0.0f, 0.0f, 0.0f);
 		if (channel == 1011) return Color(1.0f, 1.0f, 1.0f);
