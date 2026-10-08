@@ -5182,6 +5182,7 @@ private:
 		if (!data) return;
 		synced_light_bg = live;
 		data->set("color", live);
+		data->emit_signal(StringName("changed"));
 	}
 	Color synced_light_bg = Color(-1.0f, -1.0f, -1.0f, -1.0f);
 	// Every SFX the level's triggers can play, for download at level start.
@@ -5892,9 +5893,12 @@ private:
 			+ (effect.pulse_envelope ? " envelope" : ""));
 	}
 
-	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta) {
+	void apply_fade(const Fade &fade, const TriggerEffect &effect, double weight, double weight_delta, double delta, bool finishing = false) {
 		// Shake and Follow act on every tick of their duration, not on weight.
-		if (Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE
+		// The completing tick always runs: an eased weight can reach 1 before
+		// the duration ends, leaving a zero delta on the final tick, and the
+		// colour copy link (key 50) is only committed on that tick.
+		if (!finishing && Math::is_zero_approx(weight_delta) && effect.kind != TriggerEffectKind::SHAKE
 				&& effect.kind != TriggerEffectKind::FOLLOW) return;
 		switch (effect.kind) {
 			case TriggerEffectKind::FOLLOW: {
@@ -7628,7 +7632,7 @@ public:
 			// (update_size/update_color/channel changed signals) which can
 			// rebuild this runtime and free fades/records mid-application.
 			const Fade fade = fades[i];
-			apply_fade(fade, effect, weight, weight_delta, delta);
+			apply_fade(fade, effect, weight, weight_delta, delta, finished);
 			if (structure_epoch != fade_epoch) return;
 			if (finished) {
 				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));

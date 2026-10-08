@@ -7,6 +7,8 @@ const WATCHER_GROUP_PREFIX := "watcher_"
 ## returning white - GDRweb's CopyColor iteration budget, which is what keeps
 ## copy cycles (A copies B copies A) from recursing forever.
 const COPY_ITERATIONS := 8
+## Reserved channels that exist as ColorChannelData in a level.
+const _CHANNEL_BACKED_SPECIALS: Array[int] = [1003, 1004, 1007, 1009, 1012, 1013, 1014]
 
 static var DEFAULT_DATA := ColorChannelData.new()
 
@@ -204,6 +206,10 @@ static func live_special_color(id: int) -> Color:
 	var level: Level = LevelManager.current_level
 	if level == null:
 		return Color.WHITE
+	# The native runtime owns the reserved channels in play (GD's Light BG
+	# formula, Object/3DL/G2/MG channel data).
+	if NativeTriggerBridge.current != null:
+		return NativeTriggerBridge.current.live_channel_color(id)
 	match id:
 		1000:
 			return level.background_color
@@ -246,6 +252,11 @@ static func resolve_channel_color(channel_data: ColorChannelData, iterations: in
 		return channel_data.color
 	var source_id := channel_data.copied_channel_id
 	if _is_special_id(source_id):
+		# Object, 3DL, G2, MG and MG2 (1003/1004/1009/1013/1014), 1007 and
+		# 1012 are real channels with their own triggers and copy links.
+		var special: ColorChannelData = channel_by_id(source_id) if source_id in _CHANNEL_BACKED_SPECIALS else null
+		if special != null:
+			return _shift_copy_hsv(resolve_channel_color(special, iterations - 1), channel_data)
 		return _shift_copy_hsv(live_special_color(source_id), channel_data)
 	var source: ColorChannelData = channel_by_id(source_id)
 	if source == null:

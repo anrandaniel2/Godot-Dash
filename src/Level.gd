@@ -154,6 +154,7 @@ var ground_color: Color = Constants.DEFAULT_GROUND_COLOR:
 	set(new_color):
 		if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:
 			return
+		ground_color = new_color
 		# The build job finalises levels outside the playing scene (and the
 		# smoke harness runs without one); the value still stores, the ground
 		# sprites simply do not exist to tint yet.
@@ -168,6 +169,7 @@ var line_color: Color = Constants.DEFAULT_LINE_COLOR:
 	set(new_color):
 		if Editor.render_mode_manager and Editor.render_mode_manager.mode == RenderMode.Mode.OBJECT_MODE:
 			return
+		line_color = new_color
 		if LevelManager.ground_down == null:
 			return
 		# The material resource is shared between ground sprites
