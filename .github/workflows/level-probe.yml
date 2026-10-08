@@ -18,9 +18,9 @@ env:
   GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
   # Amethyst (119550490), exported by the maintainer as .gmd2.
   LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
-  PROBE_GROUPS: "949,951,940,987"
-  PROBE_DENSE_FROM: "32000"
-  PROBE_CHANNELS: "1004,1002"
+  PROBE_GROUPS: "858,857,856"
+  PROBE_DENSE_FROM: "99999"
+  PROBE_CHANNELS: "805,803,1007"
 
 jobs:
   probe:
