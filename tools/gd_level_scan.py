@@ -7,7 +7,7 @@ check-run annotations. Usage:
 
     gd_level_scan.py LEVEL_FILE [--focus-from FRACTION]
 
-LEVEL_FILE may be a GDHistory .gmd plist, a raw boomlings
+LEVEL_FILE may be a .gmd2 zip, a GDHistory .gmd plist, a raw boomlings
 downloadGJLevel22 response, or a plain/encoded level string.
 """
 
@@ -16,6 +16,7 @@ import collections
 import gzip
 import re
 import sys
+import zipfile
 import zlib
 
 TRIGGER_IDS = {
@@ -57,7 +58,11 @@ def pairs(chunk: str, sep: str = ",") -> dict:
 
 
 def main() -> int:
-    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+    if zipfile.is_zipfile(sys.argv[1]):
+        with zipfile.ZipFile(sys.argv[1]) as archive:
+            text = archive.read("level.data").decode("utf-8", "replace")
+    else:
+        text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
     focus = 0.9
     if "--focus-from" in sys.argv:
         focus = float(sys.argv[sys.argv.index("--focus-from") + 1])

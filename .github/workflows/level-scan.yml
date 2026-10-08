@@ -10,7 +10,8 @@ on:
       - ".github/workflows/level-scan.yml"
 
 env:
-  LEVEL_ID: "119550490"
+  # Amethyst (119550490), exported by the maintainer as .gmd2.
+  LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
   FOCUS_FROM: "0.9"
 
 jobs:
@@ -20,20 +21,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Download level
         run: |
-          set -u
-          ok() { [ -s level.txt ] && grep -q -E '^1:|<k>k4</k>|^H4sI' <(head -c 2000 level.txt); }
-          report() { echo "::warning title=$1::code=$2 size=$(stat -c %s level.txt 2>/dev/null) head=$(head -c 160 level.txt 2>/dev/null | tr -d '\n\r%')"; }
-          for url in https://www.boomlings.com/database/downloadGJLevel22.php http://www.boomlings.com/database/downloadGJLevel22.php https://boomlings.com/database/downloadGJLevel22.php; do
-            code=$(curl -s -m 60 -A "" -H "Content-Type: application/x-www-form-urlencoded" -X POST "$url" \
-              -d "gameVersion=22&binaryVersion=42&levelID=${LEVEL_ID}&secret=Wmfd2893gb7" -o level.txt -w "%{http_code}" || true)
-            report "$url" "$code"; ok && exit 0
-          done
-          for url in "https://gdbrowser.com/api/level/${LEVEL_ID}?download" \
-                     "https://history.geometrydash.eu/level/${LEVEL_ID}/126902325/download/"; do
-            code=$(curl -s -L -m 120 -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36" "$url" -o level.txt -w "%{http_code}" || true)
-            report "$url" "$code"; ok && exit 0
-          done
-          exit 1
+          curl -sL -m 120 "$LEVEL_URL" -o level.txt
+          echo "::notice title=download::size=$(stat -c %s level.txt) type=$(file -b level.txt | cut -c1-60)"
       - name: Scan
         run: |
           if ! python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" > report.txt 2> err.txt; then
