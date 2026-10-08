@@ -3183,6 +3183,8 @@ static bool apply_gravity_portal_player(Object *player, int mode) {
 // checkpoint snapshots AND the executed effect stay in C++.
 class NativeTriggerRuntime : public RefCounted {
 	GDCLASS(NativeTriggerRuntime, RefCounted)
+	// The owning Node forwards bridge calls straight to these internals.
+	friend class NativeLevelRuntime;
 
 	enum Flags : int32_t {
 		SPAWN_ONLY = 1,
