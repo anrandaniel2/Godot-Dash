@@ -34,6 +34,8 @@ func _ready() -> void:
 		_finish()
 		return
 
+	_check_bridge_runtime_surface()
+
 	# Four independent channels, one per parse path under test.
 	var faded := ColorChannelData.new()
 	faded.associated_group = "c_35"
@@ -220,6 +222,25 @@ func _ready() -> void:
 	_expect("White with default copy HSV stays white and does not turn red", shifted_copy_white == Color.WHITE)
 
 	_finish()
+
+
+## Every method NativeTriggerBridge calls on its NativeLevelRuntime must be
+## bound there. A missing one (level_sfx_ids) made setup() raise, so the bridge
+## was discarded and no trigger in any level ran.
+func _check_bridge_runtime_surface() -> void:
+	var level_runtime: Object = ClassDB.instantiate(&"NativeLevelRuntime")
+	_expect("NativeLevelRuntime instantiates", level_runtime != null)
+	if level_runtime == null:
+		return
+	var source := FileAccess.get_file_as_string("res://src/NativeTriggerBridge.gd")
+	var pattern := RegEx.create_from_string("_runtime\\.call\\(&\"([a-z_0-9]+)\"")
+	var names: Dictionary[String, bool] = { }
+	for found: RegExMatch in pattern.search_all(source):
+		names[found.get_string(1)] = true
+	_expect("NativeTriggerBridge runtime calls found", names.size() >= 5)
+	for method: String in names:
+		_expect("NativeLevelRuntime has %s" % method, level_runtime.has_method(StringName(method)))
+	(level_runtime as Node).free()
 
 
 func _expect(description: String, condition: bool) -> void:

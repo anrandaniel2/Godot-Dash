@@ -254,7 +254,7 @@ func _configure_runtime_targets(trigger: TriggerInteractable) -> void:
 
 ## Live colour of a channel id from the native colour state (GameScene art layers).
 func live_channel_color(channel: int) -> Color:
-	if _runtime == null or not _runtime.has_method(&"live_channel_color"):
+	if _runtime == null:
 		return Color.WHITE
 	return _runtime.call(&"live_channel_color", channel)
 

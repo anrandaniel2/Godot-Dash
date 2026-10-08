@@ -6,6 +6,7 @@ on:
   push:
     branches: ["arena/**"]
     paths:
+      - "native/src/**"
       - "tools/level_probe.gd"
       - "tools/level_probe.tscn"
       - ".github/workflows/level-probe.yml"

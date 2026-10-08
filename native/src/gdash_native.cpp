@@ -2355,6 +2355,15 @@ static void parse_color_source(const Dictionary &properties, TriggerEffect &effe
 
 // Level colours the reserved channel IDs alias to; P1/P2/GLOW have no runtime
 // representation (matching TargetColorChannelComponent.Type.LEVEL no-ops).
+// Light BG (1007), GD 2.2 GJEffectManager colour 1007: the BG with saturation
+// lowered by 20 points, blended over P1 by the BG's brightness, so a black BG
+// shows pure P1 (gddocs level-colors.md; Wyliemaster/gddocs).
+static Color gd_light_bg_color(const Color &bg, const Color &p1) {
+	const float s = bg.get_s() - 0.2f;
+	const Color shifted = Color::from_hsv(bg.get_h(), s < 0.0f ? 0.0f : s, bg.get_v(), 1.0f);
+	return p1.lerp(shifted, bg.get_v());
+}
+
 static String level_color_property_for_channel(int32_t channel) {
 	if (channel == 1000) return String("background_color");
 	if (channel == 1001) return String("ground_color");
@@ -3579,8 +3588,8 @@ class NativeTriggerRuntime : public RefCounted {
 		if (channel == 1005 && config) return config->get("primary_color");
 		if (channel == 1006 && config) return config->get("secondary_color");
 		if (channel == 1007 && level) {
-			const Color bg = level->get("background_color");
-			return bg.lightened(0.2f);
+			const Color p1 = config ? Color(config->get("primary_color")) : Color(1.0f, 1.0f, 1.0f);
+			return gd_light_bg_color(level->get("background_color"), p1);
 		}
 		if (channel == 1010) return Color(0.0f, 0.0f, 0.0f);
 		if (channel == 1011) return Color(1.0f, 1.0f, 1.0f);
@@ -5156,6 +5165,18 @@ private:
 		Object *data = channel_lookup(int32_t(channel));
 		return data ? resolve_channel_data_color(data, COPY_RESOLUTION_BUDGET) : Color(1.0f, 1.0f, 1.0f);
 	}
+	// The importer bakes channel 1007 as a static colour; GD recomputes it from
+	// the live BG and P1. Re-push it whenever either changes (BG triggers,
+	// restarts that restore the BG, colour changes of the player).
+	void sync_light_bg() {
+		const Color live = live_special_color(1007);
+		if (live == synced_light_bg) return;
+		Object *data = channel_lookup(1007);
+		if (!data) return;
+		synced_light_bg = live;
+		data->set("color", live);
+	}
+	Color synced_light_bg = Color(-1.0f, -1.0f, -1.0f, -1.0f);
 	// Every SFX the level's triggers can play, for download at level start.
 	PackedInt32Array level_sfx_ids() const {
 		PackedInt32Array out;
@@ -7794,6 +7815,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
 		ClassDB::bind_method(D_METHOD("trigger_count"), &NativeLevelRuntime::trigger_count);
+		ClassDB::bind_method(D_METHOD("level_sfx_ids"), &NativeLevelRuntime::level_sfx_ids);
+		ClassDB::bind_method(D_METHOD("live_channel_color", "channel"), &NativeLevelRuntime::live_channel_color);
 		ClassDB::bind_method(D_METHOD("active_fade_count"), &NativeLevelRuntime::active_fade_count);
 		ClassDB::bind_method(D_METHOD("render_stats"), &NativeLevelRuntime::render_stats);
 	}
@@ -7830,6 +7853,7 @@ protected:
 		if (!triggers->is_ui_applied()) {
 			triggers->apply_ui_triggers();
 		}
+		triggers->sync_light_bg();
 		// 2026-09-13 device forensics: an interacted handler reached from
 		// advance_player()/tick() can free this node synchronously (an
 		// immediate free() of an ancestor in the scene). Snapshot every
@@ -7930,6 +7954,12 @@ public:
 	Dictionary snapshot() const { return triggers->snapshot(); }
 	void restore(const Dictionary &state) { triggers->restore(state); }
 	int64_t trigger_count() const { return triggers->trigger_count(); }
+	// NativeTriggerBridge preloads these at setup; without this forward the
+	// call raised, setup aborted and no trigger in the level ever ran.
+	PackedInt32Array level_sfx_ids() const { return triggers->level_sfx_ids(); }
+	// GameScene tints the GD ground / middleground art through this; unbound,
+	// the bridge fell back to white and the art ignored its colour channels.
+	Color live_channel_color(int64_t channel) const { return triggers->live_channel_color(channel); }
 	int64_t active_fade_count() const { return triggers->active_fade_count(); }
 	Dictionary render_stats() const { return registered_decoration_stats(); }
 };
