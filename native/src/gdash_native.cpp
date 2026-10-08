@@ -5829,6 +5829,28 @@ private:
 		return pivot ? ObjectID(pivot->get_instance_id()) : ObjectID();
 	}
 
+	// A running channel pulse (not a group pulse) on the same target, other than
+	// `self`. GD pulses are overlays on the channel's base colour, so
+	// overlapping pulses share one base and only the last one restores it.
+	const Fade *active_channel_pulse(const TriggerEffect &effect, const Fade *self) const {
+		for (const Fade &other : fades) {
+			if (&other == self || other.record_index >= records.size()) continue;
+			const TriggerEffect &e = records[other.record_index].effect;
+			if (e.kind == TriggerEffectKind::PULSE && !e.pulse_group
+					&& e.target_channel == effect.target_channel
+					&& e.channel_is_level_color == effect.channel_is_level_color) return &other;
+		}
+		return nullptr;
+	}
+
+	// The live entry of a by-value fade snapshot (same record and start).
+	const Fade *find_fade(const Fade &snapshot) const {
+		for (const Fade &f : fades) {
+			if (f.record_index == snapshot.record_index && f.start == snapshot.start && f.player == snapshot.player) return &f;
+		}
+		return nullptr;
+	}
+
 	// Captures the fade's channel target and from/to colours. Returns false
 	// when the target does not exist (the component path no-ops then).
 	bool capture_color_target(const TriggerEffect &effect, Fade &fade) {
@@ -5838,6 +5860,9 @@ private:
 			fade.level_color_property = level_color_property_for_channel(effect.target_channel);
 			const Color current = level->get(fade.level_color_property);
 			fade.from_color = current;
+			if (effect.kind == TriggerEffectKind::PULSE) {
+				if (const Fade *running = active_channel_pulse(effect, nullptr)) fade.from_color = running->from_color;
+			}
 			double alpha_target = effect.opacity;
 			fade.to_color = resolve_source_color(effect, current, alpha_target);
 			fade.alpha_target = alpha_target;
@@ -5849,6 +5874,9 @@ private:
 		fade.channel_data = ObjectID(data->get_instance_id());
 		const Color current = data->get("color");
 		fade.from_color = current;
+		if (effect.kind == TriggerEffectKind::PULSE) {
+			if (const Fade *running = active_channel_pulse(effect, nullptr)) fade.from_color = running->from_color;
+		}
 		const Array hsv = data->get("hsv_shift");
 		if (hsv.size() >= 3) {
 			fade.initial_hue = hsv[0];
@@ -6029,6 +6057,8 @@ private:
 					apply_group_pulse(fade.members, fade.to_color, weight);
 					break;
 				}
+				if (finishing && effect.kind == TriggerEffectKind::PULSE
+						&& active_channel_pulse(effect, find_fade(fade)) != nullptr) break;
 				apply_color(fade, effect, weight, weight_delta);
 				break;
 			case TriggerEffectKind::TIMEWARP: {
