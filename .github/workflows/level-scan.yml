@@ -1,0 +1,42 @@
+name: Level scan
+
+# Downloads a Geometry Dash level on the runner, scans it with
+# tools/gd_level_scan.py and surfaces the report as annotations. The level
+# string is never committed or uploaded.
+on:
+  push:
+    paths:
+      - "tools/gd_level_scan.py"
+      - ".github/workflows/level-scan.yml"
+
+env:
+  LEVEL_ID: "119550490"
+  FOCUS_FROM: "0.9"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download level
+        run: |
+          set -u
+          curl -s -m 60 -A "" -X POST https://www.boomlings.com/database/downloadGJLevel22.php \
+            -d "levelID=${LEVEL_ID}&secret=Wmfd2893gb7" -o level.txt || true
+          if ! head -c 2 level.txt 2>/dev/null | grep -q "1:"; then
+            echo "boomlings unavailable, using GDHistory"
+            record=$(curl -s -m 60 "https://history.geometrydash.eu/api/v1/level/${LEVEL_ID}/" | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)
+          r=[x for x in d["records"] if x.get("level_string_available")]
+          r.sort(key=lambda x: x.get("real_date") or "")
+          print(r[-1]["id"])')
+            curl -s -L -m 120 "https://history.geometrydash.eu/level/${LEVEL_ID}/${record}/download/" -o level.txt
+          fi
+          ls -la level.txt
+      - name: Scan
+        run: python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" > report.txt
+      - name: Report part 1
+        run: python3 -c "import sys;t=open('report.txt').read();[print('::notice title=scan %d::'%i+t[i*60000:(i+1)*60000].replace('%','%25').replace('\r','').replace('\n','%0A')) for i in range(0,10) if t[i*60000:(i+1)*60000]]"
+      - name: Report part 2
+        run: python3 -c "import sys;t=open('report.txt').read();[print('::notice title=scan %d::'%i+t[i*60000:(i+1)*60000].replace('%','%25').replace('\r','').replace('\n','%0A')) for i in range(10,20) if t[i*60000:(i+1)*60000]]"
