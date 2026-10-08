@@ -57,6 +57,34 @@ def pairs(chunk: str, sep: str = ",") -> dict:
     return dict(zip(fields[0::2], fields[1::2]))
 
 
+def channel_report(channels: list, defined: dict, objects: list) -> str:
+    """Definition, users, writers and copiers of each listed colour channel."""
+    lines = []
+    color_ids = {"899", "29", "30", "105", "744", "915", "221", "717", "718", "743", "900", "1006"}
+    for ch in channels:
+        lines.append("--- channel %s def=%s" % (ch, defined.get(ch, "UNDEFINED")))
+        users = collections.Counter()
+        xs = []
+        for o in objects:
+            if o.get("21") == ch or o.get("22") == ch:
+                users["%s%s" % (o.get("1", "?"), "m" if o.get("21") == ch else "d")] += 1
+                xs.append(float(o.get("2", "0") or 0))
+        lines.append("  users=%d x=%s ids=%s" % (sum(users.values()),
+            "%.0f..%.0f" % (min(xs), max(xs)) if xs else "-",
+            " ".join("%s:%d" % kv for kv in users.most_common(10))))
+        copiers = [c for c, d in defined.items() if d.get("9") == ch]
+        lines.append("  header copies from it: %s" % (",".join(copiers) or "-"))
+        for index, o in enumerate(objects):
+            oid = o.get("1")
+            hit = (oid in color_ids and o.get("23", "1" if oid == "899" else "") == ch) \
+                or (oid in color_ids and o.get("50") == ch) \
+                or (oid == "1006" and o.get("52", "0") != "1" and o.get("51") == ch)
+            if hit:
+                lines.append("  #%d %s" % (index, ",".join("%s=%s" % kv for kv in o.items()
+                    if kv[0] in ("1", "2", "3", "23", "7", "8", "9", "10", "35", "17", "50", "49", "60", "51", "52", "48", "45", "46", "47", "62", "87", "57", "103"))))
+    return "\n".join(lines)
+
+
 def main() -> int:
     if zipfile.is_zipfile(sys.argv[1]):
         with zipfile.ZipFile(sys.argv[1]) as archive:
@@ -114,6 +142,9 @@ def main() -> int:
     xs = [float(o.get("2", "0") or 0) for o in objects if o.get("1", "").isdigit() and int(o["1"]) not in TRIGGER_IDS]
     max_x = max(xs) if xs else 0.0
     out.append("max_x(non-trigger)=%.1f focus_from=%.1f" % (max_x, max_x * focus))
+    if "--channels" in sys.argv:
+        print("=====CHANNELS=====")
+        print(channel_report(sys.argv[sys.argv.index("--channels") + 1].split(","), defined, objects))
     print("\n".join(out))
     print("=====FOCUS=====")
     focus_rows = []
