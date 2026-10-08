@@ -9,6 +9,8 @@ extends Node
 ## player physics do not interfere. Grep "PROBE".
 ##
 ## GDASH_PROBE_GROUPS: comma list of GD group ids to sample (default none).
+## GDASH_PROBE_CHANNELS: colour channels logged per sample, GDScript resolver
+## next to the native runtime colour.
 ## GDASH_PROBE_DENSE_FROM: GD x after which samples are taken every 60 units.
 
 const _LEVEL_PATH := "user://level_probe.gdlvl"
@@ -19,6 +21,7 @@ const _DENSE_EVERY_GD: float = 60.0
 const _CHANNELS_EVERY_GD: float = 3000.0
 
 var _groups: PackedStringArray = PackedStringArray()
+var _channels: PackedStringArray = PackedStringArray()
 var _dense_from_gd: float = INF
 var _next_sample_gd: float = -INF
 var _next_channels_gd: float = 3000.0
@@ -49,6 +52,8 @@ func _ready() -> void:
 		return
 	for group: String in OS.get_environment("GDASH_PROBE_GROUPS").split(",", false):
 		_groups.append(group.strip_edges())
+	for channel: String in OS.get_environment("GDASH_PROBE_CHANNELS").split(",", false):
+		_channels.append(channel.strip_edges())
 	var dense := OS.get_environment("GDASH_PROBE_DENSE_FROM")
 	if dense.is_valid_float():
 		_dense_from_gd = dense.to_float()
@@ -61,6 +66,7 @@ func _ready() -> void:
 	runner.name = "LevelProbeRunner"
 	runner.set_script(get_script())
 	runner.set(&"_groups", _groups)
+	runner.set(&"_channels", _channels)
 	runner.set(&"_dense_from_gd", _dense_from_gd)
 	runner.set(&"_running", true)
 	get_tree().root.add_child.call_deferred(runner)
@@ -116,7 +122,21 @@ func _sample(gd_x: float) -> void:
 	parts.append("bg=%s" % _hex(level.background_color))
 	for group: String in _groups:
 		parts.append("g%s{%s}" % [group, _group_state(group)])
+	for channel: String in _channels:
+		parts.append("c%s{%s}" % [channel, _channel_state(channel)])
 	print("PROBE " + " ".join(parts))
+
+
+func _channel_state(channel: String) -> String:
+	var gd := "none"
+	var group := Constants.COLOR_CHANNEL_GROUP_PREFIX + channel
+	for data: ColorChannelData in LevelManager.current_level.color_channels:
+		if data.associated_group == group:
+			gd = "%s/%.2f%s" % [_hex(ColorChannelWatcher.resolve_channel_color(data)), ColorChannelWatcher.resolve_channel_alpha(data), "c%d" % data.copied_channel_id if data.copied_channel_id > 0 else ""]
+			break
+	var bridge: NativeTriggerBridge = NativeTriggerBridge.current
+	var native := _hex(bridge.live_channel_color(int(channel))) if bridge != null else "nobridge"
+	return "gd=%s nat=%s" % [gd, native]
 
 
 func _group_state(group: String) -> String:

@@ -18,8 +18,9 @@ env:
   GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
   # Amethyst (119550490), exported by the maintainer as .gmd2.
   LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
-  PROBE_GROUPS: "948,949,950,951,940,960,981,987"
-  PROBE_DENSE_FROM: "31300"
+  PROBE_GROUPS: ""
+  PROBE_DENSE_FROM: "99999"
+  PROBE_CHANNELS: "227,294,295,1002,1004,504,354,3,25,111"
 
 jobs:
   probe:
@@ -78,7 +79,7 @@ jobs:
       - name: Probe
         run: |
           set +e
-          env GDASH_PROBE_LEVEL=/tmp/level.gmd2 GDASH_PROBE_GROUPS="$PROBE_GROUPS" GDASH_PROBE_DENSE_FROM="$PROBE_DENSE_FROM" \
+          env GDASH_PROBE_LEVEL=/tmp/level.gmd2 GDASH_PROBE_GROUPS="$PROBE_GROUPS" GDASH_PROBE_DENSE_FROM="$PROBE_DENSE_FROM" GDASH_PROBE_CHANNELS="$PROBE_CHANNELS" \
             timeout 1800s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > probe.log 2>&1
           echo "exit $?" > probe.txt
           grep -E "PROBE|SCRIPT ERROR|ERROR:|FADIAG|at: " probe.log | cut -c1-3000 >> probe.txt
