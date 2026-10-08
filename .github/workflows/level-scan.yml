@@ -35,7 +35,11 @@ jobs:
           fi
           ls -la level.txt
       - name: Scan
-        run: python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" > report.txt
+        run: |
+          if ! python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" > report.txt 2> err.txt; then
+            echo "::warning title=scan failed::size=$(stat -c %s level.txt) head=$(head -c 300 level.txt | tr -d '\n\r%') err=$(tail -c 800 err.txt | tr '\n' ' ')"
+            exit 1
+          fi
       - name: Report part 1
         run: python3 -c "import sys;t=open('report.txt').read();[print('::notice title=scan %d::'%i+t[i*60000:(i+1)*60000].replace('%','%25').replace('\r','').replace('\n','%0A')) for i in range(0,10) if t[i*60000:(i+1)*60000]]"
       - name: Report part 2
