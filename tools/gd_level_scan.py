@@ -139,9 +139,22 @@ def main() -> int:
     print("=====TARGET GROUPS=====")
     for group in sorted(targets, key=lambda g: int(g) if g.isdigit() else 0):
         print("g%s: %s" % (group, " ".join("%s:%d" % kv for kv in members[group].most_common(12))))
+    print("=====ALL ROWS (899 1007 1268 1346 1347 1612 1613 1616 1812 1814 1819 22 32 33)=====")
+    wanted = {"899", "1007", "1268", "1346", "1347", "1612", "1613", "1616", "1812", "1814", "1819", "22", "32", "33"}
+    skip = {"20", "61", "64", "67", "155", "36"}
+    for index, o in enumerate(objects):
+        if o.get("1") in wanted:
+            print("#%d " % index + ",".join("%s=%s" % (k, v) for k, v in o.items() if k not in skip))
+    print("=====GROUPS OF 1007/1268/1049 TARGETS=====")
+    alpha_targets = set()
+    for o in objects:
+        if o.get("1") in ("1007", "1268", "1049", "1612", "1613"):
+            alpha_targets.add(o.get("51", ""))
+    for group in sorted(alpha_targets, key=lambda g: int(g) if g.isdigit() else 0):
+        print("g%s: %s" % (group, " ".join("%s:%d" % kv for kv in members[group].most_common(8))))
     print("=====TEXT=====")
     for index, o in enumerate(objects):
-        if o.get("1") == "914" and float(o.get("2", "0") or 0) >= max_x * focus:
+        if o.get("1") == "914":
             try:
                 label = base64.urlsafe_b64decode(o.get("31", "") + "==").decode("utf-8", "replace")
             except ValueError:
