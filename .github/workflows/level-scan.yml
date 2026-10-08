@@ -29,7 +29,31 @@ jobs:
             echo "::warning title=scan failed::size=$(stat -c %s level.txt) head=$(head -c 300 level.txt | tr -d '\n\r%') err=$(tail -c 800 err.txt | tr '\n' ' ')"
             exit 1
           fi
-      - name: Report part 1
-        run: python3 -c "import sys;t=open('report.txt').read();[print('::notice title=scan %d::'%i+t[i*60000:(i+1)*60000].replace('%','%25').replace('\r','').replace('\n','%0A')) for i in range(0,10) if t[i*60000:(i+1)*60000]]"
-      - name: Report part 2
-        run: python3 -c "import sys;t=open('report.txt').read();[print('::notice title=scan %d::'%i+t[i*60000:(i+1)*60000].replace('%','%25').replace('\r','').replace('\n','%0A')) for i in range(10,20) if t[i*60000:(i+1)*60000]]"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-report
+          path: report.txt
+          retention-days: 1
+
+  # Annotations are cut at ~4 KB and capped at 10 per type per step, so each
+  # matrix job surfaces 50 slices of 3900 characters.
+  report:
+    needs: scan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: scan-report
+      - name: Slices 0
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+0);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 1
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+10);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 2
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+20);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 3
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+30);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 4
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+40);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
