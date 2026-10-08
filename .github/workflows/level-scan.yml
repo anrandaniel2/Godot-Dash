@@ -25,7 +25,7 @@ jobs:
           echo "::notice title=download::size=$(stat -c %s level.txt) type=$(file -b level.txt | cut -c1-60)"
       - name: Scan
         run: |
-          if ! python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" --channels "3,25,111,235,239,243,257,258,267,268,272,274,276,277,278,294,295,354,502,504,775,776,826,962,977,1002,1011,1012" > report.txt 2> err.txt; then
+          if ! python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" --channels "1004,1011,1003" > report.txt 2> err.txt; then
             echo "::warning title=scan failed::size=$(stat -c %s level.txt) head=$(head -c 300 level.txt | tr -d '\n\r%') err=$(tail -c 800 err.txt | tr '\n' ' ')"
             exit 1
           fi
