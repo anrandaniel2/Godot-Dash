@@ -2,6 +2,7 @@ name: Fetch transfer
 
 # Downloads a maintainer-shared WeTransfer bundle on the runner (the sandbox
 # cannot reach it) and commits downscaled frames for review. Temporary.
+# Revision 2: images detected by MIME type.
 on:
   push:
     branches: ["arena/**"]
@@ -42,10 +43,11 @@ jobs:
             i=$((i+1))
             info=$(ffprobe -v error -show_entries format=duration:stream=width,height,r_frame_rate -of compact "$f" | tr '\n' ' ')
             echo "::notice title=probe $i::$f $info"
-            case "$f" in
-              *.png|*.jpg|*.jpeg|*.webp) ffmpeg -v error -i "$f" -vf "scale=960:-2" "scratch/transfer/v${i}_img.jpg" ;;
-              *) ffmpeg -v error -i "$f" -vf "fps=1/2,scale=640:-2" -q:v 6 "scratch/transfer/v${i}_%04d.jpg" ;;
-            esac
+            if file -b --mime-type "$f" | grep -q '^image/'; then
+              ffmpeg -v error -i "$f" -frames:v 1 -vf "scale='min(1280,iw)':-2" "scratch/transfer/v${i}_img.png"
+            else
+              ffmpeg -v error -i "$f" -vf "fps=1/2,scale=640:-2" -q:v 6 "scratch/transfer/v${i}_%04d.jpg"
+            fi
           done
           ls scratch/transfer | wc -l
           du -sh scratch/transfer
