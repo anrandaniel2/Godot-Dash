@@ -726,6 +726,15 @@ func _collided_shared_shape(collision: KinematicCollision2D) -> CollisionShape2D
 	return shape as CollisionShape2D
 
 
+## Jump input for this tick: the replay's while playing one back, the live action otherwise.
+func _jump_pressed_now() -> bool:
+	return replay.pressing_jump(replay_physics_tick) if _is_playing_back_replay() else InputUtils.is_action_pressed(&"jump")
+
+
+func _jump_just_pressed_now() -> bool:
+	return replay.just_pressed_jump(replay_physics_tick) if _is_playing_back_replay() else InputUtils.is_action_just_pressed(&"jump")
+
+
 func _is_playing_back_replay() -> bool:
 	return in_replay and replay.data.size() > replay_physics_tick
 
@@ -798,7 +807,7 @@ func _get_jump_state() -> int:
 		_click_buffer_state = ClickBufferState.BUFFERING
 	if _click_buffer_state == ClickBufferState.BUFFERING and not orb_queue.is_empty():
 		_click_buffer_state = ClickBufferState.JUMPING
-	if is_jump_just_released or ((is_on_floor() or is_on_ceiling()) and not InputUtils.is_action_pressed(&"jump")):
+	if is_jump_just_released or ((is_on_floor() or is_on_ceiling()) and not is_jump_pressed):
 		_click_buffer_state = ClickBufferState.NOT_HOLDING
 
 	if jump_hold_disabled:
@@ -974,7 +983,7 @@ func _compute_velocity(
 
 	if not orb_queue.is_empty() and (
 			_click_buffer_state == ClickBufferState.JUMPING
-			or InputUtils.is_action_just_pressed(&"jump")
+			or _jump_just_pressed_now()
 	):
 		var colliding_orb: OrbInteractable = orb_queue.pop_front()
 		_click_buffer_state = ClickBufferState.BUFFER_USED
@@ -986,7 +995,7 @@ func _compute_velocity(
 
 	if dash_control:
 		local_velocity = dash_control.get_velocity(self)
-		if not InputUtils.is_action_pressed(&"jump"):
+		if not _jump_pressed_now():
 			stop_dash()
 
 	_deferred_velocity_redirect = _ensure_velocity_redirect(delta, local_velocity.rotated(gameplay_rotation))

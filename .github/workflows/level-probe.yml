@@ -12,6 +12,7 @@ on:
       - ".github/workflows/level-probe.yml"
       - "tools/fetch_level.sh"
       - "src/static/GDRFormat.gd"
+      - "src/Player.gd"
 
 env:
   GODOT_VERSION: "4.7.2"
