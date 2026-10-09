@@ -23,6 +23,11 @@ const LOCKEDFLY_GAMEMODE_GRID_HEIGHTS: Dictionary = {
 @export var use_gd_band: bool = false
 @export var gd_band_floor_y: float = 0.0
 @export var gd_band_ceiling_y: float = 0.0
+## Imported GD portals: the band height in GD units. When set, the band is
+## worked out from where the portal is when touched, so a portal moved by
+## triggers frames the camera at its new place, as in GD (the touched
+## object's position feeds the band, gdsolver bands.hpp).
+@export var gd_band_height: float = 0.0
 
 
 ## Global Y of a level-space band line.
@@ -41,6 +46,7 @@ func _get_property_default_value(property: String) -> Variant:
 		"use_gd_band": false,
 		"gd_band_floor_y": 0.0,
 		"gd_band_ceiling_y": 0.0,
+		"gd_band_height": 0.0,
 	}
 	return DEFAULT_VALUES.get(property)
 
@@ -61,8 +67,17 @@ func _move_grounds(_player: Player) -> void:
 	if use_gd_band:
 		# The band is in level coordinates; GroundObject places the grounds
 		# from GroundData in global ones (the level sits at y = 925).
-		var floor_y: float = gd_band_global_y(gd_band_floor_y)
-		var ceiling_y: float = gd_band_global_y(gd_band_ceiling_y)
+		var floor_level_y: float = gd_band_floor_y
+		var ceiling_level_y: float = gd_band_ceiling_y
+		var level: Level = LevelManager.current_level
+		if gd_band_height > 0.0 and level != null and level.is_inside_tree():
+			var portal_level_y: float = level.to_local(parent.global_position).y
+			var portal_gd_y: float = (GMDConverter.GROUND_Y - portal_level_y) / Constants.CELL_SIZE * GMDConverter.GD_CELL_SIZE
+			var band: Vector2 = GMDConverter.gd_portal_band(portal_gd_y, gd_band_height)
+			floor_level_y = GMDConverter.gd_to_godot_y(band.x)
+			ceiling_level_y = GMDConverter.gd_to_godot_y(band.y)
+		var floor_y: float = gd_band_global_y(floor_level_y)
+		var ceiling_y: float = gd_band_global_y(ceiling_level_y)
 		GroundData.center = Vector2(parent.global_position.x, (floor_y + ceiling_y) * 0.5)
 		GroundData.distance = absf(floor_y - ceiling_y) * 0.5
 		GroundData.offset = 0

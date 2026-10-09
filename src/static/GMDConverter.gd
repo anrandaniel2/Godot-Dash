@@ -1509,6 +1509,7 @@ static func _apply_gd_portal_band(object_data: Dictionary, gd_id: int, propertie
 			"use_gd_band": true,
 			"gd_band_floor_y": gd_to_godot_y(band.x),
 			"gd_band_ceiling_y": gd_to_godot_y(band.y),
+			"gd_band_height": band_height,
 		}
 	var components: Dictionary = object_data.get("components", { })
 	components["GroundMoverComponent"] = mover

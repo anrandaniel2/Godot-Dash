@@ -1364,6 +1364,8 @@ func _assert_level_end() -> void:
 	assert(is_equal_approx(float(ship_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(540.0))
 			and is_equal_approx(float(ship_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(840.0)),
 		"native smoke: ship band must be floor30(y - 150) .. +300")
+	assert(is_equal_approx(float(ship_band.get("gd_band_height", 0.0)), 300.0),
+		"native smoke: a ship portal must keep its band height so a moved portal re-centres the band on touch")
 	assert(bool(band_entries[1].components.GroundMoverComponent.freefly), "native smoke: a Free Mode portal must not clamp")
 	assert(bool(band_entries[2].components.GroundMoverComponent.freefly), "native smoke: a cube portal must not clamp")
 	var ball_band: Dictionary = band_entries[3].components.GroundMoverComponent
