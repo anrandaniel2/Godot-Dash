@@ -761,6 +761,7 @@ func to_data(reason: Serialize.Reason = Serialize.Reason.SAVE) -> Dictionary:
 		"gd_background_id": gd_background_id,
 		"gd_ground_id": gd_ground_id,
 		"gd_middleground_id": gd_middleground_id,
+		"default_font": default_font,
 		"gd_practice_art": {} if isnt_practice or LevelManager.game_scene == null else LevelManager.game_scene.gd_art_state(),
 		"start_speed": start_speed if isnt_practice else player.speed_multiplier,
 		"start_speed_preset": start_speed_preset,
@@ -846,6 +847,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	gd_background_id = int(data.get("gd_background_id", -1))
 	gd_ground_id = int(data.get("gd_ground_id", -1))
 	gd_middleground_id = int(data.get("gd_middleground_id", -1))
+	default_font = String(data.get("default_font", ""))
 	gd_practice_art = data.get("gd_practice_art", {})
 	start_speed = data.start_speed
 	start_speed_preset = data.start_speed_preset

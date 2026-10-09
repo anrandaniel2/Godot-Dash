@@ -52,6 +52,9 @@ func start(player: Player) -> void:
 	elif parent.query(TargetObjectComponent).target.is_empty():
 		Toasts.error("In %s: target object is unset" % parent.name)
 		return
+	# Imported levels: GD only shakes the camera at the end, it never pans
+	# up to the end position, so the static pin keeps the current height.
+	static_trigger.query(CameraStaticComponent).axis = Constants.Axis.X if gd_target != null else Constants.Axis.BOTH
 	var static_target: TargetObjectComponent = static_trigger.query(TargetObjectComponent)
 	static_target.target = LevelManager.current_level.get_path_to(gd_target) if gd_target != null else parent.query(TargetObjectComponent).target
 	if instant and gd_target != null:
@@ -107,4 +110,9 @@ func _on_static_easing_finished(player: Player) -> void:
 
 func _on_shake_easing_finished(_player: Player) -> void:
 	LevelManager.current_level.stop_level()
-	LevelManager.game_scene.pause_menu.toggle_pause_menu()
+	if Editor.in_editor:
+		LevelManager.game_scene.pause_menu.toggle_pause_menu()
+		return
+	# GD's EndLevelLayer: the level-complete screen, not the pause menu.
+	get_tree().paused = true
+	LevelManager.game_scene.add_child(LevelCompleteScreen.new())

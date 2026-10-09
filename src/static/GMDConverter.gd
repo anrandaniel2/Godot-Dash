@@ -133,6 +133,7 @@ const HeaderKey := {
 	BACKGROUND = "kA6",
 	GROUND = "kA7",
 	MIDDLEGROUND = "kA25",
+	FONT = "kA18",
 	GAMEMODE = "kA2",
 	MINI = "kA3",
 	SPEED = "kA4",
@@ -201,6 +202,8 @@ enum PulseSource {
 ## Geometry Dash uses a 30x30 pixel grid, Godot Dash uses [member
 ## Constants.CELL_SIZE] (128) pixels.
 const GD_CELL_SIZE: float = 30.0
+const GD_FONT_DIR: String = "res://assets/fonts/gd/"
+const GD_FONT_COUNT: int = 59
 
 ## Y=0 in Geometry Dash is the ground line, with Y growing upwards.
 ##
@@ -693,6 +696,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		"gd_background_id": int(header.get(HeaderKey.BACKGROUND, "0")),
 		"gd_ground_id": int(header.get(HeaderKey.GROUND, "0")),
 		"gd_middleground_id": int(header.get(HeaderKey.MIDDLEGROUND, "0")),
+		"default_font": gd_font_path(int(header.get(HeaderKey.FONT, "0"))),
 		"transition_width": 15.0,
 		"fade_power": 1.0,
 		"move_power": 0.0,
@@ -1534,6 +1538,15 @@ static func _level_bounds(level_string: String, dynamic_level_height: bool) -> D
 ## PlayLayer: m_levelLength = max(screenRight + 300, m_realLevelLength + 340)
 ## (camila314/BetterLoading src/main.cpp). screenRight 569 = GD's 16:9 design
 ## width (hypothesis: aspect fixed).
+## Bundled GD bitmap font for the level's Font setting (header kA18, GD 2.2
+## Level Settings): 0 is bigFont (Pusab), N is gjFontNN. Both ship as the HD
+## BMFont pair under res://assets/fonts/gd.
+static func gd_font_path(font_id: int) -> String:
+	if font_id <= 0 or font_id > GD_FONT_COUNT:
+		return GD_FONT_DIR + "bigFont-hd.fnt"
+	return GD_FONT_DIR + "gjFont%02d-hd.fnt" % font_id
+
+
 static func gd_level_length(max_object_x: float) -> float:
 	return maxf(569.0 + 300.0, max_object_x + 340.0)
 

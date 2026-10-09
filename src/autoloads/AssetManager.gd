@@ -120,9 +120,14 @@ func load_font(path: String) -> FontFile:
 		if error != OK:
 			push_error("Error while loading font at %s: %s" % [valid_path, error])
 			return null
-	loaded_font.multichannel_signed_distance_field = true
-	loaded_font.msdf_pixel_range = 64
-	loaded_font.msdf_size = 128
+	if loaded_font.fixed_size > 0:
+		# BMFont atlases (the bundled GD fonts) are bitmaps: MSDF would
+		# re-rasterise glyphs that have no outlines to rasterise.
+		loaded_font.set_meta(&"gd_bitmap", valid_path.begins_with(GMDConverter.GD_FONT_DIR))
+	else:
+		loaded_font.multichannel_signed_distance_field = true
+		loaded_font.msdf_pixel_range = 64
+		loaded_font.msdf_size = 128
 	loaded_fonts[valid_path] = loaded_font
 	return loaded_font
 

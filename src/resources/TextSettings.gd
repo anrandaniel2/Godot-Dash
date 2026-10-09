@@ -5,6 +5,9 @@ extends LabelSettings
 	set = set_font_path
 
 var prevent_history_action: bool = false
+## Size and outline to restore when a GD bitmap font is swapped out again.
+var _vector_font_size: int = -1
+var _vector_outline_size: int = -1
 
 
 func set_font_path(path: String = "") -> void:
@@ -30,6 +33,27 @@ func set_font_path(path: String = "") -> void:
 				default_font_changed.disconnect(set_font_path)
 		font = AssetManager.load_font(path)
 	_font_path = path
+	_apply_gd_bitmap_metrics()
+
+
+## GD text objects draw the HD BMFont at half scale in GD points (30 per
+## cell, GD 2.2 TextGameObject over CCLabelBMFont), and its glyphs carry
+## their own outline, so the label adds none.
+func _apply_gd_bitmap_metrics() -> void:
+	var file: FontFile = font as FontFile
+	var is_gd_bitmap: bool = file != null and bool(file.get_meta(&"gd_bitmap", false))
+	if is_gd_bitmap:
+		if _vector_font_size < 0:
+			_vector_font_size = font_size
+			_vector_outline_size = outline_size
+		file.fixed_size_scale_mode = TextServer.FIXED_SIZE_SCALE_ENABLED
+		font_size = roundi(file.fixed_size * 0.5 / GMDConverter.GD_CELL_SIZE * Constants.CELL_SIZE)
+		outline_size = 0
+	elif _vector_font_size >= 0:
+		font_size = _vector_font_size
+		outline_size = _vector_outline_size
+		_vector_font_size = -1
+		_vector_outline_size = -1
 
 
 func to_data() -> Dictionary:
