@@ -317,10 +317,7 @@ func prepare_external_data() -> void:
 	LevelManager.ground_up.show()
 	LevelManager.player.max_gameplay_y = GMDConverter.gd_to_godot_y(gd_max_gameplay_y) if gd_max_gameplay_y > 0.0 else -INF
 	if LevelManager.player_camera:
-		LevelManager.player_camera.gd_level_end = Vector2(
-			gd_level_end_x / GMDConverter.GD_CELL_SIZE * Constants.CELL_SIZE,
-			GMDConverter.gd_to_godot_y(GMDConverter.LEVEL_END_GD_Y),
-		) if gd_level_end_x > 0.0 else Vector2.INF
+		LevelManager.player_camera.gd_level_end = camera_level_end(self, gd_level_end_x)
 	if LevelManager.player_camera and get_viewport().get_camera_2d() == LevelManager.player_camera:
 		LevelManager.player_camera.freefly = start_freefly
 	if not start_freefly:
@@ -1431,3 +1428,16 @@ static func generate_version_warning(
 		return "Your game is out of date."
 	else:
 		return ""
+
+
+## The camera's end stop in GLOBAL coordinates. The camera compares it with its
+## own global position, and the level node is offset (640 px = 150 GD units),
+## so a level-local end stopped the camera 150 units early and cut off the
+## right side of end cutscenes.
+static func camera_level_end(level: Node2D, end_x_gd: float) -> Vector2:
+	if end_x_gd <= 0.0:
+		return Vector2.INF
+	return level.to_global(Vector2(
+		end_x_gd / GMDConverter.GD_CELL_SIZE * Constants.CELL_SIZE,
+		GMDConverter.gd_to_godot_y(GMDConverter.LEVEL_END_GD_Y),
+	))

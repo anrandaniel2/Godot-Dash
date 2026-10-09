@@ -13,6 +13,7 @@ on:
       - "tools/fetch_level.sh"
       - "src/static/GDRFormat.gd"
       - "src/Player.gd"
+      - "src/Level.gd"
 
 env:
   GODOT_VERSION: "4.7.2"

@@ -156,7 +156,7 @@ func _real_run(player: Player, level: Level) -> void:
 		print("PROBE EV tick=%d x=%.1f y=%.1f %s" % [player.replay_physics_tick, gd_x,
 				-level.to_local(player.global_position).y / _CELL_PER_GD, state])
 	if gd_x >= _next_sample_gd:
-		var dense: bool = _macro == null or (gd_x > 9000.0 and gd_x < 12000.0)
+		var dense: bool = _macro == null or gd_x > 34000.0
 		_next_sample_gd = gd_x + (30.0 if dense else 600.0)
 		var camera: PlayerCamera = LevelManager.player_camera
 		var centre: Vector2 = level.to_local(camera.get_screen_center_position()) / _CELL_PER_GD

@@ -256,6 +256,7 @@ func _ready() -> void:
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
 	_test_composite_saw()
+	_test_camera_level_end_global()
 	get_window().size = VIEW_SIZE
 	get_viewport().transparent_bg = true
 	RenderingServer.set_default_clear_color(Color(0, 0, 0, 0))
@@ -1225,6 +1226,17 @@ func _test_native_core() -> void:
 	assert(packed_physics_res.size() == 11, "native smoke: packed physics result size")
 	assert(absf(packed_physics_res[3] - (Player.GRAVITY / 60.0)) < 0.1, "native smoke: packed physics gravity fall")
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
+
+
+func _test_camera_level_end_global() -> void:
+	var level := Node2D.new()
+	level.position = Vector2(640.0, 925.0)
+	add_child(level)
+	var end: Vector2 = Level.camera_level_end(level, 1500.0)
+	var local_x: float = 1500.0 / GMDConverter.GD_CELL_SIZE * Constants.CELL_SIZE
+	assert(is_equal_approx(end.x, local_x + 640.0), "camera end stop must be global: a level-local end stops the camera 150 GD units early")
+	assert(not Level.camera_level_end(level, 0.0).is_finite(), "no end stop without a level end")
+	level.queue_free()
 
 
 func _test_composite_saw() -> void:
