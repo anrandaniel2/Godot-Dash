@@ -70,7 +70,6 @@ jobs:
       - name: Download level
         run: |
           bash tools/fetch_level.sh "$LEVEL_URL" /tmp/level.gmd2
-          bash tools/fetch_level.sh "$OUTER_URL" /tmp/outer.gmd2
 
       - name: Import project resources
         run: |
