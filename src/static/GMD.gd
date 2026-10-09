@@ -85,7 +85,8 @@ static func read_file(path: String) -> Document:
 
 ## Parses the contents of a `.gmd` file.
 static func parse(text: String) -> Document:
-	if not text.contains("<plist") and not text.contains("<dict"):
+	# GD's own saves use the compact form: a bare <d> root, no <plist>/<dict>.
+	if not text.contains("<plist") and not text.contains("<dict") and not text.strip_edges().begins_with("<d>"):
 		push_error("GMD: file is not a plist document")
 		return null
 
