@@ -97,7 +97,7 @@ jobs:
           }
           # Amethyst cutscenes, real physics: ~68% from ship mode, ending from UFO.
           # The maintainer's Amethyst macro, replayed from the start.
-          probe AMETHYST_MACRO /tmp/level.gmd2 "" 0 "" "" "" 40000 "$(ls /tmp/macro/* | head -1)"
+          probe AMETHYST_MACRO /tmp/level.gmd2 "" 0 "" "" "" 25000 "$(ls /tmp/macro/* | head -1)"
           wc -c probe.txt
       - uses: actions/upload-artifact@v4
         with:

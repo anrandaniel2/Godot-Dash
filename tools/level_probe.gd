@@ -20,6 +20,8 @@ const _LEVEL_PATH := "user://level_probe.gdlvl"
 const _CELL_PER_GD: float = 128.0 / 30.0
 const _RUN_SPEED_PX: float = 1329.41
 const _SAMPLE_EVERY_GD: float = 600.0
+
+var _last_state: String = ""
 const _DENSE_EVERY_GD: float = 60.0
 const _CHANNELS_EVERY_GD: float = 3000.0
 
@@ -126,6 +128,11 @@ func _physics_process(delta: float) -> void:
 		return
 	player.global_position = Vector2(player.global_position.x + _RUN_SPEED_PX * delta, _player_y)
 	var gd_x: float = _gd_x(player)
+	var state: String = "speed=%.2f mode=%d vis=%s" % [player.speed_multiplier, player.internal_gamemode, str(player.visible)]
+	if state != _last_state:
+		_last_state = state
+		print("PROBE EV tick=%d x=%.1f y=%.1f %s" % [player.replay_physics_tick, gd_x,
+				-level.to_local(player.global_position).y / _CELL_PER_GD, state])
 	if gd_x >= _next_sample_gd:
 		_sample(gd_x)
 		_next_sample_gd = gd_x + (_DENSE_EVERY_GD if gd_x >= _dense_from_gd else _SAMPLE_EVERY_GD)
@@ -149,7 +156,7 @@ func _real_run(player: Player, level: Level) -> void:
 		return
 	var gd_x: float = _gd_x(player)
 	if gd_x >= _next_sample_gd:
-		var dense: bool = _macro == null or (gd_x > 23300.0 and gd_x < 24900.0) or gd_x > 28100.0
+		var dense: bool = _macro == null or (gd_x > 9000.0 and gd_x < 12000.0)
 		_next_sample_gd = gd_x + (30.0 if dense else 600.0)
 		var camera: PlayerCamera = LevelManager.player_camera
 		var centre: Vector2 = level.to_local(camera.get_screen_center_position()) / _CELL_PER_GD
