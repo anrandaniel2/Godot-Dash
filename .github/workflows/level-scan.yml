@@ -33,7 +33,7 @@ jobs:
             python3 tools/gd_level_scan.py outer.txt --focus-from 0.999 --speeds 2> outer_err.txt \
               || echo "::warning title=outer scan failed::$(tail -c 900 outer_err.txt | tr '\n' ' ')"
             echo "##### AMETHYST #####"
-            python3 tools/gd_level_scan.py level.txt --focus-from 0.999 --speeds
+            python3 tools/gd_level_scan.py level.txt --focus-from 0.905
           } > report.txt 2> err.txt || {
             echo "::warning title=scan failed::err=$(tail -c 800 err.txt | tr '\n' ' ')"
             exit 1

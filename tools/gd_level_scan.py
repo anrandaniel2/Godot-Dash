@@ -285,10 +285,12 @@ def main() -> int:
             focus_rows.append((x, index, o))
     focus_rows.sort(key=lambda row: row[0])
     members = collections.defaultdict(collections.Counter)
+    extents = collections.defaultdict(list)
     for o in objects:
         for group in o.get("57", "").split("."):
             if group:
                 members[group][o.get("1", "?")] += 1
+                extents[group].append((float(o.get("2", "0") or 0), float(o.get("3", "0") or 0)))
     targets = set()
     for x, index, o in focus_rows:
         print("#%d " % index + ",".join("%s=%s" % (k, v) for k, v in o.items()))
@@ -297,7 +299,10 @@ def main() -> int:
                 targets.add(o[key])
     print("=====TARGET GROUPS=====")
     for group in sorted(targets, key=lambda g: int(g) if g.isdigit() else 0):
-        print("g%s: %s" % (group, " ".join("%s:%d" % kv for kv in members[group].most_common(12))))
+        pts = extents.get(group, [])
+        span = " x=%.0f..%.0f y=%.0f..%.0f" % (min(p[0] for p in pts), max(p[0] for p in pts),
+                                               min(p[1] for p in pts), max(p[1] for p in pts)) if pts else ""
+        print("g%s%s: %s" % (group, span, " ".join("%s:%d" % kv for kv in members[group].most_common(12))))
     print("=====ALL ROWS (899 1007 1268 1346 1347 1612 1613 1616 1812 1814 1819 22 32 33)=====")
     wanted = {"899", "1007", "1268", "1346", "1347", "1612", "1613", "1616", "1812", "1814", "1819", "22", "32", "33"}
     skip = {"20", "61", "64", "67", "155", "36"}
