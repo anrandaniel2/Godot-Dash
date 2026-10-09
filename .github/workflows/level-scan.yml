@@ -30,7 +30,8 @@ jobs:
         run: |
           {
             echo "##### OUTERSPACE #####"
-            python3 tools/gd_level_scan.py outer.txt --focus-from 0.97 --window "0.60:0.90"
+            python3 tools/gd_level_scan.py outer.txt --focus-from 0.97 --window "0.60:0.90" 2> outer_err.txt \
+              || echo "::warning title=outer scan failed::$(tail -c 900 outer_err.txt | tr '\n' ' ')"
             echo "##### AMETHYST #####"
             python3 tools/gd_level_scan.py level.txt --focus-from 0.99 --camera
           } > report.txt 2> err.txt || {
