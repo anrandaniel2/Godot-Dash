@@ -252,6 +252,15 @@ def main() -> int:
         rows = sorted((float(o.get("2", "0") or 0), i, o) for i, o in enumerate(objects) if o.get("1") in names)
         for x, i, o in rows:
             print("%s x=%.0f y=%s %s" % (names[o["1"]], x, o.get("3"), _row(i, o)))
+    if "--portals" in sys.argv:
+        print("=====MODE PORTALS=====")
+        names = {"12": "cube", "13": "ship", "47": "ball", "111": "ufo", "660": "wave", "745": "robot",
+                 "1331": "spider", "1933": "swing", "10": "grav-down", "11": "grav-up", "2926": "grav-flip",
+                 "99": "size-normal", "101": "size-mini", "45": "mirror-on", "46": "mirror-off",
+                 "286": "dual-on", "287": "dual-off", "1612": "hide-player", "1613": "show-player"}
+        rows = sorted((float(o.get("2", "0") or 0), i, o) for i, o in enumerate(objects) if o.get("1") in names)
+        for x, i, o in rows:
+            print("%s x=%.0f y=%s %s" % (names[o["1"]], x, o.get("3"), _row(i, o)))
     if "--group-x" in sys.argv:
         print("=====GROUP EXTENTS=====")
         for group in sys.argv[sys.argv.index("--group-x") + 1].split(","):
