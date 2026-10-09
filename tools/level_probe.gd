@@ -12,6 +12,9 @@ extends Node
 ## GDASH_PROBE_CHANNELS: colour channels logged per sample, GDScript resolver
 ## next to the native runtime colour.
 ## GDASH_PROBE_DENSE_FROM: GD x after which samples are taken every 60 units.
+## GDASH_PROBE_START_X/START_Y/MODE/END_X: real-physics run (portals, bands,
+## the real camera) from that GD point in that Player.Gamemode, no input,
+## deaths off, sampling the camera every 30 units until END_X ("CAM" lines).
 
 const _LEVEL_PATH := "user://level_probe.gdlvl"
 const _CELL_PER_GD: float = 128.0 / 30.0
@@ -29,6 +32,10 @@ var _end_gd: float = 0.0
 var _running: bool = false
 var _player_y: float = 0.0
 var _elapsed: float = 0.0
+var _start: Vector2 = Vector2.INF
+var _start_mode: int = 0
+var _stop_gd: float = INF
+var _placed: bool = false
 
 
 func _ready() -> void:
@@ -57,7 +64,12 @@ func _ready() -> void:
 	var dense := OS.get_environment("GDASH_PROBE_DENSE_FROM")
 	if dense.is_valid_float():
 		_dense_from_gd = dense.to_float()
-	Config.fly_mode = true
+	var start_x := OS.get_environment("GDASH_PROBE_START_X")
+	if start_x.is_valid_float():
+		_start = Vector2(start_x.to_float(), OS.get_environment("GDASH_PROBE_START_Y").to_float())
+		_start_mode = OS.get_environment("GDASH_PROBE_MODE").to_int()
+		_stop_gd = OS.get_environment("GDASH_PROBE_END_X").to_float()
+	Config.fly_mode = not _start.is_finite()
 	Config.noclip = true
 	Config.paced_level_open = false
 	LevelManager.current_level_path = _LEVEL_PATH
@@ -68,6 +80,9 @@ func _ready() -> void:
 	runner.set(&"_groups", _groups)
 	runner.set(&"_channels", _channels)
 	runner.set(&"_dense_from_gd", _dense_from_gd)
+	runner.set(&"_start", _start)
+	runner.set(&"_start_mode", _start_mode)
+	runner.set(&"_stop_gd", _stop_gd)
 	runner.set(&"_running", true)
 	get_tree().root.add_child.call_deferred(runner)
 	get_tree().change_scene_to_file.call_deferred("res://scenes/GameScene.tscn")
@@ -91,6 +106,9 @@ func _physics_process(delta: float) -> void:
 		print("PROBE start player=%s gd_end=%.0f" % [str(player.global_position), level.gd_level_end_x])
 		_log_channels("start")
 	_elapsed += delta
+	if _start.is_finite():
+		_real_run(player, level)
+		return
 	player.global_position = Vector2(player.global_position.x + _RUN_SPEED_PX * delta, _player_y)
 	var gd_x: float = _gd_x(player)
 	if gd_x >= _next_sample_gd:
@@ -102,6 +120,31 @@ func _physics_process(delta: float) -> void:
 	if _elapsed > 900.0 or gd_x > _end_gd + 300.0 or LevelManager.player.in_end_level_animation:
 		print("PROBE finished x=%.0f t=%.1f" % [gd_x, _elapsed])
 		_log_channels("end")
+		get_tree().quit(0)
+
+
+func _real_run(player: Player, level: Level) -> void:
+	if not _placed:
+		_placed = true
+		player.global_position = level.to_global(Vector2(_start.x * _CELL_PER_GD, -_start.y * _CELL_PER_GD))
+		player.internal_gamemode = _start_mode as Player.Gamemode
+		player.displayed_gamemode = _start_mode as Player.Gamemode
+		LevelManager.player_camera.snap_view()
+		print("PROBE CAM start at %s mode %d" % [str(_start), _start_mode])
+		return
+	var gd_x: float = _gd_x(player)
+	if gd_x >= _next_sample_gd:
+		_next_sample_gd = gd_x + 30.0
+		var camera: PlayerCamera = LevelManager.player_camera
+		var centre: Vector2 = level.to_local(camera.get_screen_center_position()) / _CELL_PER_GD
+		var band: Vector2 = level.to_local(GroundData.center) / _CELL_PER_GD
+		var player_gd: Vector2 = level.to_local(player.global_position) / _CELL_PER_GD
+		print("PROBE CAM x=%.0f py=%.0f mode=%d vis=%s free=%s portal_free=%s cam=(%.0f,%.0f) band_c=%.0f half=%.0f zoom=%.2f static=%s dead=%s" % [
+			gd_x, -player_gd.y, player.internal_gamemode, str(player.visible), str(camera.freefly),
+			str(camera.portal_freefly), centre.x, -centre.y, -band.y, GroundData.distance / _CELL_PER_GD,
+			camera.zoom.x, str(camera.static_factor), str(player.dead)])
+	if gd_x >= _stop_gd or _elapsed > 600.0 or player.in_end_level_animation:
+		print("PROBE CAM finished x=%.0f t=%.1f" % [gd_x, _elapsed])
 		get_tree().quit(0)
 
 
