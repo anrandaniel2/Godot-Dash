@@ -236,6 +236,14 @@ def main() -> int:
     if "--camera" in sys.argv:
         print("=====CAMERA=====")
         print(camera_report(objects))
+    if "--group-x" in sys.argv:
+        print("=====GROUP EXTENTS=====")
+        for group in sys.argv[sys.argv.index("--group-x") + 1].split(","):
+            pts = [(float(o.get("2", "0") or 0), float(o.get("3", "0") or 0)) for o in objects
+                   if group in o.get("57", "").split(".")]
+            if pts:
+                print("g%s n=%d x=%.0f..%.0f y=%.0f..%.0f" % (group, len(pts), min(p[0] for p in pts),
+                      max(p[0] for p in pts), min(p[1] for p in pts), max(p[1] for p in pts)))
     if "--window" in sys.argv:
         low, high = (float(v) for v in sys.argv[sys.argv.index("--window") + 1].split(":"))
         print("=====WINDOW %.2f-%.2f x=%.0f..%.0f=====" % (low, high, max_x * low, max_x * high))
