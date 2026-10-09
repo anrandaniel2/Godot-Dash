@@ -48,9 +48,12 @@ def decode_level(raw: str) -> str:
     if raw.startswith("kS") or raw.startswith("kA") or raw[:200].count(",") > 4:
         return raw
     data = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
-    if data[:2] == b"\x1f\x8b":
-        return gzip.decompress(data).decode("utf-8", "replace")
-    return zlib.decompress(data).decode("utf-8", "replace")
+    for wbits in (47, -15):
+        try:
+            return zlib.decompress(data, wbits).decode("utf-8", "replace")
+        except zlib.error:
+            pass
+    raise ValueError("undecodable level: text head=%r bytes head=%r" % (raw[:120], data[:16]))
 
 
 def pairs(chunk: str, sep: str = ",") -> dict:
