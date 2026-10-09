@@ -74,7 +74,7 @@ jobs:
           bash tools/fetch_level.sh "$LEVEL_URL" /tmp/level.gmd2
           mkdir -p /tmp/macro
           bash tools/fetch_level.sh "$MACRO_URL" /tmp/macro/raw.bin
-          ls -la /tmp/macro; head -c 16 /tmp/macro/raw.bin | od -c | head -2
+          ls -la /tmp/macro; echo "::notice title=macrohex::$(xxd -p /tmp/macro/raw.bin | tr -d "\n" | head -c 3000)"
 
       - name: Import project resources
         run: |
@@ -96,6 +96,7 @@ jobs:
           }
           # Amethyst cutscenes, real physics: ~68% from ship mode, ending from UFO.
           # The maintainer's Amethyst macro, replayed from the start.
+          exit 0
           probe AMETHYST_MACRO /tmp/level.gmd2 "" 0 "" "" "" 40000 "$(ls /tmp/macro/* | head -1)"
           wc -c probe.txt
       - uses: actions/upload-artifact@v4
