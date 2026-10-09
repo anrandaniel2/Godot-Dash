@@ -44,7 +44,8 @@ def decode_level(raw: str) -> str:
         fields = dict(zip(parts[0::2], parts[1::2]))
         raw = fields.get("4", "")
     raw = raw.strip()
-    if raw.startswith("kS38") or raw.startswith("kA"):
+    # Plain level strings; 2.1-era headers open with the legacy kS1.. colours.
+    if raw.startswith("kS") or raw.startswith("kA") or raw[:200].count(",") > 4:
         return raw
     data = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
     if data[:2] == b"\x1f\x8b":
