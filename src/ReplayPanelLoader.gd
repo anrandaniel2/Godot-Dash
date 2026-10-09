@@ -179,7 +179,17 @@ func _open_importer() -> void:
 			_import_replay_from_android_picker,
 		)
 		return
+	# On the web, FileDialog only browses the browser's virtual filesystem;
+	# the browser's own picker reaches the device's storage.
+	if WebFilePicker.is_available():
+		WebFilePicker.pick(GDRFormat.FILE_EXTENSION, _import_replay_from_web_picker)
+		return
 	import_dialog.show()
+
+
+func _import_replay_from_web_picker(path: String) -> void:
+	_import_replay_from(path, true)
+	DirAccess.remove_absolute(path)
 
 
 func _import_replay_from_android_picker(status: bool, selected_paths: PackedStringArray, _selected_filter_index: int) -> void:
