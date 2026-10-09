@@ -8,8 +8,11 @@ on:
     paths:
       - "tools/gd_level_scan.py"
       - ".github/workflows/level-scan.yml"
+      - "tools/fetch_level.sh"
 
 env:
+  # OuterSpace (27732941), shared by the maintainer over WeTransfer.
+  OUTER_URL: "https://we.tl/t-0EaFKTxEJmVOkv4i"
   # Amethyst (119550490), exported by the maintainer as .gmd2.
   LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
   FOCUS_FROM: "0.9"
@@ -19,16 +22,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download level
+      - name: Download levels
         run: |
-          curl -sL -m 120 "$LEVEL_URL" -o level.txt
-          echo "::notice title=download::size=$(stat -c %s level.txt) type=$(file -b level.txt | cut -c1-60)"
+          bash tools/fetch_level.sh "$LEVEL_URL" level.txt
+          bash tools/fetch_level.sh "$OUTER_URL" outer.txt
       - name: Scan
         run: |
-          if ! python3 tools/gd_level_scan.py level.txt --focus-from "$FOCUS_FROM" --big --channels "1004" > report.txt 2> err.txt; then
-            echo "::warning title=scan failed::size=$(stat -c %s level.txt) head=$(head -c 300 level.txt | tr -d '\n\r%') err=$(tail -c 800 err.txt | tr '\n' ' ')"
+          {
+            echo "##### OUTERSPACE #####"
+            python3 tools/gd_level_scan.py outer.txt --focus-from 0.97 --window "0.60:0.90"
+            echo "##### AMETHYST #####"
+            python3 tools/gd_level_scan.py level.txt --focus-from 0.99 --camera
+          } > report.txt 2> err.txt || {
+            echo "::warning title=scan failed::err=$(tail -c 800 err.txt | tr '\n' ' ')"
             exit 1
-          fi
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: scan-report

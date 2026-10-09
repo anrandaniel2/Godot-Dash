@@ -113,6 +113,6 @@ func _on_shake_easing_finished(_player: Player) -> void:
 	if Editor.in_editor:
 		LevelManager.game_scene.pause_menu.toggle_pause_menu()
 		return
-	# GD's EndLevelLayer: the level-complete screen, not the pause menu.
+	# Finishing a level returns straight to the main menu.
 	get_tree().paused = true
-	LevelManager.game_scene.add_child(LevelCompleteScreen.new())
+	LevelManager.game_scene.pause_menu._on_leave_pressed()

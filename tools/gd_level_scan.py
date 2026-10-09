@@ -122,6 +122,50 @@ def channel_report(channels: list, defined: dict, objects: list) -> str:
     return "\n".join(lines)
 
 
+CAMERA_IDS = {"1913", "1914", "1916", "2015", "2016", "2062", "2901", "2925", "1917", "1934"}
+ROW_SKIP = {"20", "61", "64", "67", "155", "36", "156"}
+
+
+def _row(index: int, o: dict) -> str:
+    return "#%d " % index + ",".join("%s=%s" % (k, v) for k, v in o.items() if k not in ROW_SKIP)
+
+
+def camera_report(objects: list) -> str:
+    """Camera triggers, the members of their target groups and every Move /
+    Follow that drives those groups (the cutscene camera paths)."""
+    lines = []
+    targets = set()
+    for index, o in enumerate(objects):
+        if o.get("1") in CAMERA_IDS:
+            lines.append(_row(index, o))
+            for key in ("71", "51"):
+                if o.get(key, "0") not in ("", "0"):
+                    targets.add(o[key])
+    lines.append("--camera target groups--")
+    for group in sorted(targets, key=lambda g: int(g) if g.isdigit() else 0):
+        members = [(i, o) for i, o in enumerate(objects) if group in o.get("57", "").split(".")]
+        lines.append("g%s members=%d first=%s" % (group, len(members), " | ".join(
+            "id%s@(%s,%s)" % (o.get("1"), o.get("2"), o.get("3")) for _, o in members[:4])))
+        for i, o in enumerate(objects):
+            if o.get("1") in ("901", "1346", "1347", "1814", "2067", "1585") and o.get("51") == group:
+                lines.append("  drive " + _row(i, o))
+    return "\n".join(lines)
+
+
+def window_report(objects: list, low: float, high: float) -> str:
+    """Every trigger between two x positions, sorted by x."""
+    rows = []
+    for index, o in enumerate(objects):
+        oid = o.get("1", "")
+        if not oid.isdigit() or int(oid) not in TRIGGER_IDS:
+            continue
+        x = float(o.get("2", "0") or 0)
+        if low <= x <= high:
+            rows.append((x, _row(index, o)))
+    rows.sort(key=lambda r: r[0])
+    return "\n".join(r for _, r in rows)
+
+
 def main() -> int:
     if zipfile.is_zipfile(sys.argv[1]):
         with zipfile.ZipFile(sys.argv[1]) as archive:
@@ -185,6 +229,13 @@ def main() -> int:
     if "--channels" in sys.argv:
         print("=====CHANNELS=====")
         print(channel_report(sys.argv[sys.argv.index("--channels") + 1].split(","), defined, objects))
+    if "--camera" in sys.argv:
+        print("=====CAMERA=====")
+        print(camera_report(objects))
+    if "--window" in sys.argv:
+        low, high = (float(v) for v in sys.argv[sys.argv.index("--window") + 1].split(":"))
+        print("=====WINDOW %.2f-%.2f x=%.0f..%.0f=====" % (low, high, max_x * low, max_x * high))
+        print(window_report(objects, max_x * low, max_x * high))
     print("\n".join(out))
     print("=====FOCUS=====")
     focus_rows = []
