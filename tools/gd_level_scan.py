@@ -236,6 +236,12 @@ def main() -> int:
     if "--camera" in sys.argv:
         print("=====CAMERA=====")
         print(camera_report(objects))
+    if "--speeds" in sys.argv:
+        print("=====SPEED PORTALS=====")
+        names = {"200": "0.5x", "201": "1x", "202": "2x", "203": "3x", "1334": "4x"}
+        rows = sorted((float(o.get("2", "0") or 0), i, o) for i, o in enumerate(objects) if o.get("1") in names)
+        for x, i, o in rows:
+            print("%s x=%.0f y=%s %s" % (names[o["1"]], x, o.get("3"), _row(i, o)))
     if "--group-x" in sys.argv:
         print("=====GROUP EXTENTS=====")
         for group in sys.argv[sys.argv.index("--group-x") + 1].split(","):
