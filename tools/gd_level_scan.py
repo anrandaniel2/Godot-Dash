@@ -36,7 +36,7 @@ TRIGGER_IDS = {
 
 
 def decode_level(raw: str) -> str:
-    match = re.search(r"<k>k4</k><s>([^<]+)</s>", raw)
+    match = re.search(r"<k>k4</k>\s*<s>([^<]+)</s>", raw)
     if match:
         raw = match.group(1)
     elif raw.count("#") >= 2 and raw.startswith("1:"):
