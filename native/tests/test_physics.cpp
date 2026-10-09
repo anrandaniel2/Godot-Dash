@@ -289,8 +289,26 @@ int main() {
 		check_true("ship hold while rising uses 0.4", std::abs(ship_acceleration(1000.0, true, false) - GRAVITY_PX * 0.4) < 1e-9);
 		check_true("ship release while rising uses 1.2 * 0.4", std::abs(ship_acceleration(1000.0, false, false) + GRAVITY_PX * 0.48) < 1e-9);
 		check_true("mini ship divides by 0.85", std::abs(ship_acceleration(0.0, true, true) - GRAVITY_PX * 0.5 / 0.85) < 1e-9);
-		check_true("ship cap 6.4 units upright", std::abs(fly_cap(false, false, false) - 6.4 * 230.4) < 1e-9);
-		check_true("ship cap 8 units upside down", std::abs(fly_cap(false, false, true) - 8.0 * 230.4) < 1e-9);
+		// 2.2081 (gdsolver ship_params / ufo_params): rise <= 8, fall <= 6.4.
+		check_true("ship rises up to 8 units", std::abs(clamp_fly(9000.0, false, false) - 8.0 * 230.4) < 1e-9);
+		check_true("ship falls down to 6.4 units", std::abs(clamp_fly(-9000.0, false, false) + 6.4 * 230.4) < 1e-9);
+		check_true("a 7-unit rise is not clamped", clamp_fly(7.0 * 230.4, false, false) == 7.0 * 230.4);
+		check_true("mini ship rises up to 9.412", std::abs(clamp_fly(9000.0, false, true) - 8.0 / 0.85 * 230.4) < 1e-9);
+		check_true("swing caps 8 both ways", std::abs(clamp_fly(-9000.0, true, false) + 8.0 * 230.4) < 1e-9);
+		// playerIsFallingBugged: vy < 2g (1.9164 units at 1x), not 1g.
+		check_true("ship holding at 1.5 units still takes the falling 0.5", std::abs(ship_acceleration(1.5 * 230.4, true, false) - GRAVITY_PX * 0.5) < 1e-9);
+		check_true("ship holding at 2.0 units takes 0.4", std::abs(ship_acceleration(2.0 * 230.4, true, false) - GRAVITY_PX * 0.4) < 1e-9);
+		check_true("ufo at 1.5 units still falls with 0.4", std::abs(ufo_acceleration(1.5 * 230.4, false) + GRAVITY_PX * 0.4) < 1e-9);
+		check_true("0.5x switch is 2 x 0.940199", std::abs(falling_threshold_px(0) - 2.0 * 0.940199 * 230.4) < 1e-9);
+		// Speed tiers from the multiplier.
+		check_true("speed tiers", speed_index(speed_ratio(0)) == 0 && speed_index(1.0) == 1 && speed_index(speed_ratio(2)) == 2
+				&& speed_index(speed_ratio(3)) == 3 && speed_index(speed_ratio(4)) == 4 && speed_index(0.0) == 1);
+		// Cube jump per speed (2.2081 measured): 10.62 / 11.18 / 11.42 / 11.23.
+		check_true("cube jump 2x is 11.42", std::abs(JUMP_PX * jump_ratio(2) - 11.42 * 230.4) < 1e-6);
+		check_true("cube jump 0.5x is 10.62", std::abs(JUMP_PX * jump_ratio(0) - 10.62 * 230.4) < 1e-6);
+		check_true("cube jump 1x unchanged", jump_ratio(1) == 1.0);
+		check_true("cube gravity 0.5x is 0.940199", std::abs(GRAVITY_PX * cube_gravity_ratio(0) - 0.940199 * ACCELERATION_TO_PX) < 1e-6);
+		check_true("ball tap scales with the jump at 2x", std::abs(ball_tap_px(false, 2) - 11.42 * 0.3 * 230.4) < 1e-6);
 		check_true("ufo tap is 7 units", std::abs(ufo_tap(0.0, false) - 7.0 * 230.4) < 1e-9);
 		check_true("ufo tap keeps a faster rise", ufo_tap(5000.0, false) == 5000.0);
 		check_true("ufo falling gravity 0.4", std::abs(ufo_acceleration(0.0, false) + GRAVITY_PX * 0.4) < 1e-9);

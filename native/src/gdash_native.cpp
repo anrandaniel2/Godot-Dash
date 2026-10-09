@@ -9676,7 +9676,7 @@ public:
 			if (internal_gamemode == 7) local_velocity.y = static_cast<real_t>(local_velocity.y * gd_physics::SWING_TAP_KEEP);
 		}
 		const bool mini = player_scale == 0;
-		const bool upside_down = gravity_flip < 0.0;
+		const int speed_tier = gd_physics::speed_index(speed_multiplier);
 		auto up_of = [&]() { return -static_cast<double>(local_velocity.y) * gravity_flip; };
 		auto set_up = [&](double up) { local_velocity.y = static_cast<real_t>(-up * gravity_flip); };
 
@@ -9688,12 +9688,12 @@ public:
 		if (!has_dash_control) {
 			if (internal_gamemode == 1 /*SHIP*/) {
 				double up = up_of();
-				up += gd_physics::ship_acceleration(up, jump_state == 1, mini) * gravity_multiplier * delta;
-				set_up(gd_physics::clamp_cap(up, gd_physics::fly_cap(false, mini, upside_down)));
+				up += gd_physics::ship_acceleration(up, jump_state == 1, mini, speed_tier) * gravity_multiplier * delta;
+				set_up(gd_physics::clamp_fly(up, false, mini));
 			} else if (internal_gamemode == 7 /*SWING*/) {
 				double up = up_of();
 				up += gd_physics::swing_acceleration(mini) * gravity_multiplier * delta;
-				set_up(gd_physics::clamp_cap(up, gd_physics::fly_cap(true, mini, upside_down)));
+				set_up(gd_physics::clamp_fly(up, true, mini));
 			} else if (internal_gamemode == 4 /*WAVE*/) {
 				local_velocity.y = static_cast<real_t>(gd_physics::X_SPEED_PX * gravity_flip * gravity_multiplier * jump_state * -1.0);
 				if (speed_multiplier > 0.0) {
@@ -9710,13 +9710,14 @@ public:
 			} else if (!is_on_floor) {
 				if (internal_gamemode == 2 /*UFO*/) {
 					double up = up_of();
-					up += gd_physics::ufo_acceleration(up, mini) * gravity_multiplier * delta;
-					set_up(gd_physics::clamp_cap(up, gd_physics::fly_cap(false, mini, upside_down)));
+					up += gd_physics::ufo_acceleration(up, mini, speed_tier) * gravity_multiplier * delta;
+					set_up(gd_physics::clamp_fly(up, false, mini));
 				} else if (internal_gamemode == 3 /*BALL*/) {
 					local_velocity.y += static_cast<real_t>(GRAVITY * gd_physics::BALL_GRAVITY_FACTOR * delta * gravity_flip * gravity_multiplier);
 					local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 				} else {
-					local_velocity.y += static_cast<real_t>(GRAVITY * delta * gravity_flip * gravity_multiplier);
+					// The cube falls with the per-speed gravity (updateTimeMod).
+					local_velocity.y += static_cast<real_t>(GRAVITY * gd_physics::cube_gravity_ratio(speed_tier) * delta * gravity_flip * gravity_multiplier);
 					// GD caps the cube's fall at 15 units per frame (updateJump).
 					local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 				}
@@ -9743,11 +9744,12 @@ public:
 			instant_jump_mode = internal_gamemode;
 			if (internal_gamemode == 3 /*BALL*/) {
 				// Toward the new floor (gravity already flipped above).
-				local_velocity.y = static_cast<real_t>(gd_physics::ball_tap_px(mini) * gravity_flip);
+				local_velocity.y = static_cast<real_t>(gd_physics::ball_tap_px(mini, speed_tier) * gravity_flip);
 			} else if (internal_gamemode == 2 /*UFO*/) {
 				set_up(gd_physics::ufo_tap(up_of(), mini));
 			} else if (internal_gamemode == 0 /*CUBE*/) {
-				local_velocity.y = static_cast<real_t>(-speed.y * gravity_flip);
+				// The jump impulse is per speed (2.2081: 10.62 / 11.18 / 11.42 / 11.23).
+				local_velocity.y = static_cast<real_t>(-speed.y * gd_physics::jump_ratio(speed_tier) * gravity_flip);
 			}
 		}
 
