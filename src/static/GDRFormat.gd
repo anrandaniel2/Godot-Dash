@@ -143,7 +143,10 @@ static func _gdr2_document(bytes: PackedByteArray) -> Dictionary:
 		return {"ok": false, "error": "truncated header"}
 	var inputs: Array = []
 	var previous := 0
-	var player2 := p1_inputs == 0
+	# The reference reader marks every input player 2 when the P1 count is 0,
+	# but iCreate Pro writes 0 there for ordinary one-player macros (the
+	# maintainer's Amethyst .gdr2), so a zero count means "all player 1".
+	var player2 := false
 	while reader.at < bytes.size():
 		var packed := _read_varint(reader)
 		if not reader.ok:

@@ -11,6 +11,7 @@ on:
       - "tools/level_probe.tscn"
       - ".github/workflows/level-probe.yml"
       - "tools/fetch_level.sh"
+      - "src/static/GDRFormat.gd"
 
 env:
   GODOT_VERSION: "4.7.2"
@@ -96,7 +97,6 @@ jobs:
           }
           # Amethyst cutscenes, real physics: ~68% from ship mode, ending from UFO.
           # The maintainer's Amethyst macro, replayed from the start.
-          exit 0
           probe AMETHYST_MACRO /tmp/level.gmd2 "" 0 "" "" "" 40000 "$(ls /tmp/macro/* | head -1)"
           wc -c probe.txt
       - uses: actions/upload-artifact@v4

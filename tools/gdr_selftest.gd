@@ -24,6 +24,7 @@ func _ready() -> void:
 	_test_json_variant()
 	_test_framerate_resample()
 	_test_gdr2_binary()
+	_test_gdr2_zero_p1_count()
 	_test_rejects_garbage()
 	print("GDR_SELFTEST_SUMMARY total=", checks, " failed=", failures.size())
 	for failure in failures:
@@ -246,6 +247,19 @@ func _test_gdr2_binary() -> void:
 	check("gdr2: length", replay.data.size() == 21)
 	check("gdr2: jump held from frame 10 to 19",
 			replay.data[9][0] == 0 and replay.data[10][0] == 1 and replay.data[19][0] == 1 and replay.data[20][0] == 0)
+
+
+func _test_gdr2_zero_p1_count() -> void:
+	# iCreate Pro writes a P1 input count of 0 for one-player macros.
+	var bytes: PackedByteArray = "GDR".to_ascii_buffer()
+	bytes.append_array(_hex_to_raw("02" + "00" + "0161" + "00" + "00000000" + "baac01"
+			+ "406e000000000000" + "00" + "00" + "00" + "00" + "0178" + "01" + "05" + "014c"
+			+ "00" + "00" + "02" + "00" + "15" + "14"))
+	var result: Dictionary = GDRFormat.from_bytes(bytes)
+	check("gdr2 p1=0: parses", result.ok)
+	if result.ok:
+		var replay: Replay = result.replay
+		check("gdr2 p1=0: inputs kept as player 1", replay.data.size() == 21 and replay.data[10][0] == 1)
 
 
 func _test_rejects_garbage() -> void:
