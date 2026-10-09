@@ -36,6 +36,7 @@ var _start: Vector2 = Vector2.INF
 var _start_mode: int = 0
 var _stop_gd: float = INF
 var _placed: bool = false
+var _macro: Replay = null
 
 
 func _ready() -> void:
@@ -69,6 +70,14 @@ func _ready() -> void:
 		_start = Vector2(start_x.to_float(), OS.get_environment("GDASH_PROBE_START_Y").to_float())
 		_start_mode = OS.get_environment("GDASH_PROBE_MODE").to_int()
 		_stop_gd = OS.get_environment("GDASH_PROBE_END_X").to_float()
+	var macro_path := OS.get_environment("GDASH_PROBE_MACRO")
+	if not macro_path.is_empty():
+		var loaded: Dictionary = GDRFormat.load(macro_path)
+		print("PROBE macro %s ok=%s %s" % [macro_path, str(loaded.ok), str(loaded.get("error", ""))])
+		if loaded.ok:
+			_macro = loaded.replay
+			print("PROBE macro ticks=%d level=%s" % [_macro.data.size(), _macro.level_name])
+			_start = Vector2(0.0, 0.0)
 	Config.fly_mode = not _start.is_finite()
 	Config.noclip = true
 	Config.paced_level_open = false
@@ -80,6 +89,7 @@ func _ready() -> void:
 	runner.set(&"_groups", _groups)
 	runner.set(&"_channels", _channels)
 	runner.set(&"_dense_from_gd", _dense_from_gd)
+	runner.set(&"_macro", _macro)
 	runner.set(&"_start", _start)
 	runner.set(&"_start_mode", _start_mode)
 	runner.set(&"_stop_gd", _stop_gd)
@@ -98,6 +108,11 @@ func _physics_process(delta: float) -> void:
 		return
 	var player: Player = LevelManager.player
 	var level: Level = LevelManager.current_level
+	if _macro != null and player != null and not player.in_replay:
+		player.replay = _macro
+		player.in_replay = true
+		player.replay_physics_tick = 0
+		_placed = true
 	if player == null or level == null or not LevelManager.level_playing:
 		return
 	if _end_gd <= 0.0:
@@ -134,13 +149,14 @@ func _real_run(player: Player, level: Level) -> void:
 		return
 	var gd_x: float = _gd_x(player)
 	if gd_x >= _next_sample_gd:
-		_next_sample_gd = gd_x + 30.0
+		var dense: bool = _macro == null or (gd_x > 23300.0 and gd_x < 24900.0) or gd_x > 28100.0
+		_next_sample_gd = gd_x + (30.0 if dense else 600.0)
 		var camera: PlayerCamera = LevelManager.player_camera
 		var centre: Vector2 = level.to_local(camera.get_screen_center_position()) / _CELL_PER_GD
 		var band: Vector2 = level.to_local(GroundData.center) / _CELL_PER_GD
 		var player_gd: Vector2 = level.to_local(player.global_position) / _CELL_PER_GD
-		print("PROBE CAM x=%.0f py=%.0f mode=%d vis=%s free=%s portal_free=%s cam=(%.0f,%.0f) band_c=%.0f half=%.0f zoom=%.2f static=%s dead=%s" % [
-			gd_x, -player_gd.y, player.internal_gamemode, str(player.visible), str(camera.freefly),
+		print("PROBE CAM tick=%d x=%.0f py=%.0f mode=%d vis=%s free=%s portal_free=%s cam=(%.0f,%.0f) band_c=%.0f half=%.0f zoom=%.2f static=%s dead=%s" % [
+			player.replay_physics_tick, gd_x, -player_gd.y, player.internal_gamemode, str(player.visible), str(camera.freefly),
 			str(camera.portal_freefly), centre.x, -centre.y, -band.y, GroundData.distance / _CELL_PER_GD,
 			camera.zoom.x, str(camera.static_factor), str(player.dead)])
 	if gd_x >= _stop_gd or _elapsed > 600.0 or player.in_end_level_animation:

@@ -20,6 +20,8 @@ env:
   # Amethyst (119550490), exported by the maintainer as .gmd2.
   LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
   # OuterSpace (27732941), shared by the maintainer over WeTransfer.
+  # The maintainer's Amethyst macro (.gdr/.gdr2) over WeTransfer.
+  MACRO_URL: "https://we.tl/t-x4v3pvGQVetjWUz4"
   OUTER_URL: "https://we.tl/t-0EaFKTxEJmVOkv4i"
 
 jobs:
@@ -70,6 +72,9 @@ jobs:
       - name: Download level
         run: |
           bash tools/fetch_level.sh "$LEVEL_URL" /tmp/level.gmd2
+          mkdir -p /tmp/macro
+          bash tools/fetch_level.sh "$MACRO_URL" /tmp/macro/raw.bin
+          ls -la /tmp/macro; head -c 16 /tmp/macro/raw.bin | od -c | head -2
 
       - name: Import project resources
         run: |
@@ -84,14 +89,14 @@ jobs:
           probe() {
             echo "##### $1 #####" >> probe.txt
             env GDASH_PROBE_LEVEL="$2" GDASH_PROBE_GROUPS="$3" GDASH_PROBE_DENSE_FROM="$4" GDASH_PROBE_CHANNELS="" \
-              GDASH_PROBE_START_X="${5:-}" GDASH_PROBE_START_Y="${6:-}" GDASH_PROBE_MODE="${7:-}" GDASH_PROBE_END_X="${8:-}" \
+              GDASH_PROBE_MACRO="${9:-}" GDASH_PROBE_START_X="${5:-}" GDASH_PROBE_START_Y="${6:-}" GDASH_PROBE_MODE="${7:-}" GDASH_PROBE_END_X="${8:-}" \
               timeout 900s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > probe.log 2>&1
             echo "exit $?" >> probe.txt
             grep -E "PROBE|SCRIPT ERROR|Parse Error" probe.log | cut -c1-600 >> probe.txt
           }
           # Amethyst cutscenes, real physics: ~68% from ship mode, ending from UFO.
-          probe AMETHYST_CUT1 /tmp/level.gmd2 "" 0 23450 200 1 24700
-          probe AMETHYST_END /tmp/level.gmd2 "" 0 28250 121 2 34900
+          # The maintainer's Amethyst macro, replayed from the start.
+          probe AMETHYST_MACRO /tmp/level.gmd2 "" 0 "" "" "" 40000 "$(ls /tmp/macro/* | head -1)"
           wc -c probe.txt
       - uses: actions/upload-artifact@v4
         with:

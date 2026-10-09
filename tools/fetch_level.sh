@@ -34,7 +34,7 @@ if zipfile.is_zipfile(path):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         print("::notice title=zip::" + " ".join("%s:%d" % (i.filename, i.file_size) for i in archive.infolist())[:900])
-        inner = [n for n in names if n.lower().endswith((".gmd2", ".gmd"))]
+        inner = [n for n in names if n.lower().endswith((".gmd2", ".gmd", ".gdr", ".gdr2"))]
         if inner:
             data = archive.read(inner[0])
             open(path, "wb").write(data)
