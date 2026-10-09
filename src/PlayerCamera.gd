@@ -2,7 +2,11 @@ class_name PlayerCamera
 extends Camera2D
 
 const DEFAULT_ZOOM: Vector2 = Vector2(0.8, 0.8)
-const DEFAULT_OFFSET: Vector2 = Vector2(400.0, 0.0)
+## gd_docs triggers/camera/default_camera_properties: the default gameplay
+## offset is 25, i.e. the view centre sits 75 GD units ahead of the player.
+## The offset is divided by zoom when applied, so it is stored pre-zoom.
+const GD_GAMEPLAY_OFFSET_UNITS: float = 75.0
+const DEFAULT_OFFSET: Vector2 = Vector2(GD_GAMEPLAY_OFFSET_UNITS / 30.0 * Constants.CELL_SIZE * DEFAULT_ZOOM.x, 0.0)
 const MAX_DISTANCE := Vector2(400.0, 300.0)
 ## Geometry Dash vertical camera law, from Wyliemaster/Geometry-Dash-1.0
 ## PlayLayer/updateCamera.cpp (PlayLayer::updateCamera): in cube-style modes

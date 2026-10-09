@@ -1,6 +1,6 @@
 name: Level probe
 
-# Plays a downloaded level in the real GameScene (tools/level_probe.gd) and
+# Plays downloaded levels in the real GameScene (tools/level_probe.gd) and
 # surfaces the PROBE log as annotations. The level is never committed.
 on:
   push:
