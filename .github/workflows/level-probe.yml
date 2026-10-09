@@ -10,6 +10,7 @@ on:
       - "tools/level_probe.gd"
       - "tools/level_probe.tscn"
       - ".github/workflows/level-probe.yml"
+      - "tools/fetch_level.sh"
 
 env:
   GODOT_VERSION: "4.7.2"
@@ -18,9 +19,8 @@ env:
   GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
   # Amethyst (119550490), exported by the maintainer as .gmd2.
   LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
-  PROBE_GROUPS: "858,857,856"
-  PROBE_DENSE_FROM: "99999"
-  PROBE_CHANNELS: "1007"
+  # OuterSpace (27732941), shared by the maintainer over WeTransfer.
+  OUTER_URL: "https://we.tl/t-0EaFKTxEJmVOkv4i"
 
 jobs:
   probe:
@@ -68,7 +68,9 @@ jobs:
           ls -lh bin/linux/
 
       - name: Download level
-        run: curl -sL -m 120 "$LEVEL_URL" -o /tmp/level.gmd2 && ls -la /tmp/level.gmd2
+        run: |
+          bash tools/fetch_level.sh "$LEVEL_URL" /tmp/level.gmd2
+          bash tools/fetch_level.sh "$OUTER_URL" /tmp/outer.gmd2
 
       - name: Import project resources
         run: |
@@ -79,11 +81,16 @@ jobs:
       - name: Probe
         run: |
           set +e
-          env GDASH_PROBE_LEVEL=/tmp/level.gmd2 GDASH_PROBE_GROUPS="$PROBE_GROUPS" GDASH_PROBE_DENSE_FROM="$PROBE_DENSE_FROM" GDASH_PROBE_CHANNELS="$PROBE_CHANNELS" \
-            timeout 1800s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > probe.log 2>&1
-          echo "exit $?" > probe.txt
-          grep -E "PROBE|SCRIPT ERROR|ERROR:|FADIAG|at: " probe.log | cut -c1-3000 >> probe.txt
-          tail -c 3000 probe.log >> probe.txt
+          : > probe.txt
+          probe() {
+            echo "##### $1 #####" >> probe.txt
+            env GDASH_PROBE_LEVEL="$2" GDASH_PROBE_GROUPS="$3" GDASH_PROBE_DENSE_FROM="$4" GDASH_PROBE_CHANNELS="" \
+              timeout 900s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > probe.log 2>&1
+            echo "exit $?" >> probe.txt
+            grep -E "PROBE|SCRIPT ERROR|Parse Error" probe.log | cut -c1-600 >> probe.txt
+          }
+          probe OUTERSPACE /tmp/outer.gmd2 "23,29,31" 22500
+          probe AMETHYST /tmp/level.gmd2 "949" 0
           wc -c probe.txt
       - uses: actions/upload-artifact@v4
         with:
