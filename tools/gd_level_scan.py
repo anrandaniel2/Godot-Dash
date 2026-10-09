@@ -236,6 +236,16 @@ def main() -> int:
     if "--camera" in sys.argv:
         print("=====CAMERA=====")
         print(camera_report(objects))
+    if "--group-triggers" in sys.argv:
+        print("=====GROUP TRIGGERS=====")
+        for group in sys.argv[sys.argv.index("--group-triggers") + 1].split(","):
+            for i, o in enumerate(objects):
+                oid = o.get("1", "")
+                if oid.isdigit() and int(oid) in TRIGGER_IDS and group in (o.get("51"), o.get("71")):
+                    print("g%s %s" % (group, _row(i, o)))
+            members = [(i, o) for i, o in enumerate(objects) if group in o.get("57", "").split(".")]
+            print("g%s members=%d %s" % (group, len(members), " | ".join(
+                "id%s@(%s,%s)" % (o.get("1"), o.get("2"), o.get("3")) for _, o in members[:12])))
     if "--speeds" in sys.argv:
         print("=====SPEED PORTALS=====")
         names = {"200": "0.5x", "201": "1x", "202": "2x", "203": "3x", "1334": "4x"}
