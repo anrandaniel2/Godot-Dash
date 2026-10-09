@@ -20,7 +20,7 @@ env:
   LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
   PROBE_GROUPS: "858,857,856"
   PROBE_DENSE_FROM: "99999"
-  PROBE_CHANNELS: "805,803,1007"
+  PROBE_CHANNELS: "1007"
 
 jobs:
   probe:
