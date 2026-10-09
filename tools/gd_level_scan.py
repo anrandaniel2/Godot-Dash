@@ -276,12 +276,15 @@ def main() -> int:
     print("\n".join(out))
     print("=====FOCUS=====")
     focus_rows = []
+    focus_x = None
+    if "--focus-x" in sys.argv:
+        focus_x = tuple(float(v) for v in sys.argv[sys.argv.index("--focus-x") + 1].split(":"))
     for index, o in enumerate(objects):
         oid = o.get("1", "")
         if not oid.isdigit() or int(oid) not in TRIGGER_IDS:
             continue
         x = float(o.get("2", "0") or 0)
-        if x >= max_x * focus:
+        if focus_x is not None and focus_x[0] <= x <= focus_x[1] or focus_x is None and x >= max_x * focus:
             focus_rows.append((x, index, o))
     focus_rows.sort(key=lambda row: row[0])
     members = collections.defaultdict(collections.Counter)
