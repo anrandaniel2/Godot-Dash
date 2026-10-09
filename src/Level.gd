@@ -862,7 +862,7 @@ func _use_data_fields(data: Dictionary) -> void:
 	fade_power = data.fade_power
 	move_power = data.move_power
 	scale_power = data.scale_power
-	color_channels.assign(data.color_channels.map(ColorChannelData.from_data))
+	_use_channel_data(data.color_channels.map(ColorChannelData.from_data))
 	duration = data.duration
 	native_trigger_records.assign(data.get("native_trigger_records", []))
 	packed_trigger_records = data.get(PackedTriggers.DATA_KEY, { })
@@ -882,6 +882,32 @@ func _use_data_fields(data: Dictionary) -> void:
 		_apply_practice_data(data.practice_data)
 	else:
 		_elapsed_time = 0.0
+
+
+## A restart re-applies the level's channel data. Watchers, the channel
+## cache and the native runtime all hold the existing ColorChannelData
+## objects, so the stored values are written into them in place; swapping in
+## new objects left every colour trigger after the first death editing
+## objects nothing displayed, and the old colours never reset.
+func _use_channel_data(fresh: Array) -> void:
+	var in_place: bool = fresh.size() == color_channels.size()
+	if in_place:
+		for i: int in fresh.size():
+			if (fresh[i] as ColorChannelData).associated_group != color_channels[i].associated_group:
+				in_place = false
+				break
+	if not in_place:
+		color_channels.assign(fresh)
+		return
+	for i: int in fresh.size():
+		var source: ColorChannelData = fresh[i]
+		var target: ColorChannelData = color_channels[i]
+		for property: Dictionary in source.get_property_list():
+			var property_name: String = property.name
+			if property.usage & PROPERTY_USAGE_SCRIPT_VARIABLE == 0 or property.usage & PROPERTY_USAGE_STORAGE == 0:
+				continue
+			target.set(property_name, source.get(property_name))
+		target.emit_changed()
 
 
 ## Applies one object pass of a level-data dictionary onto the existing object

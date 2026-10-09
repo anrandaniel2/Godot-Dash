@@ -845,6 +845,8 @@ func _test_native_core() -> void:
 	toggled.add_to_group(&"g_8")
 	effect_level.add_child(toggled)
 	effect_runtime.call(&"set_group_members", &"g_8", [toggled])
+	var moved_start: Vector2 = moved.global_position
+	var toggled_start_visible: bool = toggled.visible
 	var effect_player := Node2D.new()
 	effect_level.add_child(effect_player)
 	# 901 Move: 60 units right, 30 units up over 1s. 30 GD units = 128 px,
@@ -943,6 +945,8 @@ func _test_native_core() -> void:
 	# Reset clears activation state and running fades.
 	effect_runtime.call(&"reset")
 	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
+	assert(moved.global_position == moved_start, "native smoke: reset did not move the group back to its start")
+	assert(toggled.visible == toggled_start_visible, "native smoke: reset did not undo the toggle trigger")
 	assert(not post_rect.visible, "native smoke: GD post-process not hidden on reset")
 	assert(ui_node.get_parent() == effect_level, "native smoke: UI node restored to effect_level on reset")
 	assert(is_equal_approx(ui_node.position.x, -1012.5), "native smoke: UI node position restored on reset")

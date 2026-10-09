@@ -3311,6 +3311,16 @@ class NativeTriggerRuntime : public RefCounted {
 	HashMap<ObjectID, double> member_own_alpha;
 	// Reverse of member_index: which effect-referenced groups a member is in.
 	HashMap<ObjectID, std::vector<String>> member_groups;
+	// Each member's transform and visibility when the level was built.
+	// Move/rotate/scale/toggle triggers edit the nodes directly, and grouped
+	// decorations live in DecorationBatch nodes that Level.use_data never
+	// rebuilds, so reset() puts every member back (GD's PlayLayer::resetLevel
+	// restores each object's start state).
+	struct MemberStart {
+		Transform2D transform;
+		bool visible = true;
+	};
+	HashMap<ObjectID, MemberStart> member_start;
 	// Budgets for the FADIAG fire-time diagnostic (see report_fade_capture).
 	int64_t fade_capture_count = 0;
 	int64_t fade_capture_reports = 0;
@@ -7279,6 +7289,11 @@ public:
 			if (!member_own_alpha.has(id)) {
 				member_own_alpha.insert(id, read_member_alpha(ObjectDB::get_instance(id)));
 			}
+			if (!member_start.has(id)) {
+				if (Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id))) {
+					member_start.insert(id, MemberStart{ node->get_transform(), node->is_visible() });
+				}
+			}
 			std::vector<String> &groups = member_groups[id];
 			bool duplicate = false;
 			for (const String &existing : groups) {
@@ -7703,6 +7718,7 @@ public:
 		group_opacity.clear();
 		reset_gameplay_state();
 		armed_counts.clear();
+		restore_member_starts();
 		for (const KeyValue<ObjectID, std::vector<String>> &entry : member_groups) {
 			refresh_member_alpha(entry.key);
 		}
@@ -7712,6 +7728,15 @@ public:
 		previous_positions.clear();
 		reset_shaders();
 	}
+	void restore_member_starts() {
+		for (const KeyValue<ObjectID, MemberStart> &entry : member_start) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(entry.key));
+			if (!node) continue;
+			node->set_transform(entry.value.transform);
+			node->set_visible(entry.value.visible);
+		}
+	}
+	int64_t member_start_count() const { return static_cast<int64_t>(member_start.size()); }
 	Dictionary snapshot() const {
 		Dictionary state; PackedByteArray active;
 		active.resize(records.size());
