@@ -117,12 +117,15 @@ constexpr double ball_tap_px(bool mini, int speed = 1) {
 // Ship and UFO velocity limits in the player frame (gdsolver ship_params.hpp /
 // ufo_params.hpp, measured on 2.2081): rising at most 8, falling at most 6.4
 // (mini 9.412 / 7.529 = divided by 0.85), the same with gravity flipped. The
-// old single cap clamped rises at 6.4. The swing keeps 8 both ways.
+// old single cap clamped rises at 6.4. The swing keeps 8 both ways, 9.385
+// when mini (measured, not 8 / 0.85).
+constexpr double SWING_MINI_CAP_UNITS = 9.385;
 constexpr double fly_up_cap(bool swing, bool mini) {
-	(void)swing;
+	if (swing && mini) return SWING_MINI_CAP_UNITS * VELOCITY_TO_PX;
 	return 8.0 / (mini ? FLY_MINI_SIZE : 1.0) * VELOCITY_TO_PX;
 }
 constexpr double fly_down_cap(bool swing, bool mini) {
+	if (swing && mini) return SWING_MINI_CAP_UNITS * VELOCITY_TO_PX;
 	return (swing ? 8.0 : 6.4) / (mini ? FLY_MINI_SIZE : 1.0) * VELOCITY_TO_PX;
 }
 constexpr double clamp_fly(double up, bool swing, bool mini) {
@@ -130,6 +133,18 @@ constexpr double clamp_fly(double up, bool swing, bool mini) {
 	return up > hi ? hi : (up < lo ? lo : up);
 }
 
+
+// Robot and spider (gdsolver dp/src/dp/constants.hpp, read from
+// PlayerObject::updateJump 2.2081): the robot falls at 0.9 g, jumps at half the
+// cube's per-speed jump (mini x0.8 on top) and, while the press is held, hovers
+// at that velocity for 67 ticks of 240 Hz. The spider falls at the ball's 0.6 g.
+constexpr double ROBOT_GRAVITY_FACTOR = 0.9;
+constexpr double ROBOT_JUMP_FACTOR = 0.5;
+constexpr double ROBOT_HOVER_SECONDS = 67.0 / 240.0;
+constexpr double SPIDER_GRAVITY_FACTOR = 0.6;
+constexpr double robot_jump_px(bool mini, int speed) {
+	return JUMP_PX * jump_ratio(speed) * ROBOT_JUMP_FACTOR * (mini ? MINI_SIZE_FACTOR : 1.0);
+}
 
 constexpr double speed_ratio(int portal) {
 	return SPEED_PRODUCT[portal] / SPEED_PRODUCT[1];

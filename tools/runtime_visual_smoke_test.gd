@@ -265,7 +265,25 @@ func _test_generated_static_hitboxes() -> void:
 	assert(not GMDObjects.is_static_gameplay_object(1154), "static hitbox: outline decoration 1154 gained collision")
 
 
+## Rings scale with the per-speed jump (gdsolver ringScaleFor); pads and the
+## black drop ring do not.
+func _test_ring_speed_scaling() -> void:
+	assert(JumpBoostComponent.speed_tier(0.806) == 0 and JumpBoostComponent.speed_tier(1.0) == 1
+			and JumpBoostComponent.speed_tier(1.85) == 4, "ring speed: tier mapping drifted from gd_physics::speed_index")
+	assert(is_equal_approx(JumpBoostComponent.SPEED_JUMP_RATIO[2], 11.42 / 11.180032), "ring speed: 2x ratio")
+	for path: String in ["orbs/YellowOrb", "orbs/BlackOrb", "pads/YellowPad"]:
+		var node: Node = (load("res://scenes/components/level_components/%s.tscn" % path) as PackedScene).instantiate()
+		var boost: JumpBoostComponent = null
+		for child: Node in node.get_children():
+			if child is JumpBoostComponent:
+				boost = child
+		assert(boost != null, "ring speed: %s has no JumpBoostComponent" % path)
+		assert(boost.scales_with_speed_jump == (path == "orbs/YellowOrb"), "ring speed: %s scaling flag is wrong" % path)
+		node.free()
+
+
 func _ready() -> void:
+	_test_ring_speed_scaling()
 	_test_generated_static_hitboxes()
 	_test_batch_order()
 	_test_hsv_neutral()

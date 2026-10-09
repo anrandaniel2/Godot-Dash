@@ -21,7 +21,7 @@ struct Vector2D {
 static constexpr double PLAYER_GRAVITY = gd_physics::GRAVITY_PX;
 static constexpr double PLAYER_FLY_GRAVITY_MULTIPLIER = 0.5;
 static constexpr double PLAYER_UFO_GRAVITY_MULTIPLIER = 0.7;
-static constexpr double PLAYER_SPIDER_GRAVITY_MULTIPLIER = 0.65;
+static constexpr double PLAYER_SPIDER_GRAVITY_MULTIPLIER = gd_physics::SPIDER_GRAVITY_FACTOR;
 static constexpr double PLAYER_FLY_TERMINAL_VELOCITY_Y = 1800.0;
 static constexpr double PLAYER_TERMINAL_VELOCITY_Y = gd_physics::TERMINAL_PX;
 static constexpr double PLAYER_PLATFORMER_ACCELERATION = 5.0;
@@ -106,6 +106,7 @@ PlayerPhysicsResult compute_player_velocity_core(const PlayerPhysicsState &state
 		gravity_flip *= -1.0;
 	}
 
+	const double pre_gravity_velocity_y = local_velocity.y;
 	if (!state.has_dash_control) {
 		if (state.internal_gamemode == 1 /*SHIP*/) {
 			local_velocity.y += PLAYER_GRAVITY * state.delta * gravity_flip * state.gravity_multiplier * state.jump_state * -1.0 * PLAYER_FLY_GRAVITY_MULTIPLIER;
@@ -130,7 +131,8 @@ PlayerPhysicsResult compute_player_velocity_core(const PlayerPhysicsState &state
 			if (state.internal_gamemode == 2 /*UFO*/) {
 				local_velocity.y += PLAYER_GRAVITY * state.delta * gravity_flip * state.gravity_multiplier * PLAYER_UFO_GRAVITY_MULTIPLIER;
 			} else {
-				local_velocity.y += PLAYER_GRAVITY * state.delta * gravity_flip * state.gravity_multiplier;
+				const double mode_gravity = state.internal_gamemode == 5 /*ROBOT*/ ? gd_physics::ROBOT_GRAVITY_FACTOR : 1.0;
+				local_velocity.y += PLAYER_GRAVITY * mode_gravity * state.delta * gravity_flip * state.gravity_multiplier;
 				local_velocity.y = clamp_val(local_velocity.y, -PLAYER_TERMINAL_VELOCITY_Y, PLAYER_TERMINAL_VELOCITY_Y);
 			}
 		}
@@ -147,7 +149,11 @@ PlayerPhysicsResult compute_player_velocity_core(const PlayerPhysicsState &state
 
 	// Robot hold jump
 	if (state.jump_state == 1 && state.robot_timer_time_left > 0.0 && state.internal_gamemode == 5 /*ROBOT*/) {
-		local_velocity.y = gd_physics::X_SPEED_PX * gravity_flip * -1.0;
+		if (state.is_on_floor || coyote_time > 0.0) {
+			local_velocity.y = -gd_physics::robot_jump_px(state.player_scale == 0, gd_physics::speed_index(state.speed_multiplier)) * gravity_flip;
+		} else {
+			local_velocity.y = pre_gravity_velocity_y;
+		}
 	}
 
 	int64_t instant_jump_mode = -1;
@@ -437,8 +443,22 @@ int main() {
 		p.jump_state = 1;
 		p.internal_gamemode = 5; // ROBOT
 		p.robot_timer_time_left = 0.2;
+		p.is_on_floor = true;
 		PlayerPhysicsResult res = compute_player_velocity_core(p);
-		check_true("Robot holding jump gives the x-speed boost", std::abs(res.velocity.y - (-gd_physics::X_SPEED_PX)) < 1e-2);
+		check_true("Robot jumps at half the cube jump", std::abs(res.velocity.y - (-0.5 * gd_physics::JUMP_PX)) < 1e-2);
+		p.is_on_floor = false;
+		p.previous_velocity = Vector2D(1250, -900);
+		res = compute_player_velocity_core(p);
+		check_true("Robot hover holds its velocity", std::abs(res.velocity.y - (-900.0)) < 1e-2);
+		p.jump_state = -1;
+		res = compute_player_velocity_core(p);
+		check_true("Robot falls at 0.9 g", std::abs(res.velocity.y - (-900.0 + PLAYER_GRAVITY * 0.9 / 60.0)) < 1e-2);
+		check_true("Robot hover is 67 ticks of 240 Hz", std::abs(gd_physics::ROBOT_HOVER_SECONDS - 67.0 / 240.0) < 1e-12);
+		check_true("Mini robot jump x0.8", std::abs(gd_physics::robot_jump_px(true, 1) - 0.4 * gd_physics::JUMP_PX) < 1e-6);
+		check_true("Spider falls at the ball's 0.6 g", gd_physics::SPIDER_GRAVITY_FACTOR == 0.6);
+		check_true("Mini swing caps at 9.385", std::abs(gd_physics::fly_up_cap(true, true) - 9.385 * gd_physics::VELOCITY_TO_PX) < 1e-6
+				&& std::abs(gd_physics::fly_down_cap(true, true) - 9.385 * gd_physics::VELOCITY_TO_PX) < 1e-6);
+		check_true("Mini ship cap stays 8 / 0.85", std::abs(gd_physics::fly_up_cap(false, true) - 8.0 / 0.85 * gd_physics::VELOCITY_TO_PX) < 1e-6);
 	}
 
 	// 10. Mini and Big wave vertical speed scaling

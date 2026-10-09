@@ -55,6 +55,7 @@ metadata/_custom_type_script = "uid://dsrhynpnvau8u"
 [node name="JumpBoostComponent" type="Node" parent="." unique_id=1489965246]
 script = ExtResource("10_ofvbe")
 jump_boost = 0.985
+scales_with_speed_jump = true
 
 [node name="GravityFlipChangerComponent" type="Node" parent="." unique_id=1882225510]
 script = ExtResource("11_ihas7")

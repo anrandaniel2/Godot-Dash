@@ -9681,10 +9681,11 @@ public:
 		auto set_up = [&](double up) { local_velocity.y = static_cast<real_t>(-up * gravity_flip); };
 
 		static constexpr double GRAVITY = gd_physics::GRAVITY_PX;
-		static constexpr double SPIDER_GRAVITY_MULTIPLIER = 0.65;
+		static constexpr double SPIDER_GRAVITY_MULTIPLIER = gd_physics::SPIDER_GRAVITY_FACTOR;
 		static constexpr double TERMINAL_VELOCITY_Y = gd_physics::TERMINAL_PX;
 		static constexpr double PLATFORMER_ACCELERATION = 5.0;
 
+		const real_t pre_gravity_velocity_y = local_velocity.y;
 		if (!has_dash_control) {
 			if (internal_gamemode == 1 /*SHIP*/) {
 				double up = up_of();
@@ -9716,8 +9717,9 @@ public:
 					local_velocity.y += static_cast<real_t>(GRAVITY * gd_physics::BALL_GRAVITY_FACTOR * delta * gravity_flip * gravity_multiplier);
 					local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 				} else {
-					// The cube falls with the per-speed gravity (updateTimeMod).
-					local_velocity.y += static_cast<real_t>(GRAVITY * gd_physics::cube_gravity_ratio(speed_tier) * delta * gravity_flip * gravity_multiplier);
+					// The cube falls with the per-speed gravity (updateTimeMod); the robot at 0.9 of it.
+					const double mode_gravity = internal_gamemode == 5 /*ROBOT*/ ? gd_physics::ROBOT_GRAVITY_FACTOR : 1.0;
+					local_velocity.y += static_cast<real_t>(GRAVITY * gd_physics::cube_gravity_ratio(speed_tier) * mode_gravity * delta * gravity_flip * gravity_multiplier);
 					// GD caps the cube's fall at 15 units per frame (updateJump).
 					local_velocity.y = static_cast<real_t>(Math::clamp(static_cast<double>(local_velocity.y), -TERMINAL_VELOCITY_Y, TERMINAL_VELOCITY_Y));
 				}
@@ -9734,8 +9736,14 @@ public:
 		}
 
 		// Robot hold jump
+		// GD jumps at half the cube's jump and then holds that velocity (the
+		// hover adds back the gravity it subtracts) until the budget or the press ends.
 		if (jump_state == 1 && robot_timer_time_left > 0.0 && internal_gamemode == 5 /*ROBOT*/) {
-			local_velocity.y = static_cast<real_t>(gd_physics::X_SPEED_PX * gravity_flip * -1.0);
+			if (is_on_floor || coyote_time > 0.0) {
+				set_up(gd_physics::robot_jump_px(mini, speed_tier));
+			} else {
+				local_velocity.y = pre_gravity_velocity_y;
+			}
 		}
 
 		int64_t instant_jump_mode = -1;

@@ -65,6 +65,8 @@ const PLATFORMER_ACCELERATION: float = 5.0
 const ENSURE_VELOCITY_REDIRECT_SAFE_MARGIN: float = 2.0
 const SPIDER_BOUNCE_MULTIPLIER: float = 0.65
 const ROBOT_FIRE_SCALE: float = 0.9
+## GD's robot hover budget: 67 ticks of 240 Hz (gd_physics::ROBOT_HOVER_SECONDS).
+const ROBOT_HOVER_SECONDS: float = 67.0 / 240.0
 const DEFAULT_COLLISION_MASK: int = 1 << 1 | 1 << 3 | 1 << 4 | 1 << 5 | 1 << 6
 const USED_ACTIONS: Array[String] = ["jump", "move_left", "move_right", "platformer_wave_down", "practice_create_checkpoint", "practice_remove_checkpoint"]
 #endregion
@@ -830,7 +832,7 @@ func _get_jump_state() -> int:
 				(is_jump_just_pressed and (is_on_floor() or coyote_time > 0) and orb_queue.is_empty())
 				or (_click_buffer_state == ClickBufferState.BUFFERING and is_on_floor())
 		):
-			_robot_timer.start(0.25)
+			_robot_timer.start(ROBOT_HOVER_SECONDS)
 		if is_on_ceiling() or is_jump_just_released or colliding_pad:
 			_robot_timer.stop()
 		jump_state = 1 if is_jump_pressed and _robot_timer.time_left > 0.0 else -1

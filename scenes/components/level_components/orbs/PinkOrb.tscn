@@ -50,6 +50,7 @@ metadata/_custom_type_script = "uid://dsrhynpnvau8u"
 [node name="JumpBoostComponent" type="Node" parent="." unique_id=450162884]
 script = ExtResource("7_o35k0")
 jump_boost = 0.706
+scales_with_speed_jump = true
 
 [node name="DirectionChangerComponent" type="Node" parent="." unique_id=490935267]
 script = ExtResource("8_dlals")
