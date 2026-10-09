@@ -23,6 +23,7 @@ func _ready() -> void:
 	_test_replay_roundtrip_classic()
 	_test_json_variant()
 	_test_framerate_resample()
+	_test_gdr2_binary()
 	_test_rejects_garbage()
 	print("GDR_SELFTEST_SUMMARY total=", checks, " failed=", failures.size())
 	for failure in failures:
@@ -226,6 +227,25 @@ func _test_framerate_resample() -> void:
 			jump_ticks += 1
 	# Frames 30..44 become ticks 120..179.
 	check("resampled jump window", jump_ticks == 60)
+
+
+func _test_gdr2_binary() -> void:
+	# Hand-built GDR2 file (maxnut/GDReplayFormat gdr2, Replay::exportData):
+	# author "a", 240 fps, level 5 "L", one death, jump down at frame 10 and
+	# up at frame 20 (non-platformer packing: delta << 1 | down).
+	var bytes: PackedByteArray = "GDR".to_ascii_buffer()
+	bytes.append_array(_hex_to_raw("02" + "00" + "0161" + "00" + "00000000" + "baac01"
+			+ "406e000000000000" + "00" + "00" + "00" + "00" + "0178" + "01" + "05" + "014c"
+			+ "00" + "0107" + "02" + "02" + "15" + "14"))
+	var result: Dictionary = GDRFormat.from_bytes(bytes)
+	check("gdr2: parses", result.ok)
+	if not result.ok:
+		return
+	var replay: Replay = result.replay
+	check("gdr2: metadata", replay.author == "a" and replay.level_id == 5 and replay.level_name == "L")
+	check("gdr2: length", replay.data.size() == 21)
+	check("gdr2: jump held from frame 10 to 19",
+			replay.data[9][0] == 0 and replay.data[10][0] == 1 and replay.data[19][0] == 1 and replay.data[20][0] == 0)
 
 
 func _test_rejects_garbage() -> void:

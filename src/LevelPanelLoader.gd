@@ -517,6 +517,12 @@ func _open_importer() -> void:
 			_import_level_from_android_picker,
 		)
 		return
+	# On the web, FileDialog only browses the browser's virtual filesystem;
+	# the browser's own picker reaches the device's storage. No accept
+	# filter: mobile browsers grey out .gmd/.gmd2/.lvl (no MIME type).
+	if WebFilePicker.is_available():
+		WebFilePicker.pick("", func(path: String) -> void: _do_import_level(path, true))
+		return
 	import_dialog.show()
 
 

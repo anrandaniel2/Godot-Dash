@@ -32,6 +32,10 @@ const BOT_NAME := "Godot-Dash"
 const GAME_VERSION := 2.2
 const FORMAT_VERSION := 1.0
 const FILE_EXTENSION := ".gdr"
+## GDR2 (Eclipse Menu's GDReplay engine) writes binary files that start
+## with these three bytes, usually with a .gdr2 extension.
+const GDR2_MAGIC := "GDR"
+const IMPORT_EXTENSIONS: PackedStringArray = [".gdr", ".gdr2"]
 ## Defensive ceiling for imported replays (one hour at 240 ticks/s): a
 ## corrupt duration field must not translate into a multi-gigabyte array.
 const MAX_IMPORT_TICKS := 240 * 60 * 60
@@ -80,6 +84,11 @@ static func from_bytes(bytes: PackedByteArray) -> Dictionary:
 	# other parser if the obvious one fails.
 	var document: Variant = null
 	var error := ""
+	if bytes.size() >= 3 and bytes.slice(0, 3).get_string_from_ascii() == GDR2_MAGIC:
+		var gdr2 := _gdr2_document(bytes)
+		if not gdr2.ok:
+			return {"ok": false, "error": "not a valid GDR2 replay (%s)" % gdr2.error}
+		return _replay_from_document(gdr2.document)
 	if bytes.size() > 0 and bytes[0] == 0x7b: # '{'
 		var parsed: Variant = JSON.parse_string(bytes.get_string_from_utf8())
 		if typeof(parsed) == TYPE_DICTIONARY:
@@ -99,6 +108,110 @@ static func from_bytes(bytes: PackedByteArray) -> Dictionary:
 	if typeof(document) != TYPE_DICTIONARY:
 		return {"ok": false, "error": "not a GDR document (%s)" % error}
 	return _replay_from_document(document)
+
+
+## GDR2 reader (maxnut/GDReplayFormat gdr2 branch, include/gdr/gdr.hpp
+## Replay::importData and binarystream.hpp): integers and bools are LEB128
+## varints, strings are varint-length-prefixed, float/double are big-endian.
+## Returns a GDR1-shaped document for _replay_from_document.
+static func _gdr2_document(bytes: PackedByteArray) -> Dictionary:
+	var reader := {"bytes": bytes, "at": 3, "ok": true}
+	_read_varint(reader) # format version
+	var input_tag := _read_string(reader)
+	var author := _read_string(reader)
+	var description := _read_string(reader)
+	var duration := _read_big_endian(reader, 4)
+	_read_varint(reader) # game version
+	var framerate := _read_big_endian(reader, 8)
+	_read_varint(reader) # seed
+	_read_varint(reader) # coins
+	_read_varint(reader) # ldm
+	var platformer := _read_varint(reader) != 0
+	_read_string(reader) # bot name
+	_read_varint(reader) # bot version
+	var level_id := _read_varint(reader)
+	var level_name := _read_string(reader)
+	reader.at += _read_varint(reader) # replay extension
+	var death_count := _read_varint(reader)
+	for i: int in death_count:
+		if not reader.ok:
+			break
+		_read_varint(reader)
+	_read_varint(reader) # total input count
+	var p1_inputs := _read_varint(reader)
+	if not reader.ok or reader.at > bytes.size():
+		return {"ok": false, "error": "truncated header"}
+	var inputs: Array = []
+	var previous := 0
+	var player2 := p1_inputs == 0
+	while reader.at < bytes.size():
+		var packed := _read_varint(reader)
+		if not reader.ok:
+			return {"ok": false, "error": "truncated input"}
+		var frame: int
+		var button: int = BUTTON_JUMP
+		if platformer:
+			frame = previous + (packed >> 3)
+			button = (packed >> 1) & 3
+		else:
+			frame = previous + (packed >> 1)
+		inputs.append({"2p": player2, "btn": button, "down": (packed & 1) == 1, "frame": frame})
+		if not input_tag.is_empty():
+			reader.at += _read_varint(reader)
+		previous = frame
+		if p1_inputs > 0:
+			p1_inputs -= 1
+			if p1_inputs == 0:
+				previous = 0
+				player2 = true
+	return {"ok": true, "document": {
+		"author": author,
+		"description": description,
+		"duration": duration,
+		"framerate": framerate,
+		"platformer": platformer,
+		"level": {"id": level_id, "name": level_name},
+		"inputs": inputs,
+	}}
+
+
+static func _read_varint(reader: Dictionary) -> int:
+	var bytes: PackedByteArray = reader.bytes
+	var value := 0
+	var shift := 0
+	while true:
+		if reader.at >= bytes.size() or shift > 63:
+			reader.ok = false
+			return 0
+		var byte: int = bytes[reader.at]
+		reader.at += 1
+		value |= (byte & 0x7F) << shift
+		shift += 7
+		if byte & 0x80 == 0:
+			return value
+	return value
+
+
+static func _read_string(reader: Dictionary) -> String:
+	var length := _read_varint(reader)
+	var bytes: PackedByteArray = reader.bytes
+	if not reader.ok or length < 0 or reader.at + length > bytes.size():
+		reader.ok = false
+		return ""
+	var text := bytes.slice(reader.at, reader.at + length).get_string_from_utf8()
+	reader.at += length
+	return text
+
+
+static func _read_big_endian(reader: Dictionary, size: int) -> float:
+	var bytes: PackedByteArray = reader.bytes
+	if reader.at + size > bytes.size():
+		reader.ok = false
+		return 0.0
+	var chunk := bytes.slice(reader.at, reader.at + size)
+	chunk.reverse()
+	reader.at += size
+	return chunk.decode_float(0) if size == 4 else chunk.decode_double(0)
 
 
 static func save(replay: Replay, path: String) -> Error:

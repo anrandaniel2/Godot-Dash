@@ -52,6 +52,9 @@ static func _on_file_read(args: Array) -> void:
 		file_name = "imported"
 	var bytes: PackedByteArray = Marshalls.base64_to_raw(str(args[1]))
 	DirAccess.make_dir_recursive_absolute(IMPORT_DIR)
+	# Only the latest pick is kept; earlier copies were already imported.
+	for old_file: String in DirAccess.get_files_at(IMPORT_DIR):
+		DirAccess.remove_absolute(IMPORT_DIR.path_join(old_file))
 	var path: String = IMPORT_DIR.path_join(file_name)
 	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
 	if file == null:

@@ -182,7 +182,9 @@ func _open_importer() -> void:
 	# On the web, FileDialog only browses the browser's virtual filesystem;
 	# the browser's own picker reaches the device's storage.
 	if WebFilePicker.is_available():
-		WebFilePicker.pick(GDRFormat.FILE_EXTENSION, _import_replay_from_web_picker)
+		# No accept filter: mobile browsers grey out files whose extension has
+		# no MIME type (.gdr/.gdr2), and the import content-sniffs anyway.
+		WebFilePicker.pick("", _import_replay_from_web_picker)
 		return
 	import_dialog.show()
 
