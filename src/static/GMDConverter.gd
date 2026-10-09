@@ -521,7 +521,7 @@ static func _import_level_string(level_string: String, level_name: String, repor
 		var object_data: Dictionary = { }
 		var kind: int = 0 # 0 = scene, 1 = decoration, 2 = substituted block
 
-		if GMDObjects.MAP.has(gd_id) or gd_id in GMDObjects.TRIGGER_IDS:
+		if GMDObjects.has_object_scene(gd_id) or gd_id in GMDObjects.TRIGGER_IDS:
 			object_data = _object_from_properties(gd_id, properties, chunk_idx, channel_style, used_channels)
 		else:
 			object_data = _decoration_from_properties(
@@ -752,7 +752,7 @@ static func _native_import_tables(channel_style: Dictionary[int, Dictionary]) ->
 		var default_z_layer := PackedInt32Array()
 		default_z_layer.resize(size)
 		for gd_id: int in ids:
-			if gd_id < 0 or GMDObjects.MAP.has(gd_id) or gd_id in GMDObjects.TRIGGER_IDS \
+			if gd_id < 0 or GMDObjects.has_object_scene(gd_id) or gd_id in GMDObjects.TRIGGER_IDS \
 					or LEGACY_COLOR_TRIGGER_CHANNELS.has(gd_id) or gd_id == PULSE_TRIGGER_ID:
 				continue
 			if not GDDecorationLoader.can_draw(gd_id):

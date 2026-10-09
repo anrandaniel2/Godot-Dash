@@ -247,7 +247,26 @@ func _test_hidden_objects() -> void:
 	hidden_portal.free()
 
 
+## Unmapped slopes, spikes, saws and blocks used to import as collision-less
+## decoration artwork. They must resolve to their generated scene, carry a
+## real hitbox shape and stay out of the native decoration table.
+func _test_generated_static_hitboxes() -> void:
+	var flags: PackedByteArray = GMDConverter._native_import_tables({}).get("id_flags", PackedByteArray())
+	for gd_id: int in [294, 363, 9, 183, 40, 143, 918, 919, 1911]:
+		assert(GMDObjects.is_static_gameplay_object(gd_id), "static hitbox: %d is not a static gameplay object" % gd_id)
+		var scene_path: String = GMDObjects.get_object(gd_id).get("scene", "")
+		assert(scene_path == "scenes/gd_objects/gd_%d.tscn" % gd_id, "static hitbox: %d has scene '%s'" % [gd_id, scene_path])
+		assert(gd_id >= flags.size() or (flags[gd_id] & GMDConverter.NATIVE_ID_DECORATION) == 0,
+				"static hitbox: %d is still imported as decoration" % gd_id)
+		var node: Node = (load("res://" + scene_path) as PackedScene).instantiate()
+		var hitbox := node.get_node_or_null(^"Collision/Hitbox") as CollisionShape2D
+		assert(hitbox != null and hitbox.shape != null, "static hitbox: %d has no collision shape" % gd_id)
+		node.free()
+	assert(not GMDObjects.is_static_gameplay_object(1154), "static hitbox: outline decoration 1154 gained collision")
+
+
 func _ready() -> void:
+	_test_generated_static_hitboxes()
 	_test_batch_order()
 	_test_hsv_neutral()
 	_test_gameplay_z()

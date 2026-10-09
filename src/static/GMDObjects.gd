@@ -523,7 +523,7 @@ const FALLBACK_BLOCK: Dictionary = {
 ## [code]true[/code] when [param gd_id] is a solid square block that Godot Dash
 ## has no specific scene for, and so should be imported as a plain block.
 static func is_fallback_block(gd_id: int) -> bool:
-	if MAP.has(gd_id):
+	if has_object_scene(gd_id):
 		return false
 	for range_: Vector2i in BLOCK_ID_RANGES:
 		if gd_id >= range_.x and gd_id <= range_.y:
@@ -531,6 +531,22 @@ static func is_fallback_block(gd_id: int) -> bool:
 			# the placeholder scene; otherwise the level gets a white square.
 			return GDObjectFrames.has_frames(gd_id)
 	return false
+
+
+## Static gameplay objects (solid blocks, slopes, spikes, saws, breakable
+## bricks) with no hand-made entry in [member MAP]. They resolve to their
+## generated scene, which carries the GD hitbox from the game-extracted table
+## (tools/gd_hitbox_data.json, cross-checked against the gmdkit 2.2
+## hitbox_table.csv), so they import with collision instead of as artwork.
+const GENERATED_STATIC_IDS: Array[int] = [
+	9, 40, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 74, 75, 76, 77, 78, 81, 82, 83, 90, 91, 92,\n	93, 94, 95, 96, 116, 117, 118, 119, 121, 122, 135, 143, 160, 161, 162, 163, 165, 166, 167,\n	168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 183, 184, 185, 186, 187, 188, 192,\n	194, 195, 196, 197, 207, 208, 209, 210, 212, 213, 215, 218, 219, 220, 243, 244, 247, 248, 249,\n	250, 252, 253, 254, 255, 256, 257, 258, 260, 261, 263, 264, 265, 267, 268, 269, 270, 271, 272,\n	274, 275, 294, 295, 299, 301, 305, 307, 309, 311, 315, 317, 321, 323, 326, 327, 328, 331, 333,\n	337, 339, 343, 345, 349, 351, 353, 355, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 421,\n	422, 446, 447, 458, 471, 475, 483, 484, 492, 493, 651, 652, 661, 662, 663, 664, 665, 666, 667,\n	678, 679, 680, 709, 710, 711, 712, 720, 726, 727, 728, 729, 740, 741, 742, 768, 886, 887, 918,\n	919, 989, 991, 1155, 1156, 1157, 1208, 1209, 1210, 1220, 1221, 1222, 1226, 1227, 1260, 1262,\n	1264, 1338, 1339, 1340, 1341, 1342, 1343, 1344, 1345, 1561, 1562, 1565, 1566, 1567, 1582,\n	1583, 1619, 1620, 1701, 1702, 1703, 1705, 1706, 1707, 1708, 1709, 1710, 1711, 1712, 1713,\n	1714, 1715, 1716, 1717, 1718, 1719, 1720, 1721, 1722, 1723, 1724, 1725, 1726, 1727, 1728,\n	1729, 1730, 1731, 1732, 1733, 1734, 1735, 1736, 1743, 1744, 1745, 1746, 1747, 1748, 1749,\n	1750, 1886, 1887, 1888, 1903, 1904, 1905, 1906, 1907, 1910, 1911,
+]
+
+
+## [code]true[/code] when [param gd_id] imports as a gameplay object: a
+## [member MAP] entry or a [member GENERATED_STATIC_IDS] static object.
+static func has_object_scene(gd_id: int) -> bool:
+	return MAP.has(gd_id) or gd_id in GENERATED_STATIC_IDS
 
 
 ## Reverse lookup built lazily on first export.
@@ -547,6 +563,12 @@ static func get_object(gd_id: int) -> Dictionary:
 		return MAP[gd_id]
 	if gd_id in TRIGGER_IDS:
 		return GENERIC_TRIGGER
+	if gd_id in GENERATED_STATIC_IDS:
+		return {
+			"scene": GD_OBJECT_SCENES + "gd_%d.tscn" % gd_id,
+			"name": "GDObject%d" % gd_id,
+			"colorable": true,
+		}
 	if is_fallback_block(gd_id):
 		return FALLBACK_BLOCK
 	return { }
@@ -555,7 +577,7 @@ static func get_object(gd_id: int) -> Dictionary:
 ## [code]true[/code] when the object ID can be imported, either because it has a
 ## dedicated scene or because it's a block that falls back to a plain one.
 static func is_supported(gd_id: int) -> bool:
-	return MAP.has(gd_id) or gd_id in TRIGGER_IDS or is_fallback_block(gd_id)
+	return has_object_scene(gd_id) or gd_id in TRIGGER_IDS or is_fallback_block(gd_id)
 
 
 ## The generated scene for [param gd_id] as a relative path
@@ -590,7 +612,7 @@ static func is_static_gameplay_object(gd_id: int) -> bool:
 	if description.is_empty():
 		return false
 	var scene: String = description.get("scene", "")
-	return scene.begins_with(SOLIDS) or scene.begins_with(HAZARDS)
+	return scene.begins_with(SOLIDS) or scene.begins_with(HAZARDS) or scene.begins_with(GD_OBJECT_SCENES)
 
 
 ## Returns the Geometry Dash object ID for a Godot Dash scene path

@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://cdnrsbt0hqdm1"]
+[gd_scene load_steps=10 format=3 uid="uid://cdnrsbt0hqdm1"]
 
 [ext_resource type="Script" uid="uid://cn58fxe6ybso3" path="res://src/GDObject.gd" id="gd_script"]
 [ext_resource type="Texture2D" uid="uid://dx77cvh0lh2m5" path="res://assets/textures/gd_atlas/gd_objects_atlas_0.png" id="gd_page0"]
@@ -19,6 +19,9 @@ region = Rect2(1037, 1219, 48, 34)
 [sub_resource type="AtlasTexture" id="AtlasTexture_gd2"]
 atlas = ExtResource("gd_page0")
 region = Rect2(4028, 1880, 30, 15)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_gdc0"]
+size = Vector2(64, 34.133333)
 
 [node name="GD1911" type="Node2D"]
 texture_filter = 1
@@ -59,6 +62,7 @@ metadata/_editor_description_ = "Collision for this Geometry Dash object type. t
 metadata/_editor_auto_collision_ = "gd-hitboxes-2"
 
 [node name="Hitbox" type="CollisionShape2D" parent="Collision"]
+shape = SubResource("RectangleShape2D_gdc0")
 debug_color = Color(0, 0.07, 0.7, 0.25)
 
 [node name="EditorSelectionCollider" type="Area2D" parent="."]

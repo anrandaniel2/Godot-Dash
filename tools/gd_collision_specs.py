@@ -170,6 +170,12 @@ def _slope_polygon(rect: list[float], orientation: str) -> Polygon:
     return Polygon([(gx * GD_TO_WORLD, -gy * GD_TO_WORLD) for gx, gy in corners])
 
 
+# OpenGD leaves these ids untyped although they carry a gameplay hitbox; the
+# gmdkit 2.2 hitbox table (UHDanke/gmdkit data/csv/hitbox_table.csv) classes
+# 918 as Sawblade, 919 as Hazard and 1911 as Block.
+UNTYPED_GAMEPLAY_TYPES: dict[int, int] = {918: 2, 919: 2, 1911: 0}
+
+
 _hitbox_cache: dict | None = None
 
 
@@ -191,6 +197,8 @@ def _build_specs() -> tuple[dict[int, CollisionSpec], set[int]]:
     for key, entry in _hitbox_data().get("objects", {}).items():
         gd_id = int(key)
         obj_type = entry.get("type")
+        if obj_type is None:
+            obj_type = UNTYPED_GAMEPLAY_TYPES.get(gd_id)
         rect = entry.get("rect")
         radius = entry.get("radius")
         if gd_id in INVISIBLE_BLOCK_IDS:
