@@ -370,15 +370,16 @@ func _test_camera_reset_clears_shake() -> void:
 	camera.free()
 
 
-func _test_web_texture_filtering_migration() -> void:
-	# The web build went black with linear-with-mipmaps; the migration moves only that value on web.
-	assert(Config.web_texture_filtering_after_migration(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, true) == Config.TextureFilteringMode.NEAREST_NEIGHBOR, "web mipmap filtering must migrate to nearest")
-	assert(Config.web_texture_filtering_after_migration(Config.TextureFilteringMode.LINEAR, true) == Config.TextureFilteringMode.LINEAR, "web linear filtering must be kept")
-	assert(Config.web_texture_filtering_after_migration(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, false) == Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, "desktop mipmap filtering must not change")
+func _test_web_graphics_forced() -> void:
+	# The web build forces anti-aliasing off and Nearest filtering; desktop keeps the choice.
+	assert(Config.web_anti_aliasing(Viewport.MSAA.MSAA_8X, true) == Viewport.MSAA.MSAA_DISABLED, "web MSAA must be forced off")
+	assert(Config.web_anti_aliasing(Viewport.MSAA.MSAA_8X, false) == Viewport.MSAA.MSAA_8X, "desktop MSAA must not change")
+	assert(Config.web_texture_filtering(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, true) == Config.TextureFilteringMode.NEAREST_NEIGHBOR, "web filtering must be forced to nearest")
+	assert(Config.web_texture_filtering(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, false) == Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, "desktop filtering must not change")
 
 
 func _ready() -> void:
-	_test_web_texture_filtering_migration()
+	_test_web_graphics_forced()
 	_test_ring_speed_scaling()
 	_test_camera_floor_view()
 	_test_camera_end_holds_height()

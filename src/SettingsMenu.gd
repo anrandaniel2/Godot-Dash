@@ -86,7 +86,7 @@ func _on_anti_aliasing_value_changed(anti_aliasing_mode: Viewport.MSAA) -> void:
 	var viewport: Viewport = get_viewport()
 	if not viewport:
 		return
-	viewport.msaa_2d = anti_aliasing_mode
+	viewport.msaa_2d = Config.web_anti_aliasing(anti_aliasing_mode, OS.has_feature("web"))
 
 
 func _on_render_scale_value_changed(value: int) -> void:
@@ -98,6 +98,7 @@ func _on_render_scale_value_changed(value: int) -> void:
 
 
 func _on_texture_filtering_value_changed(texture_filtering_mode: Config.TextureFilteringMode) -> void:
+	texture_filtering_mode = Config.web_texture_filtering(texture_filtering_mode, OS.has_feature("web"))
 	match texture_filtering_mode:
 		Config.TextureFilteringMode.NEAREST_NEIGHBOR:
 			get_viewport().canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST

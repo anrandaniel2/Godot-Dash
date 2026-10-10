@@ -217,11 +217,8 @@ func _init():
 		# Web browsers forbid entering fullscreen without a direct user gesture.
 		window_mode = WindowMode.WINDOWED
 	render_scale = config_file.get_value("Graphics", "render_scale", render_scale)
-	anti_aliasing = config_file.get_value("Graphics", "anti_aliasing", anti_aliasing)
-	# Web default is Nearest: linear-with-mipmaps made the web build go black for
-	# at least one player. Desktop keeps the export default.
-	var default_filtering: TextureFilteringMode = TextureFilteringMode.NEAREST_NEIGHBOR if OS.has_feature("web") else texture_filtering
-	texture_filtering = config_file.get_value("Graphics", "texture_filtering", default_filtering)
+	anti_aliasing = web_anti_aliasing(config_file.get_value("Graphics", "anti_aliasing", anti_aliasing), OS.has_feature("web"))
+	texture_filtering = web_texture_filtering(config_file.get_value("Graphics", "texture_filtering", texture_filtering), OS.has_feature("web"))
 	# The previous web build turned bloom off once because Compatibility glow is
 	# several fullscreen passes. Soft glow is a different effect, so that
 	# one-time switch must not keep the Graphics toggle off.
@@ -266,13 +263,6 @@ func _init():
 			max_fps = 0
 		config_file.set_value("Graphics", "max_fps", max_fps)
 		config_file.set_value("Performance", "defaults_version", 3)
-		config_file.save("user://config.cfg")
-	# Version 4: a saved Linear-with-mipmaps setting on web moves to Nearest once,
-	# so an existing install that went black can recover without clearing site data.
-	if int(config_file.get_value("Performance", "defaults_version", 0)) < 4:
-		texture_filtering = web_texture_filtering_after_migration(texture_filtering, OS.has_feature("web"))
-		config_file.set_value("Graphics", "texture_filtering", texture_filtering)
-		config_file.set_value("Performance", "defaults_version", 4)
 		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
@@ -344,10 +334,17 @@ func _apply_bloom_to_world(value: bool) -> void:
 		world.environment.glow_enabled = value and not OS.has_feature("web")
 
 
-## One-time web migration (defaults_version 4): linear-with-mipmaps becomes
-## Nearest on web; every other value, and every desktop value, is kept.
-static func web_texture_filtering_after_migration(mode: TextureFilteringMode, is_web: bool) -> TextureFilteringMode:
-	if is_web and mode == TextureFilteringMode.LINEAR_WITH_MIPMAPS:
+## Web builds force anti-aliasing off and Nearest filtering: the web build went
+## black with the saved settings (2x/8x MSAA, linear-with-mipmaps). Desktop keeps
+## the player's choice.
+static func web_anti_aliasing(mode: Viewport.MSAA, is_web: bool) -> Viewport.MSAA:
+	if is_web:
+		return Viewport.MSAA.MSAA_DISABLED
+	return mode
+
+
+static func web_texture_filtering(mode: TextureFilteringMode, is_web: bool) -> TextureFilteringMode:
+	if is_web:
 		return TextureFilteringMode.NEAREST_NEIGHBOR
 	return mode
 
