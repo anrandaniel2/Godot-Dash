@@ -360,11 +360,22 @@ func _test_camera_gp_offset_scale() -> void:
 	assert(is_equal_approx(CameraGameplayOffsetChangerComponent.gd_offset_factor(12.5) * PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS, 37.5), "camera GP offset: a value of 12.5 must halve the look-ahead")
 
 
+## A restart drops running Shake fades without their final zero-offset tick,
+## so reset() must clear any shake offset left behind.
+func _test_camera_reset_clears_shake() -> void:
+	var camera := PlayerCamera.new()
+	camera.shake_offset = Vector2(12.0, -7.0)
+	camera.reset()
+	assert(camera.shake_offset == Vector2.ZERO, "camera reset: shake offset %s survives a restart" % camera.shake_offset)
+	camera.free()
+
+
 func _ready() -> void:
 	_test_ring_speed_scaling()
 	_test_camera_floor_view()
 	_test_camera_end_holds_height()
 	_test_camera_gp_offset_scale()
+	_test_camera_reset_clears_shake()
 	_test_interactable_hitboxes()
 	_test_generated_static_hitboxes()
 	_test_batch_order()

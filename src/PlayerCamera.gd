@@ -169,6 +169,9 @@ static func gd_end_holds_height(in_end_animation: bool, next_centre_x: float, en
 
 
 func reset() -> void:
+	# A restart or checkpoint restore drops running Shake fades without their
+	# final zero-offset tick, so a shake offset left over from them must go.
+	shake_offset = Vector2.ZERO
 	_last_ground_was_floor = false
 	free_ease = GD_FREE_EASE
 	free_deadzone_px = -1.0
