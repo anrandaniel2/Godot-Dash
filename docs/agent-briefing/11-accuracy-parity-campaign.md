@@ -400,7 +400,7 @@ than in the physics step. **Measure, don't guess** — see §10.
 | 1916 | Offset | `CameraOffsetTrigger` / `CameraOffsetChangerComponent` | **native** (keys `28/29` × cells) |
 | 2015 | Rotate | `CameraRotateTrigger` / `CameraRotationChangerComponent` | **native** (key `68`, +`69`×360) |
 | 2062 | Edge | `CameraEdgeTrigger` | components (`player_camera.limit_*`, reset ±10,000,000) |
-| 2901 | Gameplay Offset | `CameraGameplayOffsetTrigger` / `...ChangerComponent` | components (`gameplay_offset_factor`, %) |
+| 2901 | Gameplay Offset | `CameraGameplayOffsetTrigger` / `...ChangerComponent` | components (`gameplay_offset_factor` = raw value / 25; default 25 = 75 units) |
 | 2016 | Guide (editor-only) | `CameraGuide` in `GMDObjects.MAP` | editor |
 | 1520 | Shake | `CameraShakeTrigger` | **native** (key `75`, `CameraShakeComponent` when not) |
 | 2066 / 2900 | Gravity / gameplay rotate | `GravityTrigger`, `GameplayRotateTrigger` | components |
@@ -423,9 +423,12 @@ Known `H:` parity gaps to verify against a 2.2 level and the 2.2 decompiles:
 - The height hold (`PlayerCamera.gd_end_holds_height`) starts when the camera centre reaches the
   end stop, not only in the end animation. Before this the view kept following the player up into
   the portal during the approach. Guard: `_test_camera_end_holds_height` in the visual smoke test.
-- Not yet explained: both Amethyst cutscenes sit too far left on screen. Cutscene 1 (about 68%,
-  ship) has no camera trigger, so it is the plain follow lead (75 units) or the view size, not a
-  trigger. The level-probe runs in CI logged physics tick 2 after 600 s, so they cannot measure it yet.
+- GP Offset (2901) scale: the component multiplied the raw value by 0.01 with a default of 100, so
+  GD's default value 25 (gd_docs: 75 GD units ahead) gave a 19-unit look-ahead and pushed the player
+  right on screen. Now factor = value / 25 (`CameraGameplayOffsetChangerComponent.gd_offset_factor`).
+  Guard: `_test_camera_gp_offset_scale`. This is the only camera input that moves the look-ahead, so
+  it is the likely cause of the "too far left" cutscene framing. Not confirmed in-game: it depends on a
+  GP Offset trigger active before the cutscene.
 
 ---
 

@@ -353,10 +353,18 @@ func _test_camera_end_holds_height() -> void:
 	assert(not PlayerCamera.gd_end_holds_height(false, 5000.0, INF), "camera end: no end stop, so no hold")
 
 
+func _test_camera_gp_offset_scale() -> void:
+	var default_factor: float = CameraGameplayOffsetChangerComponent.gd_offset_factor(CameraGameplayOffsetChangerComponent.GD_DEFAULT_OFFSET_VALUE)
+	assert(is_equal_approx(default_factor, 1.0), "camera GP offset: GD's default value 25 must be the default look-ahead (factor 1)")
+	assert(is_equal_approx(default_factor * PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS, 75.0), "camera GP offset: default value must keep the 75-unit look-ahead")
+	assert(is_equal_approx(CameraGameplayOffsetChangerComponent.gd_offset_factor(12.5) * PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS, 37.5), "camera GP offset: a value of 12.5 must halve the look-ahead")
+
+
 func _ready() -> void:
 	_test_ring_speed_scaling()
 	_test_camera_floor_view()
 	_test_camera_end_holds_height()
+	_test_camera_gp_offset_scale()
 	_test_interactable_hitboxes()
 	_test_generated_static_hitboxes()
 	_test_batch_order()

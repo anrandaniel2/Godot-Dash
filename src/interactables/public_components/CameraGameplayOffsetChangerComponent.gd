@@ -7,7 +7,12 @@ enum Mode {
 }
 
 @export var mode: Mode = Mode.SET
-@export_custom(PROPERTY_HINT_RANGE, "-100.0,100.0,0.01,or_greater,or_less,suffix:%") var gameplay_offset := Vector2.ONE * 100.0
+## GD's GP Offset value: the editor default is 25, which is the default
+## 75-unit look-ahead (gd_docs camera properties, PlayerCamera.gd). Values are
+## raw GD values, so a parsed level keeps its numbers.
+const GD_DEFAULT_OFFSET_VALUE: float = 25.0
+
+@export_custom(PROPERTY_HINT_RANGE, "-100.0,100.0,0.1,or_greater,or_less") var gameplay_offset := Vector2.ONE * GD_DEFAULT_OFFSET_VALUE
 
 @export_storage var initial_gameplay_offset_factor: Vector2
 
@@ -39,9 +44,15 @@ func _get_property_default_value(property: String) -> Variant:
 		"mode":
 			return Mode.SET
 		"gameplay_offset":
-			return Vector2.ONE * 100.0
+			return Vector2.ONE * GD_DEFAULT_OFFSET_VALUE
 		_:
 			return null
+
+
+## The camera's gameplay offset factor for a GD GP Offset value: 1.0 is the
+## default look-ahead, so 25 maps to 1.0 and 12.5 to half of it.
+static func gd_offset_factor(value: float) -> float:
+	return value / GD_DEFAULT_OFFSET_VALUE
 
 
 func start(_player: Player) -> void:
@@ -51,6 +62,6 @@ func start(_player: Player) -> void:
 func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
 	match mode:
 		Mode.ADD:
-			LevelManager.player_camera.gameplay_offset_factor += gameplay_offset * 0.01 * weight_delta
+			LevelManager.player_camera.gameplay_offset_factor += gameplay_offset / GD_DEFAULT_OFFSET_VALUE * weight_delta
 		Mode.SET:
-			LevelManager.player_camera.gameplay_offset_factor += (gameplay_offset * 0.01 - initial_gameplay_offset_factor) * weight_delta
+			LevelManager.player_camera.gameplay_offset_factor += (gameplay_offset / GD_DEFAULT_OFFSET_VALUE - initial_gameplay_offset_factor) * weight_delta
