@@ -155,11 +155,9 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
 
 ## 5. Open items and unresolved questions
 
-1. **Physics tick rate.** `project.godot` sets `physics_ticks_per_second = 120`, while
-   `README.md` and `src/Player.gd` describe a "240 Hz player loop" and `GDRFormat.gd` treats 240
-   as "the same rate this engine's physics run at". Resolve by checking
-   `Engine.physics_ticks_per_second` at runtime in a build, or by reading the replay
-   length/time relationship for a known level. Until then, do not assert either number.
+1. **Physics tick rate (resolved).** `project.godot` sets `physics_ticks_per_second = 240`, matching
+   the 240 Hz player loop and `GDRFormat`'s 240/s file standard. Replays store no tick rate, so replays
+   recorded at 120 ticks/s before this change play back at double speed.
 2. **Plan milestones.** M3 is partial (editor palette repoint and `GDArtSwap` retirement
    pending), M4/M5 not started. Do not delete old component scenes or their SVG art yet.
 3. **Hitbox follow-ups.** Invisible slopes 1344/1345 (homology-resolved, wants a GD

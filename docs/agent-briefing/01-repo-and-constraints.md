@@ -47,7 +47,7 @@ window/vsync/vsync_mode     = 1
 display_server/driver.linuxbsd = "wayland"
 
 [physics]
-common/physics_ticks_per_second      = 120
+common/physics_ticks_per_second      = 240
 common/max_physics_steps_per_frame   = 12
 common/physics_interpolation         = true
 
