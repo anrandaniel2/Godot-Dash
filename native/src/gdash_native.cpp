@@ -3243,6 +3243,8 @@ class NativeTriggerRuntime : public RefCounted {
 		double linear_eased_weight = 0.0;     // shake noise position
 		Ref<FastNoiseLite> noise;
 	};
+	// Level-local -> global placement for packed rows (see set_packed_transform).
+	Transform2D packed_transform;
 	std::vector<Record> records;
 	std::vector<size_t> x_order;
 	// Direct group -> record index lookup makes spawn/event dispatch proportional
@@ -6869,6 +6871,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeTriggerRuntime::register_packed_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_table", "table"), &NativeTriggerRuntime::register_packed_table);
+		ClassDB::bind_method(D_METHOD("set_packed_transform", "transform"), &NativeTriggerRuntime::set_packed_transform);
+		ClassDB::bind_method(D_METHOD("record_position", "index"), &NativeTriggerRuntime::record_position);
 		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeTriggerRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
 		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeTriggerRuntime::bind_shader_layer);
 		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeTriggerRuntime::bind_ui_layer);
@@ -6968,8 +6972,21 @@ public:
 		records.push_back(std::move(record)); index_dirty = true;
 		return static_cast<int64_t>(index);
 	}
+	// Packed rows carry level-local coordinates (the converter's transform
+	// origin, GROUND_Y = 0), but the player and every node-based trigger live
+	// in global space. The bridge sets packed_transform to the Level node's
+	// global transform so packed triggers land where the node path puts them:
+	// without it a trigger fires ~640 px (150 GD units) early in X and is
+	// ~925 px off in Y for touch checks. Identity keeps direct callers
+	// (self-tests, smoke tests) unchanged.
+	void set_packed_transform(const Transform2D &transform) { packed_transform = transform; }
+	Vector2 record_position(int64_t index) const {
+		if (index < 0 || static_cast<size_t>(index) >= records.size()) return Vector2();
+		return Vector2(static_cast<real_t>(records[index].x), static_cast<real_t>(records[index].y));
+	}
 	int64_t register_packed_trigger(double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
-		return register_trigger(nullptr, x, y, flags, source_order, groups, gd_id, properties);
+		const Vector2 place = packed_transform.xform(Vector2(static_cast<real_t>(x), static_cast<real_t>(y)));
+		return register_trigger(nullptr, place.x, place.y, flags, source_order, groups, gd_id, properties);
 	}
 	// Registers every row of a PackedTriggers table straight from its columns
 	// (see src/static/PackedTriggers.gd). Only the effect parser still takes a
@@ -7009,7 +7026,9 @@ public:
 				const int64_t end = std::clamp<int64_t>(value_offsets[k + 1], begin, text_size);
 				properties[String::num_int64(prop_keys[k])] = String::utf8(text + begin, end - begin);
 			}
-			register_trigger(nullptr, xform[row * 6 + 4], xform[row * 6 + 5], flags[row], source_order[row], groups,
+			const Vector2 place = packed_transform.xform(Vector2(static_cast<real_t>(xform[row * 6 + 4]),
+					static_cast<real_t>(xform[row * 6 + 5])));
+			register_trigger(nullptr, place.x, place.y, flags[row], source_order[row], groups,
 					gd_id[row], properties);
 			if (gd_id[row] == 3032) {
 				// The converted transform is authoritative for a keyframe's
@@ -7868,6 +7887,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("register_trigger", "trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_trigger", "x", "y", "flags", "source_order", "groups", "gd_id", "properties"), &NativeLevelRuntime::register_packed_trigger, DEFVAL(0.0));
 		ClassDB::bind_method(D_METHOD("register_packed_table", "table"), &NativeLevelRuntime::register_packed_table);
+		ClassDB::bind_method(D_METHOD("set_packed_transform", "transform"), &NativeLevelRuntime::set_packed_transform);
+		ClassDB::bind_method(D_METHOD("record_position", "index"), &NativeLevelRuntime::record_position);
 		ClassDB::bind_method(D_METHOD("bind_context", "level", "camera", "config", "shader_layer", "ui_layer"), &NativeLevelRuntime::bind_context, DEFVAL(Variant()), DEFVAL(Variant()));
 		ClassDB::bind_method(D_METHOD("bind_shader_layer", "shader_layer"), &NativeLevelRuntime::bind_shader_layer);
 		ClassDB::bind_method(D_METHOD("bind_ui_layer", "ui_layer"), &NativeLevelRuntime::bind_ui_layer);
@@ -7961,6 +7982,8 @@ public:
 		return triggers->register_packed_trigger(x, y, flags, source_order, groups, gd_id, properties);
 	}
 	int64_t register_packed_table(const Dictionary &table) { return triggers->register_packed_table(table); }
+	void set_packed_transform(const Transform2D &transform) { triggers->set_packed_transform(transform); }
+	Vector2 record_position(int64_t index) const { return triggers->record_position(index); }
 	void bind_context(Object *level, Object *camera, Object *config, Object *shader_layer = nullptr, Object *ui_layer = nullptr) {
 		Node *level_node = Object::cast_to<Node>(level);
 		if (level_node) context_level = level_node;

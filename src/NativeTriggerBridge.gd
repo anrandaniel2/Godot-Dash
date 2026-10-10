@@ -122,6 +122,11 @@ const COLOR_FAMILY := {
 
 
 func _register_packed_triggers(level_data: Dictionary) -> void:
+	# Packed rows are level-local; node triggers are registered in global space
+	# (trigger.global_position below). Place packed rows with the Level's own
+	# global transform so both paths agree. The Level sits at (640, 925) in
+	# GameScene.tscn, so without this packed triggers were 150 GD units early.
+	_runtime.call(&"set_packed_transform", _level.global_transform)
 	var packed_records: Array = level_data.get("native_trigger_records", [])
 	# Compatibility for levels imported before the side index existed.
 	if packed_records.is_empty():

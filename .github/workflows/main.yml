@@ -621,6 +621,43 @@ jobs:
           fi
           echo "Native colour self-test passed (engine exit $status; timeout was the backstop)"
 
+      # Packed trigger rows are level-local; the Level node sits at (640, 925).
+      # Without the Level's global transform, packed triggers fired 150 GD units
+      # early and were 925 px off for touch checks. Pins the runtime boundary.
+      - name: Packed trigger placement self-test
+        run: |
+          set -euo pipefail
+          command -v xvfb-run >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          }
+          set +e
+          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+            --rendering-method gl_compatibility \
+            --audio-driver Dummy \
+            res://tools/packed_trigger_origin_selftest.tscn \
+            > packed_trigger_origin_selftest.log 2>&1
+          status=$?
+          set -e
+          cat packed_trigger_origin_selftest.log
+          if grep -nE "Assertion failed|SCRIPT ERROR" packed_trigger_origin_selftest.log; then
+            details=$(grep -nE -B2 -A6 "Assertion failed|SCRIPT ERROR" packed_trigger_origin_selftest.log | head -40)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Packed trigger self-test script error::${details}"
+            exit 1
+          fi
+          if ! grep -q "PACKED_TRIGGER_SELFTEST_SUMMARY.* failed=0$" packed_trigger_origin_selftest.log; then
+            details=$(tail -n 40 packed_trigger_origin_selftest.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=Packed trigger self-test failure (tail 40)::${details}"
+            exit 1
+          fi
+          echo "Packed trigger self-test passed (engine exit $status; timeout was the backstop)"
+
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.
