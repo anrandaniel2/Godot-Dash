@@ -204,6 +204,14 @@ func _test_invisible_blocks() -> void:
 	triangle.free()
 
 
+## IDs 1886-1888 are decoration in the extracted type table (type 7) with an
+## empty frame. They must not import as the generated solid 60-unit box: at the
+## Amethyst start, stacked copies at x~300 walled off the UFO portal from the red pad.
+func _test_gradient_ids_not_solid() -> void:
+	for id: int in [1886, 1887, 1888]:
+		assert(not GMDObjects.has_object_scene(id), "gradient smoke: %d must not get a generated solid scene" % id)
+
+
 ## Key 135 (Hide) is Geometry Dash 2.2's per-object hide flag: the node keeps
 ## its collision and group membership but renders nothing - the standard way
 ## modern effect levels build invisible geometry out of regular blocks.
@@ -391,6 +399,7 @@ func _ready() -> void:
 	_test_hsv_neutral()
 	_test_gameplay_z()
 	_test_invisible_blocks()
+	_test_gradient_ids_not_solid()
 	_test_hidden_objects()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()
