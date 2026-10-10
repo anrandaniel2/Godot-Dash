@@ -4,12 +4,16 @@ name: bli levels check
 # and opens each one in a real Godot build of the game. Levels are never
 # committed; results come back as check-run annotations.
 on:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - ".github/workflows/bli-levels.yml"
+      - "tools/fetch_transfer_levels.py"
   workflow_dispatch:
     inputs:
       url:
         description: "WeTransfer (or direct) link to the level files"
-        required: true
-        default: "https://we.tl/t-x5aZPEvs5KA6m201"
+        required: false
 
 env:
   GODOT_VERSION: "4.7.2"
@@ -64,7 +68,7 @@ jobs:
 
       - name: Download the shared levels
         env:
-          LEVEL_URL: ${{ inputs.url }}
+          LEVEL_URL: ${{ inputs.url || 'https://we.tl/t-x5aZPEvs5KA6m201' }}
         run: |
           set -euo pipefail
           python3 tools/fetch_transfer_levels.py "$LEVEL_URL" /tmp/bli
