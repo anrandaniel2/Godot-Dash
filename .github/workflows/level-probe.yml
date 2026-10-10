@@ -14,6 +14,9 @@ on:
       - "src/static/GDRFormat.gd"
       - "src/Player.gd"
       - "src/Level.gd"
+      - "src/PlayerCamera.gd"
+      - "src/interactables/public_components/CameraStaticComponent.gd"
+      - "src/interactables/public_components/EndLevelComponent.gd"
 
 env:
   GODOT_VERSION: "4.7.2"
@@ -97,7 +100,10 @@ jobs:
             echo "exit $?" >> probe.txt
             grep -E "PROBE|SCRIPT ERROR|Parse Error" probe.log | cut -c1-600 >> probe.txt
           }
-          # Amethyst cutscenes, real physics: ~68% from ship mode, ending from UFO.
+          # Amethyst cutscenes, real physics (no input): cutscene 1 in ship mode,
+          # then the approach to the ending from UFO, through the end animation.
+          probe CUTSCENE1_SHIP /tmp/level.gmd2 "" 0 23650 150 1 24250
+          probe ENDING_UFO /tmp/level.gmd2 "" 0 28400 150 2 36000
           # The maintainer's Amethyst macro, replayed from the start.
           probe AMETHYST_MACRO /tmp/level.gmd2 "" 0 "" "" "" 25000 "$(ls /tmp/macro/* | head -1)"
           wc -c probe.txt
