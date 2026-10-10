@@ -218,7 +218,10 @@ func _init():
 		window_mode = WindowMode.WINDOWED
 	render_scale = config_file.get_value("Graphics", "render_scale", render_scale)
 	anti_aliasing = config_file.get_value("Graphics", "anti_aliasing", anti_aliasing)
-	texture_filtering = config_file.get_value("Graphics", "texture_filtering", texture_filtering)
+	# Web default is Nearest: linear-with-mipmaps made the web build go black for
+	# at least one player. Desktop keeps the export default.
+	var default_filtering: TextureFilteringMode = TextureFilteringMode.NEAREST_NEIGHBOR if OS.has_feature("web") else texture_filtering
+	texture_filtering = config_file.get_value("Graphics", "texture_filtering", default_filtering)
 	# The previous web build turned bloom off once because Compatibility glow is
 	# several fullscreen passes. Soft glow is a different effect, so that
 	# one-time switch must not keep the Graphics toggle off.
@@ -263,6 +266,13 @@ func _init():
 			max_fps = 0
 		config_file.set_value("Graphics", "max_fps", max_fps)
 		config_file.set_value("Performance", "defaults_version", 3)
+		config_file.save("user://config.cfg")
+	# Version 4: a saved Linear-with-mipmaps setting on web moves to Nearest once,
+	# so an existing install that went black can recover without clearing site data.
+	if int(config_file.get_value("Performance", "defaults_version", 0)) < 4:
+		texture_filtering = web_texture_filtering_after_migration(texture_filtering, OS.has_feature("web"))
+		config_file.set_value("Graphics", "texture_filtering", texture_filtering)
+		config_file.set_value("Performance", "defaults_version", 4)
 		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
@@ -332,6 +342,14 @@ func _apply_bloom_to_world(value: bool) -> void:
 		# On web the toggle drives WebSoftEffects. Compatibility glow stays off
 		# so the Graphics setting cannot turn the multi-pass hitch back on.
 		world.environment.glow_enabled = value and not OS.has_feature("web")
+
+
+## One-time web migration (defaults_version 4): linear-with-mipmaps becomes
+## Nearest on web; every other value, and every desktop value, is kept.
+static func web_texture_filtering_after_migration(mode: TextureFilteringMode, is_web: bool) -> TextureFilteringMode:
+	if is_web and mode == TextureFilteringMode.LINEAR_WITH_MIPMAPS:
+		return TextureFilteringMode.NEAREST_NEIGHBOR
+	return mode
 
 
 func _ready() -> void:
