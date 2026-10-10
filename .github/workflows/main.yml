@@ -658,6 +658,14 @@ jobs:
           fi
           echo "Packed trigger self-test passed (engine exit $status; timeout was the backstop)"
 
+      # Pure C++: a mirrored saw quarter must turn with its orbit around the saw
+      # centre (it used to turn the other way, tearing the circle apart).
+      - name: Decoration spin self-test (mirrored saw quarters)
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -Wall -Wextra native/tests/test_decoration_spin.cpp -o decoration_spin_test
+          ./decoration_spin_test
+
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.

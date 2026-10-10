@@ -71,6 +71,7 @@
 #include <vector>
 
 #include "gravity_portal.h"
+#include "decoration_spin.h"
 #include "gd_physics_constants.h"
 
 namespace godot {
@@ -10787,9 +10788,18 @@ public:
 		for (size_t index : spinning_indices) {
 			Record &record = records[index];
 			const double angle = static_cast<double>(record.spin_radians) * delta;
-			const Vector2 old_origin = record.transform.get_origin();
-			record.transform = record.transform.rotated_local(angle);
-			record.transform.set_origin(record.spin_pivot + (old_origin - record.spin_pivot).rotated(angle));
+			// Rigid rotation about the pivot in parent space. Rotating the
+			// basis locally (rotated_local) turned mirrored quarters the wrong
+			// way, so a sawblade built from mirrored quarters tore apart.
+			const Vector2 &x_axis = record.transform.columns[0];
+			const Vector2 &y_axis = record.transform.columns[1];
+			const Vector2 &origin = record.transform.columns[2];
+			SpinTransform2D spun = spin_about_pivot(
+					SpinTransform2D{ x_axis.x, x_axis.y, y_axis.x, y_axis.y, origin.x, origin.y },
+					record.spin_pivot.x, record.spin_pivot.y, angle);
+			record.transform.columns[0] = Vector2(static_cast<real_t>(spun.xx), static_cast<real_t>(spun.xy));
+			record.transform.columns[1] = Vector2(static_cast<real_t>(spun.yx), static_cast<real_t>(spun.yy));
+			record.transform.columns[2] = Vector2(static_cast<real_t>(spun.ox), static_cast<real_t>(spun.oy));
 		}
 		commands_dirty = true;
 	}
