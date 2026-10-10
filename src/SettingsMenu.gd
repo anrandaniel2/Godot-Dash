@@ -86,7 +86,7 @@ func _on_anti_aliasing_value_changed(anti_aliasing_mode: Viewport.MSAA) -> void:
 	var viewport: Viewport = get_viewport()
 	if not viewport:
 		return
-	viewport.msaa_2d = anti_aliasing_mode
+	viewport.msaa_2d = Config.supported_anti_aliasing(anti_aliasing_mode, OS.has_feature("web"))
 
 
 func _on_render_scale_value_changed(value: int) -> void:

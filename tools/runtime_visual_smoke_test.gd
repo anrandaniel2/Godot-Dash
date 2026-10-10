@@ -370,7 +370,17 @@ func _test_camera_reset_clears_shake() -> void:
 	camera.free()
 
 
+func _test_web_anti_aliasing_clamp() -> void:
+	# WebGPU rejects MSAA 2x/8x (sampleCount must be 1 or 4): clamp them on web only.
+	assert(Config.supported_anti_aliasing(Viewport.MSAA.MSAA_8X, true) == Viewport.MSAA.MSAA_4X, "web 8x MSAA must clamp to 4x")
+	assert(Config.supported_anti_aliasing(Viewport.MSAA.MSAA_2X, true) == Viewport.MSAA.MSAA_4X, "web 2x MSAA must clamp to 4x")
+	assert(Config.supported_anti_aliasing(Viewport.MSAA.MSAA_4X, true) == Viewport.MSAA.MSAA_4X, "web 4x MSAA must be kept")
+	assert(Config.supported_anti_aliasing(Viewport.MSAA.MSAA_DISABLED, true) == Viewport.MSAA.MSAA_DISABLED, "web MSAA off must be kept")
+	assert(Config.supported_anti_aliasing(Viewport.MSAA.MSAA_8X, false) == Viewport.MSAA.MSAA_8X, "desktop 8x MSAA must not change")
+
+
 func _ready() -> void:
+	_test_web_anti_aliasing_clamp()
 	_test_ring_speed_scaling()
 	_test_camera_floor_view()
 	_test_camera_end_holds_height()

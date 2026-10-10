@@ -217,7 +217,9 @@ func _init():
 		# Web browsers forbid entering fullscreen without a direct user gesture.
 		window_mode = WindowMode.WINDOWED
 	render_scale = config_file.get_value("Graphics", "render_scale", render_scale)
-	anti_aliasing = config_file.get_value("Graphics", "anti_aliasing", anti_aliasing)
+	# WebGPU only accepts sampleCount 1 or 4; a saved 2x/8x would make the
+	# root viewport's MSAA target invalid and leave the page black.
+	anti_aliasing = supported_anti_aliasing(config_file.get_value("Graphics", "anti_aliasing", anti_aliasing), OS.has_feature("web"))
 	texture_filtering = config_file.get_value("Graphics", "texture_filtering", texture_filtering)
 	# The previous web build turned bloom off once because Compatibility glow is
 	# several fullscreen passes. Soft glow is a different effect, so that
@@ -332,6 +334,15 @@ func _apply_bloom_to_world(value: bool) -> void:
 		# On web the toggle drives WebSoftEffects. Compatibility glow stays off
 		# so the Graphics setting cannot turn the multi-pass hitch back on.
 		world.environment.glow_enabled = value and not OS.has_feature("web")
+
+
+## Clamps an MSAA mode to one the platform can create. WebGPU (W3C WebGPU spec,
+## GPUTextureDescriptor.sampleCount) accepts only 1 or 4, so on web 2x and 8x
+## fall back to 4x; desktop keeps every mode.
+static func supported_anti_aliasing(mode: Viewport.MSAA, is_web: bool) -> Viewport.MSAA:
+	if is_web and (mode == Viewport.MSAA.MSAA_2X or mode == Viewport.MSAA.MSAA_8X):
+		return Viewport.MSAA.MSAA_4X
+	return mode
 
 
 func _ready() -> void:
