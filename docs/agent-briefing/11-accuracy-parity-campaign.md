@@ -418,6 +418,15 @@ Known `H:` parity gaps to verify against a 2.2 level and the 2.2 decompiles:
 - Zoom mode: both paths always behave as SET. Verify whether GD's zoom trigger has a
   relative/absolute option the strings encode before adding a mode arm.
 
+### Round 2 (end of level)
+
+- The height hold (`PlayerCamera.gd_end_holds_height`) starts when the camera centre reaches the
+  end stop, not only in the end animation. Before this the view kept following the player up into
+  the portal during the approach. Guard: `_test_camera_end_holds_height` in the visual smoke test.
+- Not yet explained: both Amethyst cutscenes sit too far left on screen. Cutscene 1 (about 68%,
+  ship) has no camera trigger, so it is the plain follow lead (75 units) or the view size, not a
+  trigger. The level-probe runs in CI logged physics tick 2 after 600 s, so they cannot measure it yet.
+
 ---
 
 ## 7. Blur / menu frost (`SimpleBlurMaterial`)

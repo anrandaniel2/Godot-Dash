@@ -345,9 +345,18 @@ func _test_camera_floor_view() -> void:
 	assert(below_floor <= 240.0 * 2.5, "camera floor: view bottom shows past the ground art")
 
 
+func _test_camera_end_holds_height() -> void:
+	var stop: float = 1000.0
+	assert(not PlayerCamera.gd_end_holds_height(false, 900.0, stop), "camera end: height must follow the player before the end stop engages")
+	assert(PlayerCamera.gd_end_holds_height(false, 1000.0, stop), "camera end: height must hold once the end stop engages")
+	assert(PlayerCamera.gd_end_holds_height(true, 900.0, stop), "camera end: height must hold through the end animation")
+	assert(not PlayerCamera.gd_end_holds_height(false, 5000.0, INF), "camera end: no end stop, so no hold")
+
+
 func _ready() -> void:
 	_test_ring_speed_scaling()
 	_test_camera_floor_view()
+	_test_camera_end_holds_height()
 	_test_interactable_hitboxes()
 	_test_generated_static_hitboxes()
 	_test_batch_order()

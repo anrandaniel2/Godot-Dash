@@ -118,10 +118,13 @@ func _process(delta: float) -> void:
 			framerate_compensation,
 		)
 
-	# Imported levels hold the camera's height through the end animation: GD
-	# shakes it there but does not follow the player up into the end portal.
-	if player.in_end_level_animation and gd_level_end.is_finite():
-		local_added_distance.y = 0.0
+	# Imported levels hold the camera's height from the moment the end stop
+	# engages (its centre reaches the end portal's limit), not only once the end
+	# animation starts: the view must not follow the player up into the portal.
+	if gd_level_end.is_finite():
+		var next_centre_x: float = position.x + local_added_distance.rotated(player.gameplay_rotation).x
+		if gd_end_holds_height(player.in_end_level_animation, next_centre_x, _gd_end_max_centre_x()):
+			local_added_distance.y = 0.0
 	# Apply distance
 	var added_distance: Vector2 = local_added_distance.rotated(player.gameplay_rotation)
 	if static_factor.x == 0:
@@ -146,12 +149,23 @@ func _process(delta: float) -> void:
 ## camera's right edge never passes m_fEndOfLevel, so the player runs on into
 ## the end portal. The camera keeps its height there: no climb to the portal.
 func _apply_gd_level_end() -> void:
+	var max_centre_x: float = _gd_end_max_centre_x()
+	if position.x > max_centre_x:
+		position.x = max_centre_x
+
+
+## The camera centre's X limit at the end portal, INF when there is none.
+func _gd_end_max_centre_x() -> float:
 	if not gd_level_end.is_finite() or LevelManager.platformer:
-		return
+		return INF
 	var half_view_width: float = get_viewport_rect().size.x / 2.0 / zoom.x
-	var max_center_x: float = gd_level_end.x - half_view_width - offset.x
-	if position.x > max_center_x:
-		position.x = max_center_x
+	return gd_level_end.x - half_view_width - offset.x
+
+
+## Whether an imported level's camera keeps its height this frame: always in
+## the end animation, and from the moment its centre reaches the end stop.
+static func gd_end_holds_height(in_end_animation: bool, next_centre_x: float, end_stop_centre_x: float) -> bool:
+	return in_end_animation or next_centre_x >= end_stop_centre_x
 
 
 func reset() -> void:
