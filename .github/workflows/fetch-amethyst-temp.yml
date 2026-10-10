@@ -1,0 +1,25 @@
+name: Fetch Amethyst (temporary)
+
+# One-off: downloads the maintainer's WeTransfer share on a runner and
+# uploads it as an artifact so it can be committed. Delete after use.
+on:
+  push:
+    paths:
+      - ".github/workflows/fetch-amethyst-temp.yml"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download
+        run: |
+          bash tools/fetch_level.sh "https://we.tl/t-1qPqmqjwCP88Rzeb" amethyst.raw
+          ls -la amethyst.raw
+          file amethyst.raw || true
+          head -c 300 amethyst.raw | od -c | head -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amethyst-raw
+          path: amethyst.raw
+          retention-days: 3
