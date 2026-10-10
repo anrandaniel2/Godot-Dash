@@ -28,7 +28,7 @@ scale_max = 0.25
 scale_curve = SubResource("CurveTexture_dol5j")
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_twl62"]
-size = Vector2(112, 24)
+size = Vector2(123.7, 29.87)
 
 [node name="RedPad" type="Area2D" unique_id=1634835076]
 collision_layer = 8

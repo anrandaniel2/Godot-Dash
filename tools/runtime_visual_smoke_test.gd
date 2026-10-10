@@ -282,8 +282,60 @@ func _test_ring_speed_scaling() -> void:
 		node.free()
 
 
+## Interactable, portal and collider-only hitboxes must match the Geometry Dash
+## hitbox table (OpenGD LongData, cross-checked with gmdkit hitbox_table.csv),
+## in GD units. Scene colliders are in pixels: 30 GD units = Constants.CELL_SIZE.
+func _test_interactable_hitboxes() -> void:
+	var level := "res://scenes/components/level_components/"
+	var expected: Dictionary[String, Vector2] = {
+		"orbs/YellowOrb.tscn": Vector2(36, 36), "orbs/PinkOrb.tscn": Vector2(36, 36),
+		"orbs/BlueOrb.tscn": Vector2(36, 36), "orbs/RedOrb.tscn": Vector2(36, 36),
+		"orbs/GreenOrb.tscn": Vector2(36, 36), "orbs/BlackOrb.tscn": Vector2(36, 36),
+		"orbs/DashOrbGreen.tscn": Vector2(36, 36), "orbs/DashOrbMagenta.tscn": Vector2(36, 36),
+		"pads/YellowPad.tscn": Vector2(25, 4), "pads/PinkPad.tscn": Vector2(25, 5),
+		"pads/BluePad.tscn": Vector2(25, 6), "pads/RedPad.tscn": Vector2(29, 7),
+		"portals/gamemode_portals/CubePortal.tscn": Vector2(34, 86),
+		"portals/gamemode_portals/ShipPortal.tscn": Vector2(34, 86),
+		"portals/gamemode_portals/BallPortal.tscn": Vector2(34, 86),
+		"portals/gamemode_portals/UFOPortal.tscn": Vector2(34, 86),
+		"portals/gamemode_portals/WavePortal.tscn": Vector2(34, 86),
+		"portals/gamemode_portals/RobotPortal.tscn": Vector2(34, 86),
+		"portals/gamemode_portals/SpiderPortal.tscn": Vector2(34, 86),
+		"portals/other_portals/GravityPortalNormal.tscn": Vector2(25, 75),
+		"portals/other_portals/GravityPortalFlipped.tscn": Vector2(25, 75),
+		"portals/other_portals/ScalePortalNormal.tscn": Vector2(31, 90),
+		"portals/other_portals/ScalePortalSmall.tscn": Vector2(31, 90),
+		"portals/other_portals/CountPortalDual.tscn": Vector2(41, 91),
+		"portals/other_portals/CountPortalSingle.tscn": Vector2(41, 91),
+		"portals/speed_portals/SpeedPortal05x.tscn": Vector2(35, 44),
+		"portals/speed_portals/SpeedPortal1x.tscn": Vector2(33, 56),
+		"portals/speed_portals/SpeedPortal2x.tscn": Vector2(51, 56),
+		"portals/speed_portals/SpeedPortal3x.tscn": Vector2(65, 56),
+		"portals/speed_portals/SpeedPortal4x.tscn": Vector2(69, 56),
+		"solids/GDStartPosSolid.tscn": Vector2(37, 23),
+	}
+	for rel: String in expected:
+		var node: Node = (load(level + rel) as PackedScene).instantiate()
+		var hitbox := node.get_node_or_null(^"Hitbox") as CollisionShape2D
+		assert(hitbox != null and hitbox.shape is RectangleShape2D, "hitbox: %s has no rectangle Hitbox" % rel)
+		var px: Vector2 = (hitbox.shape as RectangleShape2D).size * hitbox.scale
+		var gd_units: Vector2 = px * 30.0 / Constants.CELL_SIZE
+		assert(gd_units.distance_to(expected[rel]) < 0.05,
+				"hitbox: %s is %s GD units, expected %s" % [rel, gd_units, expected[rel]])
+		node.free()
+	# Object IDs: the red jump orb (1333) and the green dash orb (1704) must not
+	# swap scenes, and 34 must resolve to its collider with no trigger shell.
+	assert(GMDObjects.get_object(1333).get("scene", "") == "scenes/components/level_components/orbs/RedOrb.tscn",
+			"hitbox: 1333 (Red Jump Orb) does not load RedOrb")
+	assert(GMDObjects.get_object(1704).get("scene", "") == "scenes/components/level_components/orbs/DashOrbGreen.tscn",
+			"hitbox: 1704 (Green Dash Orb) does not load DashOrbGreen")
+	assert(GMDObjects.is_static_gameplay_object(34), "hitbox: 34 is not a static solid")
+	assert(not GMDObjects.TRIGGER_IDS.has(34), "hitbox: 34 still imports as an inert trigger")
+
+
 func _ready() -> void:
 	_test_ring_speed_scaling()
+	_test_interactable_hitboxes()
 	_test_generated_static_hitboxes()
 	_test_batch_order()
 	_test_hsv_neutral()

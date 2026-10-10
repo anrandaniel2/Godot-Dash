@@ -15,7 +15,7 @@
 [ext_resource type="Script" uid="uid://cd3jqi4il3x2p" path="res://src/interactables/public_components/TextureRotationPinComponent.gd" id="13_c3ums"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
-size = Vector2(128, 384)
+size = Vector2(145.1, 366.9)
 
 [node name="RobotPortal" type="Area2D" unique_id=1938189375]
 collision_layer = 8

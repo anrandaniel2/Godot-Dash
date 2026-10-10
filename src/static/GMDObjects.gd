@@ -86,8 +86,8 @@ const MAP: Dictionary[int, Dictionary] = {
 	141: { "scene": ORBS + "PinkOrb.tscn", "name": "PinkOrb" },
 	1022: { "scene": ORBS + "GreenOrb.tscn", "name": "GreenOrb" },
 	1330: { "scene": ORBS + "BlackOrb.tscn", "name": "BlackOrb" },
-	1333: { "scene": ORBS + "DashOrbGreen.tscn", "name": "DashOrbGreen" },
-	1704: { "scene": ORBS + "RedOrb.tscn", "name": "RedOrb" },
+	1333: { "scene": ORBS + "RedOrb.tscn", "name": "RedOrb" },
+	1704: { "scene": ORBS + "DashOrbGreen.tscn", "name": "DashOrbGreen" },
 	1751: { "scene": ORBS + "DashOrbMagenta.tscn", "name": "DashOrbMagenta" },
 	3004: { "scene": ORBS + "SpiderOrb.tscn", "name": "SpiderOrb" },
 	3027: { "scene": ORBS + "TeleportOrb.tscn", "name": "TeleportOrb", "components": ["TeleportComponent"] },
@@ -362,6 +362,9 @@ const MAP: Dictionary[int, Dictionary] = {
 	# (128x128 and 128x59.73).
 	146: { "scene": SOLIDS + "GDInvisibleSquare.tscn", "name": "InvisibleBlock" },
 	147: { "scene": SOLIDS + "GDInvisiblePlank.tscn", "name": "InvisiblePlank" },
+	# GD 2.0+ hidden Start Pos with a hitbox (gmdkit/OpenGD: solid 37x23). It
+	# has no atlas art, so it imports as a collision-only solid.
+	34: { "scene": SOLIDS + "GDStartPosSolid.tscn", "name": "StartPosSolid" },
 	# The rest of the invisible collision family, hitboxes likewise taken from
 	# the PRISTINE data the generated scenes carry: the invisible spikes
 	# (hazards), the small invisible square / plank, and the invisible
@@ -400,7 +403,7 @@ const MAP: Dictionary[int, Dictionary] = {
 ## silently discarded as decoration.
 const TRIGGER_IDS: Array[int] = [
 	22, 23, 24, 25, 26, 27, 28, 32, 33, 55, 56, 57, 58, 59,
-	29, 30, 104, 105, 221, 34, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
+	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
 	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1595,
 	1611, 1612, 1613, 1616, 1811, 1812, 1814, 1815, 1817, 1818, 1819,
 	# 1932 is deliberately absent: the atlas maps it to an editor UI button

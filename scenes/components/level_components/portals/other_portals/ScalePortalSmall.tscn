@@ -11,7 +11,7 @@
 [ext_resource type="Script" uid="uid://wg4jv4tqb5nq" path="res://src/interactables/public_components/PlayerScaleChangerComponent.gd" id="11_gnuak"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
-size = Vector2(128, 384)
+size = Vector2(132.3, 384)
 
 [node name="ScalePortalSmall" type="Area2D" unique_id=1410035192]
 collision_layer = 8

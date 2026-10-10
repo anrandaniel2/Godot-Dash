@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://umzzzqmeskw1"]
+
+[ext_resource type="Script" uid="uid://co07p647ncgri" path="res://src/SolidObject.gd" id="1_startpos"]
+[ext_resource type="PackedScene" uid="uid://cnru264bpjwxo" path="res://scenes/components/level_components/EditorSelectionCollider.tscn" id="2_startpos"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_startpos"]
+size = Vector2(157.867, 98.1333)
+
+[node name="GDStartPosSolid" type="RigidBody2D"]
+collision_layer = 2
+freeze = true
+freeze_mode = 1
+script = ExtResource("1_startpos")
+metadata/physics = true
+
+[node name="Hitbox" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_startpos")
+debug_color = Color(0, 0.071, 0.702, 0.25)
+
+[node name="EditorSelectionCollider" parent="." instance=ExtResource("2_startpos")]
+type = 0

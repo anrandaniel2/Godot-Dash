@@ -19,7 +19,7 @@
 shader = ExtResource("1_r0h5n")
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_cghk8"]
-size = Vector2(128, 384)
+size = Vector2(145.1, 366.9)
 
 [node name="SpiderPortal" type="Area2D" unique_id=1005087859]
 material = SubResource("ShaderMaterial_tll7r")

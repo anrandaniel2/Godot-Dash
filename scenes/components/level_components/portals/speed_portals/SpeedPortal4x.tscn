@@ -26,7 +26,7 @@ scale_max = 0.5
 scale_curve = SubResource("CurveTexture_0y2x4")
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_80b28"]
-size = Vector2(276, 226)
+size = Vector2(294.4, 238.9)
 
 [node name="SpeedPortal4x" type="Area2D" unique_id=1207966373]
 collision_layer = 8
