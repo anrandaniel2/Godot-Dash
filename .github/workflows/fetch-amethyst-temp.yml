@@ -1,25 +1,34 @@
 name: Fetch Amethyst (temporary)
 
 # One-off: downloads the maintainer's WeTransfer share on a runner and
-# uploads it as an artifact so it can be committed. Delete after use.
+# commits it to levels/amethyst/ on this branch. Delete this workflow after use.
 on:
   push:
     paths:
       - ".github/workflows/fetch-amethyst-temp.yml"
+
+permissions:
+  contents: write
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
       - name: Download
         run: |
-          bash tools/fetch_level.sh "https://we.tl/t-1qPqmqjwCP88Rzeb" amethyst.raw
-          ls -la amethyst.raw
-          file amethyst.raw || true
-          head -c 300 amethyst.raw | od -c | head -5
-      - uses: actions/upload-artifact@v4
-        with:
-          name: amethyst-raw
-          path: amethyst.raw
-          retention-days: 3
+          bash tools/fetch_level.sh "https://we.tl/t-1qPqmqjwCP88Rzeb" /tmp/amethyst.download
+          ls -la /tmp/amethyst.download
+          python3 -c "import zipfile;print('zip' if zipfile.is_zipfile('/tmp/amethyst.download') else 'not zip')"
+          head -c 120 /tmp/amethyst.download | od -c | head -4
+          mkdir -p levels/amethyst
+          cp /tmp/amethyst.download levels/amethyst/amethyst.download
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add levels/amethyst/amethyst.download
+          git commit -m "Add Amethyst level download from WeTransfer share (temp workflow)"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
