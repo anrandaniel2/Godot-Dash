@@ -45,8 +45,12 @@ const MAX_IMPORT_TICKS := 240 * 60 * 60
 const GDR_STANDARD_FRAMERATE := 240.0
 
 
+## The rate this engine's physics ticks at (project.godot common/physics_ticks_per_second,
+## currently 120). Replay ticks are this rate, so export and import must use it,
+## not the 240/s file standard: a 240/s macro played back at 120 ticks/s runs at
+## twice its intended speed and every click lands late.
 static func physics_framerate() -> float:
-	return GDR_STANDARD_FRAMERATE
+	return float(Engine.physics_ticks_per_second)
 
 
 static func to_bytes(replay: Replay) -> PackedByteArray:

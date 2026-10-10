@@ -220,14 +220,16 @@ func _test_framerate_resample() -> void:
 	if not loaded.ok:
 		print("GDR_SELFTEST_DETAIL ", loaded.error)
 		return
-	check("resampled replay length", loaded.replay.data.size() == 240)
+	# The engine's tick rate, not a fixed 240: the 240/s file standard is resampled onto it.
+	var scale: float = Engine.physics_ticks_per_second / 60.0
+	check("resampled replay length follows the engine tick rate", loaded.replay.data.size() == int(Engine.physics_ticks_per_second))
 	var data: Array[PackedByteArray] = loaded.replay.data
 	var jump_ticks := 0
 	for tick: PackedByteArray in data:
 		if tick[0] == 1:
 			jump_ticks += 1
-	# Frames 30..44 become ticks 120..179.
-	check("resampled jump window", jump_ticks == 60)
+	# Frames 30..44 become ticks round(30*scale)..round(45*scale)-1.
+	check("resampled jump window", jump_ticks == roundi(45 * scale) - roundi(30 * scale))
 
 
 func _test_gdr2_binary() -> void:
