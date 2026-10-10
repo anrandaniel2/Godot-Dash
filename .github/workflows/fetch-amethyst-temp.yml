@@ -1,7 +1,8 @@
 name: Fetch Amethyst (temporary)
 
-# One-off: downloads the maintainer's WeTransfer share on a runner and
-# commits it to levels/amethyst/ on this branch. Delete this workflow after use.
+# One-off: copies the Amethyst download (artifact from run 38059630525,
+# fetched from the maintainer's WeTransfer share) into levels/amethyst/ on
+# this branch. Delete this workflow after use.
 on:
   push:
     paths:
@@ -9,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   fetch:
@@ -17,18 +19,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
-      - name: Download
+      - name: Download artifact from the WeTransfer fetch run
+        uses: actions/download-artifact@v4
+        with:
+          name: amethyst-raw
+          run-id: 38059630525
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: /tmp/amethyst-art
+      - name: Place file
         run: |
-          bash tools/fetch_level.sh "https://we.tl/t-1qPqmqjwCP88Rzeb" /tmp/amethyst.download
-          ls -la /tmp/amethyst.download
-          python3 -c "import zipfile;print('zip' if zipfile.is_zipfile('/tmp/amethyst.download') else 'not zip')"
-          head -c 120 /tmp/amethyst.download | od -c | head -4
+          ls -la /tmp/amethyst-art
+          python3 -c "import zipfile,glob;print([zipfile.is_zipfile(p) for p in glob.glob('/tmp/amethyst-art/*')])"
           mkdir -p levels/amethyst
-          cp /tmp/amethyst.download levels/amethyst/amethyst.download
+          cp /tmp/amethyst-art/amethyst.raw levels/amethyst/amethyst.download
+          ls -la levels/amethyst
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add levels/amethyst/amethyst.download
-          git commit -m "Add Amethyst level download from WeTransfer share (temp workflow)"
+          git commit -m "Add Amethyst level download (from WeTransfer share, temp workflow)"
           git push origin HEAD:"${GITHUB_REF_NAME}"
