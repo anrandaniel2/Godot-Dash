@@ -666,6 +666,13 @@ jobs:
           g++ -std=c++17 -O2 -Wall -Wextra native/tests/test_decoration_spin.cpp -o decoration_spin_test
           ./decoration_spin_test
 
+      # The font files must match tools/font_manifest.json, so the bundle that
+      # is hosted for on-demand download cannot drift from the repo's fonts.
+      - name: Font bundle matches its manifest
+        run: |
+          set -euo pipefail
+          python3 tools/font_bundle.py --check
+
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.
