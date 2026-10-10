@@ -333,8 +333,21 @@ func _test_interactable_hitboxes() -> void:
 	assert(not GMDObjects.TRIGGER_IDS.has(34), "hitbox: 34 still imports as an inert trigger")
 
 
+## GD 1.0 keeps the view's bottom edge at cam.y = 0, 90 GD units below the floor
+## top, so the whole ground strip shows. The old 160 px margin hid most of it.
+## The ground art (GroundDownOrigin/Ground: region 240 px at scale 2.5) must
+## still cover the visible bottom.
+func _test_camera_floor_view() -> void:
+	var floor_y: float = 925.0
+	var below_floor: float = PlayerCamera.gd_floor_view_bottom(floor_y) - floor_y
+	assert(is_equal_approx(below_floor, 90.0 / 30.0 * Constants.CELL_SIZE),
+			"camera floor: view bottom sits %s px below the floor, GD is 90 units (384 px)" % below_floor)
+	assert(below_floor <= 240.0 * 2.5, "camera floor: view bottom shows past the ground art")
+
+
 func _ready() -> void:
 	_test_ring_speed_scaling()
+	_test_camera_floor_view()
 	_test_interactable_hitboxes()
 	_test_generated_static_hitboxes()
 	_test_batch_order()

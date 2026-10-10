@@ -17,6 +17,14 @@ const MAX_DISTANCE := Vector2(400.0, 300.0)
 ## 1080 / 0.8 px view (10.5 cells), so the margins carry over in cells.
 ## Hypothesis: GD 2.1 keeps the 1.0 law (only the 1.0 body is decompiled).
 const GD_TOP_MARGIN_CELLS: float = 3.0
+## GD 1.0 PlayLayer::updateCamera (Wyliemaster/Geometry-Dash-1.0) keeps the
+## camera's bottom edge at cam.y >= 0 (`if (this->cam.y <= 0.0f) cam.y = 0`).
+## The ground sprite is placed at y = 90 (its top, where the floor is) and the
+## cube stands at 105 on it, so the view's bottom edge sits 90 GD units below
+## the floor top, so the whole ground strip stays on screen. Our floor line is
+## ground_down.default_y, which matches GD's y = 90 (the cube's default y is
+## 64 px = 15 units above it, GD's 105).
+const GD_GROUND_BELOW_FLOOR_UNITS: float = 90.0
 const GD_BOTTOM_MARGIN_CELLS: float = 4.0
 const GD_FREE_EASE: float = 1.0 / 10.0
 const GD_LOCKED_EASE: float = 1.0 / 30.0
@@ -101,7 +109,7 @@ func _process(delta: float) -> void:
 	# whose player is not past the top margin settles back onto the floor.
 	if freefly and _last_ground_was_floor and is_zero_approx(player.gameplay_rotation) \
 			and local_player_distance.y >= GD_TOP_MARGIN_CELLS * Constants.CELL_SIZE - half_view_height:
-		var floor_camera_y: float = LevelManager.ground_down.default_y + 160.0 - half_view_height
+		var floor_camera_y: float = gd_floor_view_bottom(LevelManager.ground_down.default_y) - half_view_height
 		local_added_distance.y = (floor_camera_y - position.y) * GD_FREE_EASE * framerate_compensation
 	if LevelManager.platformer:
 		local_added_distance.x = local_target_distance_axis(
@@ -126,8 +134,9 @@ func _process(delta: float) -> void:
 
 	# Clamp bottom edge of the screen to the ground
 	var half_screen_height = get_viewport_rect().size.y / 2
-	if position.y + half_screen_height / zoom.y > LevelManager.ground_down.default_y + 160:
-		position.y = LevelManager.ground_down.default_y + 160 - half_screen_height / zoom.y
+	var floor_view_bottom: float = gd_floor_view_bottom(LevelManager.ground_down.default_y)
+	if position.y + half_screen_height / zoom.y > floor_view_bottom:
+		position.y = floor_view_bottom - half_screen_height / zoom.y
 	# Same thing for the top edge of the screen
 	if position.y - half_screen_height / zoom.y < LevelManager.ground_up.default_y - 160:
 		position.y = LevelManager.ground_up.default_y - 160 + half_screen_height / zoom.y
@@ -159,6 +168,12 @@ func reset() -> void:
 	zoom = PlayerCamera.DEFAULT_ZOOM
 	offset = PlayerCamera.DEFAULT_OFFSET
 	rotation = 0.0
+
+
+## The lowest the view's bottom edge may sit for a floor whose top is at
+## [param floor_y]: GD's cam.y = 0 limit, 90 GD units below the floor top.
+static func gd_floor_view_bottom(floor_y: float) -> float:
+	return floor_y + GD_GROUND_BELOW_FLOOR_UNITS / 30.0 * Constants.CELL_SIZE
 
 
 ## gd_docs camera_mode.md: OffsetY = 130 - 128 * Padding, in GD points.

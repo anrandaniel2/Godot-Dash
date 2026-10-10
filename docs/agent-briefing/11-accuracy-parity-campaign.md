@@ -368,7 +368,8 @@ const MAX_DISTANCE   := Vector2(400.0, 300.0)
   60 Hz frame; fly modes chase the portal centre at 1/30; applied to all levels; that 2.1 keeps
   the 1.0 law is a hypothesis); platformer X still uses `local_target_distance_axis`
   (deadzone `MAX_DISTANCE / zoom`, 0.2 catch-up) → rotate back → apply
-  per axis unless `static_factor` blocks that axis → clamp the view to `ground_down + 160` /
+  per axis unless `static_factor` blocks that axis → clamp the view's bottom edge to
+  `ground_down + 90 units` (GD 1.0 `cam.y >= 0`, hypothesis for 2.2; was `+ 160 px`) and the top to
   `ground_up - 160` → `offset = get_offset_target(≈delta*60)`.
 - `get_offset_target()`: `(gameplay_offset / zoom) * gameplay_offset_factor * (1 - static_factor)
   + additional_offset + shake_offset`; `gameplay_offset` eases toward
