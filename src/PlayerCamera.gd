@@ -8,14 +8,17 @@ const DEFAULT_ZOOM: Vector2 = Vector2(0.8, 0.8)
 const GD_GAMEPLAY_OFFSET_UNITS: float = 75.0
 const DEFAULT_OFFSET: Vector2 = Vector2(GD_GAMEPLAY_OFFSET_UNITS / 30.0 * Constants.CELL_SIZE * DEFAULT_ZOOM.x, 0.0)
 const MAX_DISTANCE := Vector2(400.0, 300.0)
-## Geometry Dash vertical camera law, from Wyliemaster/Geometry-Dash-1.0
-## PlayLayer/updateCamera.cpp (PlayLayer::updateCamera): in cube-style modes
-## the player is kept 90 units (3 cells) below the top edge and 120 units
-## (4 cells) above the bottom edge, swapped under flipped gravity, and the
-## camera closes 1/10 of the gap per 60 Hz frame; fly modes chase the portal
-## centre at 1/30. GD's 320-unit view (10.7 cells) matches this camera's
-## 1080 / 0.8 px view (10.5 cells), so the margins carry over in cells.
-## Hypothesis: GD 2.1 keeps the 1.0 law (only the 1.0 body is decompiled).
+## Cube and robot (no borders) vertical camera, from HDanke's GD Editor Docs
+## (uhdanke.github.io/gd_docs, Default Camera Properties): padding 40 units and
+## easing 40 ("noted as 10 in Camera Mode"). The padding is a dead zone of 40
+## units (40 / 30 cell) either side of the view centre, and the camera closes
+## 1/10 of the gap per 60 Hz frame. Camera Mode does not change these values
+## (gd_docs: cube and robot are "not affected by Camera Mode").
+## This replaces the GD 1.0 margins (3 cells top, 4 cells bottom).
+const GD_CUBE_PADDING_UNITS: float = 40.0
+const GD_CUBE_EASE: float = 1.0 / 10.0
+## GD 1.0 PlayLayer::updateCamera top margin (Wyliemaster/Geometry-Dash-1.0).
+## Still used only by the floor settle rule below; not by the cube follow.
 const GD_TOP_MARGIN_CELLS: float = 3.0
 ## GD 1.0 PlayLayer::updateCamera (Wyliemaster/Geometry-Dash-1.0) keeps the
 ## camera's bottom edge at cam.y >= 0 (`if (this->cam.y <= 0.0f) cam.y = 0`).
@@ -25,7 +28,6 @@ const GD_TOP_MARGIN_CELLS: float = 3.0
 ## ground_down.default_y, which matches GD's y = 90 (the cube's default y is
 ## 64 px = 15 units above it, GD's 105).
 const GD_GROUND_BELOW_FLOOR_UNITS: float = 90.0
-const GD_BOTTOM_MARGIN_CELLS: float = 4.0
 const GD_FREE_EASE: float = 1.0 / 10.0
 const GD_LOCKED_EASE: float = 1.0 / 30.0
 ## Camera Mode (2925) Edit Camera Settings: the free-follow ease is 1 / Easing
@@ -218,15 +220,12 @@ static func gd_vertical_step(distance: float, half_height: float, is_freefly: bo
 		if absf(distance) <= deadzone_px:
 			return 0.0
 		return (distance - signf(distance) * deadzone_px) * free_ease * framerate_compensation
-	var top_margin: float = (GD_BOTTOM_MARGIN_CELLS if flipped else GD_TOP_MARGIN_CELLS) * Constants.CELL_SIZE
-	var bottom_margin: float = (GD_TOP_MARGIN_CELLS if flipped else GD_BOTTOM_MARGIN_CELLS) * Constants.CELL_SIZE
-	var upper_limit: float = top_margin - half_height
-	var lower_limit: float = half_height - bottom_margin
-	if distance < upper_limit:
-		return (distance - upper_limit) * free_ease * framerate_compensation
-	if distance > lower_limit:
-		return (distance - lower_limit) * free_ease * framerate_compensation
-	return 0.0
+	# Cube / robot (no borders): HDanke padding 40 units, symmetric, not affected
+	# by gravity flip or Camera Mode; easing fixed at GD_CUBE_EASE.
+	var padding_px: float = GD_CUBE_PADDING_UNITS / 30.0 * Constants.CELL_SIZE
+	if absf(distance) <= padding_px:
+		return 0.0
+	return (distance - signf(distance) * padding_px) * GD_CUBE_EASE * framerate_compensation
 
 
 func get_offset_target(framerate_compensation: float) -> Vector2:

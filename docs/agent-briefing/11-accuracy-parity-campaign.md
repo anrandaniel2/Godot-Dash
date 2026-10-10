@@ -363,10 +363,11 @@ const MAX_DISTANCE   := Vector2(400.0, 300.0)
 ```
 
 - `_process`: player/ground distance → rotate into gameplay space → vertical axis via
-  `gd_vertical_step` (GD law from Wyliemaster/Geometry-Dash-1.0 `PlayLayer::updateCamera`:
-  cube band 3 cells from the top / 4 from the bottom, swapped when flipped, 1/10 catch-up per
-  60 Hz frame; fly modes chase the portal centre at 1/30; applied to all levels; that 2.1 keeps
-  the 1.0 law is a hypothesis); platformer X still uses `local_target_distance_axis`
+  `gd_vertical_step` (cube/robot: HDanke GD Editor Docs, Default Camera Properties: padding
+  40 units as a symmetric dead zone, easing 40 = 1/10 catch-up per 60 Hz frame, not changed by
+  gravity flip or Camera Mode; fly modes chase the portal centre at 1/30 (GD 1.0
+  `PlayLayer::updateCamera`, unverified for 2.2); the floor settle rule still uses the GD 1.0
+  top margin); platformer X still uses `local_target_distance_axis`
   (deadzone `MAX_DISTANCE / zoom`, 0.2 catch-up) → rotate back → apply
   per axis unless `static_factor` blocks that axis → clamp the view's bottom edge to
   `ground_down + 90 units` (GD 1.0 `cam.y >= 0`, hypothesis for 2.2; was `+ 160 px`) and the top to

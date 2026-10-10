@@ -738,15 +738,14 @@ func _test_native_core() -> void:
 	var rest_local := MonsterAnimations.sprite_local([ "x", 3.0, 6.0, 1.0, 1.0, 0.0, 1, 0, 0 ])
 	assert(rest_local.origin.is_equal_approx(Vector2(3.0, -6.0) * Constants.CELL_SIZE / GMDConverter.GD_CELL_SIZE) and rest_local.x.x < 0.0,
 		"monsters: sprite placement must match the loader's part transform (y up, flip mirrors)")
-	# GD vertical camera law (Geometry-Dash-1.0 PlayLayer::updateCamera):
-	# 3-cell top / 4-cell bottom band, 1/10 ease; 1/30 in fly modes.
+	# Cube vertical camera (HDanke GD Editor Docs, Default Camera Properties):
+	# symmetric 40-unit padding dead zone, 1/10 ease; 1/30 in fly modes.
 	var half_view: float = 675.0
-	var lower_edge: float = half_view - 4.0 * Constants.CELL_SIZE
-	var upper_edge: float = 3.0 * Constants.CELL_SIZE - half_view
-	assert(is_zero_approx(PlayerCamera.gd_vertical_step(lower_edge - 1.0, half_view, true, false, 1.0)), "camera: inside the band must not move")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(lower_edge + 100.0, half_view, true, false, 1.0), 10.0), "camera: below the band eases 1/10")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(upper_edge - 100.0, half_view, true, false, 1.0), -10.0), "camera: above the band eases 1/10")
-	assert(is_zero_approx(PlayerCamera.gd_vertical_step(lower_edge + 100.0, half_view, true, true, 1.0)), "camera: flipped gravity swaps the margins")
+	var cube_padding: float = 40.0 / 30.0 * Constants.CELL_SIZE
+	assert(is_zero_approx(PlayerCamera.gd_vertical_step(cube_padding - 1.0, half_view, true, false, 1.0)), "camera: inside the 40-unit padding must not move")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(cube_padding + 100.0, half_view, true, false, 1.0), 10.0), "camera: below the padding eases 1/10")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(-cube_padding - 100.0, half_view, true, false, 1.0), -10.0), "camera: above the padding eases 1/10")
+	assert(is_equal_approx(PlayerCamera.gd_vertical_step(cube_padding + 100.0, half_view, true, true, 1.0), 10.0), "camera: cube padding ignores gravity flip")
 	assert(is_equal_approx(PlayerCamera.gd_vertical_step(300.0, half_view, false, false, 1.0), 10.0), "camera: fly modes ease 1/30")
 	var padding_half: float = PlayerCamera.gd_padding_deadzone_px(0.5)
 	assert(is_equal_approx(padding_half, 66.0 / 30.0 * Constants.CELL_SIZE), "camera mode: padding 0.5 is a 66-point dead zone")
