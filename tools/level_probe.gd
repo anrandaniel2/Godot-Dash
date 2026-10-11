@@ -40,6 +40,10 @@ var _stop_gd: float = INF
 var _placed: bool = false
 var _revives: int = 0
 var _macro: Replay = null
+# GDASH_PROBE_NO_PLACE: keep the spawn exactly as the game places it (no probe
+# placement), log the first ticks as PROBE TRAJ, and stop at the first death.
+var _no_place: bool = false
+const _TRAJ_TICKS: int = 1500
 
 
 func _ready() -> void:
@@ -73,6 +77,7 @@ func _ready() -> void:
 		_start = Vector2(start_x.to_float(), OS.get_environment("GDASH_PROBE_START_Y").to_float())
 		_start_mode = OS.get_environment("GDASH_PROBE_MODE").to_int()
 		_stop_gd = OS.get_environment("GDASH_PROBE_END_X").to_float()
+	_no_place = OS.get_environment("GDASH_PROBE_NO_PLACE") == "1"
 	var macro_path := OS.get_environment("GDASH_PROBE_MACRO")
 	if not macro_path.is_empty():
 		var loaded: Dictionary = GDRFormat.load(macro_path)
@@ -97,6 +102,7 @@ func _ready() -> void:
 	runner.set(&"_macro", _macro)
 	runner.set(&"_start", _start)
 	runner.set(&"_start_mode", _start_mode)
+	runner.set(&"_no_place", _no_place)
 	runner.set(&"_stop_gd", _stop_gd)
 	runner.set(&"_running", true)
 	get_tree().root.add_child.call_deferred(runner)
@@ -143,9 +149,27 @@ func _physics_process(delta: float) -> void:
 		get_tree().quit(0)
 
 
+# One line every 6 physics ticks from the spawn: GD position, velocity, state.
+# Stops at the first death so the killer is the last logged event.
+func _trajectory(player: Player, level: Level) -> void:
+	var tick: int = Engine.get_physics_frames()
+	var gd_y: float = -level.to_local(player.global_position).y / _CELL_PER_GD
+	if player.dead:
+		print("PROBE TRAJ DEATH tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
+		get_tree().quit(0)
+		return
+	if tick % 6 == 0 or tick < 30:
+		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f mode=%d" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode])
+	if tick >= _TRAJ_TICKS:
+		print("PROBE TRAJ END tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
+		get_tree().quit(0)
+
 func _real_run(player: Player, level: Level) -> void:
 	if Engine.get_physics_frames() < 40:
 		print("PROBE FRAME %d pos=%s placed=%s dead=%s" % [Engine.get_physics_frames(), str(player.global_position), str(_placed), str(player.dead)])
+	if _no_place:
+		_trajectory(player, level)
+		return
 	# Positive control for the contact-kill re-check: on the spawn cell the cube
 	# still overlaps Spike68825 (before the start teleport moves it).
 	if Engine.get_physics_frames() == 13:

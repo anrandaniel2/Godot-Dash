@@ -232,6 +232,31 @@ jobs:
               print(f"::notice title=sandwich-only probe part {n // 3800}::" + esc(t[n:n + 3800]))
           PY
 
+      - name: Start of Change of scene from the spawn, no probe placement (real start)
+        if: always()
+        env:
+          GODOT_BIN: ${{ env.GODOT_BIN }}
+        run: |
+          set +e
+          # The game's own start: spawn at GD (0, 15), start teleport, fall. Nothing is
+          # placed by the probe, so every move after the spawn is the game's. Stops at
+          # the first death (PROBE TRAJ DEATH) or after 1500 ticks.
+          GDASH_PROBE_LEVEL=/tmp/bli/90475473.gmd GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
+            GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X=0 GDASH_PROBE_START_Y=15 \
+            GDASH_PROBE_MODE=0 GDASH_PROBE_END_X=600 GDASH_PROBE_NO_PLACE=1 \
+            timeout 400s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_start.log 2>&1
+          rc=$?
+          echo "start probe exit=$rc"
+          grep -E "PROBE TRAJ|PROBE EV|PROBE FRAME|PROBE REVIVE|gdash-tp|gdash-kill|kill|SCRIPT ERROR|Parse Error" /tmp/probe_start.log | cut -c1-240 > /tmp/probe_start.txt
+          echo "exit rc=$rc (124 = killed by the 400 s timeout)" >> /tmp/probe_start.txt
+          python3 - <<'PY'
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          t = open('/tmp/probe_start.txt').read()
+          for n in range(0, min(len(t), 3800 * 6), 3800):
+              print(f"::notice title=start trajectory part {n // 3800}::" + esc(t[n:n + 3800]))
+          PY
+
       - name: Region around the Change of scene cutscene (gd_level_scan --region)
         run: |
           python3 - <<'PY'
