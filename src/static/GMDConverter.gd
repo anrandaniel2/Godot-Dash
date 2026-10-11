@@ -39,6 +39,12 @@ const Prop := {
 	TEXT = "31",
 	SCALE_X = "128",
 	SCALE_Y = "129",
+	# Extended Collision: the hitbox follows the object scale. Without it a
+	# scaled object keeps its base hitbox (GD Creator School, Edit Group: "Extended
+	# collision ... makes the hitboxes match correctly when scaled up by a lot").
+	# KEY UNVERIFIED: 121 is the community key for this flag, not yet checked
+	# against a GD decompilation.
+	EXTENDED_COLLISION = "121",
 	Z_ORDER = "25",
 	OPACITY = "35",
 	TOUCH_TRIGGERED = "11",
@@ -910,6 +916,7 @@ static func _object_from_properties(
 		# and so the object round-trips with its original identity.
 		"gd_object_id": gd_id,
 		"transform": transform,
+		"extended_collision": properties.get(Prop.EXTENDED_COLLISION, "0") == "1",
 		"groups": _groups_from_properties(properties) + _control_groups(properties),
 		"color_channels": _color_channels_from_properties(
 			gd_id, properties, description, channel_style, used_channels

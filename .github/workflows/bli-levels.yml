@@ -21,6 +21,7 @@ on:
       - "src/static/GMDObjects.gd"
       - "src/static/GMDConverter.gd"
       - "src/LevelPhysics.gd"
+      - "src/GDObject.gd"
   workflow_dispatch:
     inputs:
       url:

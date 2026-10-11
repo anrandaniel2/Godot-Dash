@@ -1217,6 +1217,11 @@ static func deserialize_data_to_object(object_data: Dictionary, object: Node2D, 
 		return
 
 	object.transform = object_data.transform
+	# GD hitboxes do not follow the object scale unless Extended Collision is
+	# set. The sprite keeps the scale; the solid collider is restored to its
+	# authored size. Must run after the transform is set.
+	if object is GDObject and not bool(object_data.get("extended_collision", false)):
+		(object as GDObject).unscale_hitbox()
 
 	# A placed Geometry Dash object is fully configured by
 	# instantiate_gd_object; only the reset of a re-used node applies here.

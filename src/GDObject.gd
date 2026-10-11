@@ -296,3 +296,30 @@ static func _shift_of(watcher: HSVWatcher) -> PackedFloat32Array:
 		0.0 if watcher.saturation_multiplies else 1.0,
 		0.0 if watcher.value_multiplies else 1.0,
 	])
+
+
+## Metadata key on each collision shape: its authored transform relative to the
+## Collision body, kept so [method unscale_hitbox] is safe to run again.
+const AUTHORED_SHAPE_META: StringName = &"_gd_authored_shape_xform"
+
+
+## Restores a solid's hitbox to its authored size. Object scale is kept on the
+## node (so the sprite still scales) but every shape of a solid [code]Collision[/code]
+## body is re-expressed so its world transform is rotation and position only.
+## Hazards and other layers are left alone, as is Extended Collision (see
+## [code]extended_collision[/code] in GMDConverter).
+func unscale_hitbox() -> void:
+	var body := get_node_or_null(NodePath(COLLISION_NODE)) as Node2D
+	if body == null or int(body.get("collision_layer")) != LevelPhysics.SOLID_LAYER:
+		return
+	# Object-relative change: the scale-free basis of this object's transform.
+	var unit := Transform2D(transform.x.normalized(), transform.y.normalized(), transform.origin)
+	var object_to_unit := transform.affine_inverse() * unit
+	for child in body.get_children():
+		if not (child is CollisionShape2D or child is CollisionPolygon2D):
+			continue
+		if not child.has_meta(AUTHORED_SHAPE_META):
+			child.set_meta(AUTHORED_SHAPE_META, child.transform)
+		var authored: Transform2D = child.get_meta(AUTHORED_SHAPE_META)
+		# world = object * (body * child), so the child must be body^-1 * object^-1 * unit * body * authored.
+		child.transform = body.transform.affine_inverse() * object_to_unit * body.transform * authored
