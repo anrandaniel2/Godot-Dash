@@ -149,6 +149,13 @@ func _real_run(player: Player, level: Level) -> void:
 		player.global_position = level.to_global(Vector2(_start.x * _CELL_PER_GD, -_start.y * _CELL_PER_GD))
 		player.internal_gamemode = _start_mode as Player.Gamemode
 		player.displayed_gamemode = _start_mode as Player.Gamemode
+		# The level's own spawn overlaps the start teleport, which queues its
+		# exit before this placement runs. Clear that queued teleport, the same
+		# state a restart clears, so the probe starts where it says. Gameplay
+		# keeps the teleport; only this harness placement skips it.
+		var bridge: NativeTriggerBridge = NativeTriggerBridge.current
+		if bridge != null:
+			bridge.reset_runtime()
 		LevelManager.player_camera.snap_view()
 		print("PROBE CAM start at %s mode %d" % [str(_start), _start_mode])
 		return
