@@ -169,7 +169,7 @@ func _trajectory(player: Player, level: Level) -> void:
 			var solid := level.find_child(object_name, true, false) as Node2D
 			if solid != null:
 				var solid_at: Vector2 = level.to_local(solid.global_position)
-				print("PROBE OBJ tick=%d %s at=(%.2f,%.2f)" % [tick, object_name, solid_at.x / _CELL_PER_GD, -solid_at.y / _CELL_PER_GD])
+				print("PROBE OBJ tick=%d %s at=(%.2f,%.2f) shapes=%s" % [tick, object_name, solid_at.x / _CELL_PER_GD, -solid_at.y / _CELL_PER_GD, _shape_desc(solid)])
 	# Jump detector: a one-tick X or Y change far beyond the cube's speed names
 	# the body that moved it (slide colliders) and the state that was live.
 	var gd_x: float = _gd_x(player)
@@ -181,7 +181,9 @@ func _trajectory(player: Player, level: Level) -> void:
 				colliders.append("null")
 			elif collider is Node2D:
 				var at: Vector2 = level.to_local((collider as Node2D).global_position)
-				colliders.append("%s@%s(%.1f,%.1f)" % [str(collider.name), str(collider.get_parent().name) if collider.get_parent() else "null", at.x / _CELL_PER_GD, -at.y / _CELL_PER_GD])
+				var entry := "%s@%s(%.1f,%.1f)[%s]" % [str(collider.name), str(collider.get_parent().name) if collider.get_parent() else "null", at.x / _CELL_PER_GD, -at.y / _CELL_PER_GD, _shape_desc(collider)]
+				if not colliders.has(entry):
+					colliders.append(entry)
 			else:
 				colliders.append("%s" % str(collider.name))
 		print("PROBE JUMP tick=%d from=(%.2f,%.2f) to=(%.2f,%.2f) vel=%s speed_mult=%s s0=%s pending=%s slides=%s" % [
@@ -344,6 +346,26 @@ func _contacts(player: Player) -> String:
 			print("PROBE CONTACT point=%s normal=%s body=%s" % [str(hit.get_position()), str(hit.get_normal()), label])
 			_shapes_under(body as CollisionObject2D, _contact_gd_x)
 	return " ".join(parts)
+
+
+# Shape bounds of a collider in GD units: "size@centre" per CollisionShape2D child.
+func _shape_desc(node: Node) -> String:
+	var parts: PackedStringArray = []
+	for child in node.find_children("*", "CollisionShape2D", true, false):
+		var shape_node := child as CollisionShape2D
+		var rect_shape := shape_node.shape as RectangleShape2D
+		if rect_shape == null:
+			parts.append("%s" % shape_node.shape.get_class() if shape_node.shape else "noshape")
+			continue
+		var centre: Vector2 = _level_gd(shape_node.global_position)
+		var size: Vector2 = rect_shape.size * shape_node.global_scale.abs() / _CELL_PER_GD
+		parts.append("%.1fx%.1f@(%.1f,%.1f)" % [size.x, size.y, centre.x, centre.y])
+	return ";".join(parts)
+
+
+func _level_gd(world: Vector2) -> Vector2:
+	var at: Vector2 = LevelManager.current_level.to_local(world)
+	return Vector2(at.x / _CELL_PER_GD, -at.y / _CELL_PER_GD)
 
 
 func _gd_x(player: Player) -> float:
