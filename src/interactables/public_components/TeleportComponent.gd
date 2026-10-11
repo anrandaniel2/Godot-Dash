@@ -80,14 +80,14 @@ func teleport(player: Player) -> void:
 			Toasts.error("In %s: target is unset" % parent.name)
 			return
 	else:
-			var aim := GDTeleport.target_point(target)
-			if keep_player_x:
-				# 747 exits come out this many GD units above the exit portal's centre.
-				aim.y -= EXIT_LIFT_GD_UNITS / GD_CELL_SIZE * Constants.CELL_SIZE
-			var destination := GDTeleport.destination(
-				player.global_position, parent.global_position, aim,
-				keep_player_x, save_offset, ignore_x, ignore_y,
-			)
+		var aim := GDTeleport.target_point(target)
+		if keep_player_x:
+			# 747 exits come out this many GD units above the exit portal's centre.
+			aim.y -= EXIT_LIFT_GD_UNITS / GD_CELL_SIZE * Constants.CELL_SIZE
+		var destination := GDTeleport.destination(
+			player.global_position, parent.global_position, aim,
+			keep_player_x, save_offset, ignore_x, ignore_y,
+		)
 		match axis:
 			Constants.Axis.BOTH:
 				player.global_position = destination
