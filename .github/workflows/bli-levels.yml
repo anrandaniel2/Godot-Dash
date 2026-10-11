@@ -79,12 +79,18 @@ jobs:
           import glob, os, subprocess
           def esc(s):
               return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          ids = '1006,3662,1615,1888,3828,3802,3807,3804,3809,3817,3805,3843,3854,3991,1764,1887,1964,2064,2089,579'
           for f in sorted(glob.glob('/tmp/bli/*')):
               if os.path.isdir(f) or f.endswith('transfer.bin'):
                   continue
               name = os.path.basename(f)
-              p = subprocess.run(['python3', 'tools/gd_level_scan.py', f], capture_output=True, text=True)
-              print(f"::notice title=scan {name} exit={p.returncode}::" + esc(p.stdout[:3000]))
+              p = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--ids', ids], capture_output=True, text=True)
+              print(f"::notice title=scan {name} exit={p.returncode}::" + esc(p.stdout[:3800]))
+              detail = p.stdout[p.stdout.find('=====OBJECTS BY ID====='):]
+              detail = detail[:detail.find('objects=')] if 'objects=' in detail else detail
+              chunks = [detail[k:k + 3800] for k in range(0, min(len(detail), 3800 * 6), 3800)]
+              for n, chunk in enumerate(chunks):
+                  print(f"::notice title=ids {name} part {n}::" + esc(chunk))
               if p.stderr.strip():
                   print(f"::warning title=scan stderr {name}::" + esc(p.stderr[-800:]))
           PY
@@ -120,11 +126,19 @@ jobs:
               open(f'/tmp/bli/{name}.log', 'w').write(log)
               print(f"##### {name} exit={status}")
               lines = log.splitlines()
-              errors = [l for l in lines if re.search(r'SCRIPT ERROR|ERROR|Parse Error', l)]
+              blocks, seen = [], set()
+              for k, l in enumerate(lines):
+                  if re.search(r'SCRIPT ERROR|ERROR|Parse Error', l):
+                      block = '\n'.join(lines[k:k + 3])
+                      if block not in seen:
+                          seen.add(block)
+                          blocks.append(block)
+              errors = blocks
               ids = [l for l in lines if re.search(r'LEVEL_PROFILE (skipped_ids|failed_ids|inert_trigger_ids|substituted_block_ids|empty_target_groups)', l)]
               timing = [l for l in lines if 'LEVEL_PROFILE' in l and l not in ids]
               print(f"::notice title=timing {name} exit={status}::" + esc('\n'.join(timing[:40]) or 'no LEVEL_PROFILE lines')[:3900])
               print(f"::notice title=ids {name}::" + esc('\n'.join(ids))[:3900])
               if errors:
-                  print(f"::error title=errors {name}::" + esc('\n'.join(errors[:25]))[:3900])
+                  for n, block in enumerate(errors[:4]):
+                      print(f"::error title=error {name} {n}::" + esc(block)[:3900])
           PY

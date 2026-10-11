@@ -170,6 +170,28 @@ def window_report(objects: list, low: float, high: float) -> str:
     return "\n".join(r for _, r in rows)
 
 
+def id_report(objects: list, ids: list, samples: int = 3) -> str:
+    """For each object id: how many there are, the distinct values of each key
+    (most common first), and a few sample records. Used to see which keys a
+    trigger family actually sets in a level."""
+    lines = []
+    for wanted in ids:
+        matches = [o for o in objects if o.get("1") == wanted]
+        lines.append("id %s x%d" % (wanted, len(matches)))
+        if not matches:
+            continue
+        keys = sorted({k for o in matches for k in o}, key=lambda k: int(k) if k.isdigit() else 0)
+        for key in keys:
+            if key == "1":
+                continue
+            counter = collections.Counter(o.get(key, "<absent>") for o in matches)
+            top = ", ".join("%s x%d" % (value[:24], count) for value, count in counter.most_common(6))
+            lines.append("  key %s: %d distinct; %s" % (key, len(counter), top))
+        for o in matches[:samples]:
+            lines.append("  sample " + ";".join("%s,%s" % kv for kv in o.items())[:400])
+    return "\n".join(lines)
+
+
 def main() -> int:
     if zipfile.is_zipfile(sys.argv[1]):
         with zipfile.ZipFile(sys.argv[1]) as archive:
@@ -236,6 +258,9 @@ def main() -> int:
     if "--camera" in sys.argv:
         print("=====CAMERA=====")
         print(camera_report(objects))
+    if "--ids" in sys.argv:
+        print("=====OBJECTS BY ID=====")
+        print(id_report(objects, sys.argv[sys.argv.index("--ids") + 1].split(",")))
     if "--group-triggers" in sys.argv:
         print("=====GROUP TRIGGERS=====")
         for group in sys.argv[sys.argv.index("--group-triggers") + 1].split(","):
