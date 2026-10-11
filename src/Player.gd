@@ -682,7 +682,7 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 				var shape := _collided_shared_shape(collision)
 				print("[gdash-kill] shared hit collider=%s at=%s normal=%s shape=%s wall=%s ceiling=%s" % [
 						str(collider.name), str(collision.get_position()), str(collision.get_normal()),
-						str(shape.get_rect()) if shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
+						str(shape.shape.get_rect()) if shape != null and shape.shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
 				if shape != null:
 					shape.set_deferred(&"disabled", true)
 				if _spider_dash_frames == 0 and not Config.noclip:
