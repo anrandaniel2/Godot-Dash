@@ -11,6 +11,7 @@ their own names. Runs on a CI runner; nothing is committed.
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -35,8 +36,16 @@ def resolve_wetransfer(url):
     body = json.dumps({"security_hash": security_hash, "intent": "entire_transfer"}).encode()
     headers = dict(UA, **{"Content-Type": "application/json"})
     api = f"https://wetransfer.com/api/v4/transfers/{transfer_id}/download"
-    with open_url(api, data=body, headers=headers) as response:
-        return json.loads(response.read()).get("direct_link")
+    try:
+        with open_url(api, data=body, headers=headers) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        print(f"::error title=wetransfer api::HTTP {error.code}: {error.read()[:300]!r}")
+        return None
+    direct = payload.get("direct_link")
+    if not direct:
+        print(f"::error title=wetransfer api::no direct_link; keys={sorted(payload)[:12]} message={str(payload.get('message', ''))[:200]}")
+    return direct
 
 
 def main(argv):
