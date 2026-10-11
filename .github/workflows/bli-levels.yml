@@ -285,6 +285,6 @@ jobs:
       - name: What touches the cube in the sandwich (gd_sandwich_scan)
         run: |
           for f in /tmp/bli/*90475473*.gmd; do
-            echo "### $f"
-            python3 tools/gd_sandwich_scan.py "$f"
+            python3 tools/gd_sandwich_scan.py "$f" > /tmp/sandwich.txt 2>&1 || true
+            python3 tools/gd_annotate.py "sandwich" /tmp/sandwich.txt 3500
           done
