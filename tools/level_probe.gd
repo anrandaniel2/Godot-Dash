@@ -201,13 +201,11 @@ func _shapes_under(body: CollisionObject2D, gd_x: float) -> void:
 		var cy: float = -local.y / _CELL_PER_GD
 		var w: float = (shape as RectangleShape2D).size.x / _CELL_PER_GD
 		var h: float = (shape as RectangleShape2D).size.y / _CELL_PER_GD
-		if absf(cx - gd_x) > w * 0.5 + 6.0 or cy < 1000.0 or cy > 1300.0:
-			continue
+		if lines >= 40:
+			break
 		print("PROBE SHAPE owner=%d centre=(%.1f,%.1f) size=(%.1f,%.1f) top=%.1f bottom=%.1f" % [
 				owner_id, cx, cy, w, h, cy + h * 0.5, cy - h * 0.5])
 		lines += 1
-		if lines >= 12:
-			break
 
 
 func _contacts(player: Player) -> String:
