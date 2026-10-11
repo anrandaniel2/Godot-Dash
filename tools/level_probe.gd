@@ -81,7 +81,9 @@ func _ready() -> void:
 			print("PROBE macro ticks=%d level=%s" % [_macro.data.size(), _macro.level_name])
 			_start = Vector2(0.0, 0.0)
 	Config.fly_mode = not _start.is_finite()
-	Config.noclip = true
+	# Fly mode keeps noclip (constant speed, no deaths). Real-physics runs use
+	# normal rules so deaths, the max-Y kill and crushes count as they do in play.
+	Config.noclip = not _start.is_finite()
 	Config.paced_level_open = false
 	LevelManager.current_level_path = _LEVEL_PATH
 	# The scene change frees this node's scene; keep the probe alive on root.
