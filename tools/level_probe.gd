@@ -316,17 +316,22 @@ var _merge_logged := false
 ## Guard for the group-25 lock: every object the lock animates must keep its own body
 ## (merged=false). A merged one is frozen in the shared static body.
 func _log_merge_state(level: Level) -> void:
-	for layer in level.layers:
-		for object: Node in layer.get_children():
-			if not object is Node2D:
-				continue
-			var gd_at := (object as Node2D).global_position
-			var gx := gd_at.x / _CELL_PER_GD
-			var gy := -gd_at.y / _CELL_PER_GD
-			if gx < 100.0 or gx > 140.0 or gy < 1050.0 or gy > 1200.0:
-				continue
-			var groups := PackedStringArray()
-			for g: StringName in object.get_groups():
-				if String(g).begins_with(Constants.GROUP_PREFIX):
-					groups.append(String(g))
-			print("PROBE MERGE id=%s at=(%.1f,%.1f) merged=%s groups=%s" % [str(object.get_meta(&"gd_object_id", "?")), gx, gy, str(object.has_meta(LevelPhysics.MERGED_META)), str(groups)])
+	var found := [0]
+	var stack: Array = [level]
+	while not stack.is_empty() and found[0] < 60:
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not node is Node2D or node is Player:
+			continue
+		var gd_at := (node as Node2D).global_position
+		var gx := gd_at.x / _CELL_PER_GD
+		var gy := -gd_at.y / _CELL_PER_GD
+		if gx < 100.0 or gx > 140.0 or gy < 1050.0 or gy > 1200.0:
+			continue
+		var groups := PackedStringArray()
+		for g: StringName in node.get_groups():
+			if String(g).begins_with(Constants.GROUP_PREFIX):
+				groups.append(String(g))
+		found[0] += 1
+		print("PROBE MERGE %s parent=%s at=(%.1f,%.1f) merged=%s id=%s groups=%s" % [node.get_class(), node.get_parent().name, gx, gy, str(node.has_meta(LevelPhysics.MERGED_META)), str(node.get_meta(&"gd_object_id", "-")), str(groups)])
