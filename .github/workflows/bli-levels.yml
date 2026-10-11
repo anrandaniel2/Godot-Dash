@@ -281,3 +281,10 @@ jobs:
               for n in range(0, min(len(part), 3800 * 2), 3800):
                   print(f"::notice title=teleports and gravity part {n // 3800}::" + esc(part[n:n + 3800]))
           PY
+
+      - name: What touches the cube in the sandwich (gd_sandwich_scan)
+        run: |
+          for f in /tmp/bli/*90475473*.gmd; do
+            echo "### $f"
+            python3 tools/gd_sandwich_scan.py "$f"
+          done
