@@ -34,11 +34,14 @@ func _ready() -> void:
 	var report := GMDConverter.ImportReport.new()
 	var level_data := GMDConverter.import_online_level_string(level_string, "Profile", report)
 	_mark("C++ packed import done")
+	_print_report_ids(report)
 	var signature := _import_signature_of(level_data, report)
 	if not _signatures_match(reference, signature):
 		print("LEVEL_PROFILE import parity MISMATCH\n  gdscript %s\n  native   %s" % [str(reference), str(signature)])
-		get_tree().quit(1)
-		return
+		if not _allow_mismatch():
+			get_tree().quit(1)
+			return
+		print("LEVEL_PROFILE continuing past parity mismatch (GDASH_PROFILE_ALLOW_MISMATCH=1)")
 	print("LEVEL_PROFILE import parity ok: %s" % str(signature))
 	level_string = ""
 	var objects: Array = level_data.layers[0].objects
@@ -60,7 +63,7 @@ func _ready() -> void:
 
 	var loaded := LevelOperationsHandler.load_level_data_from_path(_SAVE_PATH)
 	_mark("loaded from disk")
-	if not _check_native_packed_parity(loaded):
+	if not _check_native_packed_parity(loaded) and not _allow_mismatch():
 		get_tree().quit(1)
 		return
 
@@ -225,6 +228,22 @@ func _sprite_count(batch: DecorationBatch) -> int:
 ## Builds the first packed layer both ways - the GDScript Item path and
 ## NativePackedDecorationBuilder - and compares sprite count, summed
 ## placement and summed tint. Returns false on a mismatch.
+## Opt-in: keep going after a parity mismatch so the level still builds and the
+## remaining stages report their own errors. Off unless the env var is "1".
+func _allow_mismatch() -> bool:
+	return OS.get_environment("GDASH_PROFILE_ALLOW_MISMATCH") == "1"
+
+
+## The IDs behind the import report's counts, one line each, so a level that
+## "does nothing" shows which objects and triggers were dropped or inert.
+func _print_report_ids(report: GMDConverter.ImportReport) -> void:
+	print("LEVEL_PROFILE skipped_ids %s" % str(report.skipped_ids))
+	print("LEVEL_PROFILE failed_ids %s" % str(report.failed_ids))
+	print("LEVEL_PROFILE inert_trigger_ids %s" % str(report.inert_trigger_ids))
+	print("LEVEL_PROFILE substituted_block_ids %s" % str(report.substituted_block_ids))
+	print("LEVEL_PROFILE empty_target_groups %s" % str(report.empty_target_groups))
+
+
 func _check_native_packed_parity(level_data: Dictionary) -> bool:
 	if not ClassDB.class_exists(&"NativePackedDecorationBuilder"):
 		print("LEVEL_PROFILE parity skipped: no native builder")
