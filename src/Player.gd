@@ -1457,6 +1457,9 @@ func _emit_gd_events(jump_state: int) -> void:
 
 
 func _player_death() -> void:
+	# Death cause for the bli probes: where the cube was and which path killed it.
+	var frames := get_stack()
+	print("[gdash-death] pos=%s stack=%s" % [str(position), str(frames.slice(0, 4))])
 	if not GDLevelOptions.audio_on_death:
 		AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), true)
 	dead = true
