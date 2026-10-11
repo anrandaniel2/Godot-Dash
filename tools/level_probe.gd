@@ -149,7 +149,8 @@ func _real_run(player: Player, level: Level) -> void:
 	# Positive control for the contact-kill re-check: on the spawn cell the cube
 	# still overlaps Spike68825 (before the start teleport moves it).
 	if Engine.get_physics_frames() == 13:
-		var spike := level.find_child("Spike68825", true, false) as Node2D
+		var spike_root := level.find_child("Spike68825", true, false) as Node2D
+		var spike := spike_root.find_child("Collision", false, false) as Node2D if spike_root != null else null
 		if spike != null:
 			var hitboxes: Array = [player.get_node("KillColliderRectangularHazard/KillColliderRectangularHazardHitbox"), player.get_node("KillColliderCircularHazard/KillColliderCircularHazardHitbox")]
 			print("PROBE QUERY spike=%s overlaps=%s" % [str(spike.name), str(player._kill_collider_overlaps(hitboxes, spike))])
