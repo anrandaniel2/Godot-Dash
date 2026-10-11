@@ -318,6 +318,15 @@ var _merge_logged := false
 func _log_merge_state(level: Level) -> void:
 	for layer in level.layers:
 		for object: Node in layer.get_children():
-			if not object is Node2D or not (object as Node2D).is_in_group(Constants.GROUP_PREFIX + "25"):
+			if not object is Node2D:
 				continue
-			print("PROBE MERGE id=%s at=(%.1f,%.1f) merged=%s" % [str(object.get_meta(&"gd_object_id", "?")), (object as Node2D).global_position.x / _CELL_PER_GD, -(object as Node2D).global_position.y / _CELL_PER_GD, str(object.has_meta(LevelPhysics.MERGED_META))])
+			var gd_at := (object as Node2D).global_position
+			var gx := gd_at.x / _CELL_PER_GD
+			var gy := -gd_at.y / _CELL_PER_GD
+			if gx < 100.0 or gx > 140.0 or gy < 1050.0 or gy > 1200.0:
+				continue
+			var groups := PackedStringArray()
+			for g: StringName in object.get_groups():
+				if String(g).begins_with(Constants.GROUP_PREFIX):
+					groups.append(String(g))
+			print("PROBE MERGE id=%s at=(%.1f,%.1f) merged=%s groups=%s" % [str(object.get_meta(&"gd_object_id", "?")), gx, gy, str(object.has_meta(LevelPhysics.MERGED_META)), str(groups)])
