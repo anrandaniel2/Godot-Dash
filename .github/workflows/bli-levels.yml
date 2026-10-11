@@ -83,25 +83,20 @@ jobs:
           import glob, os, subprocess
           def esc(s):
               return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
-          ids = '1006,3662,1615,1888,3828,3802,3807,3804,3809,3817,3805,3843,3854,3991,1764,1887,1964,2064,2089,579'
+          # Few annotations per step: GitHub drops the rest. One start report per
+          # level (name, start position, objects around it), two parts at most.
           for f in sorted(glob.glob('/tmp/bli/*')):
               if os.path.isdir(f) or f.endswith('transfer.bin'):
                   continue
               name = os.path.basename(f)
-              p = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--ids', ids], capture_output=True, text=True)
-              print(f"::notice title=scan {name} exit={p.returncode}::" + esc(p.stdout[:3800]))
-              detail = p.stdout[p.stdout.find('=====OBJECTS BY ID====='):]
-              detail = detail[:detail.find('objects=')] if 'objects=' in detail else detail
-              chunks = [detail[k:k + 3800] for k in range(0, min(len(detail), 3800 * 6), 3800)]
-              for n, chunk in enumerate(chunks):
-                  print(f"::notice title=ids {name} part {n}::" + esc(chunk))
               start = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--start'], capture_output=True, text=True)
               part = start.stdout[start.stdout.find('=====START====='):]
               part = part[:part.find('objects=') if part.find('objects=') > 0 else len(part)]
-              for n in range(0, min(len(part), 3800 * 6), 3800):
+              part = part.replace('=====START=====\n', '')
+              for n in range(0, min(len(part), 3800 * 2), 3800):
                   print(f"::notice title=start {name} part {n // 3800}::" + esc(part[n:n + 3800]))
-              if p.stderr.strip():
-                  print(f"::warning title=scan stderr {name}::" + esc(p.stderr[-800:]))
+              if start.returncode != 0 or start.stderr.strip():
+                  print(f"::warning title=scan stderr {name}::" + esc(start.stderr[-800:]))
           PY
 
       - name: Import project resources
