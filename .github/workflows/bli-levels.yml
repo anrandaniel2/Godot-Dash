@@ -232,3 +232,32 @@ jobs:
               for n in range(0, min(len(part), 3800 * 2), 3800):
                   print(f"::notice title=ids part {n // 3800}::" + esc(part[n:n + 3800]))
           PY
+
+      - name: Toggle walls in the Change of scene level (gd_level_scan decoder)
+        run: |
+          python3 - <<'PY'
+          import collections, glob, importlib.util
+          spec = importlib.util.spec_from_file_location('gls', 'tools/gd_level_scan.py')
+          gls = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(gls)
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
+              text = open(f, encoding='utf-8', errors='replace').read()
+              chunks = gls.decode_level(text).split(';')
+              objects = [gls.pairs(c) for c in chunks[1:] if c]
+              toggles = [(float(o.get('2', 0) or 0), float(o.get('3', 0) or 0), o) for o in objects if o.get('1') == '1049']
+              cols = collections.defaultdict(list)
+              for x, y, o in toggles:
+                  cols[round(x / 30) * 30].append((y, o))
+              lines = [f"toggles total={len(toggles)} distinct x columns={len(cols)}"]
+              for x, items in sorted(cols.items(), key=lambda kv: -len(kv[1]))[:8]:
+                  ys = sorted(y for y, _ in items)
+                  groups = collections.Counter(o.get('51', '?') for _, o in items)
+                  on = sum(1 for _, o in items if o.get('56') == '1')
+                  lines.append(f"x~{x}: n={len(items)} y={ys[0]:.0f}..{ys[-1]:.0f} on={on} targets={dict(list(groups.most_common(6)))}")
+              g54 = [(i, o) for i, o in enumerate(objects) if '54' in (o.get('57', '') or '').split('.') or o.get('51') == '54']
+              lines.append(f"objects touching group 54 (member or target): {len(g54)}")
+              text_out = "\n".join(lines)
+              print(f"::notice title=toggle walls::" + esc(text_out))
+PY
