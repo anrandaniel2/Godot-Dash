@@ -151,6 +151,11 @@ func _physics_process(delta: float) -> void:
 
 # One line every 6 physics ticks from the spawn: GD position, velocity, state.
 # Stops at the first death so the killer is the last logged event.
+var _jump_prev_tick: int = -1
+var _jump_prev_x: float = 0.0
+var _jump_prev_y: float = 0.0
+
+
 func _trajectory(player: Player, level: Level) -> void:
 	var tick: int = Engine.get_physics_frames()
 	var gd_y: float = -level.to_local(player.global_position).y / _CELL_PER_GD
@@ -158,6 +163,25 @@ func _trajectory(player: Player, level: Level) -> void:
 		print("PROBE TRAJ DEATH tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
 		return
+	# Jump detector: a one-tick X or Y change far beyond the cube's speed names
+	# the body that moved it (slide colliders) and the state that was live.
+	var gd_x: float = _gd_x(player)
+	if _jump_prev_tick == tick - 1 and (absf(gd_x - _jump_prev_x) > 4.0 or absf(gd_y - _jump_prev_y) > 40.0):
+		var colliders: Array[String] = []
+		for i in range(player.get_slide_collision_count()):
+			var collider := player.get_slide_collision(i).get_collider() as Node
+			if collider == null:
+				colliders.append("null")
+			else:
+				colliders.append("%s@%s" % [str(collider.name), str(collider.get_parent().name) if collider.get_parent() else "null"])
+		print("PROBE JUMP tick=%d from=(%.2f,%.2f) to=(%.2f,%.2f) vel=%s speed_mult=%s s0=%s pending=%s slides=%s" % [
+			tick, _jump_prev_x, _jump_prev_y, gd_x, gd_y, str(player.velocity),
+			str(player.get("speed_multiplier")), str(player.speed_0_portal_control.name) if player.speed_0_portal_control else "null",
+			str(player.get("gravity_portal_pending")), str(colliders),
+		])
+	_jump_prev_tick = tick
+	_jump_prev_x = gd_x
+	_jump_prev_y = gd_y
 	if tick % 6 == 0 or tick < 30:
 		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f mode=%d" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode])
 	elif tick >= 80:
