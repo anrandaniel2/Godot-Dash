@@ -185,6 +185,12 @@ var _contact_gd_x: float = 0.0
 func _shapes_under(body: CollisionObject2D, gd_x: float) -> void:
 	var level: Level = LevelManager.current_level
 	var lines := 0
+	var kinds := {}
+	for owner_id: int in body.get_shape_owners():
+		var sh: Shape2D = body.shape_owner_get_shape(owner_id, 0)
+		var key: String = sh.get_class() if sh != null else "null"
+		kinds[key] = int(kinds.get(key, 0)) + 1
+	print("PROBE SHAPES owners=%d kinds=%s body_pos=%s" % [body.get_shape_owners().size(), str(kinds), str(body.global_position)])
 	for owner_id: int in body.get_shape_owners():
 		var shape: Shape2D = body.shape_owner_get_shape(owner_id, 0)
 		if not (shape is RectangleShape2D):
