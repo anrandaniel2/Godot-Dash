@@ -196,8 +196,11 @@ jobs:
           echo "sandwich probe exit=$rc"
           grep -E "PROBE HIT|PROBE G25|PROBE END|PROBE CAM finished|SCRIPT ERROR" /tmp/probe_sw.log | cut -c1-200 > /tmp/probe_sw.txt
           echo "PROBE END rc=$rc (124 = killed by the 300 s timeout)" >> /tmp/probe_sw.txt
+          echo "$rc" > /tmp/probe_sw_rc
           python3 - <<'PY'
           def esc(s): return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          import subprocess
+          subprocess.run(["python3", "tools/sandwich_probe_summary.py", "/tmp/probe_sw.log", open("/tmp/probe_sw_rc").read().strip()], check=False)
           t = open('/tmp/probe_sw.txt').read()
           for n in range(0, min(len(t), 3800 * 12), 3800):
               print(f"::notice title=sandwich-only probe part {n // 3800}::" + esc(t[n:n + 3800]))
