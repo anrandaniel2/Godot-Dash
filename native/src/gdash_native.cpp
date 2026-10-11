@@ -1696,6 +1696,7 @@ struct TriggerEffect {
 	// 198 TargetPlayer 0 all / 1 P1 / 2 P2.
 	bool touch_hold = false;
 	int32_t touch_mode = 0, touch_player = 0;
+	bool touch_dual = false; // 1595 key 89 Dual mode: either player's press fires it, ignoring key 198
 	// 1814 (gd_docs follow_player_y.md): 90 speed, 105 max speed, 91 delay, 92 offset.
 	double follow_y_speed = 1.0, follow_y_max_px = 0.0, follow_y_delay = 0.0, follow_y_offset_px = 0.0;
 	// 3604 (gd_docs event.md): 430 event ids, 447 material, 525 player.
@@ -2603,6 +2604,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			effect.touch_hold = String(properties.get("81", String("0"))) == "1";
 			effect.touch_mode = static_cast<int32_t>(String(properties.get("82", String("0"))).to_int());
 			effect.touch_player = static_cast<int32_t>(String(properties.get("198", String("0"))).to_int());
+			effect.touch_dual = prop_bool(properties, "89");
 			break;
 		case 1814:
 			effect.kind = TriggerEffectKind::FOLLOW_PLAYER_Y;
@@ -4770,7 +4772,7 @@ public:
 			if (structure_epoch != epoch || index >= records.size()) return;
 			if (paused_records.count(index)) continue;
 			const TriggerEffect &effect = records[index].effect;
-			if (effect.touch_player != 0 && effect.touch_player != slot) continue;
+			if (!effect.touch_dual && effect.touch_player != 0 && effect.touch_player != slot) continue;
 			auto state = touch_states.find(index);
 			const bool current = state == touch_states.end() ? true : state->second;
 			int on = touch_toggle_result(effect.touch_hold, effect.touch_mode, pressed, current);

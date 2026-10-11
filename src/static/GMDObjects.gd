@@ -405,7 +405,7 @@ const TRIGGER_IDS: Array[int] = [
 	22, 23, 24, 25, 26, 27, 28, 32, 33, 55, 56, 57, 58, 59,
 	29, 30, 104, 105, 221, 717, 718, 743, 744, 899, 900, 901, 915, 1006,
 	1007, 1049, 1268, 1346, 1347, 1520, 1585, 1595,
-	1611, 1612, 1613, 1614, 1616, 1811, 1812, 1814, 1815, 1817, 1818, 1819,
+	1611, 1612, 1613, 1616, 1811, 1812, 1814, 1815, 1817, 1818, 1819,
 	# 1932 is deliberately absent: the atlas maps it to an editor UI button
 	# (edit_ePlayerControlBtn), and this project imports it as the black pad -
 	# it is not a trigger.
