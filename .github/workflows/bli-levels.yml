@@ -247,7 +247,7 @@ jobs:
             timeout 400s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_start.log 2>&1
           rc=$?
           echo "start probe exit=$rc"
-          grep -E "PROBE TRAJ|PROBE JUMP|PROBE EV|PROBE FRAME|PROBE REVIVE|gdash-tp|gdash-kill|gdash_teleport|teleport attempt|kill|SCRIPT ERROR|Parse Error" /tmp/probe_start.log | cut -c1-240 > /tmp/probe_start.txt
+          grep -E "PROBE TRAJ|PROBE JUMP|gdash_move|PROBE EV|PROBE FRAME|PROBE REVIVE|gdash-tp|gdash-kill|gdash_teleport|teleport attempt|kill|SCRIPT ERROR|Parse Error" /tmp/probe_start.log | cut -c1-240 > /tmp/probe_start.txt
           echo "exit rc=$rc (124 = killed by the 400 s timeout)" >> /tmp/probe_start.txt
           python3 - <<'PY'
           def esc(s):

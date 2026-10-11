@@ -3472,6 +3472,26 @@ class NativeTriggerRuntime : public RefCounted {
 			// Copy by value: execute_effect must not hold a reference into
 			// records across its call-outs.
 			const Record snapshot = records[index];
+			// Start-window diagnostics: name every move that fires while the cube
+			// is in the Change of Scene start window (see tools/level_probe.gd).
+			if (snapshot.effect.kind == TriggerEffectKind::MOVE
+					&& Engine::get_singleton()->get_physics_frames() <= 120) {
+				String groups;
+				for (const String &group : snapshot.effect.target_groups) {
+					groups += group;
+					groups += ",";
+				}
+				Node2D *moved_player = Object::cast_to<Node2D>(player);
+				UtilityFunctions::print(String("[gdash_move] frame=")
+					+ String::num_int64(Engine::get_singleton()->get_physics_frames())
+					+ " gd_id=" + String::num_int64(snapshot.gd_id)
+					+ " entrance=" + UtilityFunctions::str(Vector2(static_cast<real_t>(snapshot.x), static_cast<real_t>(snapshot.y)))
+					+ " groups=" + groups
+					+ " move_px=" + UtilityFunctions::str(snapshot.effect.move_px)
+					+ " lock_x=" + String::num_int64(snapshot.effect.move_lock_x ? 1 : 0)
+					+ " use_target=" + String::num_int64(snapshot.effect.move_use_target ? 1 : 0)
+					+ " player=" + (moved_player ? UtilityFunctions::str(moved_player->get_global_position()) : String("none")));
+			}
 			execute_effect(snapshot, index, player);
 		}
 		// The signal or effect above can synchronously restart the level,
