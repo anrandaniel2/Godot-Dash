@@ -146,6 +146,15 @@ func _physics_process(delta: float) -> void:
 func _real_run(player: Player, level: Level) -> void:
 	if Engine.get_physics_frames() < 40:
 		print("PROBE FRAME %d pos=%s placed=%s dead=%s" % [Engine.get_physics_frames(), str(player.global_position), str(_placed), str(player.dead)])
+	# Positive control for the contact-kill re-check: on the spawn cell the cube
+	# still overlaps Spike68825 (before the start teleport moves it).
+	if Engine.get_physics_frames() == 13:
+		var spike := level.find_child("Spike68825", true, false) as Node2D
+		if spike != null:
+			var hitboxes: Array = [player.get_node("KillColliderRectangularHazard/KillColliderRectangularHazardHitbox"), player.get_node("KillColliderCircularHazard/KillColliderCircularHazardHitbox")]
+			print("PROBE QUERY spike=%s overlaps=%s" % [str(spike.name), str(player._kill_collider_overlaps(hitboxes, spike))])
+		else:
+			print("PROBE QUERY spike=missing")
 	if not _merge_logged:
 		_merge_logged = true
 		_log_packed_box(level)
