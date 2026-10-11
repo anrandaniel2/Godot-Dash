@@ -150,6 +150,15 @@ func _real_run(player: Player, level: Level) -> void:
 		print("PROBE CAM start at %s mode %d" % [str(_start), _start_mode])
 		return
 	var gd_x: float = _gd_x(player)
+	# Where the group-25 blocks are: if the lock works they move with the cube.
+	if gd_x >= 60.0 and gd_x <= 260.0:
+		var tracked := get_tree().get_nodes_in_group(Constants.GROUP_PREFIX + "25")
+		var bits := PackedStringArray()
+		for member: Node in tracked:
+			if member is Node2D:
+				var where: Vector2 = level.to_local((member as Node2D).global_position) / _CELL_PER_GD
+				bits.append("(%.1f,%.1f)" % [where.x, -where.y])
+		print("PROBE G25 tick=%d x=%.1f members=%d %s" % [player.replay_physics_tick, gd_x, tracked.size(), " ".join(bits.slice(0, 6))])
 	# Physical contacts of the cube in the sandwich window: what holds it up,
 	# or whether it touches anything at all. One line per physics tick.
 	if gd_x >= 60.0 and gd_x <= 260.0:
