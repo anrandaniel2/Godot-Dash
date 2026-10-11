@@ -19,9 +19,14 @@ enum Eased {
 		axis = value
 		notify_property_list_changed()
 @export_range(-180, 180, 0.01, "degrees", "slider") var angle: float = 0.0
+## Seconds between offset samples, held in between. 0 samples every frame.
+@export_range(0.0, 0.2, 0.01, "or_greater", "suffix:s") var interval: float = 0.0
 
 var noise: FastNoiseLite
 var linear_eased_weight: float
+var interval_clock: float = 0.0
+var held_offset: Vector2 = Vector2.ZERO
+var sampled: bool = false
 
 
 func _ready() -> void:
@@ -50,31 +55,44 @@ func _get_property_default_value(property: String) -> Variant:
 			return Axis.BOTH
 		"angle":
 			return 0.0
+		"interval":
+			return 0.0
 		_:
 			return null
 
 
 func start(_player: Player):
 	linear_eased_weight = 0.0
+	interval_clock = 0.0
+	sampled = false
 
 
 func _on_easing_progressed(player: Player, _weight_delta: float) -> void:
 	var easing_component: EasingComponent = parent.query(EasingComponent)
 	var weight: float = easing_component.weights[player]
-	linear_eased_weight += get_process_delta_time() / easing_component.get_duration()
+	var delta := get_process_delta_time()
+	linear_eased_weight += delta / easing_component.get_duration()
+	# Interval: the offset is sampled once per interval and held until the next
+	# sample; 0 samples every frame. The finishing frame samples at full weight.
+	interval_clock += delta
+	if not sampled or weight >= 1.0 or interval_clock >= interval:
+		interval_clock = fposmod(interval_clock, interval) if interval > 0.0 else 0.0
+		sampled = true
+		held_offset = _sample_offset(weight)
+	LevelManager.player_camera.shake_offset = held_offset
+
+
+func _sample_offset(weight: float) -> Vector2:
 	var noise_sample_position := (weight if eased == Eased.SPEED_AND_STRENGTH else linear_eased_weight) * speed / 100 * 10000
 	var sample_strength := 1.0 - weight
 	match axis:
 		Axis.BOTH:
-			LevelManager.player_camera.shake_offset.x = noise.get_noise_2d(
-				noise_sample_position,
-				0.0,
-			) * sample_strength * strength * 10.0
-			LevelManager.player_camera.shake_offset.y = noise.get_noise_2d(
-				1.0, # Offset so the starting value is different
-				noise_sample_position,
+			return Vector2(
+				noise.get_noise_2d(noise_sample_position, 0.0),
+				noise.get_noise_2d(1.0, noise_sample_position), # Offset so the starting value is different
 			) * sample_strength * strength * 10.0
 		Axis.ANGLE:
-			LevelManager.player_camera.shake_offset = Vector2.from_angle(deg_to_rad(angle)) * noise.get_noise_1d(
+			return Vector2.from_angle(deg_to_rad(angle)) * noise.get_noise_1d(
 				noise_sample_position,
 			) * sample_strength * strength * 10.0
+	return Vector2.ZERO

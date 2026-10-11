@@ -1908,6 +1908,7 @@ static func _components_from_properties(
 			if "CameraShakeComponent" in supported:
 				components["CameraShakeComponent"] = {
 					"strength": maxf(0.01, float(properties.get(Prop.STRENGTH, "5"))),
+					"interval": maxf(0.0, float(properties.get("84", "0"))),
 				}
 		1913: # Camera zoom trigger
 			if "CameraZoomChangerComponent" in supported:

@@ -1652,6 +1652,7 @@ struct TriggerEffect {
 	double ease_rate = 2.0;      // key 85 (Ease exponent / Elastic period)
 	bool pulse_envelope = false; // any of keys 45/46/47 present (pulse style)
 	bool pulse_group = false;    // 1006 key 52 = 1: target_groups are object groups
+	bool pulse_exclusive = false; // 1006 key 86: pauses overlapping pulses while it runs (gd_docs/GD Creator School)
 	double fade_in = 0.0;        // key 45
 	double hold = 0.0;           // key 46
 	double fade_out = 0.0;       // key 47
@@ -1673,6 +1674,8 @@ struct TriggerEffect {
 	bool teleport_flip_x = false;         // 4
 	double teleport_rotation = 0.0;       // 6
 	Vector2 move_px;             // 901: keys 28/29 in pixels
+	bool move_use_target = false; // 901: key 100 "Use Target": move members onto the key 71 group's position
+	int32_t move_target_axes = 0; // 901: key 101 axes for Use Target: 0 both, 1 X only, 2 Y only (values unverified)
 	bool move_lock_x = false;     // 901: key 58, lock to player X
 	std::vector<String> chance_groups;  // 1912 keys 51/71, 2068 key 152 groups
 	// 3619/3620 (gmdkit prop_table.csv trigger.item_edit / item_compare; enums
@@ -1763,6 +1766,7 @@ struct TriggerEffect {
 	bool has_blending = false;   // 899: key 17 present at all (tri-state)
 	bool blending = false;       // 899: key 17, the Blending checkbox
 	double shake_strength = 5.0; // 1520: key 75
+	double shake_interval = 0.0; // 1520: key 84, seconds between offset samples (0 = every frame)
 	double time_scale = 1.0;     // 1935: key 120
 	double camera_zoom = 1.0;    // 1913: key 371 (multiplier of the default zoom)
 	Vector2 camera_offset_px;    // 1916: keys 28/29 in pixels
@@ -2953,6 +2957,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 				static_cast<real_t>(prop_float(properties, "28", 0.0) * CELLS_TO_PX_X),
 				static_cast<real_t>(prop_float(properties, "29", 0.0) * CELLS_TO_PX_Y));
 			effect.camera_offset_px = effect.move_px;
+			if (effect.kind == TriggerEffectKind::MOVE) {
+				effect.move_use_target = prop_bool(properties, "100");
+				effect.move_target_axes = static_cast<int32_t>(prop_int(properties, "101", 0));
+			}
 			effect.move_lock_x = String(properties.get("58", String("0"))) == "1";
 			effect.move_lock_y = String(properties.get("59", String("0"))) == "1";
 			effect.move_mod = Vector2(
@@ -3016,6 +3024,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 				effect.kind = TriggerEffectKind::NONE;
 				break;
 			}
+			effect.pulse_exclusive = prop_bool(properties, "86");
 			const int32_t channel = static_cast<int32_t>(prop_int(properties, "51", 0));
 			const String level_property = level_color_property_for_channel(channel);
 			if (prop_int(properties, "52", 0) == 1) {
@@ -3066,6 +3075,7 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 			break;
 		case TriggerEffectKind::SHAKE:
 			effect.shake_strength = Math::max(0.01, prop_float(properties, "75", 5.0));
+			effect.shake_interval = Math::max(0.0, prop_float(properties, "84", 0.0));
 			break;
 		case TriggerEffectKind::TIMEWARP: {
 			const double time_mod = prop_float(properties, "120", 1.0);
@@ -3243,6 +3253,12 @@ class NativeTriggerRuntime : public RefCounted {
 		double initial_time_scale = 1.0;
 		double linear_eased_weight = 0.0;     // shake noise position
 		Ref<FastNoiseLite> noise;
+		Vector2 shake_offset;                 // 1520: offset held between Interval samples
+		double shake_clock = 0.0;             // 1520: time since the offset was last sampled
+		bool shake_sampled = false;           // 1520: an offset has been sampled at least once
+		std::vector<Vector2> move_start;      // 901 Use Target: each member's global position at fire time
+		Vector2 move_target;                  // 901 Use Target: the key 71 group's global position at fire time
+		bool exclusive_hold = false;          // pulse paused by an overlapping Exclusive pulse (key 86)
 	};
 	// Level-local -> global placement for packed rows (see set_packed_transform).
 	Transform2D packed_transform;
@@ -5740,6 +5756,12 @@ private:
 		for (const Fade &existing : fades) {
 			if (existing.record_index == index && existing.player == player_id) return;
 		}
+		if (effect.kind == TriggerEffectKind::PULSE) {
+			// Exclusive pulses (key 86) own their target while they run: other
+			// pulses on it are ignored, and an Exclusive pulse pauses the rest.
+			if (!effect.pulse_exclusive && pulse_held_by_exclusive(effect, fades.size())) return;
+			if (effect.pulse_exclusive) hold_overlapping_pulses(effect);
+		}
 		Fade fade;
 		fade.record_index = index;
 		fade.player = player_id;
@@ -5749,6 +5771,18 @@ private:
 			case TriggerEffectKind::ROTATE:
 				fade.members = resolve_effect_members(effect);
 				fade.pivot = resolve_pivot(effect);
+				if (effect.kind == TriggerEffectKind::MOVE && effect.move_use_target) {
+					// Use Target: the destination is the key 71 group's position now,
+					// and each member's start is captured so its travel is fixed.
+					Node2D *target = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.pivot));
+					if (!target) return; // no target object: nothing to move to
+					fade.move_target = target->get_global_position();
+					fade.move_start.reserve(fade.members.size());
+					for (ObjectID id : fade.members) {
+						Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(id));
+						fade.move_start.push_back(node ? node->get_global_position() : Vector2());
+					}
+				}
 				if (effect.move_lock_x || effect.move_lock_y) {
 					Node2D *locked = Object::cast_to<Node2D>(ObjectDB::get_instance(player_id));
 					if (locked) fade.follow_last = locked->get_global_position();
@@ -5840,6 +5874,59 @@ private:
 	ObjectID resolve_pivot(const TriggerEffect &effect) {
 		Node2D *pivot = resolve_first_member(effect.center_group);
 		return pivot ? ObjectID(pivot->get_instance_id()) : ObjectID();
+	}
+
+	// Two pulse records aim at the same target: a shared object group, or the
+	// same colour channel of the same kind (level colour or channel id).
+	static bool pulse_targets_overlap(const TriggerEffect &a, const TriggerEffect &b) {
+		if (a.kind != TriggerEffectKind::PULSE || b.kind != TriggerEffectKind::PULSE) return false;
+		if (a.pulse_group != b.pulse_group) return false;
+		if (a.pulse_group) {
+			for (const String &group : a.target_groups) {
+				if (std::find(b.target_groups.begin(), b.target_groups.end(), group) != b.target_groups.end()) return true;
+			}
+			return false;
+		}
+		return a.target_channel == b.target_channel && a.channel_is_level_color == b.channel_is_level_color;
+	}
+
+	// A running Exclusive pulse (key 86) on the target of `effect`, other than
+	// the fade at index `skip`. Fades it holds are not active holders.
+	bool pulse_held_by_exclusive(const TriggerEffect &effect, size_t skip) const {
+		for (size_t i = 0; i < fades.size(); ++i) {
+			if (i == skip) continue;
+			const Fade &f = fades[i];
+			if (f.exclusive_hold || f.record_index >= records.size()) continue;
+			const TriggerEffect &other = records[f.record_index].effect;
+			if (other.pulse_exclusive && pulse_targets_overlap(other, effect)) return true;
+		}
+		return false;
+	}
+
+	// An Exclusive pulse disables every other pulse on its target while it runs:
+	// they pause here and resume with their remaining time when it finishes.
+	void hold_overlapping_pulses(const TriggerEffect &exclusive) {
+		for (Fade &f : fades) {
+			if (f.record_index >= records.size() || f.paused || f.exclusive_hold) continue;
+			const TriggerEffect &other = records[f.record_index].effect;
+			if (!pulse_targets_overlap(other, exclusive)) continue;
+			f.paused = true;
+			f.paused_at = clock;
+			f.exclusive_hold = true;
+		}
+	}
+
+	// Resumes the pulses an Exclusive pulse held, unless another Exclusive still
+	// covers their target. Called before the finished fade at `finishing` is erased.
+	void release_exclusive_holds(const TriggerEffect &exclusive, size_t finishing) {
+		if (pulse_held_by_exclusive(exclusive, finishing)) return;
+		for (Fade &f : fades) {
+			if (!f.exclusive_hold || f.record_index >= records.size()) continue;
+			if (!pulse_targets_overlap(records[f.record_index].effect, exclusive)) continue;
+			f.exclusive_hold = false;
+			f.paused = false;
+			f.start += clock - f.paused_at;
+		}
 	}
 
 	// A running channel pulse (not a group pulse) on the same target, other than
@@ -5957,6 +6044,20 @@ private:
 				break;
 			}
 			case TriggerEffectKind::MOVE: {
+				if (effect.move_use_target) {
+					// Use Target: each member's remaining displacement is the
+					// whole distance to the target (on the enabled axes), spread
+					// over the move's easing by weight_delta.
+					for (size_t m = 0; m < fade.members.size() && m < fade.move_start.size(); ++m) {
+						Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.members[m]));
+						if (!node) continue;
+						Vector2 remaining = fade.move_target - fade.move_start[m];
+						if (effect.move_target_axes == 1) remaining.y = 0.0;
+						if (effect.move_target_axes == 2) remaining.x = 0.0;
+						node->set_global_position(node->get_global_position() + remaining * static_cast<real_t>(weight_delta));
+					}
+					break;
+				}
 				Vector2 player_delta;
 				if (effect.move_lock_x || effect.move_lock_y) {
 					Node2D *locked = Object::cast_to<Node2D>(ObjectDB::get_instance(fade.player));
@@ -6105,7 +6206,7 @@ private:
 				break;
 			}
 			case TriggerEffectKind::SHAKE:
-				apply_shake(fade, effect, weight);
+				apply_shake(fade);
 				break;
 			default:
 				break;
@@ -6724,15 +6825,21 @@ private:
 	// advancing, matching CameraShakeComponent's STRENGTH easing at speed 100.
 	// The noise cursor (linear_eased_weight) is advanced by the caller before
 	// the snapshot is taken; this function only reads the fade.
-	void apply_shake(const Fade &fade, const TriggerEffect &effect, double weight) {
-		Object *camera = ObjectDB::get_instance(camera_id);
-		if (!camera || fade.noise.is_null()) return;
+	// One noise sample of the shake at the fade's current noise position.
+	static Vector2 sample_shake(const Fade &fade, const TriggerEffect &effect, double weight) {
 		const double noise_position = fade.linear_eased_weight * 100.0 * 100.0;
 		const double sample_strength = (1.0 - weight) * effect.shake_strength * 10.0;
-		const Vector2 offset(
+		return Vector2(
 			static_cast<real_t>(fade.noise->get_noise_2d(noise_position, 0.0) * sample_strength),
 			static_cast<real_t>(fade.noise->get_noise_2d(1.0, noise_position) * sample_strength));
-		camera->set("shake_offset", offset);
+	}
+
+	// Applies the offset held by the fade (re-sampled by the caller on each
+	// Interval boundary, see the shake block before apply_fade).
+	void apply_shake(const Fade &fade) {
+		Object *camera = ObjectDB::get_instance(camera_id);
+		if (!camera || fade.noise.is_null()) return;
+		camera->set("shake_offset", fade.shake_offset);
 	}
 
 	void check_touch_overlaps() {
@@ -7692,6 +7799,16 @@ public:
 					&& !fades[i].noise.is_null()) {
 				fades[i].linear_eased_weight += delta
 					/ (effect.duration > 0.0 ? effect.duration : 1.0);
+				// Interval (key 84): the offset is sampled once per interval and
+				// held until the next one; 0 samples every frame. The finishing
+				// tick samples too, at full weight, which leaves the view centred.
+				Fade &shake = fades[i];
+				shake.shake_clock += delta;
+				if (!shake.shake_sampled || finished || shake.shake_clock >= effect.shake_interval) {
+					shake.shake_clock = effect.shake_interval > 0.0 ? std::fmod(shake.shake_clock, effect.shake_interval) : 0.0;
+					shake.shake_sampled = true;
+					shake.shake_offset = sample_shake(shake, effect, weight);
+				}
 			}
 			// Snapshot by value: apply_fade reaches back into GDScript
 			// (update_size/update_color/channel changed signals) which can
@@ -7705,6 +7822,7 @@ public:
 			// of Amethyst flew millions of pixels off-screen).
 			fades[i].follow_last = fade.follow_last;
 			if (finished) {
+				if (effect.kind == TriggerEffectKind::PULSE && effect.pulse_exclusive) release_exclusive_holds(effect, i);
 				fades.erase(fades.begin() + static_cast<std::ptrdiff_t>(i));
 				continue;
 			}
