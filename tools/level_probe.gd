@@ -141,6 +141,9 @@ func _physics_process(delta: float) -> void:
 
 
 func _real_run(player: Player, level: Level) -> void:
+	if not _merge_logged:
+		_merge_logged = true
+		_log_merge_state(level)
 	if not _placed:
 		_placed = true
 		player.global_position = level.to_global(Vector2(_start.x * _CELL_PER_GD, -_start.y * _CELL_PER_GD))
@@ -307,3 +310,14 @@ func _log_channels(tag: String) -> void:
 
 func _hex(color: Color) -> String:
 	return color.to_html(false)
+
+var _merge_logged := false
+
+## Guard for the group-25 lock: every object the lock animates must keep its own body
+## (merged=false). A merged one is frozen in the shared static body.
+func _log_merge_state(level: Level) -> void:
+	for layer in level.layers:
+		for object: Node in layer.get_children():
+			if not object is Node2D or not (object as Node2D).is_in_group(Constants.GROUP_PREFIX + "25"):
+				continue
+			print("PROBE MERGE id=%s at=(%.1f,%.1f) merged=%s" % [str(object.get_meta(&"gd_object_id", "?")), (object as Node2D).global_position.x / _CELL_PER_GD, -(object as Node2D).global_position.y / _CELL_PER_GD, str(object.has_meta(LevelPhysics.MERGED_META))])

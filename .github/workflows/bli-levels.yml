@@ -17,6 +17,7 @@ on:
       - "tools/level_memory_profile.gd"
       - "src/static/GMDObjects.gd"
       - "src/static/GMDConverter.gd"
+      - "src/LevelPhysics.gd"
   workflow_dispatch:
     inputs:
       url:
