@@ -174,7 +174,7 @@ jobs:
           for n in range(0, min(len(t), 3800 * 3), 3800):
               print(f"::notice title=probe change of scene part {n // 3800}::" + esc(t[n:n + 3800]))
           h = open('/tmp/probe_hit.txt').read()
-          for n in range(0, min(len(h), 3800 * 8), 3800):
+          for n in range(0, min(len(h), 3800 * 20), 3800):
               print(f"::notice title=sandwich contacts part {n // 3800}::" + esc(h[n:n + 3800]))
           PY
 
