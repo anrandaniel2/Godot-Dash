@@ -1529,7 +1529,7 @@ func _on_kill_collider_solid_body_entered(_body: Node2D) -> void:
 
 func _on_kill_collider_hazard_area_entered(_area: Area2D) -> void:
 	if _can_die_on_contact():
-		print("[gdash-kill] hazard=%s parent=%s pos=%s" % [str(_area.name), str(_area.get_parent().name) if _area.get_parent() else "null", str(global_position)])
+		print("[gdash-kill] frame=%d hazard=%s parent=%s pos=%s" % [Engine.get_physics_frames(), str(_area.name), str(_area.get_parent().name) if _area.get_parent() else "null", str(global_position)])
 		_death_animator.play("DeathAnimation")
 
 

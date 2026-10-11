@@ -155,6 +155,19 @@ jobs:
                       print(f"::error title=error {name} {n}::" + esc(block)[:3900])
           PY
 
+      - name: Check the probe level is Change of scene
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          text = open('/tmp/bli/90475473.gmd', encoding='utf-8', errors='replace').read()
+          m = re.search(r"<k>k2</k>\s*<s>([^<]*)</s>", text)
+          name = m.group(1).strip() if m else ""
+          print(f"::notice title=probe level::90475473.gmd is '{name}'")
+          if name.lower() != "change of scene":
+              print(f"::error title=probe level::expected 'Change of scene', got '{name}'")
+              sys.exit(1)
+          PY
+
       - name: Probe Change of scene from the default start (real physics)
         if: always()
         env:

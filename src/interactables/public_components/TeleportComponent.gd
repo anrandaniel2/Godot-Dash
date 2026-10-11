@@ -66,6 +66,7 @@ func _get_property_default_value(property: String) -> Variant:
 
 func teleport(player: Player) -> void:
 	var target := _resolve_target()
+	print("[gdash-tp] frame=%d parent=%s target=%s pos=%s" % [Engine.get_physics_frames(), parent.name, str(target.name) if target else "null", str(player.global_position)])
 	# Device forensics 2026-09-13: a teleport interaction with an unset target
 	# has been observed firing at the exact moment the process dies at level
 	# start. Log it (Toasts.error is UI-only and never reaches logcat).

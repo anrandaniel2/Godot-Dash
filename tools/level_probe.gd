@@ -144,6 +144,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _real_run(player: Player, level: Level) -> void:
+	if Engine.get_physics_frames() < 40:
+		print("PROBE FRAME %d pos=%s placed=%s dead=%s" % [Engine.get_physics_frames(), str(player.global_position), str(_placed), str(player.dead)])
 	if not _merge_logged:
 		_merge_logged = true
 		_log_packed_box(level)
