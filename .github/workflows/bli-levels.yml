@@ -191,7 +191,7 @@ jobs:
           # Starts between the bottom block and the H block, past the x 45 slide of
           # group 290, so only the sandwich mechanics (lock at x 123, H block) run.
           GDASH_PROBE_LEVEL=/tmp/bli/90475473.gmd GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
-            GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X=110 GDASH_PROBE_START_Y=1158 \
+            GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X=45 GDASH_PROBE_START_Y=1157 \
             GDASH_PROBE_MODE=0 GDASH_PROBE_END_X=260 \
             timeout 300s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_sw.log 2>&1
           rc=$?
