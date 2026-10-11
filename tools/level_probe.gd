@@ -143,7 +143,7 @@ func _physics_process(delta: float) -> void:
 func _real_run(player: Player, level: Level) -> void:
 	if not _merge_logged:
 		_merge_logged = true
-		_log_merge_state(level)
+		_log_teleports(level)
 	if not _placed:
 		_placed = true
 		player.global_position = level.to_global(Vector2(_start.x * _CELL_PER_GD, -_start.y * _CELL_PER_GD))
@@ -336,3 +336,25 @@ func _log_merge_state(level: Level) -> void:
 				groups.append(String(g))
 		found[0] += 1
 		print("PROBE MERGE %s name=%s at=(%.1f,%.1f) merged=%s id=%s groups=%s" % [node.get_class(), node.name, gx, gy, str(node.has_meta(LevelPhysics.MERGED_META)), str(node.get_meta(&"gd_object_id", "-")), str(groups)])
+
+
+## Where every teleport portal and exit really is, and the data behind it.
+func _log_teleports(level: Level) -> void:
+	var stack: Array = [level]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not node is Node2D or not String(node.name).begins_with("Teleportal"):
+			continue
+		var at: Vector2 = level.to_local((node as Node2D).global_position)
+		var props: Dictionary = node.get_meta(&"gd_properties", {})
+		var target := ""
+		var teleport := node.get_node_or_null("TeleportComponent")
+		if teleport != null:
+			target = str(teleport.get("keep_player_x")) + " target=" + str(node.get_node_or_null("TargetObjectComponent"))
+		print("PROBE TP %s at=(%.1f,%.1f) id=%s key54=%s key351=%s groups=%s %s" % [
+			node.name, at.x / _CELL_PER_GD, -at.y / _CELL_PER_GD,
+			str(node.get_meta(&"gd_object_id", "-")), str(props.get("54", "-")),
+			str(props.get("351", "-")), str(node.get_groups()), target])
+
