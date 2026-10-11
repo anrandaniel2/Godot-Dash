@@ -11,6 +11,7 @@ their own names. Runs on a CI runner; nothing is committed.
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,8 +28,20 @@ def open_url(url, data=None, headers=UA):
 
 def resolve_wetransfer(url):
     """Return the direct download link for a WeTransfer link, or None."""
-    with open_url(url) as response:
-        final_url = response.geturl()
+    final_url = ""
+    # WeTransfer sometimes answers the first request with a page instead of the
+    # download redirect; retry before giving up, and say what came back.
+    for attempt in range(1, 4):
+        try:
+            with open_url(url) as response:
+                final_url = response.geturl()
+        except (urllib.error.URLError, OSError) as error:
+            print(f"::warning title=wetransfer::attempt {attempt}: {error!r}"[:300])
+            final_url = ""
+        if "downloads/" in final_url:
+            break
+        print(f"::warning title=wetransfer::attempt {attempt}: final URL {final_url[:200]!r}")
+        time.sleep(10 * attempt)
     if "downloads/" not in final_url:
         return None
     path = final_url.split("downloads/", 1)[1].split("?", 1)[0]
