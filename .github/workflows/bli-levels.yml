@@ -164,9 +164,11 @@ jobs:
             GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X=0 GDASH_PROBE_START_Y=15 \
             GDASH_PROBE_MODE=0 GDASH_PROBE_END_X=600 \
             timeout 400s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_cos.log 2>&1
-          echo "probe exit=$?"
+          rc=$?
+          echo "probe exit=$rc"
           grep -E "PROBE|gdash-tp|SCRIPT ERROR|Parse Error|ERROR" /tmp/probe_cos.log | head -40 | cut -c1-260 > /tmp/probe_cos.txt
           grep -E "PROBE HIT|PROBE SHAPE|PROBE CONTACT|PROBE G25|PROBE MERGE|PROBE END" /tmp/probe_cos.log | awk '/PROBE HIT/ {split($5, a, "="); if (a[2] + 0 >= 900) print; next} {print}' | cut -c1-240 > /tmp/probe_hit.txt || true
+          echo "PROBE END rc=$rc (124 = killed by the 400 s timeout)" >> /tmp/probe_hit.txt
           python3 - <<'PY'
           def esc(s):
               return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
@@ -297,3 +299,11 @@ jobs:
             python3 tools/gd_sandwich_scan.py "$f" > /tmp/sandwich.txt 2>&1 || true
             python3 tools/gd_annotate.py "sandwich $(basename $f)" /tmp/sandwich.txt 3500
           done
+
+      - name: Upload the full Change of scene probe log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: change-of-scene-probe-log
+          path: /tmp/probe_cos.log
+          if-no-files-found: ignore
