@@ -180,6 +180,29 @@ jobs:
               print(f"::notice title=sandwich contacts part {n // 3800}::" + esc(h[n:n + 3800]))
           PY
 
+      - name: Probe the sandwich alone (start inside it at GD x 110, y 1158)
+        if: always()
+        env:
+          GODOT_BIN: ${{ env.GODOT_BIN }}
+        run: |
+          set +e
+          # Starts between the bottom block and the H block, past the x 45 slide of
+          # group 290, so only the sandwich mechanics (lock at x 123, H block) run.
+          GDASH_PROBE_LEVEL=/tmp/bli/90475473.gmd GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
+            GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X=110 GDASH_PROBE_START_Y=1158 \
+            GDASH_PROBE_MODE=0 GDASH_PROBE_END_X=260 \
+            timeout 300s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_sw.log 2>&1
+          rc=$?
+          echo "sandwich probe exit=$rc"
+          grep -E "PROBE HIT|PROBE G25|PROBE END|PROBE CAM finished|SCRIPT ERROR" /tmp/probe_sw.log | cut -c1-200 > /tmp/probe_sw.txt
+          echo "PROBE END rc=$rc (124 = killed by the 300 s timeout)" >> /tmp/probe_sw.txt
+          python3 - <<'PY'
+          def esc(s): return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          t = open('/tmp/probe_sw.txt').read()
+          for n in range(0, min(len(t), 3800 * 12), 3800):
+              print(f"::notice title=sandwich-only probe part {n // 3800}::" + esc(t[n:n + 3800]))
+          PY
+
       - name: Region around the Change of scene cutscene (gd_level_scan --region)
         run: |
           python3 - <<'PY'
