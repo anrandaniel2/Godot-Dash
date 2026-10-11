@@ -428,6 +428,7 @@ func start_level() -> void:
 	# FrustumCuller listens to level_started/level_stopped on LevelManager and
 	# culls this level's placements from the moment it starts playing.
 	LevelManager.level_playing = true
+	NativeTriggerBridge.prime_spawn()
 
 
 ## Options trigger (2899): called by the native OPTIONS arm and the

@@ -89,6 +89,13 @@ func _exit_tree() -> void:
 
 
 ## Fires armed On Death triggers (1812) natively and in the GDScript twin.
+## Attempt start: run the spawn-activated triggers (the start teleport) before the
+## first physics step, so spawn hazards are not checked at the pre-teleport spot.
+static func prime_spawn() -> void:
+	if current != null and current._runtime != null:
+		current._runtime.call(&"prime_spawn", LevelManager.player)
+
+
 static func notify_player_death(player: Player) -> void:
 	if current != null and current._runtime != null:
 		current._runtime.call(&"notify_player_death", player)

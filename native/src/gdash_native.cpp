@@ -7904,6 +7904,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("take_touch_claim"), &NativeLevelRuntime::take_touch_claim);
 		ClassDB::bind_method(D_METHOD("register_particle_group", "group", "datas"), &NativeLevelRuntime::register_particle_group);
 		ClassDB::bind_method(D_METHOD("notify_event", "player", "event_id", "slot", "material"), &NativeLevelRuntime::notify_event);
+		ClassDB::bind_method(D_METHOD("prime_spawn", "player"), &NativeLevelRuntime::prime_spawn);
 		ClassDB::bind_method(D_METHOD("reset"), &NativeLevelRuntime::reset);
 		ClassDB::bind_method(D_METHOD("snapshot"), &NativeLevelRuntime::snapshot);
 		ClassDB::bind_method(D_METHOD("restore", "state"), &NativeLevelRuntime::restore);
@@ -7975,6 +7976,20 @@ protected:
 public:
 	NativeLevelRuntime() { triggers.instantiate(); }
 
+	// Attempt-start spawn pass. Godot flushes Area2D overlaps before a frame's
+	// physics callbacks, so a spawn overlapping a hazard kills the cube before the
+	// start teleport (a trigger at or left of the spawn) moves it. GD applies those
+	// triggers first, so run the same initial pass synchronously when the attempt
+	// starts. The physics notification then sees a registered player and does not
+	// repeat it.
+	void prime_spawn(Object *player) {
+		if (!player || !triggers.is_valid()) return;
+		Ref<NativeTriggerRuntime> const runtime = triggers;
+		if (!runtime->is_ui_applied()) {
+			runtime->apply_ui_triggers();
+		}
+		runtime->advance_player(player);
+	}
 	void clear() { triggers->clear(); context_level = nullptr; }
 	int64_t register_trigger(Object *trigger, double x, double y, int64_t flags, int64_t source_order, const PackedStringArray &groups, int64_t gd_id, const Dictionary &properties) {
 		return triggers->register_trigger(trigger, x, y, flags, source_order, groups, gd_id, properties);
