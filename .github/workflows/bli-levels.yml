@@ -196,7 +196,7 @@ jobs:
             timeout 300s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_sw.log 2>&1
           rc=$?
           echo "sandwich probe exit=$rc"
-          grep -E "PROBE HIT|PROBE G25|PROBE END|PROBE CAM finished|SCRIPT ERROR" /tmp/probe_sw.log | cut -c1-200 > /tmp/probe_sw.txt
+          grep -E "PROBE HIT|PROBE G25|PROBE SOLID|PROBE END|PROBE CAM finished|SCRIPT ERROR" /tmp/probe_sw.log | cut -c1-200 > /tmp/probe_sw.txt
           echo "PROBE END rc=$rc (124 = killed by the 300 s timeout)" >> /tmp/probe_sw.txt
           echo "$rc" > /tmp/probe_sw_rc
           python3 - <<'PY'

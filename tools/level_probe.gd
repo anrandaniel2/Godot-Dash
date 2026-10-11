@@ -146,6 +146,7 @@ func _real_run(player: Player, level: Level) -> void:
 	if not _merge_logged:
 		_merge_logged = true
 		_log_packed_box(level)
+		_log_solids_in_box(level)
 		_log_teleports(level)
 	if not _placed:
 		# The first physics frame fires every trigger left of the cube's x, so
@@ -354,6 +355,36 @@ func _log_merge_state(level: Level) -> void:
 ## Every packed trigger record in the cutscene box, with its real GD keys. The
 ## runtime nodes do not carry gd_properties, so this is the only place the
 ## entrance's and exit's own data (key 51 target, key 54 offset) is visible.
+## Every solid rectangle in the sandwich area, in GD units (y up): the cube's
+## exit point is (45, 1157), so this shows which blocks sit at and just above it.
+func _log_solids_in_box(level: Level) -> void:
+	var found := 0
+	var stack: Array[Node] = [level]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		stack.append_array(node.get_children())
+		var body := node as CollisionObject2D
+		if body == null:
+			continue
+		for owner_id: int in body.get_shape_owners():
+			var shape: Shape2D = body.shape_owner_get_shape(owner_id, 0)
+			if not (shape is RectangleShape2D) or body.is_shape_owner_disabled(owner_id):
+				continue
+			var t: Transform2D = body.global_transform * body.shape_owner_get_transform(owner_id)
+			var local: Vector2 = level.to_local(t.origin) / _CELL_PER_GD
+			var size: Vector2 = (shape as RectangleShape2D).size / _CELL_PER_GD
+			var gx: float = local.x
+			var gy: float = -local.y
+			if gx < -20.0 or gx > 80.0 or gy < 1080.0 or gy > 1240.0:
+				continue
+			found += 1
+			if found <= 40:
+				print("PROBE SOLID body=%s layer=%d centre=(%.2f,%.2f) size=(%.2f,%.2f) left=%.2f right=%.2f bottom=%.2f top=%.2f" % [
+					str(body.name), body.collision_layer, gx, gy, size.x, size.y,
+					gx - size.x * 0.5, gx + size.x * 0.5, gy - size.y * 0.5, gy + size.y * 0.5])
+	print("PROBE SOLID count=%d" % found)
+
+
 func _log_packed_box(level: Level) -> void:
 	var packed: Dictionary = level.packed_trigger_records
 	if packed.is_empty():
