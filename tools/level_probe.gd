@@ -163,6 +163,13 @@ func _trajectory(player: Player, level: Level) -> void:
 		print("PROBE TRAJ DEATH tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
 		return
+	# Track the solids that the jump detector names, every tick of the window.
+	if tick >= 80 and tick <= 92:
+		for object_name in ["GDObject1888203", "GDObject1888180", "GDObject1888137"]:
+			var solid := level.find_child(object_name, true, false) as Node2D
+			if solid != null:
+				var solid_at: Vector2 = level.to_local(solid.global_position)
+				print("PROBE OBJ tick=%d %s at=(%.2f,%.2f)" % [tick, object_name, solid_at.x / _CELL_PER_GD, -solid_at.y / _CELL_PER_GD])
 	# Jump detector: a one-tick X or Y change far beyond the cube's speed names
 	# the body that moved it (slide colliders) and the state that was live.
 	var gd_x: float = _gd_x(player)
