@@ -668,6 +668,10 @@ jobs:
 
       # The font files must match tools/font_manifest.json, so the bundle that
       # is hosted for on-demand download cannot drift from the repo's fonts.
+      - name: Object components exist in their scenes
+        run: |
+          python3 tools/check_object_components.py
+
       - name: Font bundle matches its manifest
         run: |
           set -euo pipefail

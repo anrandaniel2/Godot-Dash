@@ -315,7 +315,7 @@ const MAP: Dictionary[int, Dictionary] = {
 	1934: {
 		"scene": TRIGGERS + "SongTrigger.tscn",
 		"name": "SongTrigger",
-		"components": ["SongChangerComponent", "EasingComponent"],
+		"components": ["SongChangerComponent"],
 	},
 	1935: {
 		"scene": TRIGGERS + "TimewarpTrigger.tscn",
