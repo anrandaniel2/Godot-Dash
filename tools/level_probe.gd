@@ -172,8 +172,11 @@ func _trajectory(player: Player, level: Level) -> void:
 			var collider := player.get_slide_collision(i).get_collider() as Node
 			if collider == null:
 				colliders.append("null")
+			elif collider is Node2D:
+				var at: Vector2 = level.to_local((collider as Node2D).global_position)
+				colliders.append("%s@%s(%.1f,%.1f)" % [str(collider.name), str(collider.get_parent().name) if collider.get_parent() else "null", at.x / _CELL_PER_GD, -at.y / _CELL_PER_GD])
 			else:
-				colliders.append("%s@%s" % [str(collider.name), str(collider.get_parent().name) if collider.get_parent() else "null"])
+				colliders.append("%s" % str(collider.name))
 		print("PROBE JUMP tick=%d from=(%.2f,%.2f) to=(%.2f,%.2f) vel=%s speed_mult=%s s0=%s pending=%s slides=%s" % [
 			tick, _jump_prev_x, _jump_prev_y, gd_x, gd_y, str(player.velocity),
 			str(player.get("speed_multiplier")), str(player.speed_0_portal_control.name) if player.speed_0_portal_control else "null",
