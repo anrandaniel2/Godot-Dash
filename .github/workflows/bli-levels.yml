@@ -189,3 +189,22 @@ jobs:
               if r.returncode != 0 or r.stderr.strip():
                   print("::warning title=region stderr::" + esc(r.stderr[-800:]))
           PY
+
+      - name: Groups around the Change of scene cutscene blocks (gd_level_scan --group-triggers)
+        run: |
+          python3 - <<'PY'
+          import glob, os, subprocess
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          # Block groups at the cutscene (25, 1), move/follow triggers that target them (54, 284),
+          # and the follow source group (960). Triggers and members for each group.
+          for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
+              g = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--group-triggers', '1,25,54,284,960'],
+                                 capture_output=True, text=True)
+              part = g.stdout[g.stdout.find('=====GROUP TRIGGERS====='):].replace('=====GROUP TRIGGERS=====\n', '')
+              part = part[:part.find('=====TEXT=====') if part.find('=====TEXT=====') > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 2), 3800):
+                  print(f"::notice title=cutscene groups part {n // 3800}::" + esc(part[n:n + 3800]))
+              if g.returncode != 0 or g.stderr.strip():
+                  print("::warning title=groups stderr::" + esc(g.stderr[-800:]))
+          PY
