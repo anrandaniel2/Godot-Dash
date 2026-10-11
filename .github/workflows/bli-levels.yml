@@ -208,3 +208,27 @@ jobs:
               if g.returncode != 0 or g.stderr.strip():
                   print("::warning title=groups stderr::" + esc(g.stderr[-800:]))
           PY
+
+      - name: Objects around the lock trigger at (123, 1005) and the collision triggers (gd_level_scan)
+        run: |
+          python3 - <<'PY'
+          import glob, os, subprocess
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          # Lock trigger (901 at 123,1005) is touch-only: no group. Which objects sit around it,
+          # and which collision triggers / collision blocks exist at all.
+          for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
+              env = dict(os.environ, REGION_LIMIT='60')
+              r = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--region', '0,250,850,1100'],
+                                 capture_output=True, text=True, env=env)
+              part = r.stdout[r.stdout.find('=====REGION====='):].replace('=====REGION=====\n', '')
+              part = part[:part.find('objects=', 40) if part.find('objects=', 40) > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 2), 3800):
+                  print(f"::notice title=lock area part {n // 3800}::" + esc(part[n:n + 3800]))
+              i = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--ids', '1815,3609,1816,1346,1347,901'],
+                                 capture_output=True, text=True)
+              part = i.stdout[i.stdout.find('=====OBJECTS BY ID====='):].replace('=====OBJECTS BY ID=====\n', '')
+              part = part[:part.find('objects=', 40) if part.find('objects=', 40) > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 2), 3800):
+                  print(f"::notice title=ids part {n // 3800}::" + esc(part[n:n + 3800]))
+PY
