@@ -160,6 +160,8 @@ func _trajectory(player: Player, level: Level) -> void:
 		return
 	if tick % 6 == 0 or tick < 30:
 		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f mode=%d" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode])
+	elif tick >= 80:
+		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f parent=%s" % [tick, _gd_x(player), gd_y, player.velocity.y, str(player.get_parent().name)])
 	if tick >= _TRAJ_TICKS:
 		print("PROBE TRAJ END tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)

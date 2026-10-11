@@ -1552,10 +1552,18 @@ func _resolve_contact_kills() -> void:
 		if source is Area2D:
 			print("[gdash-kill] frame=%d hazard=%s parent=%s pos=%s" % [Engine.get_physics_frames(), str(source.name), str(source.get_parent().name) if source.get_parent() else "null", str(global_position)])
 		else:
-			print("[gdash-kill] solid=%s parent=%s pos=%s cube=%s" % [
+			var level_node := LevelManager.current_level
+			var solid_gd := Vector2.ZERO
+			var cube_gd := Vector2.ZERO
+			if level_node != null:
+				solid_gd = level_node.to_local(source.global_position) * 30.0 / (128.0)
+				cube_gd = level_node.to_local(global_position) * 30.0 / (128.0)
+			print("[gdash-kill] solid=%s parent=%s pos=%s cube=%s solid_gd=%s cube_gd=%s parent_of_cube=%s" % [
 				str(source.name),
 				str(source.get_parent().name) if source.get_parent() else "null",
-				str(source.global_position), str(position)])
+				str(source.global_position), str(global_position),
+				str(solid_gd), str(cube_gd),
+				str(get_parent().name) if get_parent() else "null"])
 		_death_animator.play("DeathAnimation")
 		return
 
