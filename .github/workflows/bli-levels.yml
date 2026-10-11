@@ -178,8 +178,8 @@ jobs:
           # The Change of scene teleport exit lands at GD y ~1315. Print the objects
           # in that cutscene box: counts by id, then the first rows by x.
           for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
-              env = dict(os.environ, REGION_LIMIT='24')
-              r = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--region', '-60,700,1200,1450'],
+              env = dict(os.environ, REGION_LIMIT='40')
+              r = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--region', '-40,250,1050,1450'],
                                  capture_output=True, text=True, env=env)
               part = r.stdout[r.stdout.find('=====REGION====='):]
               part = part.replace('=====REGION=====\n', '')
@@ -188,10 +188,4 @@ jobs:
                   print(f"::notice title=cutscene region part {n // 3800}::" + esc(part[n:n + 3800]))
               if r.returncode != 0 or r.stderr.strip():
                   print("::warning title=region stderr::" + esc(r.stderr[-800:]))
-              # Groups the cutscene toggles (1049 at the portal exit column) switch.
-              g = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--group-triggers',
-                                  '362,363,364,365,366,367,368'], capture_output=True, text=True)
-              part = g.stdout[g.stdout.find('=====GROUP TRIGGERS====='):].replace('=====GROUP TRIGGERS=====\n', '')
-              for n in range(0, min(len(part), 3800 * 2), 3800):
-                  print(f"::notice title=toggled groups part {n // 3800}::" + esc(part[n:n + 3800]))
           PY
