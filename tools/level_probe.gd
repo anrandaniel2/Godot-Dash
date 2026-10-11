@@ -145,6 +145,7 @@ func _physics_process(delta: float) -> void:
 func _real_run(player: Player, level: Level) -> void:
 	if not _merge_logged:
 		_merge_logged = true
+		_log_packed_box(level)
 		_log_teleports(level)
 	if not _placed:
 		# The first physics frame fires every trigger left of the cube's x, so
@@ -350,6 +351,28 @@ func _log_merge_state(level: Level) -> void:
 
 
 ## Where every teleport portal and exit really is, and the data behind it.
+## Every packed trigger record in the cutscene box, with its real GD keys. The
+## runtime nodes do not carry gd_properties, so this is the only place the
+## entrance's and exit's own data (key 51 target, key 54 offset) is visible.
+func _log_packed_box(level: Level) -> void:
+	var packed: Dictionary = level.packed_trigger_records
+	if packed.is_empty():
+		print("PROBE PACKED none")
+		return
+	var ids: PackedInt32Array = packed.get("gd_id", PackedInt32Array())
+	for i in ids.size():
+		var row: Dictionary = PackedTriggers.row(packed, i)
+		var origin: Vector2 = row.transform.origin
+		var gx := origin.x / _CELL_PER_GD
+		var gy := -origin.y / _CELL_PER_GD
+		if gx < -60.0 or gx > 120.0 or gy < 1050.0 or gy > 1450.0:
+			continue
+		var props: Dictionary = row.gd_properties
+		print("PROBE PACKED id=%d at=(%.1f,%.1f) k51=%s k54=%s k10=%s k11=%s props=%s" % [
+			int(row.gd_object_id), gx, gy, str(props.get("51", "-")), str(props.get("54", "-")),
+			str(props.get("10", "-")), str(props.get("11", "-")), str(props).left(260)])
+
+
 func _log_teleports(level: Level) -> void:
 	var stack: Array = [level]
 	while not stack.is_empty():
