@@ -222,7 +222,8 @@ func _contacts(player: Player) -> String:
 		if body is Node2D:
 			where = level.to_local((body as Node2D).global_position) / _CELL_PER_GD
 		parts.append("%s@(%.0f,%.0f)" % [label, where.x, -where.y])
-		if not _shapes_logged and body is CollisionObject2D and hit.get_normal().y < -0.5:
+		var contact_py: float = -level.to_local(player.global_position).y / _CELL_PER_GD
+		if not _shapes_logged and body is CollisionObject2D and hit.get_normal().y < -0.5 and contact_py > 1100.0 and contact_py < 1200.0:
 			_shapes_logged = true
 			print("PROBE CONTACT point=%s normal=%s body=%s" % [str(hit.get_position()), str(hit.get_normal()), label])
 			_shapes_under(body as CollisionObject2D, _contact_gd_x)
