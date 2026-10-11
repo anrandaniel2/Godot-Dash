@@ -184,6 +184,7 @@ func _real_run(player: Player, level: Level) -> void:
 			str(camera.portal_freefly), centre.x, -centre.y, -band.y, GroundData.distance / _CELL_PER_GD,
 			camera.zoom.x, str(camera.static_factor), str(player.dead)])
 	if gd_x >= _stop_gd or _elapsed > 600.0 or player.in_end_level_animation:
+		print("PROBE END x=%.1f py=%.1f t=%.1f dead=%s" % [gd_x, player.global_position.y, _elapsed, str(player.dead)])
 		print("PROBE CAM finished x=%.0f t=%.1f" % [gd_x, _elapsed])
 		get_tree().quit(0)
 

@@ -166,7 +166,7 @@ jobs:
             timeout 400s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_cos.log 2>&1
           echo "probe exit=$?"
           grep -E "PROBE|gdash-tp|SCRIPT ERROR|Parse Error|ERROR" /tmp/probe_cos.log | head -40 | cut -c1-260 > /tmp/probe_cos.txt
-          grep -E "PROBE HIT|PROBE SHAPE|PROBE CONTACT|PROBE G25|PROBE MERGE" /tmp/probe_cos.log | awk '/PROBE HIT/ {split($5, a, "="); if (a[2] + 0 >= 900) print; next} {print}' | cut -c1-240 > /tmp/probe_hit.txt || true
+          grep -E "PROBE HIT|PROBE SHAPE|PROBE CONTACT|PROBE G25|PROBE MERGE|PROBE END" /tmp/probe_cos.log | awk '/PROBE HIT/ {split($5, a, "="); if (a[2] + 0 >= 900) print; next} {print}' | cut -c1-240 > /tmp/probe_hit.txt || true
           python3 - <<'PY'
           def esc(s):
               return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
