@@ -85,6 +85,7 @@ jobs:
           set -euo pipefail
           python3 tools/fetch_transfer_levels.py "$LEVEL_URL" /tmp/bli
 
+      # Teleport records, the area around the exit, and every object in block group 25.
       - name: Dump teleport portals and the sandwich area (Change of scene)
         run: |
           set -euo pipefail
