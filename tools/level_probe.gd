@@ -318,18 +318,16 @@ var _merge_logged := false
 func _log_merge_state(level: Level) -> void:
 	var found := [0]
 	var stack: Array = [level]
-	while not stack.is_empty() and found[0] < 80:
+	while not stack.is_empty() and found[0] < 150:
 		var node: Node = stack.pop_back()
 		for child in node.get_children():
 			stack.append(child)
 		if not node is Node2D or node is Player:
 			continue
-		var gd_at := (node as Node2D).global_position
+		var gd_at: Vector2 = level.to_local((node as Node2D).global_position)
 		var gx := gd_at.x / _CELL_PER_GD
 		var gy := -gd_at.y / _CELL_PER_GD
 		if not ((gx >= 100.0 and gx <= 140.0) or (gx >= 230.0 and gx <= 250.0)):
-			continue
-		if node is Node2D and not node.has_meta(&"gd_object_id"):
 			continue
 		var groups := PackedStringArray()
 		for g: StringName in node.get_groups():
