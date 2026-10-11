@@ -113,15 +113,15 @@ jobs:
                   p = subprocess.run(
                       [godot, '--headless', '--path', '.', '--audio-driver', 'Dummy',
                        'res://tools/level_memory_profile.tscn'],
-                      capture_output=True, text=True, timeout=900, env=env)
+                      capture_output=True, text=True, timeout=400, env=env)
                   log, status = p.stdout + p.stderr, p.returncode
               except subprocess.TimeoutExpired as e:
                   log, status = (e.stdout or b'').decode(errors='replace') + (e.stderr or b'').decode(errors='replace'), 'timeout'
               open(f'/tmp/bli/{name}.log', 'w').write(log)
               print(f"##### {name} exit={status}")
               errors = [l for l in log.splitlines() if re.search(r'SCRIPT ERROR|ERROR|Parse Error', l)]
-              profile = [l for l in log.splitlines() if 'LEVEL_PROFILE' in l]
-              print(f"::notice title=open {name} exit={status}::" + esc('\n'.join(profile[:30]) or 'no LEVEL_PROFILE lines'))
+              keep = [l for l in log.splitlines() if 'LEVEL_PROFILE' in l or re.match(r'^  (gdscript|native) ', l)]
+              print(f"::notice title=open {name} exit={status}::" + esc('\n'.join(keep[:40]) or 'no LEVEL_PROFILE lines')[:3900])
               if errors:
-                  print(f"::error title=open {name} errors::" + esc('\n'.join(errors[:25])))
+                  print(f"::error title=open {name} errors::" + esc('\n'.join(errors[:25]))[:3900])
           PY
