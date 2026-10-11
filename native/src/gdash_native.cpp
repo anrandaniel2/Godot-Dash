@@ -5089,9 +5089,10 @@ private:
 				false, e.teleport_save_offset, e.teleport_ignore_x, e.teleport_ignore_y);
 			player_node->set_global_position(destination);
 			UtilityFunctions::print(String("[gdash_teleport] gd_id=") + String::num_int64(record.gd_id)
-				+ " entrance=" + String(Vector2(static_cast<real_t>(record.x), static_cast<real_t>(record.y)))
-				+ " target=" + String(target->get_name()) + " at=" + String(teleport_target_point(target))
-				+ " player_before=" + String(player_node->get_global_position()) + " dest=" + String(destination));
+				+ " entrance=" + UtilityFunctions::str(Vector2(static_cast<real_t>(record.x), static_cast<real_t>(record.y)))
+				+ " target=" + String(target->get_name()) + " at=" + UtilityFunctions::str(teleport_target_point(target))
+				+ " player_before=" + UtilityFunctions::str(player_node->get_global_position())
+				+ " dest=" + UtilityFunctions::str(destination));
 		}
 		const int gravity_mode = gd_teleport_gravity_portal_mode(e.teleport_gravity_mode);
 		if (gravity_mode >= 0) apply_gravity_portal_player(player, gravity_mode);
