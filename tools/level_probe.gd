@@ -355,8 +355,8 @@ func _log_merge_state(level: Level) -> void:
 ## Every packed trigger record in the cutscene box, with its real GD keys. The
 ## runtime nodes do not carry gd_properties, so this is the only place the
 ## entrance's and exit's own data (key 51 target, key 54 offset) is visible.
-## Every solid rectangle in the sandwich area, in GD units (y up): the cube's
-## exit point is (45, 1157), so this shows which blocks sit at and just above it.
+## Every collision shape in the sandwich area (any shape type), as GD-unit
+## bounds (y up). The exit is (45, 1157), so this shows what is at and just above it.
 func _log_solids_in_box(level: Level) -> void:
 	var found := 0
 	var stack: Array[Node] = [level]
@@ -368,20 +368,22 @@ func _log_solids_in_box(level: Level) -> void:
 			continue
 		for owner_id: int in body.get_shape_owners():
 			var shape: Shape2D = body.shape_owner_get_shape(owner_id, 0)
-			if not (shape is RectangleShape2D) or body.is_shape_owner_disabled(owner_id):
+			if shape == null or body.is_shape_owner_disabled(owner_id):
 				continue
 			var t: Transform2D = body.global_transform * body.shape_owner_get_transform(owner_id)
-			var local: Vector2 = level.to_local(t.origin) / _CELL_PER_GD
-			var size: Vector2 = (shape as RectangleShape2D).size / _CELL_PER_GD
-			var gx: float = local.x
-			var gy: float = -local.y
-			if gx < -20.0 or gx > 80.0 or gy < 1080.0 or gy > 1240.0:
+			var o: Vector2 = level.to_local(t.origin)
+			var r: Rect2 = shape.get_rect()
+			var left: float = (o.x + r.position.x) / _CELL_PER_GD
+			var right: float = (o.x + r.end.x) / _CELL_PER_GD
+			var gd_top: float = -(o.y + r.position.y) / _CELL_PER_GD
+			var gd_bottom: float = -(o.y + r.end.y) / _CELL_PER_GD
+			if right < -20.0 or left > 80.0 or gd_bottom > 1240.0 or gd_top < 1080.0:
 				continue
 			found += 1
 			if found <= 40:
-				print("PROBE SOLID body=%s layer=%d centre=(%.2f,%.2f) size=(%.2f,%.2f) left=%.2f right=%.2f bottom=%.2f top=%.2f" % [
-					str(body.name), body.collision_layer, gx, gy, size.x, size.y,
-					gx - size.x * 0.5, gx + size.x * 0.5, gy - size.y * 0.5, gy + size.y * 0.5])
+				print("PROBE SOLID %s body=%s layer=%d mask=%d x=[%.2f,%.2f] y=[%.2f,%.2f] owner=%d" % [
+					shape.get_class(), str(body.name), body.collision_layer, body.collision_mask,
+					left, right, gd_bottom, gd_top, owner_id])
 	print("PROBE SOLID count=%d" % found)
 
 
