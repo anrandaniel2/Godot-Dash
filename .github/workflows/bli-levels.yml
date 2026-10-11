@@ -90,7 +90,8 @@ jobs:
           set -euo pipefail
           for f in /tmp/bli/*90475473*.gmd; do
             echo "== $f"
-            python3 tools/gd_teleport_dump.py "$f" 0 200 1000 1300
+            python3 tools/gd_teleport_dump.py "$f" 0 200 1000 1300 > /tmp/teleport_dump.txt
+            python3 tools/gd_annotate.py "teleport dump" /tmp/teleport_dump.txt 3500
           done
 
       - name: Scan each level (gd_level_scan)

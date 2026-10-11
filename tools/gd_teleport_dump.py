@@ -29,6 +29,7 @@ def main() -> int:
     for index, o in enumerate(objects):
         if o.get("1", "") in {str(i) for i in TELEPORT_IDS}:
             print("DUMP TELEPORT #%d id=%s %s" % (index, o.get("1"), fmt(o)))
+            print("DUMP RAW #%d %s" % (index, ";".join("%s,%s" % kv for kv in o.items())))
     x_lo, x_hi, y_lo, y_hi = box
     for index, o in enumerate(objects):
         try:
