@@ -145,17 +145,18 @@ func _real_run(player: Player, level: Level) -> void:
 		_merge_logged = true
 		_log_teleports(level)
 	if not _placed:
+		# The first physics frame fires every trigger left of the cube's x, so
+		# the start portal (TeleportalIn1, x -29) always teleports the spawn to
+		# its exit (y 1315) before the probe places the cube. Wait for that to
+		# happen, as in real play, so the placement is not overridden by it.
+		_settle_ticks += 1
+		if _settle_ticks < 10:
+			return
 		_placed = true
+		print("PROBE pre-place player=%s" % str(player.global_position))
 		player.global_position = level.to_global(Vector2(_start.x * _CELL_PER_GD, -_start.y * _CELL_PER_GD))
 		player.internal_gamemode = _start_mode as Player.Gamemode
 		player.displayed_gamemode = _start_mode as Player.Gamemode
-		# The level's own spawn overlaps the start teleport, which queues its
-		# exit before this placement runs. Clear that queued teleport, the same
-		# state a restart clears, so the probe starts where it says. Gameplay
-		# keeps the teleport; only this harness placement skips it.
-		var bridge: NativeTriggerBridge = NativeTriggerBridge.current
-		if bridge != null:
-			bridge.reset_runtime()
 		LevelManager.player_camera.snap_view()
 		print("PROBE CAM start at %s mode %d" % [str(_start), _start_mode])
 		return
@@ -320,6 +321,7 @@ func _hex(color: Color) -> String:
 	return color.to_html(false)
 
 var _merge_logged := false
+var _settle_ticks := 0
 
 ## Guard for the group-25 lock: every object the lock animates must keep its own body
 ## (merged=false). A merged one is frozen in the shared static body.
