@@ -1046,6 +1046,7 @@ func _handle_velocity_interactable(local_velocity: Vector2, interactable: Intera
 			if displayed_gamemode == Gamemode.SPIDER:
 				_spider_state_machine.travel(&"jump")
 		elif component is SpiderDashComponent:
+			print("[gdash-kill] spider-dash interactable=%s parent=%s pos=%s" % [str(interactable.name), str(interactable.get_parent().name) if interactable.get_parent() else "null", str(global_position)])
 			var raycast_rotation: float = interactable.global_rotation
 			_spider_cast.rotation = raycast_rotation
 			var dash_data: PackedFloat64Array = _get_spider_dash_data()
@@ -1381,6 +1382,7 @@ func _get_spider_dash_data() -> PackedFloat64Array:
 			# spider off-level; callers still flip gravity, so it simply
 			# reverses direction in mid-air.
 			return [0.0, 0.0]
+		print("[gdash-kill] spider-dash no surface pos=%s mode=%s" % [str(global_position), str(internal_gamemode)])
 		_death_animator.play("DeathAnimation")
 		return [dash_height * 32, floor_angle]
 	return [dash_height, floor_angle]
