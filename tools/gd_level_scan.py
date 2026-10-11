@@ -192,6 +192,36 @@ def id_report(objects: list, ids: list, samples: int = 3) -> str:
     return "\n".join(lines)
 
 
+def start_report(text: str, objects: list, span: float = 900.0, limit: int = 160) -> str:
+    """The level name (plist key k2 when the file is a .gmd) and every object
+    from just behind the start position to `span` units past it, sorted by x.
+    Object 31 is GD's start position."""
+    name = re.search(r"<k>k2</k>\s*<s>([^<]*)</s>", text)
+    lines = ["level name=%s" % (name.group(1) if name else "?")]
+    starts = [o for o in objects if o.get("1") == "31"]
+    if not starts:
+        lines.append("no start position object (id 31)")
+        return "\n".join(lines)
+    sx = float(starts[0].get("2", "0") or 0)
+    sy = float(starts[0].get("3", "0") or 0)
+    lines.append("start x=%.1f y=%.1f (%d start objects)" % (sx, sy, len(starts)))
+    near = []
+    for index, o in enumerate(objects):
+        oid = o.get("1", "")
+        if not oid.isdigit():
+            continue
+        x = float(o.get("2", "0") or 0)
+        if sx - 60.0 <= x <= sx + span:
+            near.append((x, index, o))
+    near.sort(key=lambda r: r[0])
+    counts = collections.Counter(o.get("1", "?") for _, _, o in near)
+    lines.append("objects in window=%d by id: %s" % (len(near), " ".join(
+        "%s:%d" % kv for kv in sorted(counts.items(), key=lambda kv: int(kv[0])))))
+    for x, index, o in near[:limit]:
+        lines.append("x=%.1f y=%s %s" % (x, o.get("3", "?"), _row(index, o)))
+    return "\n".join(lines)
+
+
 def main() -> int:
     if zipfile.is_zipfile(sys.argv[1]):
         with zipfile.ZipFile(sys.argv[1]) as archive:
@@ -258,6 +288,9 @@ def main() -> int:
     if "--camera" in sys.argv:
         print("=====CAMERA=====")
         print(camera_report(objects))
+    if "--start" in sys.argv:
+        print("=====START=====")
+        print(start_report(text, objects))
     if "--ids" in sys.argv:
         print("=====OBJECTS BY ID=====")
         print(id_report(objects, sys.argv[sys.argv.index("--ids") + 1].split(",")))

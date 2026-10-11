@@ -95,6 +95,11 @@ jobs:
               chunks = [detail[k:k + 3800] for k in range(0, min(len(detail), 3800 * 6), 3800)]
               for n, chunk in enumerate(chunks):
                   print(f"::notice title=ids {name} part {n}::" + esc(chunk))
+              start = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--start'], capture_output=True, text=True)
+              part = start.stdout[start.stdout.find('=====START====='):]
+              part = part[:part.find('objects=') if part.find('objects=') > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 6), 3800):
+                  print(f"::notice title=start {name} part {n // 3800}::" + esc(part[n:n + 3800]))
               if p.stderr.strip():
                   print(f"::warning title=scan stderr {name}::" + esc(p.stderr[-800:]))
           PY
