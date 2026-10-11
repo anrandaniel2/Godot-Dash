@@ -72,7 +72,7 @@ jobs:
 
       - name: Download the shared levels
         env:
-          LEVEL_URL: ${{ inputs.url || 'https://we.tl/t-x5aZPEvs5KA6m201' }}
+          LEVEL_URL: ${{ inputs.url || 'https://we.tl/t-6m0QzdqbUvQ8sm3a' }}
         run: |
           set -euo pipefail
           python3 tools/fetch_transfer_levels.py "$LEVEL_URL" /tmp/bli
