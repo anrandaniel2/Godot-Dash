@@ -14,6 +14,7 @@ downloadGJLevel22 response, or a plain/encoded level string.
 import base64
 import collections
 import gzip
+import os
 import re
 import sys
 import zipfile
@@ -324,6 +325,25 @@ def main() -> int:
         rows = sorted((float(o.get("2", "0") or 0), i, o) for i, o in enumerate(objects) if o.get("1") in names)
         for x, i, o in rows:
             print("%s x=%.0f y=%s %s" % (names[o["1"]], x, o.get("3"), _row(i, o)))
+    if "--region" in sys.argv:
+        # --region x0,x1,y0,y1 (GD units): every object in the box, counted by id,
+        # then rows sorted by x. Capped so one CI annotation stays readable.
+        x0, x1, y0, y1 = (float(v) for v in sys.argv[sys.argv.index("--region") + 1].split(","))
+        inside = []
+        for i, o in enumerate(objects):
+            try:
+                x, y = float(o.get("2", "0") or 0), float(o.get("3", "0") or 0)
+            except ValueError:
+                continue
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                inside.append((x, i, o))
+        counts = collections.Counter(o.get("1", "?") for _, _, o in inside)
+        print("=====REGION=====")
+        print("region x=%g..%g y=%g..%g objects=%d by id: %s" % (x0, x1, y0, y1, len(inside), " ".join(
+            "%s:%d" % kv for kv in sorted(counts.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0))))
+        inside.sort(key=lambda r: (r[0], r[1]))
+        for _, i, o in inside[:int(os.environ.get("REGION_LIMIT", "120"))]:
+            print(_row(i, o))
     if "--group-x" in sys.argv:
         print("=====GROUP EXTENTS=====")
         for group in sys.argv[sys.argv.index("--group-x") + 1].split(","):
