@@ -260,4 +260,4 @@ jobs:
               lines.append(f"objects touching group 54 (member or target): {len(g54)}")
               text_out = "\n".join(lines)
               print(f"::notice title=toggle walls::" + esc(text_out))
-PY
+          PY
