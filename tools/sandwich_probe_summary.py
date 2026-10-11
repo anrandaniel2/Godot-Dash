@@ -49,6 +49,10 @@ def main() -> None:
     for t, x, py, floor, ceil in hits[::8]:
         out.append(f"SW t={t} x={x:.0f} py={py:.0f} f={int(floor)} c={int(ceil)} g25={g25.get(t, float('nan')):.0f}")
     out.extend(extra)
+    # Last lines of the probe's own log: where it stopped if it did not finish.
+    with open(log_path, errors="replace") as log:
+        tail = [line.rstrip()[:150] for line in log.readlines()[-25:]]
+    out.extend("SW tail " + line for line in tail)
     print("::notice title=sandwich-only summary::" + esc("\n".join(out)))
 
 
