@@ -38,6 +38,7 @@ var _start: Vector2 = Vector2.INF
 var _start_mode: int = 0
 var _stop_gd: float = INF
 var _placed: bool = false
+var _revives: int = 0
 var _macro: Replay = null
 
 
@@ -148,6 +149,20 @@ func _real_run(player: Player, level: Level) -> void:
 		_log_packed_box(level)
 		_log_solids_in_box(level)
 		_log_teleports(level)
+	# A death does not end the probe: revive the cube at the probe's start point and
+	# keep going, so every killer along the way is logged (see [gdash-kill]).
+	if player.dead and _revives < 200:
+		_revives += 1
+		print("PROBE REVIVE #%d after death at %s" % [_revives, str(player.global_position)])
+		player.dead = false
+		player.get_node("DeathAnimator").stop()
+		player._icon.show()
+		player.velocity = Vector2.ZERO
+		player.internal_gamemode = _start_mode as Player.Gamemode
+		player.displayed_gamemode = _start_mode as Player.Gamemode
+		player.global_position = level.to_global(Vector2(_start.x * _CELL_PER_GD, -_start.y * _CELL_PER_GD))
+		_placed = true
+		return
 	if not _placed:
 		# The first physics frame fires every trigger left of the cube's x, so
 		# the start portal (TeleportalIn1, x -29) always teleports the spawn to

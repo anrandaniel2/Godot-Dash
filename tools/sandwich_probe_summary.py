@@ -12,7 +12,7 @@ import sys
 
 G25 = re.compile(r"PROBE G25 tick=(\d+) x=([-\d.]+) members=\d+ \(([-\d.]+),")
 HIT = re.compile(r"PROBE HIT tick=(\d+) x=([-\d.]+) py=([-\d.]+) floor=(\w+) ceil=(\w+)")
-KEEP = ("PROBE END", "PROBE SOLID", "PROBE CAM finished", "PROBE CAM start", "pre-place", "SCRIPT ERROR", "[gdash-death]", "[gdash-kill]")
+KEEP = ("PROBE END", "PROBE SOLID", "PROBE CAM finished", "PROBE CAM start", "pre-place", "SCRIPT ERROR", "[gdash-death]", "[gdash-kill]", "PROBE REVIVE")
 
 
 def esc(text: str) -> str:
