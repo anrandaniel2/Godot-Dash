@@ -150,6 +150,11 @@ func _real_run(player: Player, level: Level) -> void:
 		print("PROBE CAM start at %s mode %d" % [str(_start), _start_mode])
 		return
 	var gd_x: float = _gd_x(player)
+	# Physical contacts of the cube in the sandwich window: what holds it up,
+	# or whether it touches anything at all. One line per physics tick.
+	if gd_x >= 60.0 and gd_x <= 260.0:
+		print("PROBE HIT tick=%d x=%.1f py=%.1f %s" % [player.replay_physics_tick, gd_x,
+				-level.to_local(player.global_position).y / _CELL_PER_GD, _contacts(player)])
 	var state: String = "speed=%.2f mode=%d vis=%s" % [player.speed_multiplier, player.internal_gamemode, str(player.visible)]
 	if state != _last_state:
 		_last_state = state
@@ -169,6 +174,26 @@ func _real_run(player: Player, level: Level) -> void:
 	if gd_x >= _stop_gd or _elapsed > 600.0 or player.in_end_level_animation:
 		print("PROBE CAM finished x=%.0f t=%.1f" % [gd_x, _elapsed])
 		get_tree().quit(0)
+
+
+func _contacts(player: Player) -> String:
+	var parts := PackedStringArray()
+	parts.append("floor=%s ceil=%s wall=%s" % [str(player.is_on_floor()), str(player.is_on_ceiling()), str(player.is_on_wall())])
+	var level: Level = LevelManager.current_level
+	for index: int in player.get_slide_collision_count():
+		var hit: KinematicCollision2D = player.get_slide_collision(index)
+		var body: Object = hit.get_collider()
+		var label := "?"
+		var where := Vector2.ZERO
+		if body is Node:
+			label = str((body as Node).name)
+			var parent: Node = (body as Node).get_parent()
+			if parent != null:
+				label = str(parent.name) + "/" + label
+		if body is Node2D:
+			where = level.to_local((body as Node2D).global_position) / _CELL_PER_GD
+		parts.append("%s@(%.0f,%.0f)" % [label, where.x, -where.y])
+	return " ".join(parts)
 
 
 func _gd_x(player: Player) -> float:
