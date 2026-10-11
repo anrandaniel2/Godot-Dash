@@ -11,6 +11,7 @@ on:
       - "tools/fetch_transfer_levels.py"
       - "tools/gd_level_scan.py"
       - "tools/gd_sandwich_scan.py"
+      - "tools/sandwich_probe_summary.py"
       - "tools/level_probe.gd"
       - "tools/level_probe.tscn"
       - "tools/gd_annotate.py"
