@@ -358,6 +358,22 @@ func _log_merge_state(level: Level) -> void:
 ## Every collision shape in the sandwich area (any shape type), as GD-unit
 ## bounds (y up). The exit is (45, 1157), so this shows what is at and just above it.
 func _log_solids_in_box(level: Level) -> void:
+	# Native collision blocks: nodes in gd_collision_block, a 128 px box centred on the node.
+	var block_count := 0
+	for block: Node in level.get_tree().get_nodes_in_group("gd_collision_block"):
+		var n := block as Node2D
+		if n == null or not n.is_visible_in_tree():
+			continue
+		var local: Vector2 = level.to_local(n.global_position) / _CELL_PER_GD
+		var gx: float = local.x
+		var gy: float = -local.y
+		if gx < -35.0 or gx > 95.0 or gy < 1065.0 or gy > 1255.0:
+			continue
+		block_count += 1
+		if block_count <= 40:
+			print("PROBE SOLID NATIVE block id=%d centre=(%.2f,%.2f) x=[%.2f,%.2f] y=[%.2f,%.2f]" % [
+				int(n.get_meta("gd_block_id", 0)), gx, gy, gx - 15.0, gx + 15.0, gy - 15.0, gy + 15.0])
+	print("PROBE SOLID NATIVE count=%d" % block_count)
 	var found := 0
 	var stack: Array[Node] = [level]
 	while not stack.is_empty():
