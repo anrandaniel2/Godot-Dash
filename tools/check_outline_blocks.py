@@ -8,7 +8,8 @@ H block above it. Before this guard, IDs with type 40 had no collision: they wer
 not in GMDObjects.GENERATED_STATIC_IDS and their generated scenes had an empty
 Hitbox placeholder, so the cube passed straight through them.
 
-For every type-40 entry in tools/gd_hitbox_data.json this checks that:
+For every type-40 entry in tools/gd_hitbox_data.json, and every invisible block
+(INVISIBLE_BLOCK_IDS in tools/gd_collision_specs.py, IDs 1886-1888), this checks that:
   1. the ID is listed in GMDObjects.GENERATED_STATIC_IDS (so it imports as a
      static gameplay object), and
   2. its generated scene scenes/gd_objects/gd_<id>.tscn gives the Hitbox node a
@@ -29,6 +30,10 @@ HITBOX_JSON = ROOT / "tools" / "gd_hitbox_data.json"
 GMDOBJECTS = ROOT / "src" / "static" / "GMDObjects.gd"
 SCENES = ROOT / "scenes" / "gd_objects"
 OUTLINE_TYPE = 40
+# tools/gd_collision_specs.py: the invisible solid blocks (emptyFrame). Kept in
+# sync by importing the set rather than copying it.
+sys.path.insert(0, str(ROOT / "tools"))
+from gd_collision_specs import INVISIBLE_BLOCK_IDS  # noqa: E402
 
 
 def outline_ids() -> dict[int, str]:
@@ -37,6 +42,10 @@ def outline_ids() -> dict[int, str]:
     for key, entry in data.items():
         if entry.get("type") == OUTLINE_TYPE and entry.get("rect"):
             found[int(key)] = entry.get("texture", "?")
+    # Invisible blocks (emptyFrame, IDs 1886-1888): the game's type says
+    # decoration, but the hitbox table carries a full rect and they are solid.
+    for gd_id in INVISIBLE_BLOCK_IDS:
+        found.setdefault(gd_id, "emptyFrame.png")
     return found
 
 
