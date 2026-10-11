@@ -292,6 +292,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_resolve_contact_kills()
 	if not _should_process():
 		return
 	# Testing fly mode: no auto-run, no gravity, no collision, no replay
@@ -1516,21 +1517,64 @@ func _handle_checkpoint_placement(practice_mode: bool = LevelManager.practice_mo
 		last_automatic_checkpoint_position = position
 
 
-func _on_kill_collider_solid_body_entered(_body: Node2D) -> void:
-	if _can_die_on_contact():
-		# Which solid killed the cube, and where: for diagnosing contact deaths.
-		var where := str(_body.global_position) if _body else "null"
-		print("[gdash-kill] solid=%s parent=%s pos=%s cube=%s" % [
-			str(_body.name) if _body else "null",
-			str(_body.get_parent().name) if _body and _body.get_parent() else "null",
-			where, str(position)])
-		_death_animator.play("DeathAnimation")
+# Contact kills are not committed inside the physics flush that reports them.
+# Godot emits Area2D overlap signals before the frame's physics callbacks, so a
+# portal entered in the same flush (a start teleport on a spawn spike, for one)
+# moves the cube before its death is decided. _resolve_contact_kills re-checks
+# the overlap against the cube's position at that point.
+var _pending_contact_kills: Array[Dictionary] = []
 
 
-func _on_kill_collider_hazard_area_entered(_area: Area2D) -> void:
+func _on_kill_collider_solid_body_entered(body: Node2D) -> void:
 	if _can_die_on_contact():
-		print("[gdash-kill] frame=%d hazard=%s parent=%s pos=%s" % [Engine.get_physics_frames(), str(_area.name), str(_area.get_parent().name) if _area.get_parent() else "null", str(global_position)])
+		_pending_contact_kills.append({"source": body, "hitboxes": [$KillColliderSolid/KillColliderSolidHitbox]})
+
+
+func _on_kill_collider_hazard_area_entered(area: Area2D) -> void:
+	if _can_die_on_contact():
+		_pending_contact_kills.append({
+			"source": area,
+			"hitboxes": [$KillColliderRectangularHazard/KillColliderRectangularHazardHitbox, $KillColliderCircularHazard/KillColliderCircularHazardHitbox],
+		})
+
+
+func _resolve_contact_kills() -> void:
+	if _pending_contact_kills.is_empty():
+		return
+	var pending := _pending_contact_kills
+	_pending_contact_kills = []
+	for entry in pending:
+		if dead or not _can_die_on_contact():
+			return
+		var source: Node2D = entry["source"]
+		if not is_instance_valid(source) or not _kill_collider_overlaps(entry["hitboxes"], source):
+			continue
+		if source is Area2D:
+			print("[gdash-kill] frame=%d hazard=%s parent=%s pos=%s" % [Engine.get_physics_frames(), str(source.name), str(source.get_parent().name) if source.get_parent() else "null", str(global_position)])
+		else:
+			print("[gdash-kill] solid=%s parent=%s pos=%s cube=%s" % [
+				str(source.name),
+				str(source.get_parent().name) if source.get_parent() else "null",
+				str(source.global_position), str(position)])
 		_death_animator.play("DeathAnimation")
+		return
+
+
+## True when a kill collider's hitbox still overlaps `source` at the cube's current position.
+func _kill_collider_overlaps(hitboxes: Array, source: Node2D) -> bool:
+	var space := get_world_2d().direct_space_state
+	for hitbox: CollisionShape2D in hitboxes:
+		var kill_area := hitbox.get_parent() as Area2D
+		var query := PhysicsShapeQueryParameters2D.new()
+		query.shape = hitbox.shape
+		query.transform = hitbox.global_transform
+		query.collision_mask = kill_area.collision_mask
+		query.collide_with_areas = source is Area2D
+		query.collide_with_bodies = not (source is Area2D)
+		for result in space.intersect_shape(query, 32):
+			if result["collider"] == source:
+				return true
+	return false
 
 
 func _on_solid_overlap_check_body_exited(body: Node2D) -> void:
