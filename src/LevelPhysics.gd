@@ -48,6 +48,9 @@ const CONTAINER_NAME := "LevelPhysics"
 const BODY_META: StringName = &"_gd_level_physics_body"
 ## Metadata keys stored on merged source objects.
 const MERGED_META: StringName = &"_gd_level_physics_merged"
+## Trigger IDs whose target group is animated by the C++ runtime (Move, Follow,
+## Rotate, Scale), mirroring the interactable movers in _dynamic_transform_groups.
+const NATIVE_MOVER_IDS: Array[int] = [901, 1347, 1346, 2067]
 const SNAPSHOT_META: StringName = &"_gd_level_physics_snapshot"
 const DESCRIPTORS_META: StringName = &"_gd_level_physics_descriptors"
 ## Metadata key on the Level: whether a rebuild is needed before next play.
@@ -258,6 +261,21 @@ static func _dynamic_transform_groups(level: Level) -> Dictionary:
 			var target := interactable.query(TargetGroupComponent)
 			if target != null:
 				remember.call(target.target_group)
+	# Native-only movers (Move 901, Follow 1347, Rotate 1346, Scale 2067) are
+	# packed C++ records with no layer node, so the loop above never sees them.
+	# Their target group (key 51) still animates members, which must keep their
+	# own bodies: a merged body would stay put while the trigger moves the
+	# visible decoration - the block the cube stands on would not travel.
+	var packed: Dictionary = level.packed_trigger_records
+	if not packed.is_empty():
+		var ids: PackedInt32Array = packed.get("gd_id", PackedInt32Array())
+		for i in ids.size():
+			if not ids[i] in NATIVE_MOVER_IDS:
+				continue
+			var properties: Dictionary = PackedTriggers.row(packed, i).gd_properties
+			var target_id := str(properties.get("51", "")).to_int()
+			if target_id > 0:
+				remember.call(Constants.GROUP_PREFIX + str(target_id))
 	return groups
 
 
