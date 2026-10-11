@@ -83,6 +83,14 @@ def main(argv: list) -> int:
                 print(row(index, obj))
     print("counts by id:", dict(counts))
 
+    print("== 5. item and stop triggers and the ring that feeds group 287 (all rows)")
+    wanted = {"1615", "1616", "1595", "1611", "1817", "1888"}
+    shown = collections.Counter()
+    for index, obj in enumerate(objects):
+        kind = obj.get("1", "")
+        if kind in wanted and shown[kind] < 40:
+            shown[kind] += 1
+            print(row(index, obj) + (",80=%s" % obj["80"] if "80" in obj else "") + (",77=%s" % obj["77"] if "77" in obj else ""))
     print("== 4. pulse (1006) breakdown")
     pulse = [o for o in objects if o.get("1") == PULSE_ID]
     by = collections.Counter()
