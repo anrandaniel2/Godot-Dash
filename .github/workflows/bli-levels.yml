@@ -13,6 +13,7 @@ on:
       - "tools/gd_sandwich_scan.py"
       - "tools/sandwich_probe_summary.py"
       - "src/Player.gd"
+      - "src/Level.gd"
       - "tools/level_probe.gd"
       - "tools/level_probe.tscn"
       - "tools/gd_annotate.py"

@@ -315,7 +315,9 @@ func prepare_external_data() -> void:
 		LevelManager.touchscreen_controls.disable_platformer()
 
 	LevelManager.ground_up.show()
-	LevelManager.player.max_gameplay_y = GMDConverter.gd_to_godot_y(gd_max_gameplay_y) if gd_max_gameplay_y > 0.0 else -INF
+	# Player.global_position is global; gd_to_godot_y is level-local, and the level
+	# node sits at (640, 925) in GameScene, so compare in global space.
+	LevelManager.player.max_gameplay_y = to_global(Vector2(0.0, GMDConverter.gd_to_godot_y(gd_max_gameplay_y))).y if gd_max_gameplay_y > 0.0 else -INF
 	if LevelManager.player_camera:
 		LevelManager.player_camera.gd_level_end = camera_level_end(self, gd_level_end_x)
 	if LevelManager.player_camera and get_viewport().get_camera_2d() == LevelManager.player_camera:
