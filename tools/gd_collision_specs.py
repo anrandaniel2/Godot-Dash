@@ -138,7 +138,7 @@ INVISIBLE_BLOCK_IDS = {1886, 1887, 1888}
 # Object types in the game data that are static collision. Everything else
 # (portals, pads, rings, collectibles, decoration, ...) is not: interactables
 # keep their hand-made scenes, decoration carries none.
-SOLID_TYPES = {0, 21}  # block / breakable brick
+SOLID_TYPES = {0, 21, 40}  # block / breakable brick / outline block (blockOutline_*, solid like a block)
 HAZARD_TYPE = 2
 SLOPE_TYPE = 25
 
