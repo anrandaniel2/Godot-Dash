@@ -10,6 +10,7 @@ full probe's interleaved output.
 import re
 import sys
 
+G25 = re.compile(r"PROBE G25 tick=(\d+) x=([-\d.]+) members=\d+ \(([-\d.]+),")
 HIT = re.compile(r"PROBE HIT tick=(\d+) x=([-\d.]+) py=([-\d.]+) floor=(\w+) ceil=(\w+)")
 KEEP = ("PROBE END", "PROBE CAM finished", "PROBE CAM start", "pre-place", "SCRIPT ERROR")
 
@@ -22,11 +23,16 @@ def main() -> None:
     log_path, rc = sys.argv[1], sys.argv[2]
     hits = []
     extra = []
+    g25 = {}
     with open(log_path, errors="replace") as log:
         for line in log:
             m = HIT.match(line)
             if m:
                 hits.append((int(m[1]), float(m[2]), float(m[3]), m[4] == "true", m[5] == "true"))
+                continue
+            g = G25.match(line)
+            if g:
+                g25[int(g[1])] = float(g[3])
             elif any(k in line for k in KEEP):
                 extra.append("SW " + line.strip()[:160])
     out = [f"SW rc={rc} hits={len(hits)}"]
@@ -39,6 +45,9 @@ def main() -> None:
         out.append("SW py<1000 (fell out): " + (f"tick={fell[0][0]} x={fell[0][1]:.1f} py={fell[0][2]:.1f}" if fell else "never"))
         out.append(f"SW max x={max(h[1] for h in hits):.1f} last tick={hits[-1][0]} x={hits[-1][1]:.1f} py={hits[-1][2]:.1f}")
         out.append(f"SW floor ticks={sum(h[3] for h in hits)} ceil ticks={sum(h[4] for h in hits)}")
+    # Sampled trace: tick, x, py, floor/ceil, group-25 x offset (lock 901 moves it).
+    for t, x, py, floor, ceil in hits[::8]:
+        out.append(f"SW t={t} x={x:.0f} py={py:.0f} f={int(floor)} c={int(ceil)} g25={g25.get(t, float('nan')):.0f}")
     out.extend(extra)
     print("::notice title=sandwich-only summary::" + esc("\n".join(out)))
 
