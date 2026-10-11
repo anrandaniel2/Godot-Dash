@@ -261,3 +261,23 @@ jobs:
               text_out = "\n".join(lines)
               print(f"::notice title=toggle walls::" + esc(text_out))
           PY
+
+      - name: Gravity portals and teleports near the sandwich (gd_level_scan)
+        run: |
+          python3 - <<'PY'
+          import glob, subprocess
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          # Is the cube ever flipped upward (gravity portals) before the second teleport at (45, 1395)?
+          for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
+              p = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--portals'], capture_output=True, text=True)
+              part = p.stdout[p.stdout.find('=====MODE PORTALS====='):].replace('=====MODE PORTALS=====\n', '')
+              part = part[:part.find('objects=', 20) if part.find('objects=', 20) > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 2), 3800):
+                  print(f"::notice title=mode portals part {n // 3800}::" + esc(part[n:n + 3800]))
+              t = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--ids', '747,10,11,2926'], capture_output=True, text=True)
+              part = t.stdout[t.stdout.find('=====OBJECTS BY ID====='):].replace('=====OBJECTS BY ID=====\n', '')
+              part = part[:part.find('objects=', 20) if part.find('objects=', 20) > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 2), 3800):
+                  print(f"::notice title=teleports and gravity part {n // 3800}::" + esc(part[n:n + 3800]))
+          PY
