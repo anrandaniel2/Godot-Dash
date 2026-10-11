@@ -85,6 +85,14 @@ jobs:
           set -euo pipefail
           python3 tools/fetch_transfer_levels.py "$LEVEL_URL" /tmp/bli
 
+      - name: Dump teleport portals and the sandwich area (Change of scene)
+        run: |
+          set -euo pipefail
+          for f in /tmp/bli/*90475473*.gmd; do
+            echo "== $f"
+            python3 tools/gd_teleport_dump.py "$f" 0 200 1000 1300
+          done
+
       - name: Scan each level (gd_level_scan)
         run: |
           python3 - <<'PY'
