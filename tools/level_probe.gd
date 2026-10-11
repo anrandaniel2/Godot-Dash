@@ -176,10 +176,39 @@ func _real_run(player: Player, level: Level) -> void:
 		get_tree().quit(0)
 
 
+var _shapes_logged: bool = false
+var _contact_gd_x: float = 0.0
+
+
+## Once per run: the rectangles of the first floor body the cube touches,
+## whose x-range covers the cube, with their GD centre and top.
+func _shapes_under(body: CollisionObject2D, gd_x: float) -> void:
+	var level: Level = LevelManager.current_level
+	var lines := 0
+	for owner_id: int in body.get_shape_owners():
+		var shape: Shape2D = body.shape_owner_get_shape(owner_id, 0)
+		if not (shape is RectangleShape2D):
+			continue
+		var t: Transform2D = body.global_transform * body.shape_owner_get_transform(owner_id)
+		var local: Vector2 = level.to_local(t.origin)
+		var cx: float = local.x / _CELL_PER_GD
+		var cy: float = -local.y / _CELL_PER_GD
+		var w: float = (shape as RectangleShape2D).size.x / _CELL_PER_GD
+		var h: float = (shape as RectangleShape2D).size.y / _CELL_PER_GD
+		if absf(cx - gd_x) > w * 0.5 + 6.0 or cy < 1000.0 or cy > 1300.0:
+			continue
+		print("PROBE SHAPE owner=%d centre=(%.1f,%.1f) size=(%.1f,%.1f) top=%.1f bottom=%.1f" % [
+				owner_id, cx, cy, w, h, cy + h * 0.5, cy - h * 0.5])
+		lines += 1
+		if lines >= 12:
+			break
+
+
 func _contacts(player: Player) -> String:
 	var parts := PackedStringArray()
 	parts.append("floor=%s ceil=%s wall=%s" % [str(player.is_on_floor()), str(player.is_on_ceiling()), str(player.is_on_wall())])
 	var level: Level = LevelManager.current_level
+	_contact_gd_x = level.to_local(player.global_position).x / _CELL_PER_GD
 	for index: int in player.get_slide_collision_count():
 		var hit: KinematicCollision2D = player.get_slide_collision(index)
 		var body: Object = hit.get_collider()
@@ -193,6 +222,10 @@ func _contacts(player: Player) -> String:
 		if body is Node2D:
 			where = level.to_local((body as Node2D).global_position) / _CELL_PER_GD
 		parts.append("%s@(%.0f,%.0f)" % [label, where.x, -where.y])
+		if not _shapes_logged and body is CollisionObject2D and hit.get_normal().y < -0.5:
+			_shapes_logged = true
+			print("PROBE CONTACT point=%s normal=%s body=%s" % [str(hit.get_position()), str(hit.get_normal()), label])
+			_shapes_under(body as CollisionObject2D, _contact_gd_x)
 	return " ".join(parts)
 
 
