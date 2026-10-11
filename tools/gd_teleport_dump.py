@@ -30,6 +30,13 @@ def main() -> int:
         if o.get("1", "") in {str(i) for i in TELEPORT_IDS}:
             print("DUMP TELEPORT #%d id=%s %s" % (index, o.get("1"), fmt(o)))
             print("DUMP RAW #%d %s" % (index, ";".join("%s,%s" % kv for kv in o.items())))
+    # Every object in the sandwich's block group (25) with its position, so the
+    # real extent of the sandwich can be read off the level data.
+    for index, o in enumerate(objects):
+        groups = o.get("57", "").split(".")
+        if "25" in groups:
+            print("DUMP GROUP25 #%d id=%s x=%s y=%s rot=%s scale=%s" % (
+                index, o.get("1"), o.get("2"), o.get("3"), o.get("6", "0"), o.get("32", "1")))
     x_lo, x_hi, y_lo, y_hi = box
     for index, o in enumerate(objects):
         try:
