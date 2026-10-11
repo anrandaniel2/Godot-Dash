@@ -1512,6 +1512,12 @@ func _handle_checkpoint_placement(practice_mode: bool = LevelManager.practice_mo
 
 func _on_kill_collider_solid_body_entered(_body: Node2D) -> void:
 	if _can_die_on_contact():
+		# Which solid killed the cube, and where: for diagnosing contact deaths.
+		var where := str(_body.global_position) if _body else "null"
+		print("[gdash-kill] solid=%s parent=%s pos=%s cube=%s" % [
+			str(_body.name) if _body else "null",
+			str(_body.get_parent().name) if _body and _body.get_parent() else "null",
+			where, str(position)])
 		_death_animator.play("DeathAnimation")
 
 
