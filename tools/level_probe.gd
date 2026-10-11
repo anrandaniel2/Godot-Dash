@@ -318,7 +318,7 @@ var _merge_logged := false
 func _log_merge_state(level: Level) -> void:
 	var found := [0]
 	var stack: Array = [level]
-	while not stack.is_empty() and found[0] < 60:
+	while not stack.is_empty() and found[0] < 80:
 		var node: Node = stack.pop_back()
 		for child in node.get_children():
 			stack.append(child)
@@ -327,11 +327,13 @@ func _log_merge_state(level: Level) -> void:
 		var gd_at := (node as Node2D).global_position
 		var gx := gd_at.x / _CELL_PER_GD
 		var gy := -gd_at.y / _CELL_PER_GD
-		if gx < 100.0 or gx > 140.0 or gy < 1050.0 or gy > 1200.0:
+		if not ((gx >= 100.0 and gx <= 140.0) or (gx >= 230.0 and gx <= 250.0)):
+			continue
+		if node is Node2D and not node.has_meta(&"gd_object_id"):
 			continue
 		var groups := PackedStringArray()
 		for g: StringName in node.get_groups():
 			if String(g).begins_with(Constants.GROUP_PREFIX):
 				groups.append(String(g))
 		found[0] += 1
-		print("PROBE MERGE %s parent=%s at=(%.1f,%.1f) merged=%s id=%s groups=%s" % [node.get_class(), node.get_parent().name, gx, gy, str(node.has_meta(LevelPhysics.MERGED_META)), str(node.get_meta(&"gd_object_id", "-")), str(groups)])
+		print("PROBE MERGE %s name=%s at=(%.1f,%.1f) merged=%s id=%s groups=%s" % [node.get_class(), node.name, gx, gy, str(node.has_meta(LevelPhysics.MERGED_META)), str(node.get_meta(&"gd_object_id", "-")), str(groups)])
