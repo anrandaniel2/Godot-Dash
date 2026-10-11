@@ -146,3 +146,25 @@ jobs:
                   for n, block in enumerate(errors[:4]):
                       print(f"::error title=error {name} {n}::" + esc(block)[:3900])
           PY
+
+      - name: Probe Change of scene from the default start (real physics)
+        if: always()
+        env:
+          GODOT_BIN: ${{ env.GODOT_BIN }}
+        run: |
+          set +e
+          # The importer's default spawn is GD (0, 15): Level sits at (640, 925) and
+          # the player at (640, 861). No input, real physics, cube mode, to GD x 600.
+          GDASH_PROBE_LEVEL=/tmp/bli/90475473.gmd GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
+            GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X=0 GDASH_PROBE_START_Y=15 \
+            GDASH_PROBE_MODE=0 GDASH_PROBE_END_X=600 \
+            timeout 400s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > /tmp/probe_cos.log 2>&1
+          echo "probe exit=$?"
+          grep -E "PROBE|SCRIPT ERROR|Parse Error|ERROR" /tmp/probe_cos.log | head -60 | cut -c1-260 > /tmp/probe_cos.txt
+          python3 - <<'PY'
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          t = open('/tmp/probe_cos.txt').read()
+          for n in range(0, min(len(t), 3800 * 3), 3800):
+              print(f"::notice title=probe change of scene part {n // 3800}::" + esc(t[n:n + 3800]))
+          PY
