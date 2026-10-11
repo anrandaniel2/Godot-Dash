@@ -192,19 +192,24 @@ def id_report(objects: list, ids: list, samples: int = 3) -> str:
     return "\n".join(lines)
 
 
-def start_report(text: str, objects: list, span: float = 900.0, limit: int = 160) -> str:
+def start_report(text: str, objects: list, header: dict | None = None, span: float = 900.0, limit: int = 160) -> str:
     """The level name (plist key k2 when the file is a .gmd) and every object
     from just behind the start position to `span` units past it, sorted by x.
     Object 31 is GD's start position."""
     name = re.search(r"<k>k2</k>\s*<s>([^<]*)</s>", text)
     lines = ["level name=%s" % (name.group(1) if name else "?")]
+    if header is not None:
+        lines.append("header: " + " ".join("%s=%s" % (k, v[:40]) for k, v in header.items() if k != "kS38"))
+    lines.append("first objects: " + " | ".join(
+        ",".join("%s=%s" % kv for kv in o.items())[:160] for o in objects[:4]))
     starts = [o for o in objects if o.get("1") == "31"]
-    if not starts:
-        lines.append("no start position object (id 31)")
-        return "\n".join(lines)
-    sx = float(starts[0].get("2", "0") or 0)
-    sy = float(starts[0].get("3", "0") or 0)
-    lines.append("start x=%.1f y=%.1f (%d start objects)" % (sx, sy, len(starts)))
+    if starts:
+        sx = float(starts[0].get("2", "0") or 0)
+        sy = float(starts[0].get("3", "0") or 0)
+        lines.append("start object x=%.1f y=%.1f (%d start objects)" % (sx, sy, len(starts)))
+    else:
+        sx = 0.0
+        lines.append("no start position object (id 31); window begins at x=0")
     near = []
     for index, o in enumerate(objects):
         oid = o.get("1", "")
@@ -290,7 +295,7 @@ def main() -> int:
         print(camera_report(objects))
     if "--start" in sys.argv:
         print("=====START=====")
-        print(start_report(text, objects))
+        print(start_report(text, objects, header))
     if "--ids" in sys.argv:
         print("=====OBJECTS BY ID=====")
         print(id_report(objects, sys.argv[sys.argv.index("--ids") + 1].split(",")))
