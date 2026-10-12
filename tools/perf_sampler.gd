@@ -23,6 +23,19 @@ var _census_done: bool = false
 var _reported: bool = false
 
 
+var _draw_calls: PackedFloat64Array = PackedFloat64Array()
+var _render_cpu_ms: PackedFloat64Array = PackedFloat64Array()
+var _render_gpu_ms: PackedFloat64Array = PackedFloat64Array()
+var _viewport: RID
+
+
+func _ready() -> void:
+	# Render timing comes from the RenderingServer; it needs a real renderer
+	# (CI runs the probe under a virtual display, not --headless).
+	_viewport = get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(_viewport, true)
+
+
 func _process(_delta: float) -> void:
 	if _reported:
 		return
@@ -41,6 +54,9 @@ func _process(_delta: float) -> void:
 		var gd_x := LevelManager.player.global_position.x * 30.0 / 128.0
 		_spikes.append([process_ms, gd_x])
 	_physics_ms.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
+	_draw_calls.append(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
+	_render_cpu_ms.append(RenderingServer.viewport_get_measured_render_time_cpu(_viewport))
+	_render_gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(_viewport))
 	if not _census_done:
 		_census_done = true
 		_census()
@@ -71,10 +87,22 @@ func _report() -> void:
 		_mean(physics_sorted), _pick(physics_sorted, 0.5), _pick(physics_sorted, 0.95),
 		physics_sorted[physics_sorted.size() - 1]])
 	print("PERF frames over 16.7 ms of process: %d of %d" % [over_frame, process_sorted.size()])
+	_print_stats("draw_calls", _draw_calls)
+	_print_stats("render_cpu_ms", _render_cpu_ms)
+	_print_stats("render_gpu_ms", _render_gpu_ms)
 	var level: Level = LevelManager.current_level
 	print("PERF player GD x covered %.0f to %.0f (level end %.0f)" % [
 		_x_min, _x_max, level.gd_level_end_x if level != null else -1.0])
 	_print_spikes()
+
+
+func _print_stats(label: String, values: PackedFloat64Array) -> void:
+	var sorted: PackedFloat64Array = values.duplicate()
+	sorted.sort()
+	if sorted.is_empty():
+		return
+	print("PERF %s avg=%.2f median=%.2f p95=%.2f max=%.2f" % [
+		label, _mean(sorted), _pick(sorted, 0.5), _pick(sorted, 0.95), sorted[sorted.size() - 1]])
 
 
 func _print_spikes() -> void:

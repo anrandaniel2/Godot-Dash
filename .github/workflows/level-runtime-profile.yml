@@ -75,6 +75,11 @@ jobs:
       - name: Download level
         run: bash tools/fetch_level.sh "$LEVEL_URL" /tmp/level.gmd2
 
+      - name: Virtual display and software Vulkan (render timing needs a renderer)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers
+
       - name: Import project resources
         run: |
           chmod +x "$GODOT_BIN"
@@ -88,7 +93,7 @@ jobs:
             GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X="" GDASH_PROBE_START_Y="" \
             GDASH_PROBE_MODE="" GDASH_PROBE_END_X="" GDASH_PROBE_PERF=1 GDASH_PROBE_PERF_FRAMES=9000 \
             GDASH_PERF_DISABLE="${{ matrix.disable }}" \
-            timeout 1500s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > perf.log 2>&1
+            timeout 1500s xvfb-run -a "$GODOT_BIN" --path . --audio-driver Dummy res://tools/level_probe.tscn > perf.log 2>&1
           status=$?
           { echo "PERF variant ${{ matrix.name }} disable=[${{ matrix.disable }}]"; grep -E "PERF|SCRIPT ERROR|Parse Error" perf.log | cut -c1-300; } > perf.txt
           cat perf.txt
