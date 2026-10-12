@@ -59,6 +59,8 @@ const DIRTY_META: StringName = &"_gd_level_physics_dirty"
 ## contributed to the shared bodies. Lets the object be restored by freeing
 ## exactly its shapes, without touching the rest.
 const SHAPES_META: StringName = &"_gd_level_physics_shapes"
+## Diagnostics only: each shared shape node points at the GD object it came from.
+const SOURCE_META: StringName = &"_gd_level_physics_source"
 ## Metadata key on the Level: the trigger-group set the last merge decision was
 ## made against. Kept so a rebuild restores merged members whose group turned
 ## dynamic before it re-merges.
@@ -188,6 +190,8 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 			_chunk_of(object.global_position.x),
 	)
 	var added: Array = NativeCore.backend().call(&"commit_collision_shapes", body, object, geometry.descriptors)
+	for shape_node in added:
+		shape_node.set_meta(SOURCE_META, object)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
 	# Native online/static artwork lives in RenderingServer RIDs and this
@@ -412,6 +416,13 @@ static func _free_child_body(object: Node2D, body: CollisionObject2D) -> void:
 	object.set_meta(SNAPSHOT_META, snapshot)
 	object.set_meta(MERGED_META, true)
 	body.free()
+
+
+## The GD object a shared shape was merged from, or null. Diagnostics only.
+static func source_of_shape(shape: Node) -> Node2D:
+	if shape == null or not shape.has_meta(SOURCE_META):
+		return null
+	return shape.get_meta(SOURCE_META) as Node2D
 
 
 ## Restores an object that was merged earlier but must keep its own body again.

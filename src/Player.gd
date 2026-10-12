@@ -684,6 +684,17 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 				print("[gdash-kill] shared hit collider=%s at=%s normal=%s shape=%s wall=%s ceiling=%s" % [
 						str(collider.name), str(collision.get_position()), str(collision.get_normal()),
 						str(shape.shape.get_rect()) if shape != null and shape.shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
+				# Which GD object this shared solid came from, and where (GD units).
+				var source := LevelPhysics.source_of_shape(shape)
+				if source != null:
+					var kill_level := LevelManager.current_level
+					var source_gd := Vector2.ZERO
+					var cube_gd := Vector2.ZERO
+					if kill_level != null:
+						source_gd = kill_level.to_local(source.global_position) * 30.0 / 128.0
+						cube_gd = kill_level.to_local(global_position) * 30.0 / 128.0
+					print("[gdash-kill] shared source=%s gd_id=%s source_gd=%s cube_gd=%s" % [
+							str(source.name), str(source.get("gd_id")), str(source_gd), str(cube_gd)])
 				if shape != null:
 					shape.set_deferred(&"disabled", true)
 				if _spider_dash_frames == 0 and not Config.noclip:
