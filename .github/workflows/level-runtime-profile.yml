@@ -35,15 +35,7 @@ jobs:
           - name: baseline
             disable: ""
             settings: ""
-          - name: bloom-off
-            disable: ""
-            settings: "bloom=0"
-          - name: ldm-on
-            disable: ""
-            settings: "ldm=1"
-          - name: particles-off
-            disable: ""
-            settings: "particles=0"
+
     steps:
       - uses: actions/checkout@v4
 
