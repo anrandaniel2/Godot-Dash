@@ -165,6 +165,8 @@ func _trajectory(player: Player, level: Level) -> void:
 	if player.dead:
 		for prev_row in _ring:
 			print("PROBE TRAJ PRE %s" % prev_row)
+		_dump_body_shapes(_floor_body, level, "floor")
+		_dump_body_shapes(level.find_child("Solids_1", true, false) as CollisionObject2D, level, "killer")
 		print("PROBE TRAJ DEATH tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
 		return
@@ -386,6 +388,33 @@ func _level_gd(world: Vector2) -> Vector2:
 
 
 ## Camera centre in GD units (y up), for the trajectory log.
+var _floor_body: CollisionObject2D = null
+
+
+## Death-area shapes of one body in GD units (y up): those overlapping x 990..1140, y 1090..1170.
+func _dump_body_shapes(body: CollisionObject2D, level: Level, label: String) -> void:
+	if body == null or not is_instance_valid(body):
+		print("PROBE BODY %s none" % label)
+		return
+	print("PROBE BODY %s name=%s layer=%d owners=%d" % [label, str(body.name), body.collision_layer, body.get_shape_owners().size()])
+	for owner_id in body.get_shape_owners():
+		var owner_xf: Transform2D = body.shape_owner_get_transform(owner_id)
+		for si in range(body.shape_owner_get_shape_count(owner_id)):
+			var shape: Shape2D = body.shape_owner_get_shape(owner_id, si)
+			if not shape is RectangleShape2D:
+				continue
+			var half: Vector2 = (shape as RectangleShape2D).size / 2.0
+			var centre_local: Vector2 = body.to_global(owner_xf.origin)
+			var lc: Vector2 = level.to_local(centre_local)
+			var cx: float = lc.x / _CELL_PER_GD
+			var cy: float = -lc.y / _CELL_PER_GD
+			var hw: float = half.x / _CELL_PER_GD
+			var hh: float = half.y / _CELL_PER_GD
+			if cx + hw < 990.0 or cx - hw > 1140.0 or cy + hh < 1090.0 or cy - hh > 1170.0:
+				continue
+			print("PROBE BODY %s shape centre=(%.3f,%.3f) half=(%.3f,%.3f) top=%.3f bottom=%.3f" % [label, cx, cy, hw, hh, cy + hh, cy - hh])
+
+
 ## The surface straight below the cube: its GD y (top face) and the body's name.
 ## Ray query, no physics change. The cube's own body is excluded.
 func _floor_under(player: Player, level: Level) -> String:
@@ -397,6 +426,8 @@ func _floor_under(player: Player, level: Level) -> String:
 		return "fl=none"
 	var at: Vector2 = level.to_local(hit["position"])
 	var collider: Object = hit["collider"]
+	if collider is CollisionObject2D:
+		_floor_body = collider as CollisionObject2D
 	var name_text := str(collider.name) if collider is Node else "?"
 	return "fl_y=%.3f fl=%s" % [-at.y / _CELL_PER_GD, name_text]
 
