@@ -29,8 +29,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Each row changes one setting, so the difference from baseline is
+          # what that setting costs. Software Vulkan: compare the rows, not
+          # the absolute milliseconds.
           - name: baseline
             disable: ""
+            settings: ""
+          - name: bloom-off
+            disable: ""
+            settings: "bloom=0"
+          - name: ldm-on
+            disable: ""
+            settings: "ldm=1"
+          - name: particles-off
+            disable: ""
+            settings: "particles=0"
     steps:
       - uses: actions/checkout@v4
 
@@ -91,11 +104,11 @@ jobs:
           set +e
           env GDASH_PROBE_LEVEL=/tmp/level.gmd2 GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
             GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X="" GDASH_PROBE_START_Y="" \
-            GDASH_PROBE_MODE="" GDASH_PROBE_END_X="" GDASH_PROBE_PERF=1 GDASH_PROBE_PERF_FRAMES=9000 \
-            GDASH_PERF_DISABLE="${{ matrix.disable }}" \
+            GDASH_PROBE_MODE="" GDASH_PROBE_END_X="" GDASH_PROBE_PERF=1 GDASH_PROBE_PERF_FRAMES=2000 \
+            GDASH_PERF_DISABLE="${{ matrix.disable }}" GDASH_PROBE_SETTINGS="${{ matrix.settings }}" \
             timeout 1500s xvfb-run -a "$GODOT_BIN" --path . --audio-driver Dummy res://tools/level_probe.tscn > perf.log 2>&1
           status=$?
-          { echo "PERF variant ${{ matrix.name }} disable=[${{ matrix.disable }}]"; grep -E "PERF|SCRIPT ERROR|Parse Error" perf.log | cut -c1-300; } > perf.txt
+          { echo "PERF variant ${{ matrix.name }} settings=[${{ matrix.settings }}] disable=[${{ matrix.disable }}]"; grep -E "PERF|SCRIPT ERROR|Parse Error" perf.log | cut -c1-300; } > perf.txt
           cat perf.txt
           {
             echo "## Amethyst runtime profile (exit $status)"

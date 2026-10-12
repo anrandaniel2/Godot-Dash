@@ -91,6 +91,20 @@ func _ready() -> void:
 	# normal rules so deaths, the max-Y kill and crushes count as they do in play.
 	Config.noclip = not _start.is_finite()
 	Config.paced_level_open = false
+	# GDASH_PROBE_SETTINGS: comma list of key=value, applied before the scene
+	# loads. Keys: bloom=0|1, ldm=0|1, particles=<visibility bitmask>.
+	for setting: String in OS.get_environment("GDASH_PROBE_SETTINGS").split(",", false):
+		var pair: PackedStringArray = setting.split("=")
+		if pair.size() != 2:
+			continue
+		match pair[0].strip_edges():
+			"bloom":
+				Config.bloom = pair[1] == "1"
+			"ldm":
+				Config.ldm = pair[1] == "1"
+			"particles":
+				Config.particles_visibility = pair[1].to_int()
+		print("PROBE setting %s" % setting)
 	LevelManager.current_level_path = _LEVEL_PATH
 	# The scene change frees this node's scene; keep the probe alive on root.
 	var runner := Node.new()
