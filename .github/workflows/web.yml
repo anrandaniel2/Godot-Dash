@@ -8,6 +8,9 @@ name: Build Web HTML5
 #   - Every successful export also updates the rolling "web-html5" prerelease
 #     with the newest ZIP:
 #       https://github.com/anrandaniel2/Godot-Dash/releases/download/web-html5/godot-dash-web-html5.zip
+#   - The web build is wasm64 (64-bit memory, up to 16 GB), so the level
+#     editor can exceed the 4 GB wasm32 ceiling. Browsers without memory64
+#     (Safari at the time of writing) cannot load it.
 #   - Multi-threading is enabled (variant/thread_support=true) with PWA
 #     Cross-Origin Isolation headers for SharedArrayBuffer support.
 #   - The game draws at the browser's resolution. Do not force a fixed
@@ -80,7 +83,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: native/scons-cache
-          key: native-scons-web-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}
+          key: native-scons-web-wasm64-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}
 
       - name: Checkout pinned godot-cpp
         uses: actions/checkout@v4
@@ -90,7 +93,10 @@ jobs:
           path: native/godot-cpp
           fetch-depth: 1
 
-      - name: Build gdash_native for Web (WASM multi-threaded)
+      - name: Patch pinned godot-cpp for wasm64
+        run: python3 tools/godot_cpp_wasm64.py native/godot-cpp
+
+      - name: Build gdash_native for Web (WASM64 multi-threaded)
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -109,22 +115,22 @@ jobs:
           }
 
           echo "Compiling template_release (threads=yes)..."
-          if ! scons platform=web target=template_release arch=wasm32 threads=yes api_version=4.7 debug_symbols=no -j2 > /tmp/scons_web_release.log 2>&1; then
+          if ! scons platform=web target=template_release arch=wasm64 threads=yes api_version=4.7 debug_symbols=no -j2 > /tmp/scons_web_release.log 2>&1; then
             emit_scons_error /tmp/scons_web_release.log
             exit 1
           fi
           tail -n 5 /tmp/scons_web_release.log
 
           echo "Compiling template_debug (threads=yes)..."
-          if ! scons platform=web target=template_debug arch=wasm32 threads=yes api_version=4.7 debug_symbols=yes -j2 > /tmp/scons_web_debug.log 2>&1; then
+          if ! scons platform=web target=template_debug arch=wasm64 threads=yes api_version=4.7 debug_symbols=yes -j2 > /tmp/scons_web_debug.log 2>&1; then
             emit_scons_error /tmp/scons_web_debug.log
             exit 1
           fi
           tail -n 5 /tmp/scons_web_debug.log
 
           ls -lh bin/web/
-          test -f bin/web/libgdash_native.web.template_release.wasm32.wasm || { echo "::error::Release wasm missing"; exit 1; }
-          test -f bin/web/libgdash_native.web.template_debug.wasm32.wasm || { echo "::error::Debug wasm missing"; exit 1; }
+          test -f bin/web/libgdash_native.web.template_release.wasm64.wasm || { echo "::error::Release wasm missing"; exit 1; }
+          test -f bin/web/libgdash_native.web.template_debug.wasm64.wasm || { echo "::error::Debug wasm missing"; exit 1; }
 
       # ------------------------------------------------------- hogdot WebGPU editor
       # The editor bakes shaders. The published web zips are not used: their
@@ -151,7 +157,7 @@ jobs:
         id: cache-webgpu-template
         with:
           path: hogdot-templates/web_dlink_release.zip
-          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-maxmem4g
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-wasm64-maxmem16g
 
       - name: Build unstripped WebGPU template
         if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
@@ -175,20 +181,20 @@ jobs:
           cd "$HOGDOT_SRC"
           # No build_profile. The published profile disables Line2D, physics
           # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
-          scons platform=web target=template_release arch=wasm32 \
+          scons platform=web target=template_release arch=wasm64 \
             webgpu=yes vulkan=no opengl3=yes \
             production=yes optimize=speed threads=yes dlink_enabled=yes \
-            initial_memory=256 linkflags="-sMAXIMUM_MEMORY=4GB" -j"$(nproc)"
-          test -f bin/godot.web.template_release.wasm32.dlink.zip
-          unzip -l bin/godot.web.template_release.wasm32.dlink.zip
+            initial_memory=256 linkflags="-sMAXIMUM_MEMORY=16GB" -j"$(nproc)"
+          test -f bin/godot.web.template_release.wasm64.dlink.zip
+          unzip -l bin/godot.web.template_release.wasm64.dlink.zip
           # ClassDB strings live in the engine module. dlink puts that in the
           # side wasm; check both so a filename change does not waste the build.
-          if ! { unzip -p bin/godot.web.template_release.wasm32.dlink.zip godot.side.wasm || true; unzip -p bin/godot.web.template_release.wasm32.dlink.zip godot.wasm || true; } | grep -a -q 'Line2D'; then
+          if ! { unzip -p bin/godot.web.template_release.wasm64.dlink.zip godot.side.wasm || true; unzip -p bin/godot.web.template_release.wasm64.dlink.zip godot.wasm || true; } | grep -a -q 'Line2D'; then
             echo "::error::Unstripped template is still missing Line2D"
             exit 1
           fi
           mkdir -p "$GITHUB_WORKSPACE/hogdot-templates"
-          cp bin/godot.web.template_release.wasm32.dlink.zip "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
+          cp bin/godot.web.template_release.wasm64.dlink.zip "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
           ls -lh "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
           cd "$GITHUB_WORKSPACE"
           rm -rf "$HOGDOT_SRC"
@@ -291,6 +297,11 @@ jobs:
           echo "Web export folder contents:"
           ls -la "$WEB_DIR"
 
+      - name: Set up Node for the wasm engine check
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Verify Web Export Artifacts
         run: |
           set -euo pipefail
@@ -299,13 +310,18 @@ jobs:
           test -f "$WEB_DIR/index.pck"
           test -f "$WEB_DIR/index.wasm"
           test -f "$WEB_DIR/index.side.wasm"
-          test -f "$WEB_DIR/libgdash_native.web.template_release.wasm32.wasm"
-          # Emscripten writes the heap cap into the JS glue. 2 GB was not enough
-          # for 300k-object levels (alloc_static "mem is null").
-          if ! grep -Eq '4294901760|4294967296' "$WEB_DIR/index.js"; then
-            echo "::error::Web template is not built with MAXIMUM_MEMORY=4GB"
-            exit 1
-          fi
+          test -f "$WEB_DIR/libgdash_native.web.template_release.wasm64.wasm"
+          # The engine and its side module must be wasm64 with a limit above
+          # 4 GiB. A wasm32 template fails here instead of shipping (wasm32 is
+          # capped at 4 GiB, which the level editor exceeds).
+          node tools/check_wasm_engine.mjs \
+            "$WEB_DIR/index.wasm" \
+            "$WEB_DIR/index.side.wasm" \
+            "$WEB_DIR/libgdash_native.web.template_release.wasm64.wasm"
+          python3 tools/check_wasm64.py \
+            "$WEB_DIR/index.wasm" \
+            "$WEB_DIR/index.side.wasm" \
+            "$WEB_DIR/libgdash_native.web.template_release.wasm64.wasm"
           if ! grep -q 'webgpu' "$WEB_DIR/index.html"; then
             echo "::error::Export did not select the WebGPU driver. Refusing to publish a WebGL build."
             exit 1
