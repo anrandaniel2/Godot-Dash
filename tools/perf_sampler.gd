@@ -15,6 +15,8 @@ var skip_frames: int = 120
 var disable_scripts: PackedStringArray = PackedStringArray()
 var _skipped: int = 0
 var _spikes: Array = []
+var _x_min: float = INF
+var _x_max: float = -INF
 var _process_ms: PackedFloat64Array = PackedFloat64Array()
 var _physics_ms: PackedFloat64Array = PackedFloat64Array()
 var _census_done: bool = false
@@ -31,6 +33,9 @@ func _process(_delta: float) -> void:
 		return
 	var process_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	_process_ms.append(process_ms)
+	var x_now := LevelManager.player.global_position.x * 30.0 / 128.0
+	_x_min = minf(_x_min, x_now)
+	_x_max = maxf(_x_max, x_now)
 	if process_ms > 1000.0 / 60.0:
 		# Where in the level the slow frame happened, in GD units (30 px per 128 px cell).
 		var gd_x := LevelManager.player.global_position.x * 30.0 / 128.0
@@ -66,6 +71,9 @@ func _report() -> void:
 		_mean(physics_sorted), _pick(physics_sorted, 0.5), _pick(physics_sorted, 0.95),
 		physics_sorted[physics_sorted.size() - 1]])
 	print("PERF frames over 16.7 ms of process: %d of %d" % [over_frame, process_sorted.size()])
+	var level: Level = LevelManager.current_level
+	print("PERF player GD x covered %.0f to %.0f (level end %.0f)" % [
+		_x_min, _x_max, level.gd_level_end_x if level != null else -1.0])
 	_print_spikes()
 
 
