@@ -106,6 +106,14 @@ func _ready() -> void:
 	runner.set(&"_stop_gd", _stop_gd)
 	runner.set(&"_running", true)
 	get_tree().root.add_child.call_deferred(runner)
+	# GDASH_PROBE_PERF=1: sample frame times and census the node tree while
+	# the level plays (tools/perf_sampler.gd prints the PERF lines).
+	if OS.get_environment("GDASH_PROBE_PERF") == "1":
+		var sampler: Node = load("res://tools/perf_sampler.gd").new()
+		var frames := OS.get_environment("GDASH_PROBE_PERF_FRAMES")
+		if frames.is_valid_int():
+			sampler.frame_limit = frames.to_int()
+		get_tree().root.add_child.call_deferred(sampler)
 	get_tree().change_scene_to_file.call_deferred("res://scenes/GameScene.tscn")
 
 
