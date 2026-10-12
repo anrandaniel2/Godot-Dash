@@ -1491,8 +1491,10 @@ func _player_death() -> void:
 		# walls), and those can be drawn over it. Visual only.
 		z_as_relative = false
 		z_index = RenderingServer.CANVAS_ITEM_Z_MAX
+		var canvas_position: Vector2 = get_global_transform_with_canvas().origin
 		print("[gdash-freeze] frozen at pos=%s canvas=%s viewport=%s; press R to restart" % [
-			str(position), str(get_global_transform_with_canvas().origin), str(get_viewport().get_visible_rect().size)])
+			str(position), str(canvas_position), str(get_viewport().get_visible_rect().size)])
+		_show_death_marker(canvas_position)
 		# The hide-player option (levels 162/163) zeroes modulate; reveal the players
 		# so the death spot can be seen. Gameplay is not changed.
 		modulate.a = 1.0
@@ -1510,6 +1512,18 @@ func _player_death() -> void:
 	_trail.clear_points()
 	if not GDLevelOptions.no_death_sfx:
 		SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3", &"In Level SFX")
+
+
+## Debug: red marker at the frozen cube's screen position (see DeathFreezeMarker).
+func _show_death_marker(canvas_position: Vector2) -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 128
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	var marker := DeathFreezeMarker.new()
+	marker.marker_position = canvas_position
+	marker.label_text = "DEAD HERE (%d, %d)" % [roundi(canvas_position.x), roundi(canvas_position.y)]
+	layer.add_child(marker)
+	get_tree().root.add_child(layer)
 
 
 func _on_death_restart() -> void:
