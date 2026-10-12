@@ -16,6 +16,7 @@ var disable_scripts: PackedStringArray = PackedStringArray()
 var _skipped: int = 0
 var _spikes: Array = []
 var _emitters: Array = []
+var _batches: Array = []
 var _emitting_sum: float = 0.0
 var _x_min: float = INF
 var _x_max: float = -INF
@@ -124,6 +125,29 @@ func _report() -> void:
 	print("PERF player GD x covered %.0f to %.0f (level end %.0f)" % [
 		_x_min, _x_max, level.gd_level_end_x if level != null else -1.0])
 	_print_spikes()
+
+
+## World-space area of every decoration sprite, by layer (base, detail, glow,
+## part). A static one-time census: which layer covers the most of the level.
+func _decoration_area_report() -> void:
+	var area_by_layer: Dictionary = {}
+	var count_by_layer: Dictionary = {}
+	var total_area := 0.0
+	var total_items := 0
+	for batch: Node in _batches:
+		for item: Object in batch.get("items"):
+			var layer: String = item.get("layer")
+			var region: Rect2 = item.get("region")
+			var transform: Transform2D = item.get("transform")
+			var area := region.size.x * region.size.y * absf(transform.determinant())
+			area_by_layer[layer] = area_by_layer.get(layer, 0.0) + area
+			count_by_layer[layer] = count_by_layer.get(layer, 0) + 1
+			total_area += area
+			total_items += 1
+	print("PERF decoration sprites: %d in %d batches, total area %.0f" % [total_items, _batches.size(), total_area])
+	for layer: String in area_by_layer:
+		print("PERF decoration layer %s: %d sprites, %.1f%% of area" % [
+			layer, count_by_layer[layer], 100.0 * area_by_layer[layer] / maxf(total_area, 1.0)])
 
 
 func _build_toggle() -> void:
@@ -243,6 +267,8 @@ func _census() -> void:
 		if script != null:
 			key += " " + script.resource_path.get_file()
 		by_type[key] = by_type.get(key, 0) + 1
+		if script != null and script.resource_path.get_file() == "DecorationBatch.gd":
+			_batches.append(node)
 		if script != null and disable_scripts.has(script.resource_path.get_file()):
 			node.set_process(false)
 			node.set_physics_process(false)
@@ -254,6 +280,7 @@ func _census() -> void:
 		if node.is_physics_processing():
 			physics[key] = physics.get(key, 0) + 1
 		stack.append_array(node.get_children(true))
+	_decoration_area_report()
 	print("PERF census nodes=%d (engine monitor %d) disabled=%d %s" % [
 		total, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), disabled, str(disable_scripts)])
 	print("PERF GPU particle emitters in tree: %d" % _emitters.size())
