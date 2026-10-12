@@ -24,6 +24,18 @@ var _physics_ms: PackedFloat64Array = PackedFloat64Array()
 var _census_done: bool = false
 var _reported: bool = false
 
+## Fill attribution inside one run: GDASH_PERF_TOGGLE lists categories. The run
+## alternates blocks where nothing is hidden with blocks where one category is
+## hidden, so drift in the runner cancels out of the comparison. Visibility is
+## only changed during measurement; nothing ships.
+var toggle_categories: PackedStringArray = PackedStringArray()
+var _toggle_nodes: Dictionary = {}
+var _toggle_original: Dictionary = {}
+var _schedule: PackedStringArray = PackedStringArray()
+var _state: String = "none"
+var _render_state: PackedStringArray = PackedStringArray()
+const TOGGLE_BLOCK: int = 30
+
 
 var _draw_calls: PackedFloat64Array = PackedFloat64Array()
 var _render_cpu_ms: PackedFloat64Array = PackedFloat64Array()
@@ -64,9 +76,18 @@ func _process(_delta: float) -> void:
 	_draw_calls.append(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 	_render_cpu_ms.append(RenderingServer.viewport_get_measured_render_time_cpu(_viewport))
 	_render_gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(_viewport))
+	# The render timings just read belong to the frame drawn under _state.
+	_render_state.append(_state)
 	if not _census_done:
 		_census_done = true
 		_census()
+		if not toggle_categories.is_empty():
+			_build_toggle()
+	if not _schedule.is_empty():
+		var next := _schedule[(_process_ms.size() / TOGGLE_BLOCK) % _schedule.size()]
+		if next != _state:
+			_state = next
+			_apply_toggle(_state)
 	if _process_ms.size() >= frame_limit:
 		_report()
 		get_tree().quit(0)
@@ -97,11 +118,86 @@ func _report() -> void:
 	_print_stats("draw_calls", _draw_calls)
 	_print_stats("render_cpu_ms", _render_cpu_ms)
 	_print_stats("render_gpu_ms", _render_gpu_ms)
+	_report_toggle()
 	var level: Level = LevelManager.current_level
 	print("PERF GPU particle emitters emitting on average: %.1f" % (_emitting_sum / maxf(process_sorted.size(), 1)))
 	print("PERF player GD x covered %.0f to %.0f (level end %.0f)" % [
 		_x_min, _x_max, level.gd_level_end_x if level != null else -1.0])
 	_print_spikes()
+
+
+func _build_toggle() -> void:
+	for category: String in toggle_categories:
+		_toggle_nodes[category] = []
+	var stack: Array = [get_tree().root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		stack.append_array(node.get_children(true))
+		if not node is CanvasItem:
+			continue
+		var attached: Script = node.get_script()
+		var file := attached.resource_path.get_file() if attached != null else ""
+		for category: String in toggle_categories:
+			var match_found := false
+			match category:
+				"decor":
+					match_found = file == "DecorationBatch.gd"
+				"blur":
+					match_found = file == "BlurBackBuffer.gd"
+				"ground":
+					match_found = file == "GroundObject.gd"
+				"particles":
+					match_found = node is GPUParticles2D
+				"glow":
+					match_found = node.name == &"Glow"
+				"background":
+					match_found = node.name == &"BackgroundParallax"
+			if match_found:
+				_toggle_nodes[category].append(node)
+	var schedule: PackedStringArray = PackedStringArray()
+	for cycle in 3:
+		for category: String in toggle_categories:
+			schedule.append("none")
+			schedule.append(category)
+	_schedule = schedule
+	for category: String in toggle_categories:
+		print("PERF toggle %s: %d nodes" % [category, _toggle_nodes[category].size()])
+
+
+func _apply_toggle(hidden: String) -> void:
+	for category: String in _toggle_nodes:
+		for node: CanvasItem in _toggle_nodes[category]:
+			if not is_instance_valid(node):
+				continue
+			var id := node.get_instance_id()
+			if not _toggle_original.has(id):
+				_toggle_original[id] = node.visible
+			node.visible = bool(_toggle_original[id]) and category != hidden
+
+
+func _report_toggle() -> void:
+	if _schedule.is_empty():
+		return
+	var by_state: Dictionary = {}
+	for i in _render_gpu_ms.size():
+		var state := _render_state[i] if i < _render_state.size() else "none"
+		if not by_state.has(state):
+			by_state[state] = PackedFloat64Array()
+		by_state[state].append(_render_gpu_ms[i])
+	var none: PackedFloat64Array = by_state.get("none", PackedFloat64Array())
+	var base := _pick(_sorted(none), 0.5)
+	print("PERF toggle baseline (nothing hidden): render_gpu median=%.1f ms n=%d" % [base, none.size()])
+	for category: String in toggle_categories:
+		var values: PackedFloat64Array = by_state.get(category, PackedFloat64Array())
+		var median := _pick(_sorted(values), 0.5)
+		print("PERF toggle hide %s: render_gpu median=%.1f ms, saves %.1f ms (%.0f%%) n=%d" % [
+			category, median, base - median, 100.0 * (base - median) / maxf(base, 0.001), values.size()])
+
+
+func _sorted(values: PackedFloat64Array) -> PackedFloat64Array:
+	var copy: PackedFloat64Array = values.duplicate()
+	copy.sort()
+	return copy
 
 
 func _print_stats(label: String, values: PackedFloat64Array) -> void:
