@@ -91,6 +91,12 @@ jobs:
             cat perf.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # Annotations survive when logs and artifacts cannot be downloaded.
+          # A step keeps only 10 annotations, so pack the lines in chunks.
+          split -l 30 -d perf.txt perf_chunk_
+          for chunk in perf_chunk_*; do
+            echo "::notice::$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' "$chunk")"
+          done
           grep -q "PERF census" perf.log
 
       - uses: actions/upload-artifact@v4
