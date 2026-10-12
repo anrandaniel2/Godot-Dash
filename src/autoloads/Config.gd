@@ -118,7 +118,9 @@ enum ParticlePreprocessing {
 @export_range(0.1, 2.0, 0.05) var game_speed: float = 1.0:
 	set(value):
 		game_speed = value
-		TimescaleChangerComponent.apply_game_speed()
+		# Loading runs inside Config's own _init, before the autoload exists.
+		if is_inside_tree():
+			TimescaleChangerComponent.apply_game_speed()
 
 # Practice
 @export_subgroup("Practice")
@@ -358,6 +360,7 @@ static func web_texture_filtering(mode: TextureFilteringMode, is_web: bool) -> T
 
 
 func _ready() -> void:
+	TimescaleChangerComponent.apply_game_speed()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
 			get_tree().root.set_size(saved_window_size)
