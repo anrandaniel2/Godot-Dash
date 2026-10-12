@@ -181,10 +181,19 @@ jobs:
           cd "$HOGDOT_SRC"
           # No build_profile. The published profile disables Line2D, physics
           # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
-          scons platform=web target=template_release arch=wasm64 \
+          # Keep the scons log and re-emit its errors as annotations; the raw
+          # job log is not always downloadable.
+          if ! scons platform=web target=template_release arch=wasm64 \
             webgpu=yes vulkan=no opengl3=yes \
             production=yes optimize=speed threads=yes dlink_enabled=yes \
-            initial_memory=256 linkflags="-sMAXIMUM_MEMORY=16GB" -j"$(nproc)"
+            initial_memory=256 linkflags="-sMAXIMUM_MEMORY=16GB" -j"$(nproc)" \
+            > /tmp/hogdot_scons.log 2>&1; then
+            tail -n 60 /tmp/hogdot_scons.log
+            grep -E "error|Error|\*\*\*" /tmp/hogdot_scons.log | head -n 12 | cut -c1-300 | while IFS= read -r line; do
+              echo "::error::${line//%/%25}"
+            done
+            exit 1
+          fi
           test -f bin/godot.web.template_release.wasm64.dlink.zip
           unzip -l bin/godot.web.template_release.wasm64.dlink.zip
           # ClassDB strings live in the engine module. dlink puts that in the
