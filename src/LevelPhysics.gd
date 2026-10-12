@@ -190,8 +190,10 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 			_chunk_of(object.global_position.x),
 	)
 	var added: Array = NativeCore.backend().call(&"commit_collision_shapes", body, object, geometry.descriptors)
+	# Plain data, not a reference: the merged root is freed below.
+	var source := {"name": str(object.name), "gd_id": object.get("gd_id"), "position": object.global_position}
 	for shape_node in added:
-		shape_node.set_meta(SOURCE_META, object)
+		shape_node.set_meta(SOURCE_META, source)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
 	# Native online/static artwork lives in RenderingServer RIDs and this
@@ -418,11 +420,12 @@ static func _free_child_body(object: Node2D, body: CollisionObject2D) -> void:
 	body.free()
 
 
-## The GD object a shared shape was merged from, or null. Diagnostics only.
-static func source_of_shape(shape: Node) -> Node2D:
+## {name, gd_id, position} of the GD object a shared shape was merged from, or
+## an empty dictionary. Diagnostics only.
+static func source_of_shape(shape: Node) -> Dictionary:
 	if shape == null or not shape.has_meta(SOURCE_META):
-		return null
-	return shape.get_meta(SOURCE_META) as Node2D
+		return {}
+	return shape.get_meta(SOURCE_META)
 
 
 ## Restores an object that was merged earlier but must keep its own body again.
