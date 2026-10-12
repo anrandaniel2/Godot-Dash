@@ -279,6 +279,26 @@ jobs:
                   print("::warning title=region stderr::" + esc(r.stderr[-800:]))
           PY
 
+      - name: Source of the floor block under the cube at the death (gd_level_scan --ids)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, re, subprocess
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          log = open('/tmp/probe_start.log', errors='replace').read() if __import__('os').path.exists('/tmp/probe_start.log') else ''
+          m = re.search(r'PROBE BODY floor parent=\S+ id=(\d+)', log)
+          if not m:
+              print('::notice title=floor source::no floor id in the probe log')
+          else:
+              oid = m.group(1)
+              for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
+                  r = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--ids', oid], capture_output=True, text=True)
+                  out = r.stdout[:3800 * 2]
+                  for n in range(0, len(out), 3800):
+                      print(f"::notice title=floor source id {oid} part {n // 3800}::" + esc(out[n:n + 3800]))
+          PY
+
       - name: Objects around the death point (gd_level_scan --region 1000..1130, 1080..1200)
         run: |
           python3 - <<'PY'

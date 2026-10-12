@@ -396,7 +396,9 @@ func _dump_body_shapes(body: CollisionObject2D, level: Level, label: String) -> 
 	if body == null or not is_instance_valid(body):
 		print("PROBE BODY %s none" % label)
 		return
-	print("PROBE BODY %s name=%s layer=%d owners=%d" % [label, str(body.name), body.collision_layer, body.get_shape_owners().size()])
+	var parent_node := body.get_parent()
+	var pid := str(parent_node.get_meta(&"gd_object_id", "none")) if parent_node != null else "none"
+	print("PROBE BODY %s parent=%s id=%s name=%s layer=%d owners=%d" % [label, str(parent_node.name) if parent_node != null else "null", pid, str(body.name), body.collision_layer, body.get_shape_owners().size()])
 	for owner_id in body.get_shape_owners():
 		var owner_xf: Transform2D = body.shape_owner_get_transform(owner_id)
 		for si in range(body.shape_owner_get_shape_count(owner_id)):
