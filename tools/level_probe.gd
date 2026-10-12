@@ -205,7 +205,9 @@ func _trajectory(player: Player, level: Level) -> void:
 	# Every tick is kept in a ring buffer and printed as PROBE TRAJ PRE at death, so
 	# the approach to the killer is logged without a per-tick line for the whole run.
 	var cam_now := _cam_gd()
-	var row := "tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f)" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_now.x, cam_now.y]
+	var cam_node: Camera2D = LevelManager.player_camera
+	var lgf := str(cam_node.get("_last_ground_was_floor")) if cam_node != null else "null"
+	var row := "tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f) lgf=%s floor=%s gf=%s" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_now.x, cam_now.y, lgf, str(player.is_on_floor()), str(player.gravity_flip)]
 	_ring.append(row)
 	if _ring.size() > 40:
 		_ring.pop_front()
