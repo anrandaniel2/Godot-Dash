@@ -132,6 +132,7 @@ func _ready() -> void:
 			sampler.skip_frames = skip.to_int()
 		var disable := OS.get_environment("GDASH_PERF_DISABLE")
 		sampler.disable_scripts = PackedStringArray(disable.split(",", false))
+		sampler.toggle_categories = PackedStringArray(OS.get_environment("GDASH_PERF_TOGGLE").split(",", false))
 		get_tree().root.add_child.call_deferred(sampler)
 	get_tree().change_scene_to_file.call_deferred("res://scenes/GameScene.tscn")
 
