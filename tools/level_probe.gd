@@ -49,6 +49,8 @@ const _TRAJ_TICKS: int = 1500
 func _ready() -> void:
 	if _running:
 		return
+	# The probe revives the cube after each death itself; a frozen tree would stall it.
+	Player.freeze_on_death_debug = OS.get_environment("GDASH_PROBE_FREEZE") == "1"
 	var path := OS.get_environment("GDASH_PROBE_LEVEL")
 	var document: GMD.Document = GMD.read_any_file(path)
 	if document == null or document.level_string.is_empty():

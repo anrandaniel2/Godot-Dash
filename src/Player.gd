@@ -1471,7 +1471,7 @@ func _emit_gd_events(jump_state: int) -> void:
 
 ## Debug: freeze the game at the point of death instead of playing the death
 ## animation and restarting. Set to false to restore normal death handling.
-const FREEZE_ON_DEATH_DEBUG: bool = true
+static var freeze_on_death_debug: bool = true
 
 
 func _player_death() -> void:
@@ -1484,10 +1484,15 @@ func _player_death() -> void:
 	_event_last_gamemode = -1
 	NativeTriggerBridge.notify_player_death(self)
 	last_automatic_checkpoint_position = position
-	if FREEZE_ON_DEATH_DEBUG:
+	if freeze_on_death_debug:
 		# Debug: stop the whole game where the cube died and keep the cube visible.
 		# R (restart_level) unpauses and restarts through the always-running pause menu.
-		print("[gdash-freeze] frozen at pos=%s; press R to restart" % str(position))
+		# Draw the cube above every level object: it dies inside blocks (sandwich,
+		# walls), and those can be drawn over it. Visual only.
+		z_as_relative = false
+		z_index = RenderingServer.CANVAS_ITEM_Z_MAX
+		print("[gdash-freeze] frozen at pos=%s canvas=%s viewport=%s; press R to restart" % [
+			str(position), str(get_global_transform_with_canvas().origin), str(get_viewport().get_visible_rect().size)])
 		# The hide-player option (levels 162/163) zeroes modulate; reveal the players
 		# so the death spot can be seen. Gameplay is not changed.
 		modulate.a = 1.0
