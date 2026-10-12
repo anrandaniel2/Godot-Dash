@@ -195,9 +195,11 @@ func _trajectory(player: Player, level: Level) -> void:
 	_jump_prev_x = gd_x
 	_jump_prev_y = gd_y
 	if tick % 6 == 0 or tick < 30:
-		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f mode=%d" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode])
+		var cam_gd := _cam_gd()
+		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f)" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_gd.x, cam_gd.y])
 	elif tick >= 80:
-		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f parent=%s" % [tick, _gd_x(player), gd_y, player.velocity.y, str(player.get_parent().name)])
+		var cam_gd := _cam_gd()
+		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f cam=(%.2f,%.2f) parent=%s" % [tick, _gd_x(player), gd_y, player.velocity.y, cam_gd.x, cam_gd.y, str(player.get_parent().name)])
 	if tick >= _TRAJ_TICKS:
 		print("PROBE TRAJ END tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
@@ -366,6 +368,16 @@ func _shape_desc(node: Node) -> String:
 func _level_gd(world: Vector2) -> Vector2:
 	var at: Vector2 = LevelManager.current_level.to_local(world)
 	return Vector2(at.x / _CELL_PER_GD, -at.y / _CELL_PER_GD)
+
+
+## Camera centre in GD units (y up), for the trajectory log.
+func _cam_gd() -> Vector2:
+	var cam: Camera2D = LevelManager.player_camera
+	var level: Level = LevelManager.current_level
+	if cam == null or level == null:
+		return Vector2.ZERO
+	var local := level.to_local(cam.global_position)
+	return Vector2(local.x / _CELL_PER_GD, -local.y / _CELL_PER_GD)
 
 
 func _gd_x(player: Player) -> float:
