@@ -694,8 +694,8 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 						var source_at: Vector2 = source["position"]
 						source_gd = kill_level.to_local(source_at) * 30.0 / 128.0
 						cube_gd = kill_level.to_local(global_position) * 30.0 / 128.0
-					print("[gdash-kill] shared source=%s gd_id=%s source_gd=%s cube_gd=%s" % [
-							str(source["name"]), str(source["gd_id"]), str(source_gd), str(cube_gd)])
+					print("[gdash-kill] shared source=%s gd_id=%s source_gd=%s cube_gd=%s groups=%s" % [
+							str(source["name"]), str(source["gd_id"]), str(source_gd), str(cube_gd), str(source["groups"])])
 				if shape != null:
 					shape.set_deferred(&"disabled", true)
 				if _spider_dash_frames == 0 and not Config.noclip:

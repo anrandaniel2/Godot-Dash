@@ -135,6 +135,7 @@ static func rebuild(level: Level) -> void:
 		child.free()
 
 	var dynamic_groups := _dynamic_transform_groups(level)
+	print("[gdash-physics] rebuild dynamic=%d has_g290=%s packed_rows=%d" % [dynamic_groups.size(), str(dynamic_groups.has(&"g_290")), (level.packed_trigger_records.get("gd_id", PackedInt32Array()) as PackedInt32Array).size()])
 	# Shared bodies are chunked by horizontal region, so the physics broadphase
 	# only ever sees the chunks near the player instead of one body whose shape
 	# list spans the whole level (a huge single body would be tested in full on
@@ -191,7 +192,7 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 	)
 	var added: Array = NativeCore.backend().call(&"commit_collision_shapes", body, object, geometry.descriptors)
 	# Plain data, not a reference: the merged root is freed below.
-	var source := {"name": str(object.name), "gd_id": object.get("gd_id"), "position": object.global_position}
+	var source := {"name": str(object.name), "gd_id": object.get("gd_id"), "position": object.global_position, "groups": str(object.get_groups())}
 	for shape_node in added:
 		shape_node.set_meta(SOURCE_META, source)
 	object.set_meta(SHAPES_META, added)
