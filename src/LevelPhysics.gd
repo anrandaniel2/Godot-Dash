@@ -135,7 +135,7 @@ static func rebuild(level: Level) -> void:
 		child.free()
 
 	var dynamic_groups := _dynamic_transform_groups(level)
-	print("[gdash-physics] rebuild dynamic=%d has_g290=%s packed_rows=%d" % [dynamic_groups.size(), str(dynamic_groups.has(&"g_290")), (level.packed_trigger_records.get("gd_id", PackedInt32Array()) as PackedInt32Array).size()])
+	print("[gdash-kill] rebuild dynamic=%d has_g290=%s packed_rows=%d" % [dynamic_groups.size(), str(dynamic_groups.has(&"g_290")), (level.packed_trigger_records.get("gd_id", PackedInt32Array()) as PackedInt32Array).size()])
 	# Shared bodies are chunked by horizontal region, so the physics broadphase
 	# only ever sees the chunks near the player instead of one body whose shape
 	# list spans the whole level (a huge single body would be tested in full on
