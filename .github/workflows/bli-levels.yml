@@ -187,11 +187,15 @@ jobs:
         run: |
           # Peak memory of the same level opened by GameScene (paced) and by
           # EditorScene (one synchronous build). Results: LEVEL_OPEN notices.
+          set +e
           for mode in game editor; do
             GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd GDASH_MEM_MODE=$mode timeout 600s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_open_memory.tscn > /tmp/mem_$mode.log 2>&1
             echo "memory $mode exit=$?"
             grep -E "LEVEL_OPEN|ERROR|error|Parse Error|memory" /tmp/mem_$mode.log | head -40 | cut -c1-300 | while IFS= read -r line; do
               echo "::notice title=memory $mode::$line"
+            done
+            tail -n 25 /tmp/mem_$mode.log | cut -c1-300 | while IFS= read -r line; do
+              echo "::notice title=memory tail $mode::$line"
             done
           done
           exit 0
