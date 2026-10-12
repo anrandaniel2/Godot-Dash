@@ -207,6 +207,16 @@ func _test_invisible_blocks() -> void:
 ## IDs 1886-1888 are decoration in the extracted type table (type 7) with an
 ## empty frame. They must not import as the generated solid 60-unit box: at the
 ## Amethyst start, stacked copies at x~300 walled off the UFO portal from the red pad.
+func _test_slope_bodies_are_solid() -> void:
+	# Merged slopes share one body. It must be a StaticBody2D: the cube's
+	# CharacterBody2D passes straight through an Area2D.
+	var container := Node2D.new()
+	var body := LevelPhysics._body_for({}, container, LevelPhysics.SLOPE_LAYER, 0)
+	assert(body is StaticBody2D, "slope smoke: merged slope body is %s, not a StaticBody2D" % body.get_class())
+	assert(body.collision_layer == LevelPhysics.SLOPE_LAYER, "slope smoke: slope body lost its layer")
+	container.free()
+
+
 func _test_gradient_ids_not_solid() -> void:
 	for id: int in [1886, 1887, 1888]:
 		assert(not GMDObjects.has_object_scene(id), "gradient smoke: %d must not get a generated solid scene" % id)
@@ -400,6 +410,7 @@ func _ready() -> void:
 	_test_gameplay_z()
 	_test_invisible_blocks()
 	_test_gradient_ids_not_solid()
+	_test_slope_bodies_are_solid()
 	_test_hidden_objects()
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_test_native_core()

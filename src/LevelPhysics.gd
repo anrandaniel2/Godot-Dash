@@ -335,7 +335,9 @@ static func _body_for(
 			body.collision_layer = CIRCLE_HAZARD_LAYER
 			base_name = "CircleHazards"
 		SLOPE_LAYER:
-			body = Area2D.new()
+			# Slopes are solid, like blocks. The player's CharacterBody2D only
+			# collides with static bodies, so an Area2D here let the cube pass
+			# straight through merged slopes. The layer keeps the slope-enabler bit.
 			body.collision_layer = SLOPE_LAYER
 			base_name = "Slopes"
 		_:
