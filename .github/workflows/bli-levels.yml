@@ -191,12 +191,9 @@ jobs:
           for mode in game editor; do
             GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd GDASH_MEM_MODE=$mode timeout 600s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_open_memory.tscn > /tmp/mem_$mode.log 2>&1
             echo "memory $mode exit=$?"
-            grep -E "LEVEL_OPEN|ERROR|error|Parse Error|memory" /tmp/mem_$mode.log | head -40 | cut -c1-300 | while IFS= read -r line; do
-              echo "::notice title=memory $mode::$line"
-            done
-            tail -n 25 /tmp/mem_$mode.log | cut -c1-300 | while IFS= read -r line; do
-              echo "::notice title=memory tail $mode::$line"
-            done
+            # One notice per mode: annotation count per job is capped.
+            { grep -E "LEVEL_OPEN|SCRIPT ERROR|Parse Error" /tmp/mem_$mode.log | head -30 | cut -c1-300; echo "--- tail"; tail -n 12 /tmp/mem_$mode.log | cut -c1-300; } > /tmp/mem_${mode}_summary.txt
+            echo "::notice title=memory $mode::$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' /tmp/mem_${mode}_summary.txt)"
           done
           exit 0
 
