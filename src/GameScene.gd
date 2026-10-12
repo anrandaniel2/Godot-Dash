@@ -59,6 +59,7 @@ func _ready() -> void:
 	print("[gdash-mem] game scene ready")
 	TimescaleChangerComponent.reset_time_scale()
 	LevelManager.game_scene = self
+	add_child(PerformanceOverlay.new())
 	LevelManager.background_sprites.clear()
 	LevelManager.background_sprites.append($BackgroundParallax/Background)
 	LevelManager.background_sprites.append($BackgroundParallax/Background2)

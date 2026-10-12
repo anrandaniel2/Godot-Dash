@@ -121,6 +121,8 @@ enum ParticlePreprocessing {
 		# Loading runs inside Config's own _init, before the autoload exists.
 		if is_inside_tree():
 			TimescaleChangerComponent.apply_game_speed()
+## Live FPS, frame, physics and node numbers in the top-left corner.
+@export var show_performance_stats: bool = false
 
 # Practice
 @export_subgroup("Practice")
@@ -283,6 +285,7 @@ func _init():
 	noclip = config_file.get_value("Gameplay", "noclip", noclip)
 	fly_mode = config_file.get_value("Gameplay", "fly_mode", fly_mode)
 	game_speed = config_file.get_value("Gameplay", "game_speed", game_speed)
+	show_performance_stats = config_file.get_value("Gameplay", "show_performance_stats", show_performance_stats)
 
 	# Practice
 	automatic_checkpoints = config_file.get_value("Practice", "automatic_checkpoints", automatic_checkpoints)
@@ -413,6 +416,7 @@ func save() -> void:
 	config_file.set_value("Gameplay", "noclip", noclip)
 	config_file.set_value("Gameplay", "fly_mode", fly_mode)
 	config_file.set_value("Gameplay", "game_speed", game_speed)
+	config_file.set_value("Gameplay", "show_performance_stats", show_performance_stats)
 
 	# Practice
 	config_file.set_value("Practice", "automatic_checkpoints", automatic_checkpoints)

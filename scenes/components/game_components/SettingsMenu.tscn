@@ -560,6 +560,19 @@ script = ExtResource("6_p6jor")
 config_property = &"game_speed"
 metadata/_custom_type_script = "uid://ckqgnvpbftev7"
 
+[node name="Show Performance Stats" type="BoxContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=2200000007]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+vertical = true
+script = ExtResource("11_egxjo")
+metadata/_custom_type_script = "uid://bss8ppxnt7gio"
+metadata/_smooth_scroll_default_mouse_filter_set = true
+
+[node name="PropertySaveLoad" type="Node" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer/Show Performance Stats" unique_id=2200000008]
+script = ExtResource("6_p6jor")
+config_property = &"show_performance_stats"
+metadata/_custom_type_script = "uid://ckqgnvpbftev7"
+
 [node name="Practice" type="FoldableContainer" parent="EnumButtonTabContainer/Gameplay/SmoothScrollContainer/VBoxContainer" unique_id=884159843]
 layout_mode = 2
 mouse_filter = 1
