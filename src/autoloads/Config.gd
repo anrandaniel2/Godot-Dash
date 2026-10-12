@@ -112,6 +112,13 @@ enum ParticlePreprocessing {
 ## and collision, cannot die, and is steered with the arrow keys (Shift for
 ## faster). Not recorded into replays.
 @export var fly_mode: bool = false
+## Diagnostic: runs the whole game (physics, animation, timers) at this speed,
+## so a death can be watched frame by frame. 1.0 is normal speed. Player and
+## level speeds are unchanged; only the game's clock is scaled.
+@export_range(0.1, 2.0, 0.05) var game_speed: float = 1.0:
+	set(value):
+		game_speed = value
+		TimescaleChangerComponent.apply_game_speed()
 
 # Practice
 @export_subgroup("Practice")
@@ -273,6 +280,7 @@ func _init():
 	click_on_steps = config_file.get_value("Gameplay", "click_on_steps", click_on_steps)
 	noclip = config_file.get_value("Gameplay", "noclip", noclip)
 	fly_mode = config_file.get_value("Gameplay", "fly_mode", fly_mode)
+	game_speed = config_file.get_value("Gameplay", "game_speed", game_speed)
 
 	# Practice
 	automatic_checkpoints = config_file.get_value("Practice", "automatic_checkpoints", automatic_checkpoints)
@@ -401,6 +409,7 @@ func save() -> void:
 	config_file.set_value("Gameplay", "click_on_steps", click_on_steps)
 	config_file.set_value("Gameplay", "noclip", noclip)
 	config_file.set_value("Gameplay", "fly_mode", fly_mode)
+	config_file.set_value("Gameplay", "game_speed", game_speed)
 
 	# Practice
 	config_file.set_value("Practice", "automatic_checkpoints", automatic_checkpoints)

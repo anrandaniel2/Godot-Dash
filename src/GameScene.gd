@@ -57,7 +57,7 @@ func _print_process_memory(tag: String) -> void:
 
 func _ready() -> void:
 	print("[gdash-mem] game scene ready")
-	Engine.time_scale = 1.0
+	TimescaleChangerComponent.reset_time_scale()
 	LevelManager.game_scene = self
 	LevelManager.background_sprites.clear()
 	LevelManager.background_sprites.append($BackgroundParallax/Background)
@@ -219,7 +219,7 @@ func free_current_level() -> void:
 
 
 func reset() -> void:
-	Engine.time_scale = 1.0
+	TimescaleChangerComponent.reset_time_scale()
 	ToggleComponent.reset_items()
 	GDLevelOptions.reset()
 	get_tree().call_group(DecorationBatch.MONSTER_BATCH_GROUP, &"reset_monster_animations")

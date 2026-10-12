@@ -10,6 +10,22 @@ signal changed(time_scale: String)
 
 @export_storage var initial_time_scale: float
 
+## The level's own factor from Timescale triggers. Engine.time_scale is this
+## times Config.game_speed, so the player's Game speed setting is kept while a
+## trigger changes the level's speed.
+static var level_time_scale: float = 1.0
+
+
+## Sets Engine.time_scale from the level factor and the Game speed setting.
+static func apply_game_speed() -> void:
+	Engine.time_scale = maxf(Config.game_speed * level_time_scale, 0.001)
+
+
+## Back to the level's normal factor (level start, restart, exit to menu).
+static func reset_time_scale() -> void:
+	level_time_scale = 1.0
+	apply_game_speed()
+
 
 func _ready() -> void:
 	await require([EasingComponent])
@@ -40,9 +56,10 @@ func emit_changed() -> void:
 
 
 func start(_player: Player) -> void:
-	initial_time_scale = Engine.time_scale
+	initial_time_scale = level_time_scale
 
 
 func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
-	Engine.time_scale += (time_scale - initial_time_scale) * weight_delta
-	Engine.time_scale = maxf(Engine.time_scale, 0.01)
+	level_time_scale += (time_scale - initial_time_scale) * weight_delta
+	level_time_scale = maxf(level_time_scale, 0.01)
+	apply_game_speed()

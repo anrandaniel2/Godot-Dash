@@ -49,7 +49,7 @@ func _ready() -> void:
 		if path.size() >= 1:
 			path = path[0]
 		_launch_from_file(path)
-	Engine.time_scale = 1.0
+	TimescaleChangerComponent.reset_time_scale()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	community_menu.hide()
 	level_selector.hide()
