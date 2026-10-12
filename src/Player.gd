@@ -1488,6 +1488,12 @@ func _player_death() -> void:
 		# Debug: stop the whole game where the cube died and keep the cube visible.
 		# R (restart_level) unpauses and restarts through the always-running pause menu.
 		print("[gdash-freeze] frozen at pos=%s; press R to restart" % str(position))
+		# The hide-player option (levels 162/163) zeroes modulate; reveal the players
+		# so the death spot can be seen. Gameplay is not changed.
+		modulate.a = 1.0
+		for dual: Player in LevelManager.player_duals:
+			if is_instance_valid(dual):
+				dual.modulate.a = 1.0
 		get_tree().paused = true
 		return
 	_icon.hide()
