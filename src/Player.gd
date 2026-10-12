@@ -1469,6 +1469,11 @@ func _emit_gd_events(jump_state: int) -> void:
 	_event_last_gamemode = internal_gamemode
 
 
+## Debug: freeze the game at the point of death instead of playing the death
+## animation and restarting. Set to false to restore normal death handling.
+const FREEZE_ON_DEATH_DEBUG: bool = true
+
+
 func _player_death() -> void:
 	# Death cause for the bli probes: where the cube was and which path killed it.
 	var frames := get_stack()
@@ -1479,6 +1484,12 @@ func _player_death() -> void:
 	_event_last_gamemode = -1
 	NativeTriggerBridge.notify_player_death(self)
 	last_automatic_checkpoint_position = position
+	if FREEZE_ON_DEATH_DEBUG:
+		# Debug: stop the whole game where the cube died and keep the cube visible.
+		# R (restart_level) unpauses and restarts through the always-running pause menu.
+		print("[gdash-freeze] frozen at pos=%s; press R to restart" % str(position))
+		get_tree().paused = true
+		return
 	_icon.hide()
 	_death_effect.frame = 0
 	_death_effect.play()
