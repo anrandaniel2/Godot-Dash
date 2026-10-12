@@ -135,7 +135,7 @@ static func rebuild(level: Level) -> void:
 		child.free()
 
 	var dynamic_groups := _dynamic_transform_groups(level)
-	print("[gdash-kill] rebuild dynamic=%d has_g290=%s packed_rows=%d" % [dynamic_groups.size(), str(dynamic_groups.has(&"g_290")), (level.packed_trigger_records.get("gd_id", PackedInt32Array()) as PackedInt32Array).size()])
+	print("[gdash-kill] rebuild dynamic=%d has_g290=%s packed_rows=%d native_rows=%d" % [dynamic_groups.size(), str(dynamic_groups.has(&"g_290")), (level.packed_trigger_records.get("gd_id", PackedInt32Array()) as PackedInt32Array).size(), level.native_trigger_records.size()])
 	# Shared bodies are chunked by horizontal region, so the physics broadphase
 	# only ever sees the chunks near the player instead of one body whose shape
 	# list spans the whole level (a huge single body would be tested in full on
@@ -283,6 +283,17 @@ static func _dynamic_transform_groups(level: Level) -> Dictionary:
 			var target_id := str(properties.get("51", "")).to_int()
 			if target_id > 0:
 				remember.call(Constants.GROUP_PREFIX + str(target_id))
+	# Native-only movers that were not packed (GMDConverter keeps them as plain
+	# records) animate their members exactly like packed ones, so they count too.
+	# Without this a moved group stays merged into a static body and its
+	# collider is left behind while the visible block travels away.
+	for record: Dictionary in level.native_trigger_records:
+		if not (int(record.get("gd_object_id", 0)) in NATIVE_MOVER_IDS):
+			continue
+		var record_properties: Dictionary = record.get("gd_properties", { })
+		var record_target := str(record_properties.get("51", "")).to_int()
+		if record_target > 0:
+			remember.call(Constants.GROUP_PREFIX + str(record_target))
 	return groups
 
 
