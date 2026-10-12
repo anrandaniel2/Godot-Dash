@@ -15,6 +15,8 @@ var skip_frames: int = 120
 var disable_scripts: PackedStringArray = PackedStringArray()
 var _skipped: int = 0
 var _spikes: Array = []
+var _emitters: Array = []
+var _emitting_sum: float = 0.0
 var _x_min: float = INF
 var _x_max: float = -INF
 var _process_ms: PackedFloat64Array = PackedFloat64Array()
@@ -46,6 +48,11 @@ func _process(_delta: float) -> void:
 		return
 	var process_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	_process_ms.append(process_ms)
+	var emitting_now := 0
+	for emitter: GPUParticles2D in _emitters:
+		if is_instance_valid(emitter) and emitter.emitting:
+			emitting_now += 1
+	_emitting_sum += emitting_now
 	var x_now := LevelManager.player.global_position.x * 30.0 / 128.0
 	_x_min = minf(_x_min, x_now)
 	_x_max = maxf(_x_max, x_now)
@@ -91,6 +98,7 @@ func _report() -> void:
 	_print_stats("render_cpu_ms", _render_cpu_ms)
 	_print_stats("render_gpu_ms", _render_gpu_ms)
 	var level: Level = LevelManager.current_level
+	print("PERF GPU particle emitters emitting on average: %.1f" % (_emitting_sum / maxf(process_sorted.size(), 1)))
 	print("PERF player GD x covered %.0f to %.0f (level end %.0f)" % [
 		_x_min, _x_max, level.gd_level_end_x if level != null else -1.0])
 	_print_spikes()
@@ -131,7 +139,6 @@ func _census() -> void:
 	var physics: Dictionary = {}
 	var stack: Array = [get_tree().root]
 	var disabled := 0
-	var emitting_particles := 0
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
 		total += 1
@@ -144,8 +151,8 @@ func _census() -> void:
 			node.set_process(false)
 			node.set_physics_process(false)
 			disabled += 1
-		if node is GPUParticles2D and (node as GPUParticles2D).emitting:
-			emitting_particles += 1
+		if node is GPUParticles2D:
+			_emitters.append(node)
 		if node.is_processing():
 			processing[key] = processing.get(key, 0) + 1
 		if node.is_physics_processing():
@@ -153,7 +160,7 @@ func _census() -> void:
 		stack.append_array(node.get_children(true))
 	print("PERF census nodes=%d (engine monitor %d) disabled=%d %s" % [
 		total, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), disabled, str(disable_scripts)])
-	print("PERF GPU particle emitters emitting now: %d" % emitting_particles)
+	print("PERF GPU particle emitters in tree: %d" % _emitters.size())
 	_print_top("nodes by type", by_type)
 	_print_top("nodes with _process enabled (run every frame)", processing)
 	_print_top("nodes with _physics_process enabled (run every tick)", physics)
