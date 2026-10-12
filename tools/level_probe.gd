@@ -207,7 +207,7 @@ func _trajectory(player: Player, level: Level) -> void:
 	var cam_now := _cam_gd()
 	var cam_node: Camera2D = LevelManager.player_camera
 	var lgf := str(cam_node.get("_last_ground_was_floor")) if cam_node != null else "null"
-	var row := "tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f) lgf=%s floor=%s gf=%s" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_now.x, cam_now.y, lgf, str(player.is_on_floor()), str(player.gravity_flip)]
+	var row := "tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f) lgf=%s floor=%s gf=%s %s" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_now.x, cam_now.y, lgf, str(player.is_on_floor()), str(player.gravity_flip), _floor_under(player, level)]
 	_ring.append(row)
 	if _ring.size() > 40:
 		_ring.pop_front()
@@ -386,6 +386,21 @@ func _level_gd(world: Vector2) -> Vector2:
 
 
 ## Camera centre in GD units (y up), for the trajectory log.
+## The surface straight below the cube: its GD y (top face) and the body's name.
+## Ray query, no physics change. The cube's own body is excluded.
+func _floor_under(player: Player, level: Level) -> String:
+	var from: Vector2 = player.global_position
+	var query := PhysicsRayQueryParameters2D.create(from, from + Vector2(0.0, 400.0), 2)
+	query.exclude = [player.get_rid()]
+	var hit: Dictionary = player.get_world_2d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return "fl=none"
+	var at: Vector2 = level.to_local(hit["position"])
+	var collider: Object = hit["collider"]
+	var name_text := str(collider.name) if collider is Node else "?"
+	return "fl_y=%.3f fl=%s" % [-at.y / _CELL_PER_GD, name_text]
+
+
 func _cam_gd() -> Vector2:
 	var cam: Camera2D = LevelManager.player_camera
 	var level: Level = LevelManager.current_level

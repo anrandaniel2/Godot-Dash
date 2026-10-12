@@ -279,6 +279,27 @@ jobs:
                   print("::warning title=region stderr::" + esc(r.stderr[-800:]))
           PY
 
+      - name: Objects around the death point (gd_level_scan --region 1000..1130, 1080..1200)
+        run: |
+          python3 - <<'PY'
+          import glob, os, subprocess
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          # The Change of scene teleport exit lands at GD y ~1315. Print the objects
+          # in that cutscene box: counts by id, then the first rows by x.
+          for f in sorted(glob.glob('/tmp/bli/*90475473*.gmd')):
+              env = dict(os.environ, REGION_LIMIT='40')
+              r = subprocess.run(['python3', 'tools/gd_level_scan.py', f, '--region', '1000,1130,1080,1200'],
+                                 capture_output=True, text=True, env=env)
+              part = r.stdout[r.stdout.find('=====REGION====='):]
+              part = part.replace('=====REGION=====\n', '')
+              part = part[:part.find('objects=', 40) if part.find('objects=', 40) > 0 else len(part)]
+              for n in range(0, min(len(part), 3800 * 2), 3800):
+                  print(f"::notice title=death region part {n // 3800}::" + esc(part[n:n + 3800]))
+              if r.returncode != 0 or r.stderr.strip():
+                  print("::warning title=region stderr::" + esc(r.stderr[-800:]))
+          PY
+
       - name: Groups around the Change of scene cutscene blocks (gd_level_scan --group-triggers)
         run: |
           python3 - <<'PY'
