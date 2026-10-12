@@ -131,6 +131,7 @@ func _census() -> void:
 	var physics: Dictionary = {}
 	var stack: Array = [get_tree().root]
 	var disabled := 0
+	var emitting_particles := 0
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
 		total += 1
@@ -143,6 +144,8 @@ func _census() -> void:
 			node.set_process(false)
 			node.set_physics_process(false)
 			disabled += 1
+		if node is GPUParticles2D and (node as GPUParticles2D).emitting:
+			emitting_particles += 1
 		if node.is_processing():
 			processing[key] = processing.get(key, 0) + 1
 		if node.is_physics_processing():
@@ -150,6 +153,7 @@ func _census() -> void:
 		stack.append_array(node.get_children(true))
 	print("PERF census nodes=%d (engine monitor %d) disabled=%d %s" % [
 		total, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), disabled, str(disable_scripts)])
+	print("PERF GPU particle emitters emitting now: %d" % emitting_particles)
 	_print_top("nodes by type", by_type)
 	_print_top("nodes with _process enabled (run every frame)", processing)
 	_print_top("nodes with _physics_process enabled (run every tick)", physics)
