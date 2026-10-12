@@ -14,6 +14,7 @@ var skip_frames: int = 120
 ## census, to measure what that class costs (GDASH_PERF_DISABLE).
 var disable_scripts: PackedStringArray = PackedStringArray()
 var _skipped: int = 0
+var _spikes: Array = []
 var _process_ms: PackedFloat64Array = PackedFloat64Array()
 var _physics_ms: PackedFloat64Array = PackedFloat64Array()
 var _census_done: bool = false
@@ -28,7 +29,12 @@ func _process(_delta: float) -> void:
 	if _skipped < skip_frames:
 		_skipped += 1
 		return
-	_process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+	var process_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	_process_ms.append(process_ms)
+	if process_ms > 1000.0 / 60.0:
+		# Where in the level the slow frame happened, in GD units (30 px per 128 px cell).
+		var gd_x := LevelManager.player.global_position.x * 30.0 / 128.0
+		_spikes.append([process_ms, gd_x])
 	_physics_ms.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
 	if not _census_done:
 		_census_done = true
@@ -60,6 +66,26 @@ func _report() -> void:
 		_mean(physics_sorted), _pick(physics_sorted, 0.5), _pick(physics_sorted, 0.95),
 		physics_sorted[physics_sorted.size() - 1]])
 	print("PERF frames over 16.7 ms of process: %d of %d" % [over_frame, process_sorted.size()])
+	_print_spikes()
+
+
+func _print_spikes() -> void:
+	var by_bucket: Dictionary = {}
+	for spike: Array in _spikes:
+		var bucket := int(spike[1] / 1000.0) * 1000
+		by_bucket[bucket] = by_bucket.get(bucket, 0) + 1
+	var rows: Array = []
+	for bucket: int in by_bucket:
+		rows.append([by_bucket[bucket], bucket])
+	rows.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	var line := "PERF slow frames by GD x (1000 units):"
+	for i in mini(12, rows.size()):
+		line += " %d-%d:%d" % [rows[i][1], rows[i][1] + 999, rows[i][0]]
+	print(line)
+	var worst: Array = _spikes.duplicate()
+	worst.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	for i in mini(12, worst.size()):
+		print("PERF slow frame %6.1f ms at GD x=%.0f" % [worst[i][0], worst[i][1]])
 
 
 func _census() -> void:
