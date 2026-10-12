@@ -18,6 +18,7 @@ on:
       - "tools/level_probe.tscn"
       - "tools/gd_annotate.py"
       - "tools/level_memory_profile.gd"
+      - "tools/level_open_memory.gd"
       - "src/static/GMDObjects.gd"
       - "src/static/GMDConverter.gd"
       - "src/LevelPhysics.gd"
@@ -178,6 +179,22 @@ jobs:
               print(f"::error title=probe level::expected 'Change of scene', got '{name}'")
               sys.exit(1)
           PY
+
+      - name: Memory of opening Change of scene (game vs editor)
+        if: always()
+        env:
+          GODOT_BIN: ${{ env.GODOT_BIN }}
+        run: |
+          # Peak memory of the same level opened by GameScene (paced) and by
+          # EditorScene (one synchronous build). Results: LEVEL_OPEN notices.
+          for mode in game editor; do
+            GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd GDASH_MEM_MODE=$mode timeout 600s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_open_memory.tscn > /tmp/mem_$mode.log 2>&1
+            echo "memory $mode exit=$?"
+            grep -E "LEVEL_OPEN|ERROR|error|Parse Error|memory" /tmp/mem_$mode.log | head -40 | cut -c1-300 | while IFS= read -r line; do
+              echo "::notice title=memory $mode::$line"
+            done
+          done
+          exit 0
 
       - name: Probe Change of scene from the default start (real physics)
         if: always()
