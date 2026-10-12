@@ -152,6 +152,9 @@ func _physics_process(delta: float) -> void:
 # One line every 6 physics ticks from the spawn: GD position, velocity, state.
 # Stops at the first death so the killer is the last logged event.
 var _jump_prev_tick: int = -1
+var _ring: Array[String] = []
+var _cam_prev_y: float = 0.0
+var _cam_jumps: int = 0
 var _jump_prev_x: float = 0.0
 var _jump_prev_y: float = 0.0
 
@@ -160,6 +163,8 @@ func _trajectory(player: Player, level: Level) -> void:
 	var tick: int = Engine.get_physics_frames()
 	var gd_y: float = -level.to_local(player.global_position).y / _CELL_PER_GD
 	if player.dead:
+		for row in _ring:
+			print("PROBE TRAJ PRE %s" % row)
 		print("PROBE TRAJ DEATH tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
 		return
@@ -197,9 +202,17 @@ func _trajectory(player: Player, level: Level) -> void:
 	if tick % 6 == 0 or tick < 30:
 		var cam_gd := _cam_gd()
 		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f)" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_gd.x, cam_gd.y])
-	elif tick >= 80:
-		var cam_gd := _cam_gd()
-		print("PROBE TRAJ tick=%d x=%.2f y=%.2f vy=%.1f cam=(%.2f,%.2f) parent=%s" % [tick, _gd_x(player), gd_y, player.velocity.y, cam_gd.x, cam_gd.y, str(player.get_parent().name)])
+	# Every tick is kept in a ring buffer and printed as PROBE TRAJ PRE at death, so
+	# the approach to the killer is logged without a per-tick line for the whole run.
+	var cam_now := _cam_gd()
+	var row := "tick=%d x=%.2f y=%.2f vy=%.1f mode=%d cam=(%.2f,%.2f)" % [tick, _gd_x(player), gd_y, player.velocity.y, player.internal_gamemode, cam_now.x, cam_now.y]
+	_ring.append(row)
+	if _ring.size() > 40:
+		_ring.pop_front()
+	if tick >= 80 and absf(cam_now.y - _cam_prev_y) > 2.0 and _cam_jumps < 60:
+		_cam_jumps += 1
+		print("PROBE TRAJ CAMJUMP %s dy=%.2f" % [row, cam_now.y - _cam_prev_y])
+	_cam_prev_y = cam_now.y
 	if tick >= _TRAJ_TICKS:
 		print("PROBE TRAJ END tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
