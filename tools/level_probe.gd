@@ -163,8 +163,8 @@ func _trajectory(player: Player, level: Level) -> void:
 	var tick: int = Engine.get_physics_frames()
 	var gd_y: float = -level.to_local(player.global_position).y / _CELL_PER_GD
 	if player.dead:
-		for row in _ring:
-			print("PROBE TRAJ PRE %s" % row)
+		for prev_row in _ring:
+			print("PROBE TRAJ PRE %s" % prev_row)
 		print("PROBE TRAJ DEATH tick=%d x=%.2f y=%.2f" % [tick, _gd_x(player), gd_y])
 		get_tree().quit(0)
 		return
