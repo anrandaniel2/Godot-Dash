@@ -113,6 +113,11 @@ func _ready() -> void:
 		var frames := OS.get_environment("GDASH_PROBE_PERF_FRAMES")
 		if frames.is_valid_int():
 			sampler.frame_limit = frames.to_int()
+		var skip := OS.get_environment("GDASH_PERF_SKIP")
+		if skip.is_valid_int():
+			sampler.skip_frames = skip.to_int()
+		var disable := OS.get_environment("GDASH_PERF_DISABLE")
+		sampler.disable_scripts = PackedStringArray(disable.split(",", false))
 		get_tree().root.add_child.call_deferred(sampler)
 	get_tree().change_scene_to_file.call_deferred("res://scenes/GameScene.tscn")
 

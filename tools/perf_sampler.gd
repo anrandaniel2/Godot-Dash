@@ -2,14 +2,18 @@ extends Node
 ## Frame-time census of a real level run. Added to the root by
 ## tools/level_probe.gd when GDASH_PROBE_PERF=1, so it only ever runs under the
 ## probe. While the level is playing it samples the same Performance monitors
-## the in-game overlay shows, once per process frame. After CENSUS_AFTER_FRAMES
-## it also counts every node in the tree by type and by script, and how many of
+## the in-game overlay shows, once per process frame. After skip_frames it also
+## counts every node in the tree by type and by script, and how many of
 ## each have _process or _physics_process enabled: those are the per-frame
 ## callbacks the engine makes. Prints lines starting with "PERF", then quits.
 
-const CENSUS_AFTER_FRAMES: int = 120
-
 var frame_limit: int = 1500
+## Frames to skip after the level starts playing (deferred loading lands there).
+var skip_frames: int = 120
+## Script file names whose nodes get process callbacks switched off at the
+## census, to measure what that class costs (GDASH_PERF_DISABLE).
+var disable_scripts: PackedStringArray = PackedStringArray()
+var _skipped: int = 0
 var _process_ms: PackedFloat64Array = PackedFloat64Array()
 var _physics_ms: PackedFloat64Array = PackedFloat64Array()
 var _census_done: bool = false
@@ -21,9 +25,12 @@ func _process(_delta: float) -> void:
 		return
 	if LevelManager.player == null or not LevelManager.level_playing:
 		return
+	if _skipped < skip_frames:
+		_skipped += 1
+		return
 	_process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	_physics_ms.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
-	if not _census_done and _process_ms.size() >= CENSUS_AFTER_FRAMES:
+	if not _census_done:
 		_census_done = true
 		_census()
 	if _process_ms.size() >= frame_limit:
@@ -61,6 +68,7 @@ func _census() -> void:
 	var processing: Dictionary = {}
 	var physics: Dictionary = {}
 	var stack: Array = [get_tree().root]
+	var disabled := 0
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
 		total += 1
@@ -69,12 +77,17 @@ func _census() -> void:
 		if script != null:
 			key += " " + script.resource_path.get_file()
 		by_type[key] = by_type.get(key, 0) + 1
+		if script != null and disable_scripts.has(script.resource_path.get_file()):
+			node.set_process(false)
+			node.set_physics_process(false)
+			disabled += 1
 		if node.is_processing():
 			processing[key] = processing.get(key, 0) + 1
 		if node.is_physics_processing():
 			physics[key] = physics.get(key, 0) + 1
 		stack.append_array(node.get_children(true))
-	print("PERF census nodes=%d (engine monitor %d)" % [total, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))])
+	print("PERF census nodes=%d (engine monitor %d) disabled=%d %s" % [
+		total, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), disabled, str(disable_scripts)])
 	_print_top("nodes by type", by_type)
 	_print_top("nodes with _process enabled (run every frame)", processing)
 	_print_top("nodes with _physics_process enabled (run every tick)", physics)

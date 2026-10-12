@@ -25,6 +25,20 @@ jobs:
   profile:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # baseline: everything runs. Each other row switches off one
+          # class's per-frame callbacks so its cost shows as the difference.
+          - name: baseline
+            disable: ""
+          - name: no-decoration-batch
+            disable: "DecorationBatch.gd"
+          - name: no-pulse-and-music
+            disable: "PulseWhite.gd,MusicScale.gd,TextureRotationPinComponent.gd,TextureRotateComponent.gd,GravityTextureFlip.gd,TargetLink.gd"
+          - name: no-frustum-culler
+            disable: "FrustumCuller.gd"
     steps:
       - uses: actions/checkout@v4
 
@@ -81,9 +95,10 @@ jobs:
           env GDASH_PROBE_LEVEL=/tmp/level.gmd2 GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
             GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X="" GDASH_PROBE_START_Y="" \
             GDASH_PROBE_MODE="" GDASH_PROBE_END_X="" GDASH_PROBE_PERF=1 GDASH_PROBE_PERF_FRAMES=1500 \
+            GDASH_PERF_DISABLE="${{ matrix.disable }}" \
             timeout 900s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/level_probe.tscn > perf.log 2>&1
           status=$?
-          grep -E "PERF|SCRIPT ERROR|Parse Error" perf.log | cut -c1-300 > perf.txt
+          { echo "PERF variant ${{ matrix.name }} disable=[${{ matrix.disable }}]"; grep -E "PERF|SCRIPT ERROR|Parse Error" perf.log | cut -c1-300; } > perf.txt
           cat perf.txt
           {
             echo "## Amethyst runtime profile (exit $status)"
@@ -102,6 +117,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: runtime-profile
+          name: runtime-profile-${{ matrix.name }}
           path: perf.txt
           retention-days: 7
