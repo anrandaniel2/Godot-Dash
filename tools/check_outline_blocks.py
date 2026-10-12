@@ -42,10 +42,6 @@ def outline_ids() -> dict[int, str]:
     for key, entry in data.items():
         if entry.get("type") == OUTLINE_TYPE and entry.get("rect"):
             found[int(key)] = entry.get("texture", "?")
-    # Invisible blocks (emptyFrame, IDs 1886-1888): the game's type says
-    # decoration, but the hitbox table carries a full rect and they are solid.
-    for gd_id in INVISIBLE_BLOCK_IDS:
-        found.setdefault(gd_id, "emptyFrame.png")
     return found
 
 
@@ -74,6 +70,13 @@ def main() -> int:
             failures.append(f"{gd_id}: scene {scene.relative_to(ROOT)} is missing")
         elif not hitbox_has_shape(scene.read_text(encoding="utf-8")):
             failures.append(f"{gd_id}: {scene.relative_to(ROOT)} Hitbox has no shape")
+    # Corner slope outlines (1886-1888): decoration, so no static collision.
+    for gd_id in sorted(INVISIBLE_BLOCK_IDS):
+        if gd_id in static_ids:
+            failures.append(f"{gd_id}: in GENERATED_STATIC_IDS, but it is non-solid decoration")
+        scene = SCENES / f"gd_{gd_id}.tscn"
+        if scene.exists() and hitbox_has_shape(scene.read_text(encoding="utf-8")):
+            failures.append(f"{gd_id}: {scene.relative_to(ROOT)} has a collision shape, but it is non-solid decoration")
     if failures:
         print("outline block collision check FAILED:")
         for line in failures:

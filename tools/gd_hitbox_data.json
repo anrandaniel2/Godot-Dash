@@ -21,7 +21,7 @@
   "radius_semantics": "circular hitbox radius in GD units, centred on the object",
   "object_type_semantics": "0 solid, 2 hazard, 25 slope, 7 decoration, 21 breakable brick; other values are interactables (pads/rings/portals/collectibles) whose rect is a trigger zone, not static collision",
   "slope_orientations": "derived in this repo from the game artwork atlas (alpha IoU over the rect bounds); floor_r/ceil_r are solid on the right, floor_*/ceil_* differ by which edge the triangle is attached to",
-  "invisible_blocks": "IDs 1886/1887/1888: type says decoration but the texture is emptyFrame and a full hitbox rect exists - treated as solid"
+  "corner_slope_outlines": "IDs 1886/1887/1888: standard corner slope outlines, non-solid decoration. The type says decoration and the hitbox rect is not collision, so they get no collider"
  },
  "objects": {
   "0": {

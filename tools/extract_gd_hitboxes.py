@@ -69,9 +69,6 @@ GD_TO_WORLD = CELL_SIZE / GD_CELL_SIZE                    # scene px per GD unit
 STATIC_TYPES = {0, 2, 25, 21}
 SLOPE_TYPE = 25
 
-# Invisible solid blocks: type says decoration but the texture is emptyFrame and
-# the game hitbox table carries a full rect - these are GD's invisible blocks.
-INVISIBLE_BLOCK_IDS = {1886, 1887, 1888}
 
 # Mirrored slope IDs that appear in no GD table and in no artwork atlas; their
 # geometry is the mirror of their sibling (289/291 are the rising-right pair).
@@ -355,9 +352,9 @@ def main() -> None:
                                   "(alpha IoU over the rect bounds); floor_r/ceil_r are "
                                   "solid on the right, floor_*/ceil_* differ by which "
                                   "edge the triangle is attached to",
-            "invisible_blocks": "IDs 1886/1887/1888: type says decoration but the "
-                                "texture is emptyFrame and a full hitbox rect exists - "
-                                "treated as solid",
+            "corner_slope_outlines": "IDs 1886/1887/1888: standard corner slope outlines, "
+                                     "non-solid decoration. The type says decoration and the "
+                                     "hitbox rect is not collision, so they get no collider",
         },
         "objects": {k: out_objects[k] for k in sorted(out_objects, key=int)},
     }
@@ -370,7 +367,7 @@ def main() -> None:
     for key, record in out_objects.items():
         gd_id = int(key)
         t = record.get("type")
-        if gd_id in INVISIBLE_BLOCK_IDS or t in (0, 21):
+        if t in (0, 21):
             by_kind["solid"].append(gd_id)
         elif t == 2:
             by_kind["hazard"].append(gd_id)

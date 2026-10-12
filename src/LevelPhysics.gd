@@ -59,8 +59,6 @@ const DIRTY_META: StringName = &"_gd_level_physics_dirty"
 ## contributed to the shared bodies. Lets the object be restored by freeing
 ## exactly its shapes, without touching the rest.
 const SHAPES_META: StringName = &"_gd_level_physics_shapes"
-## Diagnostics only: each shared shape node points at the GD object it came from.
-const SOURCE_META: StringName = &"_gd_level_physics_source"
 ## Metadata key on the Level: the trigger-group set the last merge decision was
 ## made against. Kept so a rebuild restores merged members whose group turned
 ## dynamic before it re-merges.
@@ -135,7 +133,6 @@ static func rebuild(level: Level) -> void:
 		child.free()
 
 	var dynamic_groups := _dynamic_transform_groups(level)
-	print("[gdash-kill] rebuild dynamic=%d has_g290=%s packed_rows=%d native_rows=%d" % [dynamic_groups.size(), str(dynamic_groups.has(&"g_290")), (level.packed_trigger_records.get("gd_id", PackedInt32Array()) as PackedInt32Array).size(), level.native_trigger_records.size()])
 	# Shared bodies are chunked by horizontal region, so the physics broadphase
 	# only ever sees the chunks near the player instead of one body whose shape
 	# list spans the whole level (a huge single body would be tested in full on
@@ -191,10 +188,6 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 			_chunk_of(object.global_position.x),
 	)
 	var added: Array = NativeCore.backend().call(&"commit_collision_shapes", body, object, geometry.descriptors)
-	# Plain data, not a reference: the merged root is freed below.
-	var source := {"name": str(object.name), "gd_id": object.get("gd_id"), "position": object.global_position, "groups": str(object.get_groups())}
-	for shape_node in added:
-		shape_node.set_meta(SOURCE_META, source)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
 	# Native online/static artwork lives in RenderingServer RIDs and this
@@ -430,14 +423,6 @@ static func _free_child_body(object: Node2D, body: CollisionObject2D) -> void:
 	object.set_meta(SNAPSHOT_META, snapshot)
 	object.set_meta(MERGED_META, true)
 	body.free()
-
-
-## {name, gd_id, position} of the GD object a shared shape was merged from, or
-## an empty dictionary. Diagnostics only.
-static func source_of_shape(shape: Node) -> Dictionary:
-	if shape == null or not shape.has_meta(SOURCE_META):
-		return {}
-	return shape.get_meta(SOURCE_META)
 
 
 ## Restores an object that was merged earlier but must keep its own body again.

@@ -130,9 +130,9 @@ def in_block_ranges(gd_id: int) -> bool:
 
 # --- game-extracted hitbox data (rule 1) ---------------------------------------
 
-# Invisible solid blocks: the game classification calls them decoration, but
-# their texture is emptyFrame and the game hitbox table carries a full rect -
-# these are GD's invisible blocks (solid).
+# Standard corner slope outlines (IDs 1886-1888): thin 45-degree corner
+# decoration over solid slopes. Not solid: no collider, even though the game
+# hitbox table carries a rect for them (the rect is not collision).
 INVISIBLE_BLOCK_IDS = {1886, 1887, 1888}
 
 # Object types in the game data that are static collision. Everything else
@@ -202,13 +202,9 @@ def _build_specs() -> tuple[dict[int, CollisionSpec], set[int]]:
         rect = entry.get("rect")
         radius = entry.get("radius")
         if gd_id in INVISIBLE_BLOCK_IDS:
-            specs[gd_id] = CollisionSpec(
-                BodyKind.SOLID,
-                [_gd_rect_shape(rect)],
-                note="GD hitbox table: invisible block (emptyFrame), "
-                     f"{rect[1]:g}x{rect[0]:g} GD units",
-            )
-        elif obj_type in SOLID_TYPES and rect:
+            # Decoration: no spec at all, so the object gets no collision.
+            continue
+        if obj_type in SOLID_TYPES and rect:
             specs[gd_id] = CollisionSpec(
                 BodyKind.SOLID,
                 [_gd_rect_shape(rect)],
