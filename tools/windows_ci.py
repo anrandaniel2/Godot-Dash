@@ -91,6 +91,13 @@ def build() -> None:
 
 
 def export() -> None:
+    # Only the ICO is LFS-tracked, and its object is unavailable on the mirror.
+    # Generate a real Windows icon from the existing artwork, only in CI.
+    icon = ROOT / "assets/logo/logo.ico"
+    if icon.read_bytes().startswith(b"version https://git-lfs.github.com/spec/v1"):
+        from PIL import Image
+        with Image.open(ROOT / "assets/logo/logo.png") as image:
+            image.save(icon, format="ICO", sizes=[(n, n) for n in (16, 32, 48, 64, 128, 256)])
     pin(ROOT)
     # Prevent Godot from scanning a build-time dependency clone.
     (ROOT / "native/godot-cpp/.gdignore").touch()
