@@ -98,7 +98,11 @@ def main() -> None:
                 f"max={'none' if max_bytes is None else f'{max_bytes / 2**30:.2f} GiB'}"
             )
             if not is_64 or maximum is None or maximum <= WASM32_MAX_PAGES:
-                print(f"::error::{path}: memory is not a wasm64 memory above 4 GiB")
+                print(
+                    f"::error::{path}: memory import {module}.{field} is not a "
+                    f"wasm64 memory above 4 GiB (flags=0x{flags:02x}, "
+                    f"min_pages={minimum}, max_pages={maximum})"
+                )
                 failed = True
     if failed:
         raise SystemExit(1)
