@@ -183,11 +183,13 @@ RUNTIME_PATCHES = [
 
 
 # EM_ASM_PTR bodies return pointers. Under memory64 the JS side must return a
-# BigInt, so plain Number results are converted (0 is 0n).
+# BigInt, so plain Number results are converted (0 is 0n). importJsDevice's
+# default parent (parentPtr=0) is a Number that the 64-bit exports reject, so
+# the parent is passed explicitly as 0n.
 EM_ASM_PATCHES = [
     ("drivers/webgpu/rendering_context_driver_webgpu.cpp",
      "if (!d) {\n\t\t\treturn 0;\n\t\t}\n\t\treturn WebGPU[\"importJsDevice\"](d);",
-     "if (!d) {\n\t\t\treturn 0n;\n\t\t}\n\t\treturn BigInt(WebGPU[\"importJsDevice\"](d));"),
+     "if (!d) {\n\t\t\treturn 0n;\n\t\t}\n\t\treturn BigInt(WebGPU[\"importJsDevice\"](d, 0n));"),
     ("drivers/webgpu/rendering_context_driver_webgpu.cpp",
      "if (!info) {\n\t\t\treturn 0;\n\t\t}",
      "if (!info) {\n\t\t\treturn 0n;\n\t\t}"),
