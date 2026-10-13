@@ -392,7 +392,7 @@ jobs:
           rc=$?
           kill $server 2>/dev/null
           echo "smoke rc=$rc"
-          grep SMOKE /tmp/smoke.log | cut -c1-500 | head -40 | while IFS= read -r line; do echo "::notice title=web smoke::${line//%/%25}"; done
+          grep SMOKE /tmp/smoke.log | cut -c1-1500 | head -40 | while IFS= read -r line; do echo "::notice title=web smoke::${line//%/%25}"; done
           tail -n 15 /tmp/smoke.log | cut -c1-300
 
       - name: Package Web HTML5 zip

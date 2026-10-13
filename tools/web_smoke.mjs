@@ -8,7 +8,7 @@ const url = process.argv[2];
 const seconds = Number(process.argv[3] ?? 90);
 const problems = new Map();
 const note = (kind, text) => {
-  const key = `${kind}: ${String(text).replace(/\s+/g, " ")}`.slice(0, 500);
+  const key = `${kind}: ${String(text).replace(/\s+/g, " ")}`.slice(0, 1500);
   problems.set(key, (problems.get(key) ?? 0) + 1);
 };
 
@@ -28,8 +28,20 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 720 });
   page.on("pageerror", (e) => note("pageerror", `${e.message} | ${(e.stack ?? "").split("\n").slice(1, 4).join(" / ")}`));
-  page.on("console", (m) => {
-    if (m.type() === "error") note("console.error", m.text());
+  // Error objects arrive as handles; read their stacks, not just "JSHandle@error".
+  page.on("console", async (m) => {
+    if (m.type() !== "error") return;
+    const parts = await Promise.all(
+      m.args().map((arg) =>
+        arg.evaluate((v) => (v instanceof Error ? v.stack || String(v) : typeof v === "string" ? v : JSON.stringify(v))).catch(() => "?"),
+      ),
+    );
+    note("console.error", parts.join(" ") || m.text());
+  });
+  await page.evaluateOnNewDocument(() => {
+    window.__smokeErrors = [];
+    window.addEventListener("error", (e) => window.__smokeErrors.push("error: " + (e.error?.stack ?? e.message)));
+    window.addEventListener("unhandledrejection", (e) => window.__smokeErrors.push("rejection: " + (e.reason?.stack ?? e.reason)));
   });
   page.on("requestfailed", (r) => note("requestfailed", r.url()));
   await page.goto(url, { waitUntil: "load", timeout: 180000 }).catch((e) => note("goto", e.message));
@@ -41,6 +53,7 @@ try {
   }));
   console.log(`SMOKE canvases=${info.canvas} notice=${JSON.stringify(info.notice).slice(0, 300)} status=${JSON.stringify(info.status).slice(0, 120)}`);
   if (info.notice.trim()) note("page-notice", info.notice);
+  for (const entry of await page.evaluate(() => window.__smokeErrors ?? [])) note("hooked", entry);
 } finally {
   await browser.close();
 }
