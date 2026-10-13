@@ -1,8 +1,8 @@
 extends Node
-## CI copies the production helper next to this standalone scene. No game
+## Compares the existing pattern against a rejected candidate. No game
 ## autoloads, graphics, native DLL or user settings affect this microbenchmark.
 
-const Builder = preload("res://PackedIndexBuilder.gd")
+const Builder = preload("res://MutableIndexCandidate.gd")
 const COUNT: int = 50000
 
 

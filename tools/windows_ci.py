@@ -3,6 +3,7 @@
 import argparse
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,10 @@ def run(args: list[str], name: str, timeout: int = 600, allow_failure: bool = Fa
     text = log.read_text(encoding="utf-8", errors="replace")
     print("\n".join(text.splitlines()[-35:]), flush=True)
     if result.returncode and not allow_failure:
+        errors = [line for line in text.splitlines() if re.search(r"error|fatal|failed|exception", line, re.I)]
+        excerpt = "\n".join(errors[-12:] or text.splitlines()[-20:])[-12000:]
+        escaped = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title={name}::{escaped}", flush=True)
         raise RuntimeError(f"{name}: exit {result.returncode}; see {log}")
     return text
 
@@ -69,7 +74,6 @@ def benchmark() -> None:
     project = CACHE / "channel-index-benchmark"
     shutil.copytree(ROOT / "tools/benchmarks/channel_index", project, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns(".gdignore", ".godot"))
-    shutil.copy2(ROOT / "src/refcounted/PackedIndexBuilder.gd", project)
     run([EDITOR, "--headless", "--path", project, "--editor", "--import"], "benchmark-import")
     for algorithm in ("parity", "old", "new"):
         text = run([EDITOR, "--headless", "--path", project, "--", f"--algorithm={algorithm}"],
@@ -137,4 +141,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=("install", "benchmark", "build", "export"))
     stage = parser.parse_args().stage
-    {"install": install, "benchmark": benchmark, "build": build, "export": export}[stage]()
+    try:
+        {"install": install, "benchmark": benchmark, "build": build, "export": export}[stage]()
+    except Exception as error:
+        message = str(error).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title=Windows {stage}::{message}", flush=True)
+        raise

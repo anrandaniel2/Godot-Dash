@@ -101,10 +101,11 @@ content are hidden. Normal launches have no sampling callback. Profiling has ove
 and writing the CSV can pause the game once at the end; `sampler_mean_us` and
 `finalize_ms` are logged. Compare instrumented runs on the same level/machine/settings.
 
-CI also benchmarks old/new decoration channel-index construction in isolated processes
-and checks exact index parity. This removes repeated packed-array copy-on-write on that
-build path; it is a construction microbenchmark, not a whole-game FPS claim. Temporary
-mutable lists can increase construction peak memory; logs report that trade-off.
+CI also benchmarks existing decoration channel-index construction against a mutable-list
+candidate in isolated processes and checks exact index parity. The candidate measured
+slower and was rejected: production keeps the existing packed-array implementation.
+Benchmark logs ship with the ZIP; neither the benchmark nor selecting Forward+ is a
+whole-game FPS claim. Real-level optimisations need a Windows device capture.
 
 ## Web (HTML5) builds
 

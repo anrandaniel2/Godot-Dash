@@ -1,8 +1,7 @@
-class_name PackedIndexBuilder
 extends RefCounted
-## Accumulate mutable lists before freezing them for native calls. Retrieving a
-## PackedInt32Array from a Dictionary and appending clones the shared buffer on
-## every insert, making a channel with N sprites copy O(N squared) integers.
+## Rejected mutable-list candidate, retained only for reproducible A/B evidence.
+## It preserved indices but measured slower than the existing packed-array path
+## on Windows Godot 4.7.2. It is NOT used by the shipped game.
 
 
 static func append(lists: Dictionary, key: StringName, index: int) -> void:

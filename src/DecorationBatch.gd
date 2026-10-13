@@ -324,10 +324,6 @@ func _build_native_canvas(native: Object) -> void:
 	spins.resize(items.size())
 	spin_pivots.resize(items.size() * 2)
 	hsv_data.fill(-1.0)
-	# Mutable lists avoid copying a shared packed buffer on every append.
-	# Freeze once below; native indices and sprite order remain identical.
-	var channel_lists: Dictionary = {}
-	var blend_lists: Dictionary = {}
 	for index in items.size():
 		var item: Item = items[index]
 		item.render_index = index
@@ -344,15 +340,15 @@ func _build_native_canvas(native: Object) -> void:
 			for component in 5:
 				hsv_data[index * 5 + component] = item.hsv_shift[component]
 		if not item.channel.is_empty():
-			PackedIndexBuilder.append(channel_lists, item.channel, index)
+			var channel_indices: PackedInt32Array = _native_by_channel.get(item.channel, PackedInt32Array())
+			channel_indices.append(index)
+			_native_by_channel[item.channel] = channel_indices
 			# Glow layers never re-route on a Blending flip; the flip list
 			# therefore carries every other layer only.
 			if item.layer != "glow":
-				PackedIndexBuilder.append(blend_lists, item.channel, index)
-	_native_by_channel = PackedIndexBuilder.finish(channel_lists)
-	_native_blend_by_channel = PackedIndexBuilder.finish(blend_lists)
-	channel_lists.clear()
-	blend_lists.clear()
+				var blend_indices: PackedInt32Array = _native_blend_by_channel.get(item.channel, PackedInt32Array())
+				blend_indices.append(index)
+				_native_blend_by_channel[item.channel] = blend_indices
 	_native_canvas.call(
 			&"configure", self, textures, regions, transforms, colors, origins,
 			# Keep culling explicit for every node-free renderer, including tiny

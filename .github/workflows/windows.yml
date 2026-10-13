@@ -45,7 +45,7 @@ jobs:
       - name: Install matching Windows editor and templates
         run: python tools/windows_ci.py install
 
-      - name: Check channel-index parity and measure before and after
+      - name: Check index parity and benchmark the rejected candidate
         run: python tools/windows_ci.py benchmark
 
       - name: Checkout pinned godot-cpp
