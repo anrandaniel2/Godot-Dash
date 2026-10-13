@@ -157,6 +157,40 @@ def retype(root: pathlib.Path, dry_run: bool) -> int:
     return changed
 
 
+# Exact replacements in hogdot's runtime helpers (library_godot_runtime.js).
+# Under memory64 the wasm exports _malloc/_free and the i64 heap accessors take
+# and return BigInt, and pointers in arrays are 8 bytes. Each old text must
+# match exactly once or the script stops.
+RUNTIME_PATCHES = [
+    ("return _malloc(p_size);",
+     "return Number(_malloc(BigInt(p_size)));"),
+    ("_free(p_ptr);",
+     "_free(BigInt(p_ptr));"),
+    ("return getValue(p_ptr, p_type);",
+     "const value = getValue(p_ptr, p_type);\n\t\t\treturn typeof value === 'bigint' ? Number(value) : value;"),
+    ("setValue(p_ptr, p_value, p_type);",
+     "setValue(p_ptr, p_type === '*' || p_type === 'i64' ? BigInt(p_value) : p_value, p_type);"),
+    ("const ptrs = GodotRuntime.heapSub(HEAP32, p_ptr, p_size); // TODO wasm64",
+     "const ptrs = [];\n\t\t\tfor (let i = 0; i < p_size; i++) {\n\t\t\t\tptrs.push(Number(getValue(p_ptr + i * 8, '*')));\n\t\t\t}"),
+    ("const c_ptr = GodotRuntime.malloc(size * 4);",
+     "const c_ptr = GodotRuntime.malloc(size * 8);"),
+    ("HEAP32[(c_ptr >> 2) + i] = GodotRuntime.allocString(p_strings[i]);",
+     "setValue(c_ptr + i * 8, BigInt(GodotRuntime.allocString(p_strings[i])), '*');"),
+]
+
+
+def patch_runtime(root: pathlib.Path) -> None:
+    path = root / "platform/web/js/libs/library_godot_runtime.js"
+    text = path.read_text()
+    for old, new in RUNTIME_PATCHES:
+        count = text.count(old)
+        if count != 1:
+            raise SystemExit(f"{path}: expected one match, found {count}: {old!r}")
+        text = text.replace(old, new)
+    path.write_text(text)
+    print(f"patched {path}: {len(RUNTIME_PATCHES)} memory64 runtime helpers")
+
+
 def main() -> None:
     args = sys.argv[1:]
     dry_run = "--dry-run" in args
@@ -166,6 +200,7 @@ def main() -> None:
     root = pathlib.Path(args[0])
     if not dry_run:
         patch_detect(root)
+        patch_runtime(root)
     changed = retype(root, dry_run)
     print(f"{'would retype' if dry_run else 'retyped'} {changed} JS signatures for wasm64 pointers")
     if changed == 0:
