@@ -90,7 +90,7 @@ Forward+; the mobile and wasm64/WebGPU web settings are unchanged. Forward+ is t
 requested Windows renderer, not an assertion that it is faster for this 2D game.
 
 Download the ZIP from **Build Windows Forward+** Actions artifacts or the matching
-`windows-<commit>` GitHub prerelease. Extract the **whole** ZIP, then run `godot-dash.exe`.
+`windows-<commit>` GitHub prerelease. Extract the **whole** ZIP, then run `Godot Dash.exe`.
 It is unsigned and requires a compatible graphics driver. CI checks the actual exported
 EXE loads its native DLL headlessly; it cannot verify GPU performance or visual parity.
 
@@ -101,7 +101,24 @@ content are hidden. Normal launches have no sampling callback. Profiling has ove
 and writing the CSV can pause the game once at the end; `sampler_mean_us` and
 `finalize_ms` are logged. Compare instrumented runs on the same level/machine/settings.
 
-Max FPS now defaults to **0 (Unlimited)**, separately from VSync. A one-time migration
+For normal installation/updates, use **`GodotDashSetup-x86_64.exe`** from the same
+Windows release. It installs one **Godot Dash** app and upgrades it in place.
+The renamed executable is `Godot Dash.exe`. `user://` is explicitly pinned to the
+existing `%APPDATA%\godot-dash` directory, so the display-name change does not
+orphan settings, levels, songs, replays or other user files. Setup/uninstall never
+remove that directory. Old manually extracted portable folders are not deleted.
+The title-screen update check uses this fork's branch-specific GitHub installer
+channel, not upstream Codeberg releases; installing remains user-confirmed.
+CI exercises first install, upgrade into the registered path, installed native
+smoke, and uninstall, comparing user-data hashes across installer operations.
+
+Windows also has a bounded HTTPS-relay fallback after blocked direct public
+downloads, matching Web's working route. Supported hostnames are allowlisted;
+account requests/credentials are excluded. Network failure can add one bounded
+request per attempt (15 seconds for text/levels, 30 for audio). Actual failing
+level IDs still need device verification.
+
+**FPS limit** defaults to **0 (no software limit)**, separately from VSync. A one-time migration
 clears the old 60/monitor-refresh default caps (an intentional cap equal to that old default
 is indistinguishable and must be set again). Other explicit caps survive. Enabled VSync
 uses the active Windows/driver display mode, not the fixed 240 Hz physics tick rate. If it

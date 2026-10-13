@@ -21,7 +21,7 @@
 | 13 | `DebugMenu` | addon (uid `uid://cggqb75a8w8r`) | in-game debug overlay (FPS, memory, level stats) |
 | 14 | `DiscordRPCManager` | `src/autoloads/DiscordRPCManager.gd` | Discord Rich Presence (`available` flag, presence updates) |
 | 15 | `SignalLens` | addon (uid `uid://85rkx60vm7a7`) | signal inspection tool |
-| 16 | `UpdateManager` | `uid://2ut2ck6qiter` | version check against Codeberg releases API; `Status.DISABLED` on web by design |
+| 16 | `UpdateManager` | `uid://2ut2ck6qiter` | Windows: branch-scoped GitHub installer check; other native: Codeberg; `Status.DISABLED` on web |
 | 17 | `PerformanceCapture` | `src/debug/PerformanceCapture.gd` | opt-in `--perf-capture` frame diagnostics; no process callback in normal launches |
 
 Rules: autoload **order** is load-bearing (`Config` before readers, `LevelManager` before
@@ -220,3 +220,16 @@ counters: `stream Xms`, `live`, `deco <live>(+<building>)`.
 | `user://gd_object_frames.json` | optional user override of the GD object→frame table |
 
 `LevelManager._ready()` creates the level/song/sfx/font directories if missing.
+
+## 8. Windows display follow-up
+
+The FPS control is labelled **FPS limit**, with 0/no-software-limit explained in its tooltip;
+VSync remains independent. Settings show the OS-reported active display refresh rate and
+software limit on demand (no per-frame polling). Editing the cap no longer reapplies VSync;
+window mode is only changed when needed. None of this proves the reported 60-Hz VSync
+presentation problem is solved on hardware.
+
+`BlurBackBuffer` retains full-viewport copies, but synchronizes visibility in
+`RenderingServer.frame_pre_draw` instead of `_process`, which could freeze while its parent
+was paused or run before later UI visibility changes. This addresses a concrete stale-copy
+risk without reducing blur quality; whole-window black flicker is not reproduced/verified.

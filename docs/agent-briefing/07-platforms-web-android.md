@@ -260,3 +260,25 @@ xvfb-run -a godot --path . --rendering-method gl_compatibility --audio-driver Du
 - The public project page/releases live on Codeberg; GitHub Actions publishes the CI artifacts.
 - The web zip is named `godot-dash-web-html5-<sha>.zip` and documented as "unzip and host on any
   static hosting".
+
+## 8. Windows installer and public-download fallback
+
+The app display name/executable are **Godot Dash** / `Godot Dash.exe`. The explicit
+`application/config/custom_user_dir_name="godot-dash"` preserves the old
+`%APPDATA%\godot-dash` store despite the rename. Never remove this pin in a branding change.
+`tools/windows/GodotDash.iss` uses stable `AppId=GodotDash`, per-user installation and
+`UsePreviousAppDir=yes`. Setup only replaces packaged application files; uninstall leaves
+all `user://` contents alone. CI installs, upgrades without specifying a new directory,
+checks the registered path/version, runs the installed EXE, uninstalls and verifies data hashes.
+
+Windows build metadata is injected only into CI's workspace, independently of the replay
+version. `UpdateManager` checks a branch-scoped `windows-<branch-slug>` GitHub release;
+`WindowsUpdatePolicy` requires that channel, a newer build number and the expected installer
+asset URL. Updates are user-confirmed installer downloads, not silent code execution.
+Old ZIP folders cannot be automatically located/deleted safely.
+
+`NativeDownloadPolicy` allows one Windows retry through the configured HTTPS Web relay for
+blocked/transient public downloads or HTML/error bodies. Both the target-host allowlist and
+credential guard must pass. Web and Android transport routing is unchanged. Live endpoint
+access may be unavailable in the coding sandbox; mocked policy checks do not prove any
+particular remote level downloads successfully on the user's network.

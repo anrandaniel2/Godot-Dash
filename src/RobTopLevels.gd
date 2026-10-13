@@ -599,7 +599,11 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 		if relay.is_empty():
 			return _error("Audio downloads need a CORS relay in this browser build.")
 		return await _download_audio_once(_resolve_url(url, relay), destination)
-	return await _download_audio_once(url, destination)
+	var direct: Dictionary = await _download_audio_once(url, destination)
+	var relay: String = web_relay()
+	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct):
+		return await _download_audio_once(_resolve_url(url, relay), destination)
+	return direct
 
 
 static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
@@ -639,7 +643,11 @@ func _get_text(url: String) -> Dictionary:
 				if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
 					res["text"] = str(parsed_wrap["contents"]).strip_edges()
 		return res
-	return await _get_text_once(url)
+	var direct: Dictionary = await _get_text_once(url)
+	var relay: String = web_relay()
+	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct):
+		return await _get_text_once(_resolve_url(url, relay))
+	return direct
 
 
 func _get_text_once(target_url: String) -> Dictionary:
@@ -723,7 +731,7 @@ func _download_audio_once(target_url: String, destination: String) -> Dictionary
 	if body.size() < 1000 or body.size() > MAX_SONG_BYTES:
 		return _error("Audio download returned an empty or oversized audio file (%d bytes)." % body.size())
 	if not NativeCore.is_audio_stream(body):
-		return _error("Audio download returned invalid audio data.")
+		return {"ok": false, "error": "Audio download returned invalid audio data.", "retryable": true}
 
 	DirAccess.make_dir_recursive_absolute(destination.get_base_dir())
 	var file := FileAccess.open(destination, FileAccess.WRITE)
@@ -761,7 +769,11 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		if relay.is_empty():
 			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
 		return await _post_once(url, fields, relay)
-	return await _post_once(url, fields, "")
+	var direct: Dictionary = await _post_once(url, fields, "")
+	var relay: String = web_relay()
+	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct, fields):
+		return await _post_once(url, fields, relay)
+	return direct
 
 
 func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:

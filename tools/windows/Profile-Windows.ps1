@@ -7,7 +7,7 @@ New-Item -ItemType Directory -Path $folder | Out-Null
 $frames = Join-Path $folder 'frames.csv'
 $log = Join-Path $folder 'game.log'
 $memory = Join-Path $folder 'memory.csv'
-$exe = Join-Path $PSScriptRoot 'godot-dash.exe'
+$exe = Join-Path $PSScriptRoot 'Godot Dash.exe'
 if (!(Test-Path $exe)) { throw 'Extract the entire Windows ZIP before running this script.' }
 $arguments = @('--rendering-method', 'forward_plus', '--log-file', "`"$log`"", '--', '--perf-capture', "`"--perf-output=$frames`"")
 $process = Start-Process -FilePath $exe -WorkingDirectory $PSScriptRoot -ArgumentList $arguments -PassThru

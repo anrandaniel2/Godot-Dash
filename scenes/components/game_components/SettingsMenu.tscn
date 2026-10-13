@@ -142,6 +142,13 @@ metadata/_smooth_scroll_default_mouse_filter_set = true
 script = ExtResource("6_p6jor")
 config_property = &"vsync"
 
+[node name="DisplayStatus" type="Label" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer/Framerate/VBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Display information"
+autowrap_mode = 2
+mouse_filter = 2
+
 [node name="Window" type="FoldableContainer" parent="EnumButtonTabContainer/Graphics/SmoothScrollContainer/VBoxContainer" unique_id=1282957337]
 layout_mode = 2
 mouse_filter = 1

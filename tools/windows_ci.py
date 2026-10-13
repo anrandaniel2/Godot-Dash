@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Windows CI orchestration. Downloads/build outputs live outside source control."""
 import argparse
+import hashlib
 import os
 import pathlib
 import re
@@ -104,7 +105,8 @@ def safety() -> None:
     shutil.copytree(ROOT / "tools/benchmarks/runtime_safety", project, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns(".gdignore", ".godot"))
     for path in ("src/static/FramePacingPolicy.gd", "src/static/RenderTimingRequests.gd",
-                 "src/refcounted/Selection.gd"):
+                 "src/refcounted/Selection.gd", "src/BlurBackBuffer.gd",
+                 "src/static/NativeDownloadPolicy.gd", "src/static/WindowsUpdatePolicy.gd"):
         shutil.copy2(ROOT / path, project)
     imported = run([EDITOR, "--headless", "--path", project, "--editor", "--import"], "safety-import")
     check_log(imported, "safety-import")
@@ -131,6 +133,16 @@ def headless_project(text: str) -> str:
     return text.replace('"res://addons/script-ide/plugin.cfg", ', '', 1)
 
 
+def windows_project(text: str, sha: str, build_number: str, branch: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{40}", sha) or not build_number.isdecimal():
+        raise ValueError("Invalid Windows build identity")
+    channel = "windows-" + re.sub(r"[^A-Za-z0-9._-]", "-", branch)
+    metadata = (f'config/windows_build_sha="{sha}"\n'
+                f'config/windows_build_number={int(build_number)}\n'
+                f'config/windows_update_channel="{channel}"\n')
+    return headless_project(text).replace("[application]\n", "[application]\n" + metadata, 1)
+
+
 def export() -> None:
     # Only the ICO is LFS-tracked, and its object is unavailable on the mirror.
     # Generate a real Windows icon from the existing artwork, only in CI.
@@ -140,7 +152,8 @@ def export() -> None:
         with Image.open(ROOT / "assets/logo/logo.png") as image:
             image.save(icon, format="ICO", sizes=[(n, n) for n in (16, 32, 48, 64, 128, 256)])
     project = ROOT / "project.godot"
-    project.write_text(headless_project(project.read_text(encoding="utf-8")), encoding="utf-8")
+    project.write_text(windows_project(project.read_text(encoding="utf-8"),
+        os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_NUMBER"], os.environ["GITHUB_REF_NAME"]), encoding="utf-8")
     pin(ROOT)
     # Prevent Godot from scanning a build-time dependency clone.
     (ROOT / "native/godot-cpp/.gdignore").touch()
@@ -150,16 +163,16 @@ def export() -> None:
     check_log(imported, "import-checked", include_runtime=False)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
-                "--export-release", "Windows Desktop", OUTPUT / "godot-dash.exe"], "export", timeout=1200)
+                "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
     check_log(text, "export")
-    check_pe(OUTPUT / "godot-dash.exe")
-    if not (OUTPUT / "godot-dash.pck").is_file():
+    check_pe(OUTPUT / "Godot Dash.exe")
+    if not (OUTPUT / "Godot Dash.pck").is_file():
         raise RuntimeError("Exported PCK is missing")
     libraries = list(OUTPUT.rglob(DLL))
     if len(libraries) != 1:
         raise RuntimeError(f"Expected one exported native DLL, found {libraries}")
     check_pe(libraries[0])
-    smoke = run([OUTPUT / "godot-dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
+    smoke = run([OUTPUT / "Godot Dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
                 "exported-native-smoke", timeout=120)
     check_log(smoke, "exported-native-smoke")
     if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
@@ -176,12 +189,69 @@ def export() -> None:
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")
 
 
+def installer() -> None:
+    compiler = shutil.which("ISCC") or str(pathlib.Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6/ISCC.exe")
+    if not pathlib.Path(compiler).is_file():
+        raise RuntimeError("Inno Setup 6 compiler is missing from this Windows runner")
+    number = int(os.environ["GITHUB_RUN_NUMBER"])
+    sha = os.environ["GITHUB_SHA"][:8]
+    script = ROOT / "tools/windows/GodotDash.iss"
+
+    def compile_setup(destination: pathlib.Path, version: int) -> pathlib.Path:
+        destination.mkdir(parents=True, exist_ok=True)
+        run([compiler, f"/DPayloadDir={OUTPUT}", f"/DBuildVersion=1.0.{version}",
+             f"/DBuildId={sha}", f"/O{destination}", script], f"installer-compile-{version}")
+        exe = destination / "GodotDashSetup-x86_64.exe"
+        check_pe(exe, (0x14C, 0x8664))  # Inno's bootstrapper is x86; payload remains x86-64.
+        return exe
+
+    published = compile_setup(ROOT / "export", number)
+    upgrade = compile_setup(CACHE / "installer-upgrade", number + 1)
+    installed = CACHE / "Installed Godot Dash"
+    user_data = pathlib.Path(os.environ["APPDATA"]) / "godot-dash"
+    sentinel = user_data / "ci-upgrade-proof/levels/example.bin"
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_bytes(b"user-created level: must survive install, upgrade and uninstall")
+    def snapshot() -> dict[str, str]:
+        return {str(p.relative_to(user_data)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in user_data.rglob("*") if p.is_file()}
+    before = snapshot()  # Includes config.cfg written by the exported native smoke.
+    assert "config.cfg" in before
+    for label, setup in (("first", published), ("upgrade", upgrade)):
+        args = [setup, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
+                "/TASKS=", f"/LOG={LOGS / ('setup-' + label + '.log')}"]
+        if label == "first":
+            args.append(f"/DIR={installed}")
+        # No /DIR for the upgrade: proves stable AppId reuses the registered path.
+        run(args, "installer-" + label)
+        if not (installed / "Godot Dash.exe").is_file() or snapshot() != before:
+            raise RuntimeError(f"{label} changed user data or used the wrong install location")
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall\GodotDash_is1",
+            0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            registered = pathlib.Path(winreg.QueryValueEx(key, "InstallLocation")[0])
+            version = winreg.QueryValueEx(key, "DisplayVersion")[0]
+            assert registered == installed
+            assert version == f"1.0.{number if label == 'first' else number + 1}"
+    smoke = run([installed / "Godot Dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
+                "installed-native-smoke", timeout=120)
+    check_log(smoke, "installed-native-smoke")
+    if "WINDOWS_NATIVE_SMOKE result=PASS" not in smoke:
+        raise RuntimeError("Installed app failed native smoke")
+    before = snapshot()
+    run([installed / "unins000.exe", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], "installer-uninstall")
+    if snapshot() != before:
+        raise RuntimeError("Uninstall modified user data")
+    print("::notice title=Installer upgrade::Install -> newer version in the same path -> installed native smoke -> uninstall PASS; user data hashes preserved.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("install", "benchmark", "safety", "build", "export"))
+    parser.add_argument("stage", choices=("install", "benchmark", "safety", "build", "export", "installer"))
     stage = parser.parse_args().stage
     try:
-        {"install": install, "benchmark": benchmark, "safety": safety, "build": build, "export": export}[stage]()
+        {"install": install, "benchmark": benchmark, "safety": safety, "build": build, "export": export, "installer": installer}[stage]()
     except Exception as error:
         message = str(error).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print(f"::error title=Windows {stage}::{message}", flush=True)

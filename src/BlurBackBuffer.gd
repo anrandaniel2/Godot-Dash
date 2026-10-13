@@ -42,6 +42,11 @@ func _ready() -> void:
 	copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
 	z_as_relative = true
 	_panel.tree_exiting.connect(queue_free)
+	# _process freezes with a paused parent and can precede UI visibility
+	# changes. Update just before drawing, including in pause/settings menus,
+	# so a newly visible panel never samples a stale/disabled screen copy.
+	RenderingServer.frame_pre_draw.connect(_sync_copy)
+	_sync_copy()
 
 
 func _move_before_panel() -> void:
@@ -50,7 +55,7 @@ func _move_before_panel() -> void:
 		z_index = _panel.z_index
 
 
-func _process(_delta: float) -> void:
+func _sync_copy() -> void:
 	if not is_instance_valid(_panel):
 		return
 	var shown := _panel.is_visible_in_tree() and Config.menu_blur

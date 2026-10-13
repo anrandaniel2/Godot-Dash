@@ -10,6 +10,9 @@ func _ready() -> void:
 	_test_frame_pacing()
 	_test_timing_requests()
 	_test_selection()
+	_test_download_policy()
+	_test_windows_updates()
+	_test_blur_copy()
 	_benchmark_selection()
 	print("RUNTIME_SAFETY_SUMMARY checks=%d failed=%d" % [_checks, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -158,3 +161,110 @@ func _benchmark_selection() -> void:
 	old.clear()
 	for node: Node2D in nodes:
 		node.free()
+
+
+func _test_download_policy() -> void:
+	var url: String = "https://www.boomlings.com/database/downloadGJLevel22.php"
+	var relay: String = "https://relay.example/?url="
+	for response: Dictionary in [
+		{"ok": false, "status": 403},
+		{"ok": false, "status": 401},
+		{"ok": false, "retryable": true},
+		{"ok": true, "text": "<!doctype html>blocked"},
+		{"ok": true, "text": "-1"},
+	]:
+		_check(
+			NativeDownloadPolicy.should_retry(url, relay, true, response),
+			"Windows blocked public request retries"
+		)
+		_check(
+			not NativeDownloadPolicy.should_retry(url, relay, false, response),
+			"other platforms unchanged"
+		)
+		_check(
+			not NativeDownloadPolicy.should_retry(url, "", true, response),
+			"no relay means no retry"
+		)
+		_check(
+			not NativeDownloadPolicy.should_retry("https://other.example/", relay, true, response),
+			"only relay-supported hosts"
+		)
+		_check(
+			not NativeDownloadPolicy.should_retry(url, relay, true, response, {"gjp": "private"}),
+			"never forward credentials"
+		)
+		_check(
+			not NativeDownloadPolicy.should_retry(url, relay, true, response, {"accountID": "123"}),
+			"never forward account requests"
+		)
+	for response: Dictionary in [
+		{"ok": true, "text": "1:123:4:encoded"},
+		{"ok": true},
+		{"ok": false, "status": 404},
+		{"ok": false, "error": "Disk write failed"},
+	]:
+		_check(
+			not NativeDownloadPolicy.should_retry(url, relay, true, response),
+			"no duplicate successes/permanent failures"
+		)
+
+
+func _test_windows_updates() -> void:
+	var channel: String = "windows-arena-example"
+	var url: String = (
+		"https://github.com/anrandaniel2/Godot-Dash/releases/download/%s/GodotDashSetup-x86_64.exe"
+		% channel
+	)
+	var release: Dictionary = {
+		"tag_name": channel,
+		"body": "Build: 42\nCommit: abc",
+		"draft": false,
+		"assets": [{"name": "GodotDashSetup-x86_64.exe", "size": 123, "browser_download_url": url}],
+	}
+	_check(
+		WindowsUpdatePolicy.evaluate(release, channel, 41).get("newer", false), "new build offered"
+	)
+	_check(
+		not WindowsUpdatePolicy.evaluate(release, channel, 42).get("newer", true),
+		"same build not offered"
+	)
+	_check(
+		not WindowsUpdatePolicy.evaluate(release, channel, 43).get("newer", true), "no downgrade"
+	)
+	_check(
+		not WindowsUpdatePolicy.evaluate(release, "other-channel", 41).ok,
+		"never cross update channels"
+	)
+	release.assets[0].browser_download_url = "https://untrusted.example/installer.exe"
+	_check(
+		not WindowsUpdatePolicy.evaluate(release, channel, 41).ok, "reject unrelated installer URL"
+	)
+	release.assets = "malformed"
+	_check(not WindowsUpdatePolicy.evaluate(release, channel, 41).ok, "invalid assets fail closed")
+
+
+func _test_blur_copy() -> void:
+	var holder: Node = Node.new()
+	holder.process_mode = Node.PROCESS_MODE_PAUSABLE
+	add_child(holder)
+	var panel: Control = Control.new()
+	holder.add_child(panel)
+	var copy: BlurBackBuffer = BlurBackBuffer.new()
+	copy._panel = panel
+	holder.add_child(copy)
+	copy._move_before_panel()
+	_check(copy.get_index() < panel.get_index(), "copy draws before its panel")
+	_check(copy.copy_mode == BackBufferCopy.COPY_MODE_VIEWPORT, "full viewport copy retained")
+	get_tree().paused = true
+	panel.hide()
+	RenderingServer.frame_pre_draw.emit()
+	_check(not copy.visible, "hidden paused panel needs no copy")
+	panel.show()
+	RenderingServer.frame_pre_draw.emit()
+	_check(copy.visible, "newly visible paused panel gets a fresh copy before drawing")
+	Config.menu_blur = false
+	RenderingServer.frame_pre_draw.emit()
+	_check(not copy.visible, "disabled blur respected while paused")
+	Config.menu_blur = true
+	get_tree().paused = false
+	holder.free()

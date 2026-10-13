@@ -386,9 +386,10 @@ func _ready() -> void:
 
 ## Apply on startup and after a window/presentation-mode change. This never
 ## touches physics_ticks_per_second, time_scale or replay tick semantics.
-func apply_frame_pacing() -> void:
+func apply_frame_pacing(force_vsync: bool = false) -> void:
 	Engine.max_fps = maxi(0, max_fps)
-	DisplayServer.window_set_vsync_mode(vsync)
+	if force_vsync or DisplayServer.window_get_vsync_mode() != vsync:
+		DisplayServer.window_set_vsync_mode(vsync)
 
 
 func _notification(what):

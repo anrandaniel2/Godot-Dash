@@ -6,8 +6,11 @@ signal closed
 
 func _ready() -> void:
 	%"Max FPS".default = 0.0
-	%"Max FPS".label.text = "Max FPS (0 = Unlimited)"
-	%"Max FPS".tooltip_text = "An optional rendering cap, independent of VSync. Use 0 for no software limit."
+	%"Max FPS".label.text = "FPS limit"
+	%"Max FPS".tooltip_text = "0 disables only this software limit. VSync below independently synchronizes frames to the display."
+	visibility_changed.connect(_update_display_status)
+	get_tree().root.size_changed.connect(_update_display_status)
+	_update_display_status.call_deferred()
 	var saved_bus_layout: AudioBusLayout
 	if ResourceLoader.exists("user://default_bus_layout.tres"):
 		saved_bus_layout = load("user://default_bus_layout.tres") as AudioBusLayout
@@ -58,12 +61,14 @@ func _on_touch_screen_mode_value_changed(value: int) -> void:
 
 func _on_max_fps_value_changed(value: float) -> void:
 	Config.max_fps = maxi(0, int(value))
-	Config.apply_frame_pacing()
+	Engine.max_fps = Config.max_fps
+	_update_display_status()
 
 
 func _on_vsync_value_changed(id: int) -> void:
 	Config.vsync = id
 	Config.apply_frame_pacing()
+	_update_display_status()
 
 
 func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:
@@ -73,15 +78,19 @@ func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:
 	match window_mode:
 		Config.WindowMode.WINDOWED:
 			display_server_window_mode = DisplayServer.WindowMode.WINDOW_MODE_WINDOWED
-			DisplayServer.window_set_flag(DisplayServer.WindowFlags.WINDOW_FLAG_BORDERLESS, false)
+			if DisplayServer.window_get_flag(DisplayServer.WindowFlags.WINDOW_FLAG_BORDERLESS):
+				DisplayServer.window_set_flag(DisplayServer.WindowFlags.WINDOW_FLAG_BORDERLESS, false)
 		Config.WindowMode.FULLSCREEN:
 			display_server_window_mode = DisplayServer.WindowMode.WINDOW_MODE_FULLSCREEN
 		Config.WindowMode.EXCLUSIVE_FULLSCREEN:
 			display_server_window_mode = DisplayServer.WindowMode.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	if DisplayServer.window_get_mode() == display_server_window_mode:
+		return
 	DisplayServer.window_set_mode(display_server_window_mode)
 	# Fullscreen changes can recreate the presentation surface. Apply the
 	# requested mode afterward, not just to the previous window's swapchain.
-	Config.apply_frame_pacing.call_deferred()
+	Config.apply_frame_pacing.call_deferred(true)
+	_update_display_status.call_deferred()
 
 
 func _on_anti_aliasing_value_changed(anti_aliasing_mode: Viewport.MSAA) -> void:
@@ -196,3 +205,21 @@ func _on_unregister_pressed() -> void:
 			pass
 	dir = DirAccess.open(dest)
 	dir.remove(dest.path_join(file))
+
+
+## On-demand display information: no capture script or per-frame polling.
+func _update_display_status() -> void:
+	if not is_node_ready() or not is_visible_in_tree():
+		return
+	if OS.has_feature("web"):
+		%DisplayStatus.text = "Browser-controlled presentation. FPS limit and VSync are independent."
+		return
+	var screen: int = DisplayServer.window_get_current_screen()
+	var refresh: float = DisplayServer.screen_get_refresh_rate(screen)
+	var rate: String = "unknown" if refresh <= 0.0 else "%.2f Hz" % refresh
+	var mode: int = DisplayServer.window_get_vsync_mode()
+	var modes: Array[String] = ["Disabled", "Enabled", "Adaptive", "Mailbox"]
+	var cap: String = "Off" if Engine.max_fps == 0 else "%d FPS" % Engine.max_fps
+	%DisplayStatus.text = "Display %d: %s | VSync: %s | Software limit: %s" % [
+		screen + 1, rate, modes[clampi(mode, 0, 3)], cap
+	]

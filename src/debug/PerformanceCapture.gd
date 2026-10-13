@@ -169,6 +169,8 @@ func _native_smoke() -> void:
 		ok = ok and ClassDB.class_exists(required)
 	if native != null:
 		ok = ok and native.call(&"add", 2, 3) == 5
+	ok = ok and OS.get_user_data_dir().replace("\\", "/").ends_with("/godot-dash")
+	print("WINDOWS_USER_DATA path=%s" % OS.get_user_data_dir())
 	ok = ok and Engine.max_fps == maxi(0, Config.max_fps)
 	ok = ok and not DebugMenu.is_processing()
 	ok = ok and not RenderTimingRequests.is_requested(get_viewport().get_viewport_rid())

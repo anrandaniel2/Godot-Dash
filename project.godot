@@ -49,10 +49,11 @@ warnings/check_invalid_track_paths=false
 
 [application]
 
-config/name="godot-dash"
+config/name="Godot Dash"
 config/version="1.0.0-alpha.5"
 run/main_scene="res://scenes/TitleScreen.tscn"
 config/use_custom_user_dir=true
+config/custom_user_dir_name="godot-dash"
 config/features=PackedStringArray("4.7", "Mobile")
 run/max_fps=0
 boot_splash/image="uid://c1mj3e3vvh1h0"

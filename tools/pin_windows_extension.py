@@ -13,15 +13,15 @@ import struct
 DLL = "libgdash_native.windows.template_release.x86_64.dll"
 
 
-def check_pe(path: pathlib.Path) -> None:
+def check_pe(path: pathlib.Path, machines: tuple[int, ...] = (0x8664,)) -> None:
     data = path.read_bytes()
     if len(data) < 64 or data[:2] != b"MZ":
         raise ValueError(f"{path}: not a PE binary")
     offset = struct.unpack_from("<I", data, 0x3C)[0]
     if data[offset:offset + 4] != b"PE\0\0":
         raise ValueError(f"{path}: missing PE signature")
-    if struct.unpack_from("<H", data, offset + 4)[0] != 0x8664:
-        raise ValueError(f"{path}: not x86-64")
+    if struct.unpack_from("<H", data, offset + 4)[0] not in machines:
+        raise ValueError(f"{path}: unsupported PE architecture")
 
 
 def pin(root: pathlib.Path) -> None:

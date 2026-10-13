@@ -1,10 +1,27 @@
 GODOT DASH — Windows x86-64 / Forward+
 
-Extract the entire ZIP, then run godot-dash.exe. Keep its PCK and DLL files
-beside it in their exported locations. The native acceleration DLL is included;
-no Godot installation is needed. The executable is unsigned: Windows may show
-an unknown-publisher warning. Verify that the ZIP came from this project's
-GitHub Actions/release before running it.
+INSTALL / UPDATE (recommended)
+Run GodotDashSetup-x86_64.exe. It creates the Godot Dash Start-menu/desktop
+shortcut and installs to %LOCALAPPDATA%\Programs\Godot Dash without admin rights.
+Run a newer installer to update the SAME installation, not a second app.
+Close the game first (save any edits). The installer reuses its registered path.
+The title screen checks this build's branch-specific GitHub update channel and
+links to the installer when a newer build exists. Downloads/installations remain
+user-confirmed; nothing silently runs a downloaded executable.
+
+YOUR FILES
+All versions keep using %APPDATA%\godot-dash for user://. Changing the app title
+or EXE name does not move that directory. Settings, levels, songs, replays,
+keybinds and other user files are neither overwritten by setup nor removed by
+uninstall. Keep your normal backups. Old manually extracted ZIP folders are not
+automatically deleted; setup cannot safely guess which folders belong to you.
+
+PORTABLE ZIP (optional)
+Extract the entire ZIP and run Godot Dash.exe. Keep Godot Dash.pck and all DLLs
+in their exported locations. This uses the same user directory as the installer.
+No Godot installation is needed. These builds are unsigned: Windows may show
+an unknown-publisher warning. Verify the download came from this project's
+GitHub release before running it.
 
 Forward+ requires a compatible graphics driver/GPU. This is NOT the web build.
 A build-time native smoke check is headless; it cannot verify your GPU or visual
@@ -39,7 +56,7 @@ working set, private bytes and peak working set instead; none is GPU VRAM.
 The launch-relative clocks in the two CSVs have slightly different origins.
 
 FRAME PACING
-Max FPS defaults to 0 (Unlimited), independent of VSync. A one-time migration
+FPS limit defaults to 0 (no software limit), independent of VSync. A one-time migration
 clears the old 60/monitor-refresh default caps; unrelated custom caps survive.
 You can set an explicit cap again after this migration.
 VSync Enabled asks Windows/the driver to synchronize to the active display.
@@ -55,3 +72,16 @@ GPU timing only while needed. Gameplay effects and content are unchanged.
 BUILD.txt identifies the commit. runtime-safety.log contains automated frame
 policy, selection-order and profiler-ownership tests plus a selection build
 microbenchmark. These are not real-level FPS measurements.
+
+DOWNLOADS AND DISPLAY TROUBLESHOOTING
+Windows retries blocked public level/archive/audio requests once through the
+same configured HTTPS relay used by Web, where supported. No account login or
+credentials are relayed. A failed direct request can add up to 15 seconds for a
+level/text request or 30 seconds for audio before the fallback. A server outage
+or unsupported/deleted level can still fail; include the level ID and error.
+
+Graphics settings display the active monitor's Windows-reported refresh rate,
+VSync mode and software limit. This is not proof of the physical presentation
+rate. The stale blur-copy visibility risk in paused menus is addressed, but
+whole-screen black flicker and 60-FPS VSync still require device verification.
+No rendering effects, physics, replay timing or level content were removed.

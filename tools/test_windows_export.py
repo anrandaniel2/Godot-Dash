@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from pin_windows_extension import DLL, check_pe, pin
-from windows_ci import headless_project
+from windows_ci import headless_project, windows_project
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -71,6 +71,36 @@ class WindowsExportTests(unittest.TestCase):
         for feature, renderer in (("windows", "forward_plus"), ("mobile", "mobile"), ("web", "mobile")):
             self.assertIn(f'renderer/rendering_method.{feature}="{renderer}"', project)
         self.assertIn('driver/threads/thread_model=0', project)
+
+    def test_display_name_keeps_existing_user_directory(self):
+        project = (ROOT / "project.godot").read_text()
+        self.assertIn('config/name="Godot Dash"', project)
+        self.assertIn('config/use_custom_user_dir=true', project)
+        self.assertIn('config/custom_user_dir_name="godot-dash"', project)
+        self.assertIn('config/version="1.0.0-alpha.5"', project)  # replay version unchanged
+        self.assertIn('common/physics_ticks_per_second=240', project)
+
+    def test_windows_build_metadata_does_not_change_game_version(self):
+        project = (ROOT / "project.godot").read_text()
+        result = windows_project(project, "a" * 40, "42", "arena/example")
+        self.assertIn('config/windows_update_channel="windows-arena-example"', result)
+        self.assertIn('config/windows_build_number=42', result)
+        self.assertIn('config/version="1.0.0-alpha.5"', result)
+        with self.assertRaises(ValueError):
+            windows_project(project, 'invalid"', "42", "arena/example")
+
+    def test_installer_has_stable_identity_and_no_user_data_deletions(self):
+        script = (ROOT / "tools/windows/GodotDash.iss").read_text()
+        for setting in ("AppId=GodotDash", "UsePreviousAppDir=yes", "PrivilegesRequired=lowest"):
+            self.assertIn(setting, script)
+        self.assertNotIn("[UninstallDelete]", script)
+        self.assertNotIn("{userappdata}", script)
+        for line in script.splitlines():
+            if line.startswith("Type:"):
+                self.assertIn("Type: files;", line)
+                self.assertNotIn("*", line)
+                self.assertTrue(line.endswith(('.exe"', '.pck"')))
+
 
 
 if __name__ == "__main__":

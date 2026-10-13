@@ -4,5 +4,8 @@ config_version=5
 config/name="Runtime safety checks"
 run/main_scene="res://SafetyChecks.tscn"
 
+[autoload]
+Config="*res://Config.gd"
+
 [rendering]
 renderer/rendering_method="gl_compatibility"

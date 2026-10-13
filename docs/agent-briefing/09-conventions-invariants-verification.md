@@ -226,3 +226,9 @@ rate, shared timing owners, ordered set operations, duplicate/null entries, clon
 and callback mutation snapshots. The exported native smoke also requires the default hidden
 HUD to have no process callback or GPU-timing request. These checks do not prove GPU speed,
 real-level FPS, or high-refresh VSync on a user's Windows compositor/driver.
+
+The safety scene also tests paused blur-copy visibility, Windows public-download relay policy
+(success/permanent failures/credential guard/other platforms), and Windows update-channel
+validation. Windows packaging adds a real Inno Setup install/upgrade/uninstall test with
+user-data hash comparisons. The display name is allowed to change; the explicit
+`custom_user_dir_name="godot-dash"` and replay version must stay stable across such updates.
