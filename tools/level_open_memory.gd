@@ -75,33 +75,46 @@ func _census(mode: String, data: Dictionary) -> void:
 		names.append("%s=%d" % [entry[1], entry[0]])
 	print("LEVEL_OPEN census mode=%s placements=%d decorations=%d GDObject=%d selectors=%d nodes=%s" % [
 		mode, placements, decorations, objects.size(), selectors.size(), " ".join(names)])
-	var before := OS.get_static_memory_usage()
+	var labels: Array[Node] = []
+	var controls: Array[Node] = []
+	stack.clear()
+	stack.append(get_tree().root)
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is Label or node is BaseButton:
+			labels.append(node)
+		elif node is Control:
+			controls.append(node)
+		stack.append_array(node.get_children())
+	for label in labels.slice(0, 4):
+		print("LEVEL_OPEN census mode=%s label_path=%s" % [mode, str(label.get_path())])
+	for control in controls.slice(0, 4):
+		print("LEVEL_OPEN census mode=%s control_path=%s class=%s" % [mode, str(control.get_path()), control.get_class()])
+	var mark := OS.get_static_memory_usage()
+	data.clear()
+	Editor.level_data_snapshot.clear()
+	for frame in 2:
+		await get_tree().process_frame
+	mark = _phase(mode, "data dictionaries", mark)
+	for label in labels:
+		label.queue_free()
+	for frame in 2:
+		await get_tree().process_frame
+	mark = _phase(mode, "labels and buttons (%d)" % labels.size(), mark)
 	for selector in selectors:
 		selector.queue_free()
-	for frame in 3:
+	for frame in 2:
 		await get_tree().process_frame
-	var after_selectors := OS.get_static_memory_usage()
-	print("LEVEL_OPEN census mode=%s freed_selectors=%.1f MB" % [mode, (before - after_selectors) / 1048576.0])
+	mark = _phase(mode, "selectors (%d)" % selectors.size(), mark)
 	for object in objects:
 		object.queue_free()
-	for frame in 3:
+	for frame in 2:
 		await get_tree().process_frame
-	var after_objects := OS.get_static_memory_usage()
-	print("LEVEL_OPEN census mode=%s freed_gdobjects_after_selectors=%.1f MB static_now=%.1f MB" % [
-		mode, (after_selectors - after_objects) / 1048576.0, after_objects / 1048576.0])
+	mark = _phase(mode, "GDObject trees (%d)" % objects.size(), mark)
+	print("LEVEL_OPEN census mode=%s remaining_static=%.1f MB" % [mode, mark / 1048576.0])
 
 
-func _report(mode: String, stage: String) -> void:
-	var hwm := ""
-	var status := FileAccess.open("/proc/self/status", FileAccess.READ)
-	if status != null:
-		while not status.eof_reached():
-			var line := status.get_line()
-			if line.begins_with("VmHWM") or line.begins_with("VmRSS"):
-				hwm += line.strip_edges() + " "
-		status.close()
-	print("LEVEL_OPEN mode=%s stage=\"%s\" static_peak=%.1f MB static_now=%.1f MB %s" % [
-		mode, stage,
-		OS.get_static_memory_peak_usage() / 1048576.0,
-		OS.get_static_memory_usage() / 1048576.0,
-		hwm])
+func _phase(mode: String, label: String, mark: int) -> int:
+	var now := OS.get_static_memory_usage()
+	print("LEVEL_OPEN census mode=%s freed %s: %.1f MB" % [mode, label, (mark - now) / 1048576.0])
+	return now
