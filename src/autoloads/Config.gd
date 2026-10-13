@@ -1,6 +1,7 @@
 extends Node
 
 signal menu_loop_changed(menu_loop: String)
+signal performance_stats_changed(enabled: bool)
 
 enum WindowMode {
 	WINDOWED,
@@ -41,7 +42,7 @@ enum ParticlePreprocessing {
 @export_group("Graphics")
 
 @export_subgroup("Framerate")
-## Zero is replaced with the active display's refresh rate on first launch.
+## Rendering cap only. Zero means unlimited, including when VSync is disabled.
 @export_range(0, 60, 1, "or_greater") var max_fps: int = 0
 @export var vsync: int = DisplayServer.VSyncMode.VSYNC_ENABLED
 
@@ -122,7 +123,12 @@ enum ParticlePreprocessing {
 		if is_inside_tree():
 			TimescaleChangerComponent.apply_game_speed()
 ## Live FPS, frame, physics and node numbers in the top-left corner.
-@export var show_performance_stats: bool = false
+@export var show_performance_stats: bool = false:
+	set(value):
+		if show_performance_stats == value:
+			return
+		show_performance_stats = value
+		performance_stats_changed.emit(value)
 
 # Practice
 @export_subgroup("Practice")
@@ -215,13 +221,10 @@ var config_file: ConfigFile = ConfigFile.new()
 func _init():
 	config_file.load("user://config.cfg")
 
-	# Graphics. On a fresh install, cap to the actual panel refresh rate rather
-	# than an arbitrary 60 FPS. When the display reports no refresh rate (always
-	# on Web, where the browser already paces frames to the display with
-	# requestAnimationFrame) leave the frame rate uncapped (0): a 60 fallback
-	# held 120/144 Hz screens at 60.
-	var refresh_rate := maxi(0, roundi(DisplayServer.screen_get_refresh_rate()))
-	max_fps = config_file.get_value("Graphics", "max_fps", refresh_rate)
+	# VSync controls presentation; never create a second limiter from the
+	# monitor refresh rate. Keep the old migrations below before the new policy.
+	var refresh_rate: int = maxi(0, roundi(DisplayServer.screen_get_refresh_rate()))
+	max_fps = config_file.get_value("Graphics", "max_fps", 0)
 	vsync = config_file.get_value("Graphics", "vsync", vsync)
 	window_mode = config_file.get_value("Graphics", "window_mode", WindowMode.WINDOWED if OS.has_feature("web") else window_mode)
 	if OS.has_feature("web") and window_mode != WindowMode.WINDOWED:
@@ -274,6 +277,10 @@ func _init():
 			max_fps = 0
 		config_file.set_value("Graphics", "max_fps", max_fps)
 		config_file.set_value("Performance", "defaults_version", 3)
+		config_file.save("user://config.cfg")
+	var migrate_frame_pacing: bool = int(config_file.get_value("Graphics", "frame_pacing_version", 0)) < FramePacingPolicy.VERSION
+	max_fps = FramePacingPolicy.load_cap(config_file, refresh_rate)
+	if migrate_frame_pacing:
 		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
@@ -363,6 +370,7 @@ static func web_texture_filtering(mode: TextureFilteringMode, is_web: bool) -> T
 
 
 func _ready() -> void:
+	apply_frame_pacing()
 	TimescaleChangerComponent.apply_game_speed()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
@@ -374,6 +382,13 @@ func _ready() -> void:
 		var effects := preload("res://src/WebSoftEffects.gd").new()
 		effects.name = "WebSoftEffects"
 		add_child(effects)
+
+
+## Apply on startup and after a window/presentation-mode change. This never
+## touches physics_ticks_per_second, time_scale or replay tick semantics.
+func apply_frame_pacing() -> void:
+	Engine.max_fps = maxi(0, max_fps)
+	DisplayServer.window_set_vsync_mode(vsync)
 
 
 func _notification(what):

@@ -31,7 +31,7 @@ func _ready() -> void:
 			_output = arg.trim_prefix("--perf-output=")
 	_samples.resize(FRAME_COUNT * STRIDE)
 	_viewport = get_viewport().get_viewport_rid()
-	RenderingServer.viewport_set_measure_render_time(_viewport, true)
+	RenderTimingRequests.set_requested(_viewport, self, true)
 	_enabled = true
 	print(
 		(
@@ -88,7 +88,7 @@ func _finish() -> void:
 	var write_started: int = Time.get_ticks_usec()
 	set_process(false)
 	_enabled = false
-	RenderingServer.viewport_set_measure_render_time(_viewport, false)
+	RenderTimingRequests.set_requested(_viewport, self, false)
 	var file: FileAccess = FileAccess.open(_output, FileAccess.WRITE)
 	if file == null:
 		push_error(
@@ -169,6 +169,9 @@ func _native_smoke() -> void:
 		ok = ok and ClassDB.class_exists(required)
 	if native != null:
 		ok = ok and native.call(&"add", 2, 3) == 5
+	ok = ok and Engine.max_fps == maxi(0, Config.max_fps)
+	ok = ok and not DebugMenu.is_processing()
+	ok = ok and not RenderTimingRequests.is_requested(get_viewport().get_viewport_rid())
 	print(
 		"WINDOWS_NATIVE_SMOKE result=%s configured_renderer=%s" % ["PASS" if ok else "FAIL", method]
 	)

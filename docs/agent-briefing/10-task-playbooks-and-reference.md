@@ -170,8 +170,9 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
    records failed downloads rather than analysis.
 6. **`export_presets.cfg`** is tracked despite `.gitignore` listing it — keep that in mind when
    editing presets.
-7. **No tags in this checkout**; history is a single squashed commit, so `git blame` gives no
-   authorship signal.
+7. **History is snapshot-dependent.** The original briefing snapshot was squashed; newer
+   checkouts have agent commits and CI release tags. Check `git log`/`git tag` rather than
+   assuming a single-commit history.
 
 ## 6. Response protocol for expert-pool answers
 

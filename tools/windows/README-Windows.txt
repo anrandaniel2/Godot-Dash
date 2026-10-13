@@ -38,6 +38,20 @@ Release-engine static memory counters may be zero. memory.csv contains Windows
 working set, private bytes and peak working set instead; none is GPU VRAM.
 The launch-relative clocks in the two CSVs have slightly different origins.
 
-Build identity and channel-index microbenchmark results: BUILD.txt and the
-GitHub Actions run linked there. In the benchmark logs, old = shipped code,
-new = rejected slower mutable-list candidate. No whole-game speedup is claimed.
+FRAME PACING
+Max FPS defaults to 0 (Unlimited), independent of VSync. A one-time migration
+clears the old 60/monitor-refresh default caps; unrelated custom caps survive.
+You can set an explicit cap again after this migration.
+VSync Enabled asks Windows/the driver to synchronize to the active display.
+If Enabled still holds 60 on a 240 Hz panel, try Exclusive Fullscreen and check
+Windows Advanced Display and any per-game GPU-driver frame limiter. No app
+setting can guarantee that the hardware/compositor presents at 240 Hz.
+Physics remains 240 ticks/s even when rendering is uncapped.
+
+No capture is required to use this build. Normal hidden diagnostics no longer
+enable GPU timestamp queries. F3 detailed graphs and optional captures request
+GPU timing only while needed. Gameplay effects and content are unchanged.
+
+BUILD.txt identifies the commit. runtime-safety.log contains automated frame
+policy, selection-order and profiler-ownership tests plus a selection build
+microbenchmark. These are not real-level FPS measurements.

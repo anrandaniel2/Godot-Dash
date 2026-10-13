@@ -159,7 +159,7 @@ Runtime constraints on Android that show up in code:
 - `.github/workflows/windows.yml` (**Build Windows Forward+**) builds on Windows 2022 using
   the pinned godot-cpp, `platform=windows target=template_release arch=x86_64 api_version=4.7
   use_static_cpp=yes optimize=speed debug_symbols=no`. `tools/windows_ci.py` installs matching
-  editor/templates outside the project, benchmarks channel-index construction, imports,
+  editor/templates outside the project, runs runtime safety/selection benchmarks, imports,
   exports, validates PE x86-64 artifacts and runs the exported EXE's headless native smoke.
   The CI workspace regenerates the unavailable LFS ICO from the tracked logo PNG and
   disables the editor-only `script-ide` plugin (its tab lookup fails headlessly). Neither
@@ -176,7 +176,7 @@ Runtime constraints on Android that show up in code:
 - Linux/Windows presets; `dist/linux/install.sh` registers the MIME type
   (`x-godot-dash.xml` → `application-x-godot-dash-level`), a 512×512 icon, and a
   `.desktop` entry with the binary path as `Exec`.
-- `run/max_fps = 0`; `Config.max_fps` defaults to the detected panel refresh rate.
+- `run/max_fps = 0`; `Config.max_fps` defaults to 0 (unlimited), independently of VSync; see `02 §3` for migration.
 - Windows native icon `res://assets/logo/logo.ico` (LFS-tracked).
 
 ## 5. CI workflows — what "done" means

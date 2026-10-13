@@ -25,13 +25,17 @@ func _ready() -> void:
 	_label.add_theme_constant_override(&"shadow_offset_x", 1)
 	_label.add_theme_constant_override(&"shadow_offset_y", 1)
 	add_child(_label)
-	visible = Config.show_performance_stats
+	Config.performance_stats_changed.connect(_set_enabled)
+	_set_enabled(Config.show_performance_stats)
+
+
+func _set_enabled(enabled: bool) -> void:
+	visible = enabled
+	set_process(enabled)
+	_since_refresh = REFRESH_SECONDS
 
 
 func _process(delta: float) -> void:
-	visible = Config.show_performance_stats
-	if not visible:
-		return
 	_since_refresh += delta
 	if _since_refresh < REFRESH_SECONDS:
 		return

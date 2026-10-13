@@ -5,7 +5,10 @@ extends RefCounted
 ##
 ## Pure GDScript port of the class that used to live in the `godot-rust-utils` GDExtension.
 
+## The array remains the sole authority for order. Membership is indexed so
+## bulk select/clone/set operations do not scan the growing array per object.
 var _objects: Array[Node2D] = []
+var _membership: Dictionary[Node2D, bool] = {}
 
 
 func _init(objects: Array[Node2D] = []) -> void:
@@ -52,7 +55,7 @@ func size() -> int:
 ## Creates a new [Selection] with elements that are in [code]self[/code] [b]or[/b] in [code]other[/code].
 func union(other: Selection) -> Selection:
 	var result := Selection.new(_objects)
-	for object: Node2D in other.to_array():
+	for object: Node2D in other._objects:
 		result.insert(object)
 	return result
 
@@ -78,13 +81,14 @@ func difference(other: Selection) -> Selection:
 
 ## Adds an element to the selection.
 func insert(object: Node2D) -> void:
-	if not _objects.has(object):
+	if not _membership.has(object):
 		_objects.append(object)
+		_membership[object] = true
 
 
 ## Checks if an element exists in the selection.
 func contains(object: Node2D) -> bool:
-	return _objects.has(object)
+	return _membership.has(object)
 
 
 ## Removes an element from the selection.
@@ -94,6 +98,7 @@ func remove(object: Node2D) -> bool:
 	if index == -1:
 		return false
 	_objects.remove_at(index)
+	_membership.erase(object)
 	return true
 
 
@@ -107,11 +112,12 @@ func first() -> Node2D:
 ## Removes all elements from the selection.
 func clear() -> void:
 	_objects.clear()
+	_membership.clear()
 
 
 ## Creates a copy of the selection. The elements are unchanged.
 func clone() -> Selection:
-	return Selection.new(to_array())
+	return Selection.new(_objects)
 
 
 ## See [method Array.is_empty].
@@ -133,7 +139,7 @@ func is_identical(other: Selection) -> bool:
 ## Returns [code]true[/code] if the set is a superset of another,
 ## i.e., [code]self[/code] contains at least all the values in [code]other[/code].
 func is_superset(other: Selection) -> bool:
-	for object: Node2D in other.to_array():
+	for object: Node2D in other._objects:
 		if not contains(object):
 			return false
 	return true

@@ -57,6 +57,8 @@ var style := Style.HIDDEN:
 				$DebugMenu/VBoxContainer/GPUGraph.visible = style == Style.VISIBLE_DETAILED
 				information.visible = style == Style.VISIBLE_DETAILED
 				settings.visible = style == Style.VISIBLE_DETAILED
+		if is_node_ready():
+			_sync_diagnostics()
 
 # Value of `Time.get_ticks_usec()` on the previous frame.
 var last_tick := 0
@@ -128,12 +130,10 @@ func _ready() -> void:
 			if Engine.get_version_info()["hex"] >= 0x040100:
 				Callable(Thread, "set_thread_safety_checks_enabled").call(false)
 
-			# Enable required time measurements to display CPU/GPU frame time information.
-			# These lines are time-consuming operations, so run them in a separate thread.
-			RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 			update_information_label()
 			update_settings_label()
 	)
+	_sync_diagnostics()
 
 
 func _input(event: InputEvent) -> void:
@@ -142,7 +142,19 @@ func _input(event: InputEvent) -> void:
 
 
 func _exit_tree() -> void:
+	RenderTimingRequests.set_requested(get_viewport().get_viewport_rid(), self, false)
 	thread.wait_to_finish()
+
+
+## The hidden/compact HUD has no use for GPU timestamp queries. Previously
+## _ready enabled them for every frame, even when no diagnostics were shown.
+func _sync_diagnostics() -> void:
+	set_process(visible)
+	RenderTimingRequests.set_requested(
+		get_viewport().get_viewport_rid(), self,
+		visible and style == Style.VISIBLE_DETAILED
+	)
+	last_tick = Time.get_ticks_usec()
 
 
 ## Update hardware information label (this can change at runtime based on window
@@ -468,10 +480,13 @@ func _process(_delta: float) -> void:
 
 
 func _on_visibility_changed() -> void:
+	if not is_node_ready():
+		return
+	_sync_diagnostics()
 	if visible:
 		# Reset graphs to prevent them from looking strange before `HISTORY_NUM_FRAMES` frames
 		# have been drawn.
-		var frametime_last := (Time.get_ticks_usec() - last_tick) * 0.001
+		var frametime_last: float = 1000.0 / maxf(Engine.get_frames_per_second(), 1.0)
 		fps_history.resize(HISTORY_NUM_FRAMES)
 		fps_history.fill(1000.0 / frametime_last)
 		frame_history_total.resize(HISTORY_NUM_FRAMES)

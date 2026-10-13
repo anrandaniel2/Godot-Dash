@@ -75,7 +75,10 @@ func clear_data() -> void
 
 - Selection model: `Selection` (`src/refcounted/Selection.gd`) — an ordered set with set
   algebra (`union`, `intersection`, `difference`), predicates (`all/any/filter`), and
-  `map`/`flat_map`/`fold_generic` helpers; `Selection.EMPTY()`.
+  `map`/`flat_map`/`fold_generic` helpers; `Selection.EMPTY()`. An ordered array remains
+  authoritative; a membership dictionary avoids quadratic bulk operations. `to_array()`
+  returns a copy and `for_each()` retains snapshot semantics if callbacks mutate selection.
+  This does not switch the physics-based picking order to `DecorationPicker`.
 - Input: `_handle_input`, `_update_selection`, `_swipe_selection_zone` (mobile drag-select),
   `_reset_selection_zone`, `_update_interactive_picking`.
 - Transforms: `move_selection(distance_cells)`, `rotate_selection(angle)` (90°/45°/free via

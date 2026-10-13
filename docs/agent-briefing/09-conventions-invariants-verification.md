@@ -214,3 +214,15 @@ These are diagnostic costs, not production editor overhead. Startup/headless int
 not steady-state browser rendering benchmarks; static memory is not total wasm linear memory or GPU memory.
 Use the same level, machine, renderer and build for before/after comparisons. M2/M3 still need
 browser memory/frame-time measurements and save/undo/visual parity checks.
+
+## 7. Frame pacing / selection / diagnostic ownership checks
+
+Windows CI's `tools/windows_ci.py safety` runs a standalone scene in
+`tools/benchmarks/runtime_safety/`, copying the production `Selection`, `FramePacingPolicy`
+and `RenderTimingRequests` scripts into an isolated project. It gates on
+`RUNTIME_SAFETY_SUMMARY … failed=0` and logs `SELECTION_BENCH` times/retained memory for
+20,000 objects. Tests cover cap migration/idempotence/custom caps, untouched physics tick
+rate, shared timing owners, ordered set operations, duplicate/null entries, clone independence
+and callback mutation snapshots. The exported native smoke also requires the default hidden
+HUD to have no process callback or GPU-timing request. These checks do not prove GPU speed,
+real-level FPS, or high-refresh VSync on a user's Windows compositor/driver.

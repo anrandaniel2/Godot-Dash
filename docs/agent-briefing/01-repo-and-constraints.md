@@ -105,8 +105,8 @@ reports/                  device investigation reports
 ### Game (no compilation)
 
 Per `README.md`: install `git-lfs`, clone, open `project.godot` in Godot **4.7**, use
-`Project → Export`. The project is written entirely in GDScript — no toolchains needed for the
-game itself.
+`Project → Export`. Game orchestration is GDScript, but the current large-level runtime also
+needs the native library; fallback coverage is incomplete (`06 §1`). Packaged builds include it.
 
 ### Native GDExtension (`native/`)
 

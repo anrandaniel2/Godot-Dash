@@ -48,7 +48,7 @@ func _ready() -> void:
 	# Render timing comes from the RenderingServer; it needs a real renderer
 	# (CI runs the probe under a virtual display, not --headless).
 	_viewport = get_viewport().get_viewport_rid()
-	RenderingServer.viewport_set_measure_render_time(_viewport, true)
+	RenderTimingRequests.set_requested(_viewport, self, true)
 
 
 func _process(_delta: float) -> void:
@@ -95,6 +95,7 @@ func _process(_delta: float) -> void:
 
 
 func _exit_tree() -> void:
+	RenderTimingRequests.set_requested(_viewport, self, false)
 	if not _reported and _process_ms.size() > 0:
 		_report()
 

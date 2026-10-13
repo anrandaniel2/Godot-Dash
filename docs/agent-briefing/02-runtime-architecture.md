@@ -59,7 +59,7 @@ autoload. Exported groups → JSON keys:
 
 | Group | Keys (file section) |
 | --- | --- |
-| Graphics | `max_fps` (defaults to the panel refresh rate), `vsync`, `window_mode` (forced `WINDOWED` on web — browsers require a user gesture for fullscreen), `render_scale`, `anti_aliasing`, `texture_filtering`, `bloom`, `menu_blur`, `blur_strength`, `ui_color`, `transition_duration` |
+| Graphics | `max_fps` (0 = unlimited, independent of VSync), `vsync`, `window_mode` (forced `WINDOWED` on web — browsers require a user gesture for fullscreen), `render_scale`, `anti_aliasing`, `texture_filtering`, `bloom`, `menu_blur`, `blur_strength`, `ui_color`, `transition_duration` |
 | Performance | `enable_title_screen_icons`, `ldm`, `culling_enabled`, `culling_buffer_cells` (4–200, default 5), `paced_level_open`, `level_open_frame_budget_ms` (4–120, default 40), `use_native_core`, `import_gd_decorations`, `use_gd_artwork`, `show_particles_in_editor`, `particles_visibility`, `preprocess_particles_in_editor`, `particles_preprocessing` |
 | Gameplay | `show_percentage`, `click_on_steps`, `noclip` |
 | Practice | `automatic_checkpoints`, `automatic_checkpoint_distance` (10.0) |
@@ -76,6 +76,15 @@ Notable behaviours:
 
 - A **`defaults_version` migration** exists under `Performance` (version 1 rewrites `max_fps`,
   `anti_aliasing`, `culling_buffer_cells` on upgrade).
+- `FramePacingPolicy` migrates legacy 60/current-refresh software caps to 0 once, with
+  `Graphics/frame_pacing_version=1`. Unrelated caps survive; explicit caps set after migration
+  (including 60/current-refresh) survive subsequent launches. Old configs cannot distinguish
+  a deliberately selected default-valued cap from the automatic default.
+- `Config.apply_frame_pacing` applies the software cap/VSync at startup and after settings or
+  window-mode changes. Physics stays 240 Hz; Windows VSync presentation remains driver-owned.
+- `show_performance_stats` emits a change signal so the hidden overlay stops processing.
+  `RenderTimingRequests` shares GPU timing ownership between F3 and diagnostic captures;
+  the hidden debug HUD no longer unconditionally enables GPU timestamps.
 - A **one-time web bloom migration** (`Graphics/web_soft_glow`) re-enables bloom because the old
   web build disabled Compatibility glow.
 - Enums live in `Config`: `WindowMode`, `TextureFilteringMode`, `TouchScreenMode`,

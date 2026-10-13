@@ -25,11 +25,15 @@ def run(args: list[str], name: str, timeout: int = 600, allow_failure: bool = Fa
     log = LOGS / f"{name}.log"
     print(f"Running {name}", flush=True)
     with log.open("w", encoding="utf-8") as stream:
-        result = subprocess.run([str(arg) for arg in args], cwd=ROOT, stdout=stream,
-                                stderr=subprocess.STDOUT, timeout=timeout)
+        try:
+            result = subprocess.run([str(arg) for arg in args], cwd=ROOT, stdout=stream,
+                                    stderr=subprocess.STDOUT, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess(args, 124)
     text = log.read_text(encoding="utf-8", errors="replace")
     print("\n".join(text.splitlines()[-35:]), flush=True)
     if result.returncode and not allow_failure:
+        check_log(text, name)
         errors = [line for line in text.splitlines() if re.search(r"error|fatal|failed|exception", line, re.I)]
         excerpt = "\n".join(errors[-12:] or text.splitlines()[-20:])[-12000:]
         escaped = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
@@ -95,6 +99,24 @@ def benchmark() -> None:
                 print(f"::notice title=channel index::{line}")
 
 
+def safety() -> None:
+    project = CACHE / "runtime-safety"
+    shutil.copytree(ROOT / "tools/benchmarks/runtime_safety", project, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(".gdignore", ".godot"))
+    for path in ("src/static/FramePacingPolicy.gd", "src/static/RenderTimingRequests.gd",
+                 "src/refcounted/Selection.gd"):
+        shutil.copy2(ROOT / path, project)
+    imported = run([EDITOR, "--headless", "--path", project, "--editor", "--import"], "safety-import")
+    check_log(imported, "safety-import")
+    text = run([EDITOR, "--headless", "--path", project], "runtime-safety", timeout=300)
+    check_log(text, "runtime-safety")
+    if not re.search(r"RUNTIME_SAFETY_SUMMARY checks=\d+ failed=0", text):
+        raise RuntimeError("Runtime safety tests did not complete cleanly")
+    for line in text.splitlines():
+        if line.startswith(("RUNTIME_SAFETY_", "SELECTION_BENCH")):
+            print(f"::notice title=runtime safety::{line}")
+
+
 def build() -> None:
     run([sys.executable, "-m", "SCons", "-C", ROOT / "native", "platform=windows",
          "target=template_release", "arch=x86_64", "api_version=4.7", "use_static_cpp=yes",
@@ -148,7 +170,7 @@ def export() -> None:
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
-    for name in ("benchmark-parity", "benchmark-old", "benchmark-new"):
+    for name in ("runtime-safety",):
         shutil.copy2(LOGS / f"{name}.log", OUTPUT)
     shutil.make_archive(str(ROOT / "export/godot-dash-windows-x86_64"), "zip", OUTPUT)
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")
@@ -156,10 +178,10 @@ def export() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("install", "benchmark", "build", "export"))
+    parser.add_argument("stage", choices=("install", "benchmark", "safety", "build", "export"))
     stage = parser.parse_args().stage
     try:
-        {"install": install, "benchmark": benchmark, "build": build, "export": export}[stage]()
+        {"install": install, "benchmark": benchmark, "safety": safety, "build": build, "export": export}[stage]()
     except Exception as error:
         message = str(error).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print(f"::error title=Windows {stage}::{message}", flush=True)

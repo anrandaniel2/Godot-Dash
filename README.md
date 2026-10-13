@@ -101,11 +101,24 @@ content are hidden. Normal launches have no sampling callback. Profiling has ove
 and writing the CSV can pause the game once at the end; `sampler_mean_us` and
 `finalize_ms` are logged. Compare instrumented runs on the same level/machine/settings.
 
-CI also benchmarks existing decoration channel-index construction against a mutable-list
-candidate in isolated processes and checks exact index parity. The candidate measured
-slower and was rejected: production keeps the existing packed-array implementation.
-Benchmark logs ship with the ZIP; neither the benchmark nor selecting Forward+ is a
-whole-game FPS claim. Real-level optimisations need a Windows device capture.
+Max FPS now defaults to **0 (Unlimited)**, separately from VSync. A one-time migration
+clears the old 60/monitor-refresh default caps (an intentional cap equal to that old default
+is indistinguishable and must be set again). Other explicit caps survive. Enabled VSync
+uses the active Windows/driver display mode, not the fixed 240 Hz physics tick rate. If it
+still presents at 60 Hz on a high-refresh display, try **Exclusive Fullscreen** and check
+Windows Advanced Display / per-application GPU driver limits. A GPU or compositor refresh
+issue cannot be verified by headless CI.
+
+The hidden debug HUD no longer enables GPU timestamp queries or receives per-frame
+callbacks. Detailed F3 graphs and captures share timing ownership; hiding one cannot disable
+the other. Editor selections retain their ordered array and add a membership index, avoiding
+quadratic bulk selection/clone/set operations without changing picking order or content.
+
+Windows CI tests frame-cap migration, GPU-timing ownership and selection parity, including
+callback mutations, and benchmarks constructing a 20,000-object selection. The ZIP includes
+`runtime-safety.log`. This is an editor-operation microbenchmark, not a whole-game FPS claim.
+The earlier, slower decoration channel-index candidate remains only in the standalone
+benchmark tools as rejected evidence. No user PowerShell capture is required for these fixes.
 
 ## Web (HTML5) builds
 

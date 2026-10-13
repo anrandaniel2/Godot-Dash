@@ -5,12 +5,9 @@ signal closed
 
 
 func _ready() -> void:
-	# The reset/default value follows the current monitor instead of hard-coding
-	# 60, matching Config's first-launch choice: the refresh rate, or 0
-	# (uncapped, paced by the display) when it cannot be read.
-	%"Max FPS".default = maxi(0, roundi(DisplayServer.screen_get_refresh_rate()))
-	Engine.max_fps = int(Config.max_fps)
-	DisplayServer.window_set_vsync_mode(Config.vsync)
+	%"Max FPS".default = 0.0
+	%"Max FPS".label.text = "Max FPS (0 = Unlimited)"
+	%"Max FPS".tooltip_text = "An optional rendering cap, independent of VSync. Use 0 for no software limit."
 	var saved_bus_layout: AudioBusLayout
 	if ResourceLoader.exists("user://default_bus_layout.tres"):
 		saved_bus_layout = load("user://default_bus_layout.tres") as AudioBusLayout
@@ -60,11 +57,13 @@ func _on_touch_screen_mode_value_changed(value: int) -> void:
 
 
 func _on_max_fps_value_changed(value: float) -> void:
-	Engine.max_fps = int(value)
+	Config.max_fps = maxi(0, int(value))
+	Config.apply_frame_pacing()
 
 
 func _on_vsync_value_changed(id: int) -> void:
-	DisplayServer.window_set_vsync_mode(id)
+	Config.vsync = id
+	Config.apply_frame_pacing()
 
 
 func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:
@@ -80,6 +79,9 @@ func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:
 		Config.WindowMode.EXCLUSIVE_FULLSCREEN:
 			display_server_window_mode = DisplayServer.WindowMode.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 	DisplayServer.window_set_mode(display_server_window_mode)
+	# Fullscreen changes can recreate the presentation surface. Apply the
+	# requested mode afterward, not just to the previous window's swapchain.
+	Config.apply_frame_pacing.call_deferred()
 
 
 func _on_anti_aliasing_value_changed(anti_aliasing_mode: Viewport.MSAA) -> void:

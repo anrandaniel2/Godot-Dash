@@ -45,8 +45,8 @@ jobs:
       - name: Install matching Windows editor and templates
         run: python tools/windows_ci.py install
 
-      - name: Check index parity and benchmark the rejected candidate
-        run: python tools/windows_ci.py benchmark
+      - name: Test frame policy, profiling ownership and selection parity
+        run: python tools/windows_ci.py safety
 
       - name: Checkout pinned godot-cpp
         uses: actions/checkout@v4
