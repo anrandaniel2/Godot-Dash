@@ -38,11 +38,12 @@ def run(args: list[str], name: str, timeout: int = 600, allow_failure: bool = Fa
     return text
 
 
-def check_log(text: str, stage: str = "runtime") -> None:
+def check_log(text: str, stage: str = "runtime", include_runtime: bool = True) -> None:
     lines = text.splitlines()
     contexts = []
+    markers = ("Parse Error", "Failed to load script", "SCRIPT ERROR") if include_runtime else ("Parse Error", "Failed to load script")
     for index, line in enumerate(lines):
-        if any(marker in line for marker in ("Parse Error", "Failed to load script", "SCRIPT ERROR")):
+        if any(marker in line for marker in markers):
             contexts.extend(lines[max(0, index - 1):index + 9])
     if contexts:
         excerpt = "\n".join(contexts[:70])[:14000]
@@ -124,8 +125,7 @@ def export() -> None:
     run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-warm", allow_failure=True)
     imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-checked")
     # Match web CI: editor-only plugin runtime messages are not game failures.
-    if "Parse Error" in imported or "Failed to load script" in imported:
-        raise RuntimeError("Project scripts did not compile")
+    check_log(imported, "import-checked", include_runtime=False)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "godot-dash.exe"], "export", timeout=1200)
