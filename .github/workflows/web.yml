@@ -157,7 +157,7 @@ jobs:
         id: cache-webgpu-template
         with:
           path: hogdot-templates/web_dlink_release.zip
-          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-wasm64-maxmem16g-ptrrt2
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-wasm64-maxmem16g-ptrrt3
 
       - name: Build unstripped WebGPU template
         if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
@@ -221,7 +221,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: hogdot-templates/web_dlink_release.zip
-          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-wasm64-maxmem16g-ptrrt2
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-wasm64-maxmem16g-ptrrt3
 
       - name: Install hogdot editor and point the Web preset at it
         run: |

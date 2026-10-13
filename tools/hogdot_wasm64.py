@@ -182,6 +182,32 @@ RUNTIME_PATCHES = [
 ]
 
 
+# EM_ASM_PTR bodies return pointers. Under memory64 the JS side must return a
+# BigInt, so plain Number results are converted (0 is 0n).
+EM_ASM_PATCHES = [
+    ("drivers/webgpu/rendering_context_driver_webgpu.cpp",
+     "if (!d) {\n\t\t\treturn 0;\n\t\t}\n\t\treturn WebGPU[\"importJsDevice\"](d);",
+     "if (!d) {\n\t\t\treturn 0n;\n\t\t}\n\t\treturn BigInt(WebGPU[\"importJsDevice\"](d));"),
+    ("drivers/webgpu/rendering_context_driver_webgpu.cpp",
+     "if (!info) {\n\t\t\treturn 0;\n\t\t}",
+     "if (!info) {\n\t\t\treturn 0n;\n\t\t}"),
+    ("drivers/webgpu/rendering_context_driver_webgpu.cpp",
+     "return stringToNewUTF8(joined);",
+     "return BigInt(stringToNewUTF8(joined));"),
+]
+
+
+def patch_em_asm(root: pathlib.Path) -> None:
+    for name, old, new in EM_ASM_PATCHES:
+        path = root / name
+        text = path.read_text()
+        count = text.count(old)
+        if count != 1:
+            raise SystemExit(f"{path}: expected one match, found {count}: {old!r}")
+        path.write_text(text.replace(old, new))
+    print(f"patched {len(EM_ASM_PATCHES)} EM_ASM pointer returns")
+
+
 def patch_runtime(root: pathlib.Path) -> None:
     path = root / "platform/web/js/libs/library_godot_runtime.js"
     text = path.read_text()
@@ -204,6 +230,7 @@ def main() -> None:
     if not dry_run:
         patch_detect(root)
         patch_runtime(root)
+        patch_em_asm(root)
     changed = retype(root, dry_run)
     print(f"{'would retype' if dry_run else 'retyped'} {changed} JS signatures for wasm64 pointers")
     if changed == 0:
