@@ -176,6 +176,9 @@ RUNTIME_PATCHES = [
      "const c_ptr = GodotRuntime.malloc(size * 8);"),
     ("HEAP32[(c_ptr >> 2) + i] = GodotRuntime.allocString(p_strings[i]);",
      "setValue(c_ptr + i * 8, BigInt(GodotRuntime.allocString(p_strings[i])), '*');"),
+    # Function tables are 64-bit too: a function pointer is a BigInt index.
+    ("return wasmTable.get(ptr);",
+     "return wasmTable.get(BigInt(ptr));"),
 ]
 
 
