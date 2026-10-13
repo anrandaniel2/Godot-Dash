@@ -7,7 +7,7 @@
 | 0 | Windows Desktop | Windows | default template fields |
 | 1 | Linux/X11 | Linux | |
 | 2 | Android | Android | Gradle build, arm64-v8a only, native libs compressed |
-| 3 | Web | Web | WebGPU (Mobile renderer), threads, extensions, shader baker |
+| 3 | Web | Web | WebGPU (Mobile renderer) on a wasm64 threaded template, WebGL 2 fallback, extensions, shader baker |
 
 ### Web preset (key fields)
 
@@ -56,22 +56,33 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
 ## 2. Web build — how it actually works
 
 1. **Renderer**: WebGPU via the hogdot fork (a Godot 4.7.2 port of dwalter's GodotWebGPU
-   driver). `rendering_method.web = "mobile"`; if it were `gl_compatibility` the exporter would
-   emit a WebGL build, which is explicitly not the shipping target.
-2. **Templates**: the published hogdot web zips strip `Line2D`, physics shapes, MP3 and zip, so
-   **CI compiles an unstripped threaded dlink template** from the same `HOGDOT_COMMIT`:
+   driver). `rendering_method.web = "mobile"`. The template is also built with `opengl3=yes`, and
+   `misc/web/shell.html` starts the Compatibility (WebGL 2) renderer only when the browser cannot
+   create a WebGPU device. WebGPU is the target; WebGL is a fallback, and it is not the only web
+   path. The CI check refuses to publish an export whose `index.html` does not mention `webgpu`.
+2. **Templates and memory model**: the published hogdot web zips strip `Line2D`, physics shapes,
+   MP3 and zip, so **CI compiles an unstripped threaded dlink template** from the same
+   `HOGDOT_COMMIT` (`cg-v4.7.2-r19`), with emsdk `EM_VERSION` 6.0.8 to match the template.
+   The web build is **wasm64**, with a 16 GB maximum memory, so the level editor can go past the
+   4 GB wasm32 ceiling. Both the engine and the side module must use wasm64, or they will not load
+   together. The memory limits are set by the template link flags, not by `export_presets.cfg`.
 
-   ```bash
-   cd hogdot-src
-   scons platform=web target=template_release arch=wasm32 \
-     webgpu=yes vulkan=no opengl3=no \
-     production=yes optimize=speed threads=yes dlink_enabled=yes \
-     initial_memory=256 -j"$(nproc)"
-   ```
+   Before the build, CI patches the sources:
+   - `tools/godot_cpp_wasm64.py` patches the pinned godot-cpp (`6cceaf6`, wasm32 only on the web),
+     so `native/` can build the wasm64 `gdash_native` library (§5).
+   - `tools/hogdot_wasm64.py` patches the hogdot source. It replaces the hard-coded
+     `-sWASM_MEM_MAX=2048MB` in `platform/web/detect.py` (applied after `-sMAXIMUM_MEMORY`, which
+     would otherwise be overridden), and it retypes the JavaScript `__sig` pointer letters from `i`
+     to `p`. Without that, pointers reach the JS libraries as BigInts. The script rewrites 71
+     signatures at the pinned commit. It refuses to run if a source anchor does not match.
 
-   then asserts the zip's wasm still contains `Line2D`. `tools/pin_webgpu_templates.py` writes
-   the built zip paths into the Web preset's `custom_template/debug|release` fields (pointing
-   debug at the same zip so a missing debug template cannot fail the preset).
+   The engine is then built with `scons platform=web target=template_release arch=wasm64`,
+   `webgpu=yes vulkan=no opengl3=yes`, `production=yes optimize=speed threads=yes dlink_enabled=yes`,
+   `initial_memory=256`, `ccflags="-fwasm-exceptions"` and
+   `linkflags="-sMAXIMUM_MEMORY=16GB -fwasm-exceptions"`. CI then asserts the zip's wasm still
+   contains `Line2D`. `tools/pin_webgpu_templates.py` writes the built zip paths into the Web
+   preset's `custom_template/debug|release` fields (pointing debug at the same zip so a missing
+   debug template cannot fail the preset).
 3. **Cross-origin isolation**: threaded builds need `SharedArrayBuffer`, hence COOP/COEP.
    `tools/serve_web.py` (default port 8060, host `0.0.0.0`) serves
    `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`,
@@ -87,12 +98,17 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
    `WEB_RELAY_HINT`) instead of throwing console CORS errors.
    `tools/web_relay_worker_selftest.mjs` (Node, no deps) tests the Worker logic in CI.
 5. **Export verification (CI)**: the export must contain `index.html`, `index.js`, `index.pck`,
-   `index.wasm`, `index.side.wasm`, and `libgdash_native.web.template_release.wasm32.wasm`;
-   `index.html` must mention `webgpu`; `index.side.wasm` must contain `Line2D`,
-   `CircleShape2D` and `AudioStreamMP3`. A multi-thread export also emits worker/service-worker
-   files.
-6. **Browser support**: WebGPU browser (Chrome 113+, Edge, Firefox with WebGPU, Safari 18+),
-   HTTPS (or localhost). It draws at browser resolution.
+   `index.wasm`, `index.side.wasm`, and `libgdash_native.web.template_release.wasm64.wasm`.
+   `tools/check_wasm64.py` reads the memory import of each wasm file and requires a memory64 type
+   with a maximum above 4 GiB. `tools/check_wasm_engine.mjs` asks Node 24's `WebAssembly.validate`
+   whether each file loads. A wasm32 export fails these checks instead of shipping. `index.html` must mention `webgpu`; `index.side.wasm`
+   must contain `Line2D`, `CircleShape2D` and `AudioStreamMP3`. A multi-thread export also emits
+   worker/service-worker files.
+6. **Browser support**: wasm64 needs memory64 in the browser. Safari cannot load the build at all
+   (the `web.yml` header says "Browsers without memory64 (Safari at the time of writing) cannot load
+   it"), so Safari has no web support. Browsers with memory64 run the WebGPU renderer, and browsers
+   without WebGPU fall back to the WebGL 2 renderer in the same build. The site needs HTTPS (or
+   localhost). It draws at browser resolution.
 7. **Web-specific runtime behaviour**:
    - `WorldEnvironment` disables `Environment.glow` on web; `WebSoftEffects` implements a soft
      bloom with `WebGlowExtract`/`WebGlowOverlay` shaders. Menu blur is the same
@@ -175,9 +191,11 @@ Order of significance:
 ### `.github/workflows/web.yml` — "web-export"
 
 1. Check the CORS relay Worker (`web_relay_worker_selftest.mjs`).
-2. Install scons + Emscripten; build `gdash_native` for wasm32 (threads).
-3. Download/cache the hogdot editor; build/caches the **unstripped threaded WebGPU template**;
-   assert `Line2D` is present in the wasm.
+2. Install scons + Emscripten 6.0.8; patch the pinned godot-cpp for wasm64
+   (`tools/godot_cpp_wasm64.py`); build `gdash_native` for wasm64 (threads), release and debug.
+3. Download/cache the hogdot editor; patch the hogdot source (`tools/hogdot_wasm64.py`); build/cache
+   the **unstripped threaded WebGPU template** (wasm64, 16 GB maximum memory); assert `Line2D` is
+   present in the wasm.
 4. Install the hogdot editor + `tint_convert_cli` (shader baker needs it) and system GL/Vulkan
    libraries (lavapipe).
 5. `pin_webgpu_templates.py` → import project (two passes: warm cache, then checked) → export Web

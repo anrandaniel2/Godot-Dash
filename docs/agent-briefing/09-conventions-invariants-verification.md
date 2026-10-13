@@ -154,9 +154,12 @@ xvfb-run -a godot --path . --rendering-method gl_compatibility --audio-driver Du
 
 - Android: Gradle export via the CI steps (or `godot --headless --export-release "Android"` with
   the SDK/JDK/NDK installed), then inspect the APK for arm64 + `gdash_native`.
-- Web: hogdot editor + unstripped template + `tools/pin_webgpu_templates.py`, then
-  `godot --headless --rendering-method mobile --export-release "Web" export/Web/index.html` and
-  check for `webgpu` in `index.html` and `Line2D`/`CircleShape2D`/`AudioStreamMP3` in
+- Web (wasm64): patch godot-cpp with `tools/godot_cpp_wasm64.py` and hogdot with
+  `tools/hogdot_wasm64.py`, build the wasm64 unstripped template and the wasm64 `gdash_native`
+  library, then `tools/pin_webgpu_templates.py`, then
+  `godot --headless --rendering-method mobile --export-release "Web" export/Web/index.html`. Check
+  that `tools/check_wasm64.py` passes on `index.wasm`, `index.side.wasm` and the native library,
+  check for `webgpu` in `index.html`, and check for `Line2D`/`CircleShape2D`/`AudioStreamMP3` in
   `index.side.wasm`.
 
 ### Step 6 — manual (user-side, documented in the plan doc)

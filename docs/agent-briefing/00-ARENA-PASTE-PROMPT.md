@@ -50,27 +50,43 @@ group and follow-model problems. Camera **trigger** parity is still in scope: ve
 levels and never on OuterSpace. Do not let that red herring send you into `Camera*Component.gd`
 for symptom D.
 
-## First, load the briefing
+## Step 1 — read the briefing before anything else (mandatory)
 
-Read the files that match the task before answering anything substantive:
+Do not answer, plan or edit until you have opened these files in `docs/agent-briefing/` and read
+them in full with the file-read tool. Do not work from memory or from search snippets.
 
-- **`docs/agent-briefing/11-accuracy-parity-campaign.md` — read this first.** It carries the
-  mission, the OuterSpace facts, the parser/trigger/camera failure map, and the decompiled-GD
-  citations.
-- `docs/agent-briefing/05-gd-pipeline-and-tools.md` — `.gmd` import/export, level strings,
-  object tables, atlas + scene generation.
-- `docs/agent-briefing/03-gameplay-and-physics.md` — interactables, components, colour channels.
-- `docs/agent-briefing/06-native-extension.md` — the C++ classes and the fallback contract.
-- `docs/agent-briefing/09-conventions-invariants-verification.md` — invariants and CI gates.
-- `docs/agent-briefing/10-task-playbooks-and-reference.md` — recipes, cheat-sheet numbers.
-- `GD_UNIFICATION_PLAN.md` — the plan of record for the object/scene migration.
+1. `README.md` — the index, and the rule that the checkout wins over the pack.
+2. `11-accuracy-parity-campaign.md` — the mission, the OuterSpace facts, the failure maps and the
+   decompiled-GD citations.
+3. `01-repo-and-constraints.md` — toolchain, build commands and hard constraints.
+4. `09-conventions-invariants-verification.md` — invariants and the CI gates you must keep green.
 
-If a pack claim conflicts with the checkout, **the checkout wins**; say so and fix the pack.
+Then read the subsystem files your task touches:
+
+| If the task touches | Read |
+| --- | --- |
+| `.gmd` import/export, level strings, object tables, atlas and scene generation | `05`, `08` |
+| triggers, colour channels, interactables, components, physics | `03`, `06` |
+| editor, selection, palette, inspector | `04` |
+| the C++ native library, the GDExtension fallback contract | `06` |
+| web export, memory, Android, CI workflows | `07` |
+| runtime boot, streaming, batching, culling, audio | `02` |
+| recipes, glossary, cheat-sheet numbers | `10` |
+
+If the task touches the object/scene migration, also read `GD_UNIFICATION_PLAN.md`.
+
+**In your first reply, list every briefing file you read** and give one fact from each that you
+will rely on, citing the file and section (for example `07 §2`). Do not cite a file you have not
+read. If a file is missing, or a pack claim conflicts with the checkout, say so: **the checkout
+wins**, and fix the pack in the same change.
 
 ## Ground truth you must not get wrong
 
 - **Godot 4.7 exactly** (CI pins 4.7.2). GDScript only in `src/`; C++ only in `native/`.
-- Web export is **WebGPU + threads** (`rendering_method.web = mobile`) — never propose WebGL.
+- Web export is **wasm64 + threads + WebGPU** (`rendering_method.web = mobile`; 16 GB memory
+  ceiling). The template also carries a WebGL 2 (Compatibility) fallback that the shell starts only
+  when WebGPU is unavailable. Do not make WebGL the only web path, and do not revert to wasm32 or
+  drop wasm64: both are user decisions (`07 §2`, `01 §6`).
 - Physics layers 1–12 are a fixed contract; player mask **122**; slopes layer **66**; hazards
   **2048**; 1 GD cell = 30 GD units = **128 px**; GD's own sim steps at **240 Hz**.
 - **`Config.use_native_core` defaults to `true`** (`src/autoloads/Config.gd`). With the library

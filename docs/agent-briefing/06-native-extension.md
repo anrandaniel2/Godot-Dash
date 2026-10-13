@@ -16,8 +16,10 @@ GDScript**; native is an accelerator, never a requirement.
 2. The switch is `Config.use_native_core`.
 3. All access goes through `src/static/NativeCore.gd`, which wraps each native call with a
    GDScript fallback and logs a diagnostic once when the library is missing.
-4. Web has no GDExtension on desktop browsers but the wasm library is built and **bundled into
-   the web export** (`libgdash_native.web.template_release.wasm32.wasm` is verified present).
+4. Web has no GDExtension on desktop browsers, but the wasm library is built and **bundled into
+   the web export**. The web library is **wasm64** (`libgdash_native.web.template_release.wasm64.wasm`,
+   and the matching `.template_debug.wasm64.wasm`); CI checks that the release file is present. A
+   wasm32 library cannot load into the wasm64 engine template.
    Android bundles the arm64 `.so`; desktop/source builds usually run without it.
 5. Every native-only behaviour needs a GDScript equivalent that stays correct.
 
@@ -104,18 +106,25 @@ implementations** (`EasingComponent`, `GMDConverter`, `Player`, colour channels)
 
 ```bash
 cd native
-scons platform=<linux|android|web> target=<template_debug|template_release> arch=<x86_64|arm64|wasm32> \
+scons platform=<linux|android|web> target=<template_debug|template_release> arch=<x86_64|arm64|wasm64> \
       api_version=4.7 [debug_symbols=yes] [lto=none] [threads=yes]
 ```
 
-- `bin/gdash_native.gdextension` (committed) declares the library paths:
-  `linux.x86_64.single.debug`, `android.arm64.single.debug|release`, and a full matrix of
-  `web.wasm32[.threads][.debug|.release]` entries. `compatibility_minimum = "4.1"`,
+Web builds need a patched godot-cpp. The pinned commit (`6cceaf6`) accepts only wasm32 on the web,
+so CI runs `python3 tools/godot_cpp_wasm64.py native/godot-cpp` before the web library is built.
+The script makes three exact edits and stops if an anchor is missing, so a godot-cpp bump fails
+loudly rather than building wasm32. Do not commit the patched clone.
+
+- `bin/gdash_native.gdextension` (tracked, although `native/bin/` is gitignored) declares the library paths: `linux.x86_64.single.debug`, `android.arm64.single.debug|release`, and
+  a matrix of `web.wasm32[.threads][.debug|.release]` and `web.wasm64[...]` entries. Every web entry
+  points at the wasm64 files, so the wasm32 keys are aliases, not a separate build.
+  `compatibility_minimum = "4.1"`,
   `entry_symbol = "gdash_native_library_init"`, `reloadable = false`.
 - `build_profile.json` trims godot-cpp bindings (CI asserts ~29 generated class files and that
   `fast_noise_lite.cpp`/`camera2d.cpp` exist).
 - CI compiles a Linux debug lib (symbols kept for addr2line) before the in-engine selftests,
-  then the Android arm64 release lib for the APK, and the web wasm lib in the web workflow.
+  then the Android arm64 release lib for the APK, and the web wasm64 lib (release and debug) in the
+  web workflow.
 - `native/godot-cpp/` is cloned at the pinned commit; `native/bin/` is gitignored
   (`.gitignore`: `native/godot-cpp/`, `native/bin/`, `native/.sconsign.dblite`, `native/.scons-*`,
   `*.os`).

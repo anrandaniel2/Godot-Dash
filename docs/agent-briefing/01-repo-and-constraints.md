@@ -135,8 +135,10 @@ cd native
 scons platform=linux   target=template_debug   arch=x86_64 api_version=4.7 debug_symbols=yes lto=none -j2
 # Android release (arm64 only), NDK 28.1.13356709:
 scons platform=android target=template_release arch=arm64  api_version=4.7 -j2
-# Web (wasm32, threads):
-scons platform=web     target=template_release arch=wasm32 api_version=4.7 threads=yes -j4
+# Web (wasm64, threads). godot-cpp must be patched first: tools/godot_cpp_wasm64.py native/godot-cpp
+scons platform=web     target=template_release arch=wasm64 threads=yes api_version=4.7 debug_symbols=no -j2
+# (CI also builds template_debug with debug_symbols=yes; the web lib must be wasm64 or the engine
+#  cannot load it.)
 ```
 
 CI asserts the build profile was honoured: **~29 generated godot-cpp class files** (fails at
@@ -155,8 +157,12 @@ Node (no deps) for `web_relay_worker_selftest.mjs`.
 2. **GDScript-only game code.** No new native-only features: every native path has a GDScript
    fallback, and native classes are reached only via `ClassDB` string lookups
    (`src/static/NativeCore.gd` is the contract; `GameScene._probe_native_core()` is the probe).
-3. **Web stays WebGPU.** `rendering_method.web = "mobile"`; the web export needs an unstripped
-   threaded dlink template, COOP/COEP headers and the CORS relay. Never propose WebGL.
+3. **Web is wasm64 with WebGPU first.** The web export is 64-bit (16 GB memory ceiling), with
+   `rendering_method.web = "mobile"`, threads, an unstripped threaded dlink template, COOP/COEP
+   headers and the CORS relay. WebGPU is the primary renderer. The shell also starts a WebGL 2
+   (Compatibility) renderer when WebGPU is unavailable, so WebGL is a fallback, not the target. Do
+   not make the web build WebGL-only, and do not revert to wasm32. Both were decided by the user;
+   changing either needs their approval (`07 §2`).
 4. **Android stays safe.** arm64-v8a, Gradle, `largeHeap`, `thread_model=0` (Safe), paced level
    open (`Config.paced_level_open`), `max_physics_steps_per_frame=12`.
 5. **Data contracts** (§05/§08): `.gmd`/`.gmd2`, internal `.bin` gzip level, `.gdr` replays,

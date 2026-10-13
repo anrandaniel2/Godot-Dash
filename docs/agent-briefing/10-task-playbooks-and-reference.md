@@ -126,7 +126,7 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
 | GD defaults | `OBJ_CHANNEL=1004`, `DEFAULT_DETAIL_CHANNEL=1` |
 | Editor tree | `MAX_ITEMS_PER_LAYER=1000`, throttle 0.2 s |
 | Android | NDK 28.1.13356709, arm64 only, largeHeap, JDK 17 |
-| Web | hogdot 4.7.2-r19, emscripten pool 8, godot pool 4, initial memory 256 MB |
+| Web | hogdot 4.7.2-r19, emscripten 6.0.8, wasm64 (16 GB maximum memory), emscripten pool 8, godot pool 4, initial memory 256 MB |
 | Godot | 4.7 / CI 4.7.2 |
 | Godot-cpp pin | `6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918` |
 
@@ -150,6 +150,7 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
 | Editor | `src/EditorScene.gd`, `src/autoloads/Editor.gd`, `src/editor/**`, `src/gui/properties/**` |
 | Settings | `src/autoloads/Config.gd`, `src/SettingsMenu.gd` |
 | Web | `tools/serve_web.py`, `tools/web_relay_worker.js`, `tools/pin_webgpu_templates.py`, `src/WebSoftEffects.gd` |
+| Web wasm64 | `tools/godot_cpp_wasm64.py` (patches godot-cpp), `tools/hogdot_wasm64.py` (patches hogdot), `tools/check_wasm64.py`, `tools/check_wasm_engine.mjs` |
 | CI | `.github/workflows/main.yml`, `.github/workflows/web.yml` |
 | Plan of record | `GD_UNIFICATION_PLAN.md` |
 
