@@ -38,10 +38,17 @@ def run(args: list[str], name: str, timeout: int = 600, allow_failure: bool = Fa
     return text
 
 
-def check_log(text: str) -> None:
-    for marker in ("Parse Error", "Failed to load script", "SCRIPT ERROR"):
-        if marker in text:
-            raise RuntimeError(f"Unexpected {marker} in runtime/export log")
+def check_log(text: str, stage: str = "runtime") -> None:
+    lines = text.splitlines()
+    contexts = []
+    for index, line in enumerate(lines):
+        if any(marker in line for marker in ("Parse Error", "Failed to load script", "SCRIPT ERROR")):
+            contexts.extend(lines[max(0, index - 1):index + 9])
+    if contexts:
+        excerpt = "\n".join(contexts[:70])[:14000]
+        escaped = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title={stage} script errors::{escaped}", flush=True)
+        raise RuntimeError(f"Script errors in {stage}; see the annotated stack traces")
 
 
 def download(url: str, path: pathlib.Path) -> None:
@@ -78,7 +85,7 @@ def benchmark() -> None:
     for algorithm in ("parity", "old", "new"):
         text = run([EDITOR, "--headless", "--path", project, "--", f"--algorithm={algorithm}"],
                    f"benchmark-{algorithm}", timeout=300)
-        check_log(text)
+        check_log(text, f"benchmark-{algorithm}")
         expected = "CHANNEL_INDEX_PARITY result=PASS" if algorithm == "parity" else f"CHANNEL_INDEX_BENCH algorithm={algorithm}"
         if expected not in text:
             raise RuntimeError(f"Missing benchmark marker: {expected}")
@@ -113,7 +120,7 @@ def export() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "godot-dash.exe"], "export", timeout=1200)
-    check_log(text)
+    check_log(text, "export")
     check_pe(OUTPUT / "godot-dash.exe")
     if not (OUTPUT / "godot-dash.pck").is_file():
         raise RuntimeError("Exported PCK is missing")
@@ -123,7 +130,7 @@ def export() -> None:
     check_pe(libraries[0])
     smoke = run([OUTPUT / "godot-dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
                 "exported-native-smoke", timeout=120)
-    check_log(smoke)
+    check_log(smoke, "exported-native-smoke")
     if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
         raise RuntimeError("Exported native smoke did not pass")
     for name in ("Profile-Windows.ps1", "README-Windows.txt"):
