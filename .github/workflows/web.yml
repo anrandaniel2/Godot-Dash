@@ -178,6 +178,7 @@ jobs:
           git clone --filter=blob:none --no-checkout https://github.com/hogdanish/hogdot.git "$HOGDOT_SRC"
           git -C "$HOGDOT_SRC" fetch --depth 1 origin "$HOGDOT_COMMIT"
           git -C "$HOGDOT_SRC" checkout FETCH_HEAD
+          python3 "$GITHUB_WORKSPACE/tools/hogdot_wasm64.py" "$HOGDOT_SRC"
           cd "$HOGDOT_SRC"
           # No build_profile. The published profile disables Line2D, physics
           # shapes, MP3, zip, and most 2D nodes. Threads and GDExtension stay on.
@@ -214,6 +215,13 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
           cd "$GITHUB_WORKSPACE"
           rm -rf "$HOGDOT_SRC"
+
+      - name: Save unstripped WebGPU template
+        if: steps.cache-webgpu-template.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: hogdot-templates/web_dlink_release.zip
+          key: hogdot-unstripped-${{ env.HOGDOT_COMMIT }}-webgpu-gles3-threads-dlink-release-wasm64-maxmem16g
 
       - name: Install hogdot editor and point the Web preset at it
         run: |
