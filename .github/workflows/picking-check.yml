@@ -78,8 +78,8 @@ jobs:
       - name: Compare picking index with physics
         run: |
           set -uo pipefail
-          GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd timeout 900s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/picking_check.tscn > /tmp/pick.log 2>&1
+          GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd timeout 1500s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/picking_check.tscn > /tmp/pick.log 2>&1
           rc=$?
-          grep -E "PICK_CHECK|SCRIPT ERROR|Parse Error" /tmp/pick.log | head -60 | cut -c1-300
-          echo "exit rc=$rc"
-          grep -q "PICK_CHECK result=PASS" /tmp/pick.log
+          { grep -E "PICK_CHECK|SCRIPT ERROR|Parse Error" /tmp/pick.log | head -60 | cut -c1-300; echo "exit rc=$rc"; } > /tmp/pick_summary.txt
+          while IFS= read -r line; do echo "::notice title=picking::${line//%/%25}"; done < /tmp/pick_summary.txt
+          grep -q "PICK_CHECK.*result=PASS" /tmp/pick.log

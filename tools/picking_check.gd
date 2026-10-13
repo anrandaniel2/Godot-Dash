@@ -12,7 +12,15 @@ const _SEED := 20261013
 const _SCAN_MASK := 264
 
 
+var _start_ms := 0
+
+
+func _log(message: String) -> void:
+	print("PICK_CHECK +%.1fs %s" % [(Time.get_ticks_msec() - _start_ms) / 1000.0, message])
+
+
 func _ready() -> void:
+	_start_ms = Time.get_ticks_msec()
 	var path := OS.get_environment("GDASH_MEM_LEVEL")
 	var document: GMD.Document = GMD.read_any_file(path)
 	if document == null or document.level_string.is_empty():
@@ -23,6 +31,7 @@ func _ready() -> void:
 	document = null
 	LevelOperationsHandler.write_level_and_meta(_SAVE_PATH, data)
 	var loaded := LevelOperationsHandler.load_level_data_from_path(_SAVE_PATH)
+	_log("level loaded")
 	Editor.level_data_snapshot = loaded
 	var editor_scene: Node = (load("res://scenes/EditorScene.tscn") as PackedScene).instantiate()
 	add_child(editor_scene)
@@ -30,6 +39,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 	await get_tree().physics_frame
 	await get_tree().physics_frame
+	_log("editor scene ready")
 	_check(editor_scene)
 	get_tree().quit(0)
 
@@ -50,7 +60,7 @@ func _check(editor_scene: Node) -> void:
 				selectors[node.get_instance_id()] = selector
 				centres.append(node.global_position)
 		stack.append_array(node.get_children())
-	print("PICK_CHECK objects=%d entries=%d" % [selectors.size(), picker.size()])
+	_log("objects=%d entries=%d" % [selectors.size(), picker.size()])
 	if centres.is_empty():
 		print("PICK_CHECK error: no selection boxes")
 		return
@@ -82,9 +92,9 @@ func _check(editor_scene: Node) -> void:
 			rect_mismatch += 1
 			if rect_mismatch <= 5:
 				print("PICK_CHECK rect mismatch at %s physics=%s index=%s" % [rect, physics, index])
-	print("PICK_CHECK points=%d hits=%d mismatches=%d" % [_POINT_QUERIES, point_hits, point_mismatch])
-	print("PICK_CHECK rects=%d hits=%d mismatches=%d" % [_RECT_QUERIES, rect_hits, rect_mismatch])
-	print("PICK_CHECK result=%s" % ("PASS" if point_mismatch == 0 and rect_mismatch == 0 else "FAIL"))
+	_log("points=%d hits=%d mismatches=%d" % [_POINT_QUERIES, point_hits, point_mismatch])
+	_log("rects=%d hits=%d mismatches=%d" % [_RECT_QUERIES, rect_hits, rect_mismatch])
+	_log("result=%s" % ("PASS" if point_mismatch == 0 and rect_mismatch == 0 else "FAIL"))
 
 
 func _circle_query(centre: Vector2) -> PhysicsShapeQueryParameters2D:
