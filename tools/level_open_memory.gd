@@ -39,7 +39,56 @@ func _ready() -> void:
 	for frame in 60:
 		await get_tree().process_frame
 	_report(mode, "60 frames later")
+	await _census(mode, loaded)
 	get_tree().quit(0)
+
+
+## Attribution: node counts, decoration placements in the data, and the
+## static memory each group releases when freed (a measurement only).
+func _census(mode: String, data: Dictionary) -> void:
+	var counts := { }
+	var objects: Array[Node] = []
+	var selectors: Array[Node] = []
+	var stack: Array[Node] = [get_tree().root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		var cls := node.get_class()
+		counts[cls] = counts.get(cls, 0) + 1
+		if node is GDObject:
+			objects.append(node)
+		if node.name == &"EditorSelectionCollider":
+			selectors.append(node)
+		stack.append_array(node.get_children())
+	var decorations := 0
+	var placements := 0
+	for layer in data.get("layers", []):
+		for object in layer.get("objects", []):
+			placements += 1
+			if object.get("decoration", false):
+				decorations += 1
+	var top: Array = []
+	for cls: String in counts:
+		top.append([counts[cls], cls])
+	top.sort_custom(func(a, b): return a[0] > b[0])
+	var names := []
+	for entry in top.slice(0, 10):
+		names.append("%s=%d" % [entry[1], entry[0]])
+	print("LEVEL_OPEN census mode=%s placements=%d decorations=%d GDObject=%d selectors=%d nodes=%s" % [
+		mode, placements, decorations, objects.size(), selectors.size(), " ".join(names)])
+	var before := OS.get_static_memory_usage()
+	for selector in selectors:
+		selector.queue_free()
+	for frame in 3:
+		await get_tree().process_frame
+	var after_selectors := OS.get_static_memory_usage()
+	print("LEVEL_OPEN census mode=%s freed_selectors=%.1f MB" % [mode, (before - after_selectors) / 1048576.0])
+	for object in objects:
+		object.queue_free()
+	for frame in 3:
+		await get_tree().process_frame
+	var after_objects := OS.get_static_memory_usage()
+	print("LEVEL_OPEN census mode=%s freed_gdobjects_after_selectors=%.1f MB static_now=%.1f MB" % [
+		mode, (after_selectors - after_objects) / 1048576.0, after_objects / 1048576.0])
 
 
 func _report(mode: String, stage: String) -> void:
