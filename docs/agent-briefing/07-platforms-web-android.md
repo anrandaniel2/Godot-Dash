@@ -62,7 +62,8 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
    path. The CI check refuses to publish an export whose `index.html` does not mention `webgpu`.
 2. **Templates and memory model**: the published hogdot web zips strip `Line2D`, physics shapes,
    MP3 and zip, so **CI compiles an unstripped threaded dlink template** from the same
-   `HOGDOT_COMMIT` (`cg-v4.7.2-r19`), with emsdk `EM_VERSION` 6.0.8 to match the template.
+   `HOGDOT_COMMIT` (`8927aa079d1d93ae1d5fc138c0148f648eee8fa3`, tag `cg-v4.7.2-r19`),
+   with emsdk `EM_VERSION` 6.0.8 to match the template.
    The web build is **wasm64**, with a 16 GB maximum memory, so the level editor can go past the
    4 GB wasm32 ceiling. Both the engine and the side module must use wasm64, or they will not load
    together. The memory limits are set by the template link flags, not by `export_presets.cfg`.
@@ -99,10 +100,12 @@ permissions/access_wifi_state=true      # online levels; no other permissions en
    `tools/web_relay_worker_selftest.mjs` (Node, no deps) tests the Worker logic in CI.
 5. **Export verification (CI)**: the export must contain `index.html`, `index.js`, `index.pck`,
    `index.wasm`, `index.side.wasm`, and `libgdash_native.web.template_release.wasm64.wasm`.
-   `tools/check_wasm64.py` reads the memory import of each wasm file and requires a memory64 type
-   with a maximum above 4 GiB. `tools/check_wasm_engine.mjs` asks Node 24's `WebAssembly.validate`
-   whether each file loads. A wasm32 export fails these checks instead of shipping. `index.html` must mention `webgpu`; `index.side.wasm`
-   must contain `Line2D`, `CircleShape2D` and `AudioStreamMP3`. A multi-thread export also emits
+   `tools/check_wasm64.py` checks each memory import for a memory64 type with a maximum
+   above 4 GiB; files without memory imports are accepted (it does not inspect defined memories).
+   `tools/check_wasm_engine.mjs` calls Node 24's `WebAssembly.validate`: this checks binary
+   validity, not instantiation, dynamic linking, JS pointer conversions, or browser startup.
+   A wasm32 memory import fails the architecture check. `index.html` must mention `webgpu`;
+   `index.side.wasm` must contain `Line2D`, `CircleShape2D` and `AudioStreamMP3`. A multi-thread export also emits
    worker/service-worker files.
 6. **Browser support**: wasm64 needs memory64 in the browser. Safari cannot load the build at all
    (the `web.yml` header says "Browsers without memory64 (Safari at the time of writing) cannot load
@@ -188,7 +191,7 @@ Order of significance:
 12. Export the Android release APK (Gradle), verify contents, upload artifact, update the rolling
     release.
 
-### `.github/workflows/web.yml` — "web-export"
+### `.github/workflows/web.yml` — "Build Web HTML5" (job `web-export`)
 
 1. Check the CORS relay Worker (`web_relay_worker_selftest.mjs`).
 2. Install scons + Emscripten 6.0.8; patch the pinned godot-cpp for wasm64
@@ -200,7 +203,8 @@ Order of significance:
    libraries (lavapipe).
 5. `pin_webgpu_templates.py` → import project (two passes: warm cache, then checked) → export Web
    (`--rendering-method mobile`) → verify artifacts (§2.5) → zip → upload artifact → refresh the
-   rolling `web-html5` release.
+   rolling `web-html5` release. Before packaging, a headless Chrome smoke step reports console
+   errors but has `continue-on-error: true`; green CI does not establish browser correctness.
 
 ### Local equivalents
 

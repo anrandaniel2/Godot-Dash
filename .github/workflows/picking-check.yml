@@ -1,6 +1,6 @@
 name: Picking check
 
-# Manual run. Compares the editor's decoration picking index with the physics
+# Manual or path-triggered run. Compares the decoration picking index with physics
 # overlaps on a real level (Milestone M1 of the batched-decoration plan).
 # Only the verification runs here; the editor does not switch picking yet.
 
@@ -75,11 +75,37 @@ jobs:
           set -euo pipefail
           python3 tools/fetch_transfer_levels.py "$LEVEL_URL" /tmp/bli
 
+      # A fresh checkout has no imported resources or global script class cache.
+      # Warm and check it before the scene probe, as the web workflow does.
+      - name: Import project resources
+        run: |
+          set -euo pipefail
+          timeout 300s "$GODOT_BIN" --headless --path . --editor --import > /tmp/pick_import_first.log 2>&1 || true
+          timeout 300s "$GODOT_BIN" --headless --path . --editor --import > /tmp/pick_import.log 2>&1
+          if grep -qE "Parse Error|Failed to load script" /tmp/pick_import.log; then
+            tail -n 100 /tmp/pick_import.log
+            exit 1
+          fi
+
       - name: Compare picking index with physics
         run: |
           set -uo pipefail
-          GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd timeout 1500s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/picking_check.tscn > /tmp/pick.log 2>&1
-          rc=$?
+          # Explicitly capture the exit code so failures/timeouts still produce
+          # diagnostics, regardless of the runner shell's errexit setting.
+          rc=0
+          GDASH_MEM_LEVEL=/tmp/bli/90475473.gmd timeout 1500s "$GODOT_BIN" --headless --path . --audio-driver Dummy res://tools/picking_check.tscn > /tmp/pick.log 2>&1 || rc=$?
           { grep -E "PICK_CHECK|SCRIPT ERROR|Parse Error" /tmp/pick.log | head -60 | cut -c1-300; echo "exit rc=$rc"; } > /tmp/pick_summary.txt
           while IFS= read -r line; do echo "::notice title=picking::${line//%/%25}"; done < /tmp/pick_summary.txt
-          grep -q "PICK_CHECK.*result=PASS" /tmp/pick.log
+          test "$rc" -eq 0 || exit 1
+          if grep -qE 'SCRIPT ERROR|Parse Error|Failed to load script|PICK_CHECK.*(error:|result=FAIL)' /tmp/pick.log; then
+            exit 1
+          fi
+          grep -q "PICK_CHECK.*saturated_queries=0 result=PASS" /tmp/pick.log
+
+      - name: Upload picking diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: picking-diagnostics-${{ github.sha }}
+          path: /tmp/pick*.log
+          if-no-files-found: warn

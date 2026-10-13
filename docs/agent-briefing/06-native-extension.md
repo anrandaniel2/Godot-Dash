@@ -5,8 +5,10 @@
 The README is explicit: the optional GDExtension carries the hot paths that per-object GDScript
 cannot — the packed trigger scheduler, the retained-RID decoration renderer with worker-thread
 culling, the node visibility index, incremental level construction, shared-physics shape
-commits and (since 1.10) colour-channel propagation. Everything it does **also exists in
-GDScript**; native is an accelerator, never a requirement.
+commits and (since 1.10) colour-channel propagation. The intended contract is native/GDScript
+parity, but the checkout does not currently guarantee a native-free gameplay build: `LevelBuildJob._init` directly instantiates
+`NativeLevelBuildJob` outside the editor, and `GDDecorationLoader` directly instantiates
+its packed builder/renderer. Do not mistake the contract below for verified fallback coverage.
 
 ## 2. The contract (memorize)
 
@@ -14,13 +16,14 @@ GDScript**; native is an accelerator, never a requirement.
    `ClassDB.instantiate()` string lookups. A static type reference stops a script from parsing
    on builds without the library (e.g. desktop/editor builds).
 2. The switch is `Config.use_native_core`.
-3. All access goes through `src/static/NativeCore.gd`, which wraps each native call with a
-   GDScript fallback and logs a diagnostic once when the library is missing.
-4. Web has no GDExtension on desktop browsers, but the wasm library is built and **bundled into
-   the web export**. The web library is **wasm64** (`libgdash_native.web.template_release.wasm64.wasm`,
+3. `src/static/NativeCore.gd` wraps helper calls and logs a diagnostic once when the library
+   is missing. Performance subsystems also instantiate native classes directly (see §1);
+   not all calls go through this helper and not every helper has a complete fallback.
+4. The web GDExtension is a wasm side module **bundled into the web export**. The web library
+   is **wasm64** (`libgdash_native.web.template_release.wasm64.wasm`,
    and the matching `.template_debug.wasm64.wasm`); CI checks that the release file is present. A
    wasm32 library cannot load into the wasm64 engine template.
-   Android bundles the arm64 `.so`; desktop/source builds usually run without it.
+   Android bundles the arm64 `.so`; native-free desktop/source builds have the gaps noted in §1.
 5. Every native-only behaviour needs a GDScript equivalent that stays correct.
 
 ### `NativeCore` API (with fallbacks)
@@ -115,7 +118,8 @@ so CI runs `python3 tools/godot_cpp_wasm64.py native/godot-cpp` before the web l
 The script makes three exact edits and stops if an anchor is missing, so a godot-cpp bump fails
 loudly rather than building wasm32. Do not commit the patched clone.
 
-- `bin/gdash_native.gdextension` (tracked, although `native/bin/` is gitignored) declares the library paths: `linux.x86_64.single.debug`, `android.arm64.single.debug|release`, and
+- `native/bin/gdash_native.gdextension` (tracked, although `native/bin/` is gitignored) declares
+  the library paths: `linux.x86_64.single.debug`, `android.arm64.single.debug|release`, and
   a matrix of `web.wasm32[.threads][.debug|.release]` and `web.wasm64[...]` entries. Every web entry
   points at the wasm64 files, so the wasm32 keys are aliases, not a separate build.
   `compatibility_minimum = "4.1"`,
@@ -170,7 +174,7 @@ capture_color_target → fade → apply_color → ColorChannelData.color changes
    `has_method` check.
 2. Keep constants in sync with GDScript (`CELLS_TO_PX`, physics, easing, colour).
 3. Do not add a native class whose absence changes behaviour — only performance.
-4. Update `bin/gdash_native.gdextension` only if the library layout changes (it is committed).
+4. Update `native/bin/gdash_native.gdextension` only if the library layout changes (it is committed).
 5. If you touch trigger parsing, extend `native/tests/test_trigger_effect_parse.cpp` and
    `native/tests/test_ui_trigger.cpp`.
 6. Remember the build profile: adding a class binding grows `gen/src/classes/*` (CI asserts the

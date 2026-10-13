@@ -160,7 +160,10 @@ xvfb-run -a godot --path . --rendering-method gl_compatibility --audio-driver Du
   `godot --headless --rendering-method mobile --export-release "Web" export/Web/index.html`. Check
   that `tools/check_wasm64.py` passes on `index.wasm`, `index.side.wasm` and the native library,
   check for `webgpu` in `index.html`, and check for `Line2D`/`CircleShape2D`/`AudioStreamMP3` in
-  `index.side.wasm`.
+  `index.side.wasm`. Also run `tools/check_wasm_engine.mjs` on all three wasm files under
+  Node 24; this validates binaries but does not instantiate them. The workflow additionally
+  checks the GLES3 driver strings and `godotPickRenderingDriver` fallback shell. Its Chrome
+  smoke step is report-only: read browser console output before claiming a runtime fix.
 
 ### Step 6 — manual (user-side, documented in the plan doc)
 
@@ -192,3 +195,22 @@ touchboxes and wall-kill behaviour, and check the editor selection.
   `_test_*` functions inside `tools/runtime_visual_smoke_test.gd`, checks in
   `tools/gdscript_probe.gd`, or a new `tools/*_selftest.gd/.tscn` pair with a
   `*_SELFTEST_SUMMARY … failed=0` gate wired into the workflow.
+
+## 6. Editor picking gate (M1)
+
+`tools/picking_check.tscn` compares hit **sets**, not selection order, for 3,000 cursor
+circles and 600 rectangles against a real level's enabled rectangular GDObject selectors.
+Run with `GDASH_MEM_LEVEL=/path/level.gmd` after importing project resources. The
+`picking-check.yml` workflow builds the Linux extension and imports before running this scene.
+It requires exit 0, no script errors, and `saturated_queries=0 result=PASS`; missing input,
+empty/no-hit coverage, mismatches and saturated physics queries fail closed. Full logs are
+uploaded even after failure. A passing sample is not exhaustive geometric or ordering proof.
+Do not change production picking order before the real-level check reports zero mismatches.
+
+The probe logs editor construction time, the existing 60 settling-frame intervals
+(mean/p95/max and elapsed sampling time; no additional frame wait), static memory and Linux RSS/HWM, and index-plus-oracle setup memory/time.
+Query timings include ID filtering/sorting but exclude physics query-shape allocation.
+These are diagnostic costs, not production editor overhead. Startup/headless intervals are
+not steady-state browser rendering benchmarks; static memory is not total wasm linear memory or GPU memory.
+Use the same level, machine, renderer and build for before/after comparisons. M2/M3 still need
+browser memory/frame-time measurements and save/undo/visual parity checks.

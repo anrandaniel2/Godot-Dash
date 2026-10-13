@@ -147,6 +147,7 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
 | Import/export | `src/static/GMD.gd`, `GMDConverter.gd`, `GMDObjects.gd`, `GMDDefaultChannels.gd` |
 | Replays | `src/static/GDRFormat.gd`, `src/static/MsgPack.gd`, `src/Replay.gd`, `src/ReplayPanelLoader.gd` |
 | Online levels | `src/RobTopLevels.gd`, `src/LevelPanelLoader.gd` |
+| Editor picking gate | `src/editor/DecorationPicker.gd`, `tools/picking_check.gd/.tscn`, `.github/workflows/picking-check.yml` (see `09 §6`) |
 | Editor | `src/EditorScene.gd`, `src/autoloads/Editor.gd`, `src/editor/**`, `src/gui/properties/**` |
 | Settings | `src/autoloads/Config.gd`, `src/SettingsMenu.gd` |
 | Web | `tools/serve_web.py`, `tools/web_relay_worker.js`, `tools/pin_webgpu_templates.py`, `src/WebSoftEffects.gd` |

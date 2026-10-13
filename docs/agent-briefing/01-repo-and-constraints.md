@@ -96,7 +96,7 @@ dist/linux/               desktop integration
 docs/agent-briefing/      this pack
 GD_UNIFICATION_PLAN.md    plan of record for the GD object pipeline migration
 reports/                  device investigation reports
-.github/                  issue templates + the two workflows
+.github/                  issue templates + build and diagnostic workflows
 ```
 
 ## 5. Toolchain
@@ -157,6 +157,8 @@ Node (no deps) for `web_relay_worker_selftest.mjs`.
 2. **GDScript-only game code.** No new native-only features: every native path has a GDScript
    fallback, and native classes are reached only via `ClassDB` string lookups
    (`src/static/NativeCore.gd` is the contract; `GameScene._probe_native_core()` is the probe).
+   This is a requirement, not proof of current coverage: see `06 §1–2` for the checkout
+   paths that currently instantiate native classes without availability checks.
 3. **Web is wasm64 with WebGPU first.** The web export is 64-bit (16 GB memory ceiling), with
    `rendering_method.web = "mobile"`, threads, an unstripped threaded dlink template, COOP/COEP
    headers and the CORS relay. WebGPU is the primary renderer. The shell also starts a WebGL 2
