@@ -1,32 +1,175 @@
 #!/usr/bin/env python3
-"""Raise the memory ceiling of the pinned hogdot engine template to 16 GB.
+"""Make the pinned hogdot engine template correct for wasm64.
 
-hogdot's platform/web/detect.py appends -sWASM_MEM_MAX=2048MB for threaded
-builds. That flag is applied after the command-line linkflags, so
--sMAXIMUM_MEMORY=16GB is silently overridden and the shared memory maximum
-stays at 2 GiB. This script replaces that exact line and refuses to run if the
-line is missing, so a hogdot bump fails loudly.
+Two patches, both refusing to run when the pinned source does not match:
+
+1. platform/web/detect.py: hogdot appends -sWASM_MEM_MAX=2048MB for threaded
+   builds. That flag is applied after the command-line linkflags, so
+   -sMAXIMUM_MEMORY=16GB is silently overridden. The line is replaced.
+
+2. platform/web/js/libs/*.js: under wasm64 every C pointer is a 64-bit value.
+   Emscripten hands a 64-bit argument to a JS library function as a BigInt
+   unless the function's __sig says 'p' (pointer), in which case it converts it
+   to a Number first. Godot's libraries were written for wasm32 and declare
+   every pointer as 'i', so the first pointer arithmetic in JS throws
+   "Cannot mix BigInt and other types". This rewrites each __sig so a letter is
+   'p' exactly where the C prototype in platform/web/*.h has a pointer, a
+   function pointer or an array. Argument counts must match the prototype, and
+   every JS function with a __sig must have a prototype, or the script stops.
 
 usage: hogdot_wasm64.py <path to hogdot checkout>
+       hogdot_wasm64.py --dry-run <path to hogdot checkout>   (report only)
 """
 
 import pathlib
+import re
 import sys
 
 OLD = 'env.Append(LINKFLAGS=["-sWASM_MEM_MAX=2048MB"])'
 NEW = 'env.Append(LINKFLAGS=["-sWASM_MEM_MAX=16GB"])'
 
+SIG_RE = re.compile(r"^(\s*)([A-Za-z_]\w*)__sig:\s*'([a-zA-Z]+)',?\s*$", re.MULTILINE)
+PROTO_RE = re.compile(r"^[ \t]*(?:extern[ \t]+)?([A-Za-z_][\w \t*]*?)[ \t*]*\b(\w+)\s*\(([^;{}]*?)\)\s*;", re.M)
 
-def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit(__doc__)
-    path = pathlib.Path(sys.argv[1]) / "platform/web/detect.py"
+
+def patch_detect(root: pathlib.Path) -> None:
+    path = root / "platform/web/detect.py"
     text = path.read_text()
     count = text.count(OLD)
     if count != 1:
         raise SystemExit(f"{path}: expected one match, found {count}: {OLD!r}")
     path.write_text(text.replace(OLD, NEW))
     print(f"patched {path}: WASM_MEM_MAX 2048MB -> 16GB")
+
+
+def split_params(text: str) -> list[str]:
+    """Splits a C parameter list on top-level commas (function pointers nest)."""
+    parts, depth, current = [], 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current.strip())
+    # Default arguments (int p = -1) do not change the type.
+    parts = [p.split("=")[0].strip() for p in parts]
+    return [p for p in parts if p not in ("", "void")]
+
+
+TYPEDEF_RE = re.compile(r"typedef\s+([^;]+?)\s+(\w+)\s*(\[[^\]]*\])?\s*;")
+
+
+def load_typedefs(root: pathlib.Path) -> dict[str, str]:
+    """typedef name -> the C type it declares; array typedefs become pointers."""
+    typedefs: dict[str, str] = {}
+    for header in sorted((root / "platform/web").rglob("*.h")):
+        for match in TYPEDEF_RE.finditer(re.sub(r"//[^\n]*", "", header.read_text(errors="replace"))):
+            base, name, array = match.group(1), match.group(2), match.group(3)
+            typedefs[name] = base + (" *" if array else "")
+    return typedefs
+
+
+def is_pointer(decl: str, typedefs: dict[str, str]) -> bool:
+    if "*" in decl or "[" in decl or "(*" in decl:
+        return True
+    words = re.findall(r"[A-Za-z_]\w*", decl)
+    return any(w in typedefs and is_pointer(typedefs[w], {}) for w in words)
+
+
+def letter(decl: str, typedefs: dict[str, str]) -> str:
+    """Emscripten signature letter for one C parameter or return type."""
+    if is_pointer(decl, typedefs):
+        return "p"
+    words = set(re.findall(r"[A-Za-z_]\w*", decl))
+    if "void" in words:
+        return "v"
+    if "double" in words:
+        return "d"
+    if "float" in words:
+        return "f"
+    if words & {"int64_t", "uint64_t", "long", "size_t"}:
+        return "j"
+    return "i"
+
+
+def load_prototypes(root: pathlib.Path) -> dict[str, tuple[str, list[str]] | None]:
+    """name -> (signature letters: return then parameters, from the C prototype)."""
+    typedefs = load_typedefs(root)
+    protos: dict[str, tuple[str, list[str]]] = {}
+    for source in sorted([*(root / "platform/web").rglob("*.h"), *(root / "platform/web").rglob("*.cpp")]):
+        text = source.read_text(errors="replace")
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        text = re.sub(r"//[^\n]*", "", text)
+        for match in PROTO_RE.finditer(text):
+            ret, name, params = match.group(1), match.group(2), match.group(3)
+            if set(re.findall(r"\w+", ret)) & {"return", "else", "case", "new", "delete", "throw", "goto"}:
+                continue  # a call statement, not a declaration
+            args = [letter(p, typedefs) for p in split_params(params)]
+            found = (letter(ret, typedefs), args)
+            if name in protos and protos[name] != found:
+                # Another declaration (for example a class method) shares the
+                # name. Only a name a JS library needs is an error.
+                protos[name] = None
+                continue
+            protos.setdefault(name, found)
+    return protos
+
+
+def retype(root: pathlib.Path, dry_run: bool) -> int:
+    protos = load_prototypes(root)
+    changed = 0
+    for js in sorted((root / "platform/web/js/libs").glob("*.js")):
+        text = js.read_text()
+        problems: list[str] = []
+
+        def rewrite(match: re.Match) -> str:
+            nonlocal changed
+            name, sig = match.group(2), match.group(3)
+            if protos.get(name) is None:
+                problems.append(f"{name}: no unambiguous prototype in platform/web")
+                return match.group(0)
+            ret, args = protos[name]
+            # Pointers always become 'p'. Every other letter keeps the JS
+            # signature's letter (so wasm32 behaviour is unchanged); only a
+            # position the JS signature lacks takes the C-derived letter.
+            old = sig + "?" * (len(args) + 1 - len(sig))
+            new = ("p" if ret == "p" else old[0]) + "".join(
+                "p" if c == "p" else (old[i + 1] if old[i + 1] != "?" else c)
+                for i, c in enumerate(args)
+            )
+            if new == sig:
+                return match.group(0)
+            print(f"  {js.name}: {name} '{sig}' -> '{new}'")
+            changed += 1
+            return match.group(0).replace(f"'{sig}'", f"'{new}'")
+
+        new_text = SIG_RE.sub(rewrite, text)
+        if problems:
+            raise SystemExit(f"{js}: " + "; ".join(problems))
+        if new_text != text and not dry_run:
+            js.write_text(new_text)
+    return changed
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    dry_run = "--dry-run" in args
+    args = [a for a in args if a != "--dry-run"]
+    if len(args) != 1:
+        raise SystemExit(__doc__)
+    root = pathlib.Path(args[0])
+    if not dry_run:
+        patch_detect(root)
+    changed = retype(root, dry_run)
+    print(f"{'would retype' if dry_run else 'retyped'} {changed} JS signatures for wasm64 pointers")
+    if changed == 0:
+        raise SystemExit("no JS signatures changed: the pinned hogdot source no longer matches")
 
 
 if __name__ == "__main__":
