@@ -4,7 +4,7 @@
 
 | # | Name | Platform | Notes |
 | --- | --- | --- | --- |
-| 0 | Windows Desktop | Windows | default template fields |
+| 0 | Windows Desktop | Windows | x86-64 Forward+, native release DLL staged by Windows CI |
 | 1 | Linux/X11 | Linux | |
 | 2 | Android | Android | Gradle build, arm64-v8a only, native libs compressed |
 | 3 | Web | Web | WebGPU (Mobile renderer) on a wasm64 threaded template, WebGL 2 fallback, extensions, shader baker |
@@ -153,6 +153,22 @@ Runtime constraints on Android that show up in code:
   killed by lmkd on large levels.
 
 ## 4. Desktop
+
+- Windows selects `renderer/rendering_method.windows="forward_plus"`; mobile/web keep Mobile.
+  The renderer change is user-requested, not a measured performance win.
+- `.github/workflows/windows.yml` (**Build Windows Forward+**) builds on Windows 2022 using
+  the pinned godot-cpp, `platform=windows target=template_release arch=x86_64 api_version=4.7
+  use_static_cpp=yes optimize=speed debug_symbols=no`. `tools/windows_ci.py` installs matching
+  editor/templates outside the project, benchmarks channel-index construction, imports,
+  exports, validates PE x86-64 artifacts and runs the exported EXE's headless native smoke.
+- `tools/pin_windows_extension.py` stages Windows debug/release mappings to the release DLL
+  in the build workspace; generated descriptor changes and binaries are not committed.
+- The ZIP is an Actions artifact and commit-specific `windows-<sha8>` prerelease. Extract all
+  files. Forward+ GPU startup, visual parity and real-level performance need device testing.
+- The opt-in `Profile-Windows.ps1` included in the ZIP records process RSS/private memory;
+  `src/debug/PerformanceCapture.gd` records frame intervals/CPU/GPU timings. Normal launches
+  disable its process callback. Debug flags never hide content or alter physics/settings.
+  CSV writing is outside the sample window; its diagnostic pause is logged as `finalize_ms`.
 
 - Linux/Windows presets; `dist/linux/install.sh` registers the MIME type
   (`x-godot-dash.xml` → `application-x-godot-dash-level`), a 512×512 icon, and a

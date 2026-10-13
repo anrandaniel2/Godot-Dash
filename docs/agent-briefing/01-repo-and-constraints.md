@@ -53,6 +53,7 @@ common/physics_interpolation         = true
 
 [rendering]
 renderer/rendering_method            = "mobile"
+renderer/rendering_method.windows    = "forward_plus" # user-requested Windows build
 renderer/rendering_method.mobile     = "mobile"
 renderer/rendering_method.web        = "mobile"   # required for the WebGPU export
 rendering_device/fallback_to_gl_compatibility = true

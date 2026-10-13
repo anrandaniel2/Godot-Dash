@@ -25,7 +25,9 @@ Head to the [releases](https://codeberg.org/godot-dash/godot-dash/releases/) sec
 
 - [`git-lfs`](https://github.com/git-lfs/git-lfs#installing)
 
-This project is written entirely in GDScript, so no additional toolchains or native extensions need to be compiled.
+Game/editor orchestration is GDScript. The current large-level runtime also needs the
+C++ GDExtension in `native/` (Python 3, SCons and a platform C++ compiler). CI builds
+and bundles it; native-free fallback coverage is incomplete (see `docs/agent-briefing/06-native-extension.md`).
 
 #### Godot Android export
 
@@ -71,13 +73,38 @@ trigger scheduler, the retained-RID decoration renderer with worker-thread culli
 index, incremental level construction, shared-physics shape commits — and, since 1.10, colour-channel
 propagation (`NativeColorChannelIndex`): one native call repaints every `HSVWatcher` of a channel, which
 colour-pulse-heavy levels previously paid as a per-object GDScript call with ~15 property accesses each
-animation frame. Source/editor builds without the extension keep the equivalent GDScript paths.
+animation frame. Native-free fallback coverage is incomplete; use the packaged native DLL
+when testing Windows large levels.
 
 Per-frame GDScript is kept lean as well: the 240 Hz player loop resolves its scene nodes through cached
 references instead of `$Path` lookups, and idle interactable components (easings, rebounds, music-pulse
 scales, toggle sprites) only process while a tween is live or the player is within interaction range.
 
 Steps 1–2 need Python 3 and Pillow (`pip install pillow`).
+
+## Windows Forward+ builds
+
+`.github/workflows/windows.yml` builds an x86-64 release executable with Godot 4.7.2
+and an optimized, statically linked C++ runtime DLL. `rendering_method.windows` selects
+Forward+; the mobile and wasm64/WebGPU web settings are unchanged. Forward+ is the
+requested Windows renderer, not an assertion that it is faster for this 2D game.
+
+Download the ZIP from **Build Windows Forward+** Actions artifacts or the matching
+`windows-<commit>` GitHub prerelease. Extract the **whole** ZIP, then run `godot-dash.exe`.
+It is unsigned and requires a compatible graphics driver. CI checks the actual exported
+EXE loads its native DLL headlessly; it cannot verify GPU performance or visual parity.
+
+The package includes `Profile-Windows.ps1` and `README-Windows.txt`. The opt-in capture
+records 1800 gameplay/editor frames after 120 warm-up frames, GPU/CPU timings and node
+counts; the PowerShell sidecar samples process memory once per second. No effects or
+content are hidden. Normal launches have no sampling callback. Profiling has overhead,
+and writing the CSV can pause the game once at the end; `sampler_mean_us` and
+`finalize_ms` are logged. Compare instrumented runs on the same level/machine/settings.
+
+CI also benchmarks old/new decoration channel-index construction in isolated processes
+and checks exact index parity. This removes repeated packed-array copy-on-write on that
+build path; it is a construction microbenchmark, not a whole-game FPS claim. Temporary
+mutable lists can increase construction peak memory; logs report that trade-off.
 
 ## Web (HTML5) builds
 

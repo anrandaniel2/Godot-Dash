@@ -1,0 +1,8 @@
+config_version=5
+
+[application]
+config/name="Channel index benchmark"
+run/main_scene="res://Benchmark.tscn"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"

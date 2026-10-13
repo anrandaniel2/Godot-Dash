@@ -22,6 +22,7 @@
 | 14 | `DiscordRPCManager` | `src/autoloads/DiscordRPCManager.gd` | Discord Rich Presence (`available` flag, presence updates) |
 | 15 | `SignalLens` | addon (uid `uid://85rkx60vm7a7`) | signal inspection tool |
 | 16 | `UpdateManager` | `uid://2ut2ck6qiter` | version check against Codeberg releases API; `Status.DISABLED` on web by design |
+| 17 | `PerformanceCapture` | `src/debug/PerformanceCapture.gd` | opt-in `--perf-capture` frame diagnostics; no process callback in normal launches |
 
 Rules: autoload **order** is load-bearing (`Config` before readers, `LevelManager` before
 anything that touches the live level). `Editor.in_editor` is derived from `Editor.root != null`.
@@ -107,7 +108,7 @@ while not job.finished:
 - Gameplay entries always instantiate real scenes (`Level.instantiate_object_from_data`).
 - `_finish()` calls `level.use_data(_data, true)` and connects
   `level.ready → setup_color_channel_watchers` one-shot.
-- If the native core is available, `NativeLevelBuildJob` takes over (same public API:
+- Outside the editor, the checkout directly instantiates `NativeLevelBuildJob` (same public API:
   `initialize` / `step` / `is_finished` / `get_level`).
 
 **Invariant:** publish `LevelManager.current_level` *before* stepping the job. Component setters

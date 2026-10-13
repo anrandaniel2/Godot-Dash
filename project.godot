@@ -86,6 +86,7 @@ DebugMenu="*uid://cggqb75a8w8r"
 DiscordRPCManager="*res://src/autoloads/DiscordRPCManager.gd"
 SignalLens="*uid://85rkx60vm7a7"
 UpdateManager="*uid://2ut2ck6qiter"
+PerformanceCapture="*res://src/debug/PerformanceCapture.gd"
 
 [display]
 
@@ -444,6 +445,8 @@ common/physics_interpolation=true
 ; the loading screen completes (confirmed on Samsung Xclipse 540).
 driver/threads/thread_model=0
 renderer/rendering_method="mobile"
+; Windows testing build explicitly uses Forward+; mobile/web remain Mobile.
+renderer/rendering_method.windows="forward_plus"
 renderer/rendering_method.mobile="mobile"
 renderer/rendering_method.web="mobile"
 rendering_device/fallback_to_gl_compatibility=true

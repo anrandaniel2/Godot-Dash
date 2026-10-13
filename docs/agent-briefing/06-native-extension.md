@@ -124,6 +124,9 @@ loudly rather than building wasm32. Do not commit the patched clone.
   points at the wasm64 files, so the wasm32 keys are aliases, not a separate build.
   `compatibility_minimum = "4.1"`,
   `entry_symbol = "gdash_native_library_init"`, `reloadable = false`.
+- Windows CI stages `windows.debug.x86_64` / `windows.release.x86_64` mappings with
+  `tools/pin_windows_extension.py`, both to the optimized release DLL. These workspace-only
+  descriptor edits are not committed; neither are the generated Windows binaries.
 - `build_profile.json` trims godot-cpp bindings (CI asserts ~29 generated class files and that
   `fast_noise_lite.cpp`/`camera2d.cpp` exist).
 - CI compiles a Linux debug lib (symbols kept for addr2line) before the in-engine selftests,
