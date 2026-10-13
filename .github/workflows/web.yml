@@ -207,6 +207,10 @@ jobs:
           fi
           mkdir -p "$GITHUB_WORKSPACE/hogdot-templates"
           cp bin/godot.web.template_release.wasm64.dlink.zip "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
+          # Diagnostics: the memory model of the engine that will be exported.
+          rm -rf /tmp/tpl && mkdir -p /tmp/tpl
+          unzip -q -o "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip" -d /tmp/tpl
+          python3 "$GITHUB_WORKSPACE/tools/check_wasm64.py" /tmp/tpl/godot.wasm /tmp/tpl/godot.side.wasm || true
           ls -lh "$GITHUB_WORKSPACE/hogdot-templates/web_dlink_release.zip"
           cd "$GITHUB_WORKSPACE"
           rm -rf "$HOGDOT_SRC"

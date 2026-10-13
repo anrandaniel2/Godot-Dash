@@ -87,13 +87,13 @@ def main() -> None:
         path = pathlib.Path(name)
         memories = memory_imports(path)
         if not memories:
-            print(f"{path}: no memory import (ok for side modules)")
+            print(f"::notice::{path}: no memory import (ok for side modules)")
             continue
         for module, field, flags, maximum, minimum in memories:
             is_64 = bool(flags & 0x04)
             max_bytes = None if maximum is None else maximum * PAGE
             print(
-                f"{path}: import {module}.{field} memory64={is_64} "
+                f"::notice::{path}: import {module}.{field} memory64={is_64} "
                 f"min={minimum * PAGE / 2**20:.0f} MiB "
                 f"max={'none' if max_bytes is None else f'{max_bytes / 2**30:.2f} GiB'}"
             )
