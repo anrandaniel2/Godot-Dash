@@ -5,6 +5,12 @@ name: Picking check
 # Only the verification runs here; the editor does not switch picking yet.
 
 on:
+  push:
+    paths:
+      - "src/editor/DecorationPicker.gd"
+      - "tools/picking_check.gd"
+      - "tools/picking_check.tscn"
+      - ".github/workflows/picking-check.yml"
   workflow_dispatch:
     inputs:
       url:
