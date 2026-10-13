@@ -39,4 +39,5 @@ working set, private bytes and peak working set instead; none is GPU VRAM.
 The launch-relative clocks in the two CSVs have slightly different origins.
 
 Build identity and channel-index microbenchmark results: BUILD.txt and the
-GitHub Actions run linked there. A microbenchmark speedup is not an FPS claim.
+GitHub Actions run linked there. In the benchmark logs, old = shipped code,
+new = rejected slower mutable-list candidate. No whole-game speedup is claimed.

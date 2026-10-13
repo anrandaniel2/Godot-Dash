@@ -161,6 +161,9 @@ Runtime constraints on Android that show up in code:
   use_static_cpp=yes optimize=speed debug_symbols=no`. `tools/windows_ci.py` installs matching
   editor/templates outside the project, benchmarks channel-index construction, imports,
   exports, validates PE x86-64 artifacts and runs the exported EXE's headless native smoke.
+  The CI workspace regenerates the unavailable LFS ICO from the tracked logo PNG and
+  disables the editor-only `script-ide` plugin (its tab lookup fails headlessly). Neither
+  workspace-only edit changes shipped gameplay or the source project's editor plugins.
 - `tools/pin_windows_extension.py` stages Windows debug/release mappings to the release DLL
   in the build workspace; generated descriptor changes and binaries are not committed.
 - The ZIP is an Actions artifact and commit-specific `windows-<sha8>` prerelease. Extract all

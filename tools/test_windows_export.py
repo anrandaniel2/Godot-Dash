@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from pin_windows_extension import DLL, check_pe, pin
+from windows_ci import headless_project
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -56,6 +57,14 @@ class WindowsExportTests(unittest.TestCase):
                 self.assertIn(line, first)
         for target in ("debug", "release"):
             self.assertEqual(first.count(f'windows.{target}.x86_64 = "./windows/{DLL}"'), 1)
+
+    def test_headless_plugin_filter_is_scoped_and_idempotent(self):
+        project = (ROOT / "project.godot").read_text()
+        filtered = headless_project(project)
+        self.assertNotIn('"res://addons/script-ide/plugin.cfg"', filtered)
+        self.assertIn('"res://addons/debug_menu/plugin.cfg"', filtered)
+        self.assertEqual(filtered, project.replace('"res://addons/script-ide/plugin.cfg", ', '', 1))
+        self.assertEqual(filtered, headless_project(filtered))
 
     def test_renderer_overrides(self):
         project = (ROOT / "project.godot").read_text()

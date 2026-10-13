@@ -101,6 +101,13 @@ def build() -> None:
     check_pe(ROOT / "native/bin/windows" / DLL)
 
 
+def headless_project(text: str) -> str:
+    # script-ide accesses a ScriptEditor tab in _enter_tree; that UI does not
+    # exist in a headless exporter. It is already excluded from the package.
+    # Disable only this editor plugin in CI, not game autoloads or rendering.
+    return text.replace('"res://addons/script-ide/plugin.cfg", ', '', 1)
+
+
 def export() -> None:
     # Only the ICO is LFS-tracked, and its object is unavailable on the mirror.
     # Generate a real Windows icon from the existing artwork, only in CI.
@@ -109,6 +116,8 @@ def export() -> None:
         from PIL import Image
         with Image.open(ROOT / "assets/logo/logo.png") as image:
             image.save(icon, format="ICO", sizes=[(n, n) for n in (16, 32, 48, 64, 128, 256)])
+    project = ROOT / "project.godot"
+    project.write_text(headless_project(project.read_text(encoding="utf-8")), encoding="utf-8")
     pin(ROOT)
     # Prevent Godot from scanning a build-time dependency clone.
     (ROOT / "native/godot-cpp/.gdignore").touch()
@@ -133,6 +142,7 @@ def export() -> None:
     check_log(smoke, "exported-native-smoke")
     if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
         raise RuntimeError("Exported native smoke did not pass")
+    print("::notice title=Windows smoke::Exported x86-64 EXE loaded the native DLL; configured renderer is Forward+. Headless test only.")
     for name in ("Profile-Windows.ps1", "README-Windows.txt"):
         shutil.copy2(ROOT / "tools/windows" / name, OUTPUT)
     sha = os.environ.get("GITHUB_SHA", "local")
