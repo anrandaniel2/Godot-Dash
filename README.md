@@ -212,3 +212,8 @@ cell-range changes and skips draw-command invalidation for exactly unchanged
 color/blend/transform values. All live effects and draw order remain intact.
 See `reports/renderer-cache-2026-10-14.md` for the CPU benchmark, memory trade-off
 and limitations; these results are not a whole-level FPS claim.
+
+Static/spinning batches also stop running empty GDScript callbacks after entering
+the scene tree (Godot had re-enabled them after off-tree construction). Native
+rendering/spin and monster animation clocks are retained. Windows CI covers this
+lifecycle and reports a 2,000-node callback microbenchmark.

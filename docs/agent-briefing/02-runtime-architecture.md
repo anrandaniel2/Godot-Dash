@@ -261,3 +261,14 @@ Exact-equal mutations no longer dirty the command list (an already-dirty list re
 This does not change culling bounds, worker timing, picking, animation clocks or visuals.
 The cache retains extra ID storage proportional to the largest selected set, not a second
 copy of the artwork. See `reports/renderer-cache-2026-10-14.md` for scope and measurements.
+
+### Ready-time processing correction
+
+The prior Amethyst census showed 2,296 DecorationBatch `_process` callbacks, despite
+pre-tree `set_process(false)`. Godot 4.7.2 `Node::NOTIFICATION_READY` re-enables an
+overridden callback before invoking script `_ready`. DecorationBatch now reapplies
+`_built and not monsters.is_empty()` there, uses monster presence (not spin) when
+building/adopting, and enables processing for late monster registration. Its dead
+GDScript `_spinning` list is removed; native spinning remains unchanged. This removes
+empty callbacks, not drawing or effects. The selftest covers post-ready flags, native
+spin, monster timing and in-tree rebuilds, plus a 2,000-node callback microbenchmark.

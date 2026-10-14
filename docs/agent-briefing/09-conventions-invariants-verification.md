@@ -244,6 +244,9 @@ ranges (20k records, 2k redraws, median of five, alternating run order). It meas
 CPU cost and retained vector storage, not Godot draw submission/GPU performance.
 
 Windows CI runs that test via `tools/benchmarks/renderer_cache/SConstruct` and runs
-`tools/renderer_cache_selftest.tscn` with the built extension. The latter verifies real color,
-blend/transform updates, no-op redraw suppression, selection reuse, and reconfiguration
-invalidation. Headless tests cannot prove pixel parity. M1's picking-order gate remains unchanged.
+`tools/renderer_cache_selftest.tscn` with the built extension. Headless Godot has dummy/invalid
+canvas RIDs: this mode verifies native color/blend/transform/pulse values and dirty flags,
+not draw submission. With a real renderer, the fixture additionally asserts command and
+selection rebuild counts. It also checks DecorationBatch processing flags after READY,
+native spin, monster timing, and reports an isolated 2,000-node callback benchmark.
+Neither mode proves pixel parity; M1's picking-order gate remains unchanged.

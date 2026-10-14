@@ -105,4 +105,8 @@ still read live; no visual effects, geometry or collision data are removed.
 Exactly unchanged color/blend/transform updates no longer dirty draw commands.
 renderer-cache.log reports an isolated CPU selector benchmark and ordered-ID
 parity checks, not whole-game FPS. renderer-integration.log checks the real
-native renderer's live data and redraw counts headlessly, not pixel output.
+native renderer's live data/dirty flags headlessly, not draw submission or pixels.
+
+Static/spinning batches also no longer run empty GDScript callbacks after entering
+the tree. Native spin/rendering continues unchanged; monster callbacks remain on.
+The integration log includes a 2,000-node callback microbenchmark, not game FPS.

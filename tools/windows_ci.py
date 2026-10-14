@@ -35,7 +35,7 @@ def run(args: list[str], name: str, timeout: int = 600, allow_failure: bool = Fa
     print("\n".join(text.splitlines()[-35:]), flush=True)
     if result.returncode and not allow_failure:
         check_log(text, name)
-        errors = [line for line in text.splitlines() if re.search(r"error|fatal|failed|exception", line, re.I)]
+        errors = [line for line in text.splitlines() if re.search(r"error|fatal|failed|exception|_FAIL\b", line, re.I)]
         excerpt = "\n".join(errors[-12:] or text.splitlines()[-20:])[-12000:]
         escaped = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print(f"::error title={name}::{escaped}", flush=True)
@@ -176,7 +176,7 @@ def export() -> None:
     if not re.search(r"RENDERER_CACHE_SELFTEST checks=\d+ failed=0", text):
         raise RuntimeError("Native renderer cache integration failed")
     for line in text.splitlines():
-        if line.startswith("RENDERER_CACHE_SELFTEST"):
+        if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH")):
             print(f"::notice title=renderer integration::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",

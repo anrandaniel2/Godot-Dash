@@ -135,9 +135,6 @@ var _sort_key: int = 0
 ## Animated monsters in this batch; empty for nearly every batch.
 var monsters: Array[Monster] = []
 
-## Only the items with a non-zero spin, so the per-frame update stays
-## proportional to the number of rotating objects rather than the batch size.
-var _spinning: Array[Item] = []
 
 ## Geometry Dash groups this batch belongs to, mirrored onto the node so
 ## triggers can find it.
@@ -186,6 +183,10 @@ func _ready() -> void:
 	# Item z is baked into draw order within the batch; the batch itself sits at
 	# the z of the layer it represents.
 	z_as_relative = false
+	# Godot's NOTIFICATION_READY auto-enables overridden _process callbacks,
+	# even if build()/adopt_native_canvas() disabled them off-tree. Reapply
+	# here: native rendering/spin needs no per-batch GDScript frame callback.
+	set_process(_built and not monsters.is_empty())
 	# build() normally runs while the level is detached from the SceneTree.
 	# queue_redraw() issued there is not retained by CanvasItem, so explicitly
 	# request the first draw once the batch has entered a viewport.
@@ -232,7 +233,6 @@ func build() -> void:
 		items = sorted
 
 	_channel_blend.clear()
-	_spinning.clear()
 	_bounds = Rect2()
 
 	for index in items.size():
@@ -240,17 +240,14 @@ func build() -> void:
 		var extent: Vector2 = (item.region.size * 0.5).abs() * item.transform.get_scale().abs()
 		var item_rect := Rect2(item.transform.origin - extent, extent * 2.0)
 		_bounds = item_rect if index == 0 else _bounds.merge(item_rect)
-		if not is_zero_approx(item.spin):
-			_spinning.append(item)
 		if not item.channel.is_empty():
 			add_to_group(CHANNEL_GROUP_PREFIX + item.channel)
 
 	_build_native_canvas(native)
 	_release_items()
 	_built = true
-	# Native canvases poll their camera in C++; keep this GDScript callback only
-	# when individual spinning records need transform updates.
-	set_process(not _spinning.is_empty())
+	# C++ owns culling and spin; only monster clips need this script callback.
+	set_process(not monsters.is_empty())
 	_request_redraw()
 
 
@@ -267,7 +264,7 @@ func adopt_native_canvas(canvas: Object, info: Dictionary) -> void:
 	for channel: StringName in _native_by_channel:
 		add_to_group(CHANNEL_GROUP_PREFIX + channel)
 	_built = true
-	set_process(false)
+	set_process(not monsters.is_empty())
 	_request_redraw()
 
 
@@ -287,7 +284,6 @@ func _release_items() -> void:
 		return
 	_sort_key = items[0].z_order
 	items = []
-	_spinning.clear()
 	_items_released = true
 
 
@@ -411,6 +407,7 @@ func register_monster(monster_name: String, object_transform: Transform2D, art_s
 		monster.trim_offsets.append(atlas_frame.offset)
 	if not monster.bound_items.is_empty():
 		monsters.append(monster)
+		set_process(_built)
 		add_to_group(MONSTER_BATCH_GROUP)
 
 

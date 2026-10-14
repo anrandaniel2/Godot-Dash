@@ -10808,6 +10808,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
 		ClassDB::bind_method(D_METHOD("command_rebuild_count"), &NativeDecorationRenderer::command_rebuild_count);
 		ClassDB::bind_method(D_METHOD("selection_rebuild_count"), &NativeDecorationRenderer::selection_rebuild_count);
+		ClassDB::bind_method(D_METHOD("has_pending_redraw"), &NativeDecorationRenderer::has_pending_redraw);
 	}
 
 public:
@@ -11053,6 +11054,7 @@ public:
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t animated_item_count() const { return static_cast<int64_t>(spinning_indices.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
+	bool has_pending_redraw() const { return commands_dirty; }
 	int64_t command_rebuild_count() const { return command_rebuilds; }
 	int64_t selection_rebuild_count() const { return static_cast<int64_t>(visible_records.build_count()); }
 	bool is_spatially_culled() const { return cull; }
