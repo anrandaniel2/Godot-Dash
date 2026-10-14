@@ -65,7 +65,9 @@ func _test_visibility() -> void:
 	runtime.call(&"register_packed_trigger", 20.0, 0.0, 0, 1, PackedStringArray(), 1613, {"1": "1613"})
 	runtime.call(&"finalize")
 	var mask: int = primary.collision_mask
-	runtime.call(&"advance", primary, 0.0, 15.0)
+	runtime.call(&"prime_spawn", primary)
+	primary.position.x = 15.0
+	runtime.call(&"prime_spawn", primary)
 	_check(primary.gd_hidden and dual.gd_hidden, "native Hide affects both players")
 	_check(primary.modulate.a == 0.0 and dual.modulate.a == 0.0, "native Hide covers player visuals")
 	_check(primary.collision_mask == mask, "Hide preserves player collision mask")
@@ -77,7 +79,8 @@ func _test_visibility() -> void:
 	_check(late_dual.gd_hidden, "late dual inherits Hide via same helper as Player.ready")
 	GDLevelOptions.apply({"162": "-1"})
 	_check(not primary.gd_hidden and dual.gd_hidden, "Options may show P1 independently")
-	runtime.call(&"advance", primary, 15.0, 25.0)
+	primary.position.x = 25.0
+	runtime.call(&"prime_spawn", primary)
 	_check(not primary.gd_hidden and not dual.gd_hidden, "native Show affects both players")
 	var twin := GameplayTriggerComponent.new()
 	twin.kind = GameplayTriggerComponent.Kind.HIDE_PLAYER
@@ -198,12 +201,15 @@ func _test_ui() -> void:
 	var runtime: Node = ClassDB.instantiate(&"NativeLevelRuntime")
 	viewport.add_child(runtime)
 	runtime.call(&"bind_context", level, null, null)
-	runtime.call(&"set_group_members", "g_1", [batch])
-	runtime.call(&"set_group_members", "g_2", [guide])
+	# NativeLevelRuntime snapshots actual level-scoped scene groups at finalize.
+	batch.add_to_group(&"g_1")
+	guide.add_to_group(&"g_2")
 	runtime.call(&"register_packed_trigger", 0.0, 0.0, 0, 0, PackedStringArray(), 3613,
 		{"1": "3613", "51": "1", "71": "2", "385": "2", "387": "1"})
 	runtime.call(&"finalize")
 	_check(batch.get_parent().name == "UIRoot", "production UI reparents batch")
+	# Single-precision transforms at 40k world units need subpixel tolerance;
+	# 0.02 px is still far below the old hundreds-of-pixels alignment error.
 	for width: int in [1920, 2560, 1920]:
 		viewport.size = Vector2i(width, 1080)
 		runtime.call(&"apply_ui_triggers")
@@ -212,8 +218,8 @@ func _test_ui() -> void:
 		var b: Transform2D = canvas.call(&"get_draw_transform", 1)
 		var part: Transform2D = canvas.call(&"get_draw_transform", 2)
 		var world: Transform2D = batch.get_global_transform_with_canvas()
-		_check((world * a.origin).is_equal_approx(Vector2(0, 540)), "left art reaches screen edge at %d" % width)
-		_check((world * b.origin).is_equal_approx(Vector2(width, 540)), "right art reaches screen edge at %d" % width)
+		_check((world * a.origin).distance_to(Vector2(0, 540)) < 0.02, "left art reaches screen edge at %d" % width)
+		_check((world * b.origin).distance_to(Vector2(width, 540)) < 0.02, "right art reaches screen edge at %d" % width)
 		_check((part.origin - a.origin).is_equal_approx(Vector2(20, 0)), "composite parts stay rigid")
 		_check(a.x == Vector2.RIGHT and a.y == Vector2.DOWN, "UI never stretches sprite geometry")
 		_check(int(canvas.call(&"last_drawn_count")) == 3, "world culling cannot drop UI side art")
@@ -223,7 +229,7 @@ func _test_ui() -> void:
 	viewport.size = Vector2i(2560, 1080)
 	runtime.call(&"apply_ui_triggers")
 	var resized_left: Transform2D = canvas.call(&"get_draw_transform", 0)
-	_check((batch.get_global_transform_with_canvas() * resized_left.origin).is_equal_approx(Vector2(-1200, 580)), "resize retains live group scale and move")
+	_check((batch.get_global_transform_with_canvas() * resized_left.origin).distance_to(Vector2(-1200, 580)) < 0.02, "resize retains live group scale and move")
 	canvas.call(&"advance_animation", 1.0)
 	var spun: Transform2D = canvas.call(&"get_draw_transform", 2)
 	var base: Transform2D = canvas.call(&"get_draw_transform", 0)

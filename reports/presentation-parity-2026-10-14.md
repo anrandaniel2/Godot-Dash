@@ -70,3 +70,15 @@ Windows remains Forward+; Web remains wasm64, threads, WebGPU-first/mobile with 
 WebGL2 fallback. No engine template edits/cache-key bump required. App identity, installer
 identity, user data directory, replay version/ticks, 240 Hz physics and player mask 122
 remain unchanged. M1 picking-order gate is still blocked on real-level zero mismatches.
+
+
+## First CI attempt (fc4fab6)
+
+Web run 38655927288 passed. Windows run 38655927395 compiled the extension and passed
+safety (1655/0), selector (6026/0), UI math and existing renderer integration (2035/0),
+but correctly blocked packaging on new fixture script errors: `advance` and
+`set_group_members` belong to NativeTriggerRuntime, not NativeLevelRuntime. The fixture
+now uses the production wrapper's `prime_spawn`/player-position tracking and actual
+level-scoped scene groups at finalize. No production API was added to conceal the
+fixture error. Edge-position checks use an explicit 0.02-pixel tolerance for float32
+transforms at 40k world coordinates, not a widened visibility/culling tolerance.
