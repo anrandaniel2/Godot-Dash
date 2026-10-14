@@ -108,3 +108,9 @@ wall-time test, not a real-level/GPU benchmark.
 A fresh full-level profile dispatch was attempted but GitHub's app permissions
 rejected workflow_dispatch (403). Push-triggered builds and Level probe still run;
 no fresh full-level FPS number is claimed.
+
+The next Windows attempt (`38649913848`) stopped before integration at an intermittent
+Inter.ttc generated-import-cache/theme load error; the font source itself is tracked
+and unchanged. Windows CI now permits one additional import pass only for an existing
+importable source referenced as missing. The final parse-error gate stays strict. No
+font, theme or other artwork is replaced to work around this bootstrap issue.

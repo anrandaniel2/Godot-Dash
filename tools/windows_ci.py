@@ -152,6 +152,18 @@ def windows_project(text: str, sha: str, build_number: str, branch: str) -> str:
     return headless_project(text).replace("[application]\n", "[application]\n" + metadata, 1)
 
 
+def needs_asset_import_retry(text: str) -> bool:
+    # A tracked .import can point at an as-yet unbuilt font/texture cache when
+    # the project theme is loaded before the editor's first filesystem scan.
+    # Retry only importable sources that actually exist; never suppress errors.
+    pattern = r"Parse Error: \[ext_resource\] referenced non-existent resource at: (res://[^\r\n]+?)\.\s*$"
+    for resource in re.findall(pattern, text, re.MULTILINE):
+        source = (ROOT / resource.removeprefix("res://")).resolve()
+        if source.is_relative_to(ROOT.resolve()) and source.is_file() and pathlib.Path(str(source) + ".import").is_file():
+            return True
+    return False
+
+
 def export() -> None:
     # Only the ICO is LFS-tracked, and its object is unavailable on the mirror.
     # Generate a real Windows icon from the existing artwork, only in CI.
@@ -168,6 +180,9 @@ def export() -> None:
     (ROOT / "native/godot-cpp/.gdignore").touch()
     run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-warm", allow_failure=True)
     imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-checked")
+    if needs_asset_import_retry(imported):
+        print("::notice title=asset import::Retrying one editor pass after a missing generated asset cache; final parse gate remains strict.")
+        imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-rechecked")
     # Match web CI: editor-only plugin runtime messages are not game failures.
     check_log(imported, "import-checked", include_runtime=False)
     text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/renderer_cache_selftest.tscn"],

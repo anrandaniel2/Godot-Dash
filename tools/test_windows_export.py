@@ -115,6 +115,15 @@ class WindowsExportTests(unittest.TestCase):
         self.assertNotIn('window_set_current_screen', watcher)
 
 
+    def test_asset_import_retry_is_narrow(self):
+        from windows_ci import needs_asset_import_retry
+        prefix = 'ERROR: res://resources/Theme.tres:929 - Parse Error: [ext_resource] referenced non-existent resource at: '
+        self.assertTrue(needs_asset_import_retry(prefix + 'res://assets/fonts/Inter.ttc.\n'))
+        self.assertFalse(needs_asset_import_retry(prefix + 'res://assets/fonts/missing.ttf.\n'))
+        self.assertFalse(needs_asset_import_retry(prefix + 'res://src/SettingsMenu.gd.\n'))
+        self.assertFalse(needs_asset_import_retry('SCRIPT ERROR: Parse Error: broken GDScript'))
+
+
 
 if __name__ == "__main__":
     unittest.main()
