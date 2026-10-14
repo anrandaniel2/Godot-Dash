@@ -10809,6 +10809,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("command_rebuild_count"), &NativeDecorationRenderer::command_rebuild_count);
 		ClassDB::bind_method(D_METHOD("selection_rebuild_count"), &NativeDecorationRenderer::selection_rebuild_count);
 		ClassDB::bind_method(D_METHOD("has_pending_redraw"), &NativeDecorationRenderer::has_pending_redraw);
+		ClassDB::bind_method(D_METHOD("flush_commands"), &NativeDecorationRenderer::flush_commands);
 	}
 
 public:

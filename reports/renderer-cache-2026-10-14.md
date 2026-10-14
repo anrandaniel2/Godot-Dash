@@ -72,11 +72,17 @@ Thus the all-miss case regressed ~5.6% on MSVC (about 0.65 microseconds per synt
 redraw), while fixed/occasional ranges improved ~10.8x/~8.8x. Do not extrapolate the
 Linux cold-path improvement to Windows or report either microbenchmark as game FPS.
 
-That run failed the initial drawing integration fixture: headless Godot creates
-invalid dummy Canvas RIDs, so native draw-command counters stay zero. The fixture
-now explicitly reports that limitation, checks production native dirty flags and
-record values headlessly, and retains draw/cache-counter assertions for execution
-with an actual renderer. No fake headless draw success is substituted.
+The initial integration fixture failed because root-window viewport changes during
+startup invalidated selection between the test's snapshots. The follow-up run
+`38649019464` exposed the individual failed assertions; all 2,006 new batch-lifecycle
+checks passed, but five counter assertions still included that unrelated rebuild.
+The first hypothesis (invalid headless Canvas RIDs) was incorrect: headless Godot
+retains canvas commands through RenderingServerDefault, even without GPU output.
+
+The fixture now uses a fixed-size isolated SubViewport and invokes the production
+flush method synchronously for exact command/cache counters. A separate asynchronous
+sequence checks native state/dirty flags and the real coordinator consuming them.
+These are command-submission/state tests, never pixel/GPU proof.
 
 ## Empty per-batch callbacks
 

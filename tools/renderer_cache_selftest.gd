@@ -5,6 +5,7 @@ extends Node
 var _checks: int = 0
 var _failed: int = 0
 var _canvas: Object
+var _viewport: SubViewport
 var _owner: Node2D
 var _texture: ImageTexture
 
@@ -24,49 +25,54 @@ func _ready() -> void:
 	_canvas = ClassDB.instantiate(&"NativeDecorationRenderer")
 	var coordinator: Node = ClassDB.instantiate(&"NativeLevelRuntime") as Node
 	add_child(coordinator)
+	# An isolated viewport avoids startup root-window resize/stretch changes.
+	_viewport = SubViewport.new()
+	_viewport.size = Vector2i(512, 512)
+	_viewport.disable_3d = true
+	add_child(_viewport)
 	_owner = Node2D.new()
-	add_child(_owner)
+	_viewport.add_child(_owner)
 	var image: Image = Image.create(8, 8, false, Image.FORMAT_RGBA8)
 	image.fill(Color.WHITE)
 	_texture = ImageTexture.create_from_image(image)
+	await _test_record_updates()
 	var probe: RID = RenderingServer.canvas_item_create()
 	if probe.is_valid():
 		RenderingServer.free_rid(probe)
-		await _test_draw_submission()
+		_test_draw_submission()
+		print("RENDERER_CACHE_NOTE retained-command counters checked; no pixel/GPU validation")
 	else:
-		# Headless Godot uses Dummy Canvas RIDs. Do not claim drawing/cache-hit
-		# verification from that backend: test live native state/dirty flags,
-		# and leave draw submission assertions available for a real renderer.
 		print(
-			"RENDERER_CACHE_NOTE dummy renderer: native state/dirty flags only; ordered selection tested separately in C++"
+			"RENDERER_CACHE_NOTE no canvas RIDs: state tests only; ordered selection tested separately in C++"
 		)
-		await _test_record_updates()
 	await _test_batch_processing()
 	# Exit coordinator first: drain worker jobs before releasing the renderer.
 	coordinator.free()
 	_canvas = null
-	_owner.free()
+	_viewport.free()
 	print("RENDERER_CACHE_SELFTEST checks=%d failed=%d" % [_checks, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
 
 
 func _test_draw_submission() -> void:
+	_canvas.call(&"set_group_pulse", Color.WHITE, 0.0)
 	_configure(Color.WHITE)
-	# Initialize synchronously: do not depend on cull-worker scheduling speed.
+	# Keep these assertions synchronous: exercise the production flush method,
+	# not asynchronous startup viewport changes or cull-worker scheduling.
 	_canvas.call(&"update_camera_range")
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(int(_canvas.call(&"last_drawn_count")) == 2, "initial records submitted")
 	var commands: int = int(_canvas.call(&"command_rebuild_count"))
 	var selections: int = int(_canvas.call(&"selection_rebuild_count"))
 	_canvas.call(&"apply_channel_color", PackedInt32Array([0, 1]), Color.WHITE)
 	_canvas.call(&"set_item_transform", 0, Transform2D.IDENTITY)
 	_canvas.call(&"set_item_color", 0, Color.WHITE)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(
 		int(_canvas.call(&"command_rebuild_count")) == commands, "identical updates do not rebuild"
 	)
 	_canvas.call(&"apply_channel_color", PackedInt32Array([0, 1]), Color.GREEN)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(_canvas.call(&"get_item_color", 0) == Color.GREEN, "live color updated")
 	_check(
 		int(_canvas.call(&"command_rebuild_count")) == commands + 1, "changed color rebuilds once"
@@ -76,15 +82,15 @@ func _test_draw_submission() -> void:
 		"color redraw reuses ordered IDs"
 	)
 	_canvas.call(&"set_channel_blending", PackedInt32Array([0]), true)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(int(_canvas.call(&"get_item_blend", 0)) == 1, "blend override still applied")
 	commands = int(_canvas.call(&"command_rebuild_count"))
 	_canvas.call(&"set_channel_blending", PackedInt32Array([0]), true)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(int(_canvas.call(&"command_rebuild_count")) == commands, "repeated blend is a no-op")
 	var moved: Transform2D = Transform2D(0.1, Vector2(16, 16))
 	_canvas.call(&"set_item_transform", 0, moved)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(_canvas.call(&"get_item_transform", 0) == moved, "latest transform preserved")
 	_check(
 		int(_canvas.call(&"selection_rebuild_count")) == selections,
@@ -92,14 +98,14 @@ func _test_draw_submission() -> void:
 	)
 	commands = int(_canvas.call(&"command_rebuild_count"))
 	_canvas.call(&"set_group_pulse", Color.RED, 0.5)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(int(_canvas.call(&"command_rebuild_count")) == commands + 1, "group pulse redraws")
 	_check(
 		int(_canvas.call(&"selection_rebuild_count")) == selections, "pulse keeps cached IDs only"
 	)
 	_canvas.call(&"set_group_pulse", Color.WHITE, 0.0)
 	_canvas.call(&"set_item_color", 0, Color.GREEN)
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(
 		int(_canvas.call(&"command_rebuild_count")) == commands + 2,
 		"no-op keeps earlier pulse dirty"
@@ -107,7 +113,7 @@ func _test_draw_submission() -> void:
 	# Same record count and viewport, new records: cannot reuse old selection.
 	_configure(Color.BLUE)
 	_canvas.call(&"update_camera_range")
-	await _settle()
+	_canvas.call(&"flush_commands")
 	_check(
 		int(_canvas.call(&"selection_rebuild_count")) > selections,
 		"reconfigure invalidates selection"
@@ -235,6 +241,7 @@ func _measure_callbacks(batches: Array[DecorationBatch], enabled: bool) -> float
 
 func _test_record_updates() -> void:
 	_configure(Color.WHITE, false)
+	await _settle()
 	_check(int(_canvas.call(&"item_count")) == 2, "native records configured")
 	_check(not _canvas.call(&"has_pending_redraw"), "initial command state clean")
 	_canvas.call(&"apply_channel_color", PackedInt32Array([0, 1]), Color.WHITE)
