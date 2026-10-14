@@ -8,6 +8,7 @@ var _failed: int = 0
 
 func _ready() -> void:
 	_test_frame_pacing()
+	_test_window_transitions()
 	_test_timing_requests()
 	_test_selection()
 	_test_download_policy()
@@ -268,3 +269,38 @@ func _test_blur_copy() -> void:
 	Config.menu_blur = true
 	get_tree().paused = false
 	holder.free()
+
+
+func _test_window_transitions() -> void:
+	var windowed: int = DisplayServer.WINDOW_MODE_WINDOWED
+	var full: int = DisplayServer.WINDOW_MODE_FULLSCREEN
+	var exclusive: int = DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	_check(
+		(
+			FramePacingPolicy.window_mode_steps(full, exclusive, true)
+			== PackedInt32Array([windowed, exclusive])
+		),
+		"Windows exclusive transition recomputes bounds"
+	)
+	_check(
+		(
+			FramePacingPolicy.window_mode_steps(exclusive, full, true)
+			== PackedInt32Array([windowed, full])
+		),
+		"Windows borderless transition recomputes bounds"
+	)
+	_check(
+		(
+			FramePacingPolicy.window_mode_steps(full, exclusive, false)
+			== PackedInt32Array([exclusive])
+		),
+		"other platforms retain their transition"
+	)
+	_check(
+		FramePacingPolicy.window_mode_steps(full, full, true).is_empty(),
+		"unchanged modes do not reconfigure presentation"
+	)
+	_check(
+		FramePacingPolicy.window_mode_steps(windowed, full, true) == PackedInt32Array([full]),
+		"ordinary enter-fullscreen remains a single transition"
+	)

@@ -84,9 +84,18 @@ func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:
 			display_server_window_mode = DisplayServer.WindowMode.WINDOW_MODE_FULLSCREEN
 		Config.WindowMode.EXCLUSIVE_FULLSCREEN:
 			display_server_window_mode = DisplayServer.WindowMode.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
-	if DisplayServer.window_get_mode() == display_server_window_mode:
+	var steps: PackedInt32Array = FramePacingPolicy.window_mode_steps(
+		DisplayServer.window_get_mode(), display_server_window_mode, OS.has_feature("windows")
+	)
+	if steps.is_empty():
 		return
-	DisplayServer.window_set_mode(display_server_window_mode)
+	var screen: int = DisplayServer.window_get_current_screen()
+	for mode: int in steps:
+		DisplayServer.window_set_mode(mode)
+		if steps.size() > 1 and mode == DisplayServer.WINDOW_MODE_WINDOWED:
+			# Restoring the pre-fullscreen window can put it on a different
+			# monitor. Keep the monitor the user was actually using.
+			DisplayServer.window_set_current_screen(screen)
 	# Fullscreen changes can recreate the presentation surface. Apply the
 	# requested mode afterward, not just to the previous window's swapchain.
 	Config.apply_frame_pacing.call_deferred(true)

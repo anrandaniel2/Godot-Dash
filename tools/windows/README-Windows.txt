@@ -85,3 +85,8 @@ VSync mode and software limit. This is not proof of the physical presentation
 rate. The stale blur-copy visibility risk in paused menus is addressed, but
 whole-screen black flicker and 60-FPS VSync still require device verification.
 No rendering effects, physics, replay timing or level content were removed.
+
+Fullscreen -> Exclusive Fullscreen now briefly passes through windowed mode to
+work around Godot 4.7.2 retaining normal fullscreen's oversized bounds. It keeps
+the active monitor and your chosen mode. A brief transition flash is possible;
+continuous flickering is not expected or considered verified fixed by this change.

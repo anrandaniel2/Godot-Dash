@@ -19,3 +19,21 @@ static func load_cap(config: ConfigFile, refresh_rate: float) -> int:
 		config.set_value("Graphics", "max_fps", cap)
 		config.set_value("Graphics", "frame_pacing_version", VERSION)
 	return cap
+
+
+## Godot 4.7.2 Windows gives normal fullscreen a 2-pixel overscan. Its
+## window_set_mode only recomputes monitor bounds when entering fullscreen
+## from a non-fullscreen mode, not when changing between fullscreen variants.
+## Re-enter on an explicit variant change; never silently change a saved mode.
+static func window_mode_steps(current: int, requested: int, is_windows: bool) -> PackedInt32Array:
+	if current == requested:
+		return PackedInt32Array()
+	var fullscreen: PackedInt32Array = PackedInt32Array(
+		[
+			DisplayServer.WINDOW_MODE_FULLSCREEN,
+			DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN,
+		]
+	)
+	if is_windows and fullscreen.has(current) and fullscreen.has(requested):
+		return PackedInt32Array([DisplayServer.WINDOW_MODE_WINDOWED, requested])
+	return PackedInt32Array([requested])

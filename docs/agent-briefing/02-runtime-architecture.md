@@ -233,3 +233,11 @@ presentation problem is solved on hardware.
 `RenderingServer.frame_pre_draw` instead of `_process`, which could freeze while its parent
 was paused or run before later UI visibility changes. This addresses a concrete stale-copy
 risk without reducing blur quality; whole-window black flicker is not reproduced/verified.
+
+Godot 4.7.2's Windows `window_set_mode` only recomputes fullscreen bounds when
+`!wd.fullscreen`, while normal fullscreen adds `_get_screen_expand_offset` (2 pixels).
+See [upstream implementation](https://github.com/godotengine/godot/blob/4.7.2-stable/platform/windows/display_server_windows.cpp#L2690-L2830).
+`FramePacingPolicy.window_mode_steps` therefore routes an explicit switch between fullscreen
+variants through WINDOWED and retains the active monitor. Unchanged modes and non-Windows
+transitions are untouched. This makes the Exclusive Fullscreen option set proper bounds;
+it is not hardware proof that the reported VSync/flicker problem has been resolved.
