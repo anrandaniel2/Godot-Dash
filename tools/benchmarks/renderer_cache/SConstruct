@@ -1,0 +1,14 @@
+import os
+from pathlib import Path
+
+root = Path(Dir('#').abspath)
+output = Path(ARGUMENTS['output']).resolve()
+output.mkdir(parents=True, exist_ok=True)
+SConsignFile(str(output / '.sconsign'))
+env = Environment(ENV=os.environ, TARGET_ARCH='amd64')
+if env['PLATFORM'] == 'win32':
+    env.Append(CXXFLAGS=['/std:c++17', '/O2', '/EHsc', '/W4'])
+else:
+    env.Append(CXXFLAGS=['-std=c++17', '-O2', '-Wall', '-Wextra', '-Werror'])
+obj = env.Object(str(output / 'visibility'), str(root / 'native/tests/test_decoration_visibility_cache.cpp'))
+Default(env.Program(str(output / 'visibility-test'), obj))

@@ -371,6 +371,11 @@ static func web_texture_filtering(mode: TextureFilteringMode, is_web: bool) -> T
 
 func _ready() -> void:
 	apply_frame_pacing()
+	if OS.has_feature("windows") and DisplayServer.get_name() != "headless":
+		var display_watcher: DisplayPacingWatcher = DisplayPacingWatcher.new()
+		display_watcher.name = "DisplayPacingWatcher"
+		display_watcher.presentation_changed.connect(apply_frame_pacing.bind(true))
+		add_child(display_watcher)
 	TimescaleChangerComponent.apply_game_speed()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:

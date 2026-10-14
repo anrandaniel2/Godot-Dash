@@ -197,3 +197,18 @@ See *Compilation*.
 - Run `git lfs install` if you haven't done so already.
 - Clone the repo and import it in Godot.
 - Open a PR with your changes.
+
+### Multiple monitors and the next renderer performance pass
+
+The temporary monitor/Hz status text has been removed from Settings. On Windows,
+pacing now follows the current window's display and is refreshed once a display
+or topology change settles, without adding a monitor-derived software cap.
+Windows **Duplicate** mode can share presentation timing; the app cannot guarantee
+independent maximum refresh rates for cloned displays. Use **Extend** and set each
+display's highest supported refresh rate in Windows for independent high-Hz use.
+
+The native decoration renderer now caches the ordered visible-record IDs between
+cell-range changes and skips draw-command invalidation for exactly unchanged
+color/blend/transform values. All live effects and draw order remain intact.
+See `reports/renderer-cache-2026-10-14.md` for the CPU benchmark, memory trade-off
+and limitations; these results are not a whole-level FPS claim.

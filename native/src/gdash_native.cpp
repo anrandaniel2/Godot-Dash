@@ -72,6 +72,7 @@
 
 #include "gravity_portal.h"
 #include "decoration_spin.h"
+#include "decoration_visibility_cache.h"
 #include "gd_physics_constants.h"
 
 namespace godot {
@@ -10718,12 +10719,10 @@ class NativeDecorationRenderer : public RefCounted {
 	// Dense indices are effectively a small SoA hot set: animation touches only
 	// transform/spin data for rotating records, never every static Record.
 	std::vector<size_t> spinning_indices;
-	// Generation stamps replace a per-rebuild "emitted" byte vector: a camera
-	// bucket change used to allocate and zero records.size() bytes on every
-	// rebuild, every renderer, every frame of a scrolling level.
-	std::vector<uint32_t> emitted_stamp;
-	uint32_t emit_stamp = 0;
-	std::map<int64_t, std::map<int64_t, std::vector<size_t>>> sections;
+	// The candidate order changes only with the spatial index or cell range,
+	// not with the color/blend/spin changes that dirty the draw commands.
+	gdash::DecorationVisibilityCache<> visible_records;
+	gdash::DecorationSections sections;
 	bool cull = true;
 	double bucket_width = 256.0;
 	double cull_margin = 0.0;
@@ -10736,6 +10735,7 @@ class NativeDecorationRenderer : public RefCounted {
 	bool range_has_records = false;
 	bool commands_dirty = false;
 	int64_t last_drawn_items = 0;
+	int64_t command_rebuilds = 0;
 	// Group pulse (1006, key 52 = 1): a batch holds one group set, so one
 	// pulse per renderer covers it. Weight 0 keeps the draw loop untouched;
 	// a pulsing batch re-emits only its visible records per changed tick.
@@ -10760,6 +10760,7 @@ class NativeDecorationRenderer : public RefCounted {
 		commands_dirty = false;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
+		++command_rebuilds;
 		server->canvas_item_clear(canvas_item);
 		if (canvas_item_plain.is_valid()) server->canvas_item_clear(canvas_item_plain);
 		if (canvas_item_add.is_valid()) server->canvas_item_clear(canvas_item_add);
@@ -10783,27 +10784,9 @@ class NativeDecorationRenderer : public RefCounted {
 			for (const Record &record : records) draw_record(record);
 			return;
 		}
-		// Records spanning several cells are indexed into each touched cell.
-		// Emit them once even when several of those cells are visible.
-		if (records.size() != emitted_stamp.size()) emitted_stamp.assign(records.size(), 0);
-		uint32_t stamp = ++emit_stamp;
-		if (stamp == 0) { // wrapped: retire every old stamp at once
-			std::fill(emitted_stamp.begin(), emitted_stamp.end(), 0);
-			stamp = emit_stamp = 1;
-		}
-		auto column = sections.lower_bound(first_bucket);
-		while (column != sections.end() && column->first <= last_bucket) {
-			auto row = column->second.lower_bound(first_row);
-			while (row != column->second.end() && row->first <= last_row) {
-			for (size_t index : row->second) {
-				if (emitted_stamp[index] == stamp) continue;
-				emitted_stamp[index] = stamp;
-				draw_record(records[index]);
-			}
-				++row;
-			}
-			++column;
-		}
+		visible_records.for_each(sections, records.size(),
+				{ first_bucket, last_bucket, first_row, last_row },
+				[&](size_t index) { draw_record(records[index]); });
 	}
 
 protected:
@@ -10823,6 +10806,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("get_item_transform", "index"), &NativeDecorationRenderer::get_item_transform);
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationRenderer::item_count);
 		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
+		ClassDB::bind_method(D_METHOD("command_rebuild_count"), &NativeDecorationRenderer::command_rebuild_count);
+		ClassDB::bind_method(D_METHOD("selection_rebuild_count"), &NativeDecorationRenderer::selection_rebuild_count);
 	}
 
 public:
@@ -10916,7 +10901,7 @@ public:
 	// per-sprite Variant crosses the boundary.
 	void index_records(std::vector<Record> &&p_records, bool enable_culling, double width, double margin) {
 		records = std::move(p_records);
-		spinning_indices.clear(); sections.clear(); emitted_stamp.clear();
+		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (size_t index = 0; index < records.size(); ++index) {
 			const Record &record = records[index];
@@ -11023,9 +11008,8 @@ public:
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i];
 			if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
-			records[static_cast<size_t>(index)].blend = additive ? 1 : 2;
+			gdash::assign_render_value(records[static_cast<size_t>(index)].blend, static_cast<uint8_t>(additive ? 1 : 2), commands_dirty);
 		}
-		commands_dirty = true;
 	}
 	// Blend override of one record (0 inherit, 1 additive, 2 normal) for tests.
 	int64_t get_item_blend(int64_t index) const {
@@ -11051,9 +11035,9 @@ public:
 				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
 				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
 			}
-			tinted.a = channel_color.a * record.base_alpha; record.color = tinted;
+			tinted.a = channel_color.a * record.base_alpha;
+			gdash::assign_render_value(record.color, tinted, commands_dirty);
 		}
-		commands_dirty = true;
 	}
 	void set_group_pulse(const Color &color, double weight) {
 		const float clamped = static_cast<float>(Math::clamp(weight, 0.0, 1.0));
@@ -11063,12 +11047,14 @@ public:
 		commands_dirty = true;
 	}
 	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }
-	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].color = color; commands_dirty = true; } }
-	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { records[index].transform = transform; commands_dirty = true; } }
+	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { gdash::assign_render_value(records[index].color, color, commands_dirty); } }
+	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { gdash::assign_render_value(records[index].transform, transform, commands_dirty); } }
 	Transform2D get_item_transform(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].transform : Transform2D(); }
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t animated_item_count() const { return static_cast<int64_t>(spinning_indices.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
+	int64_t command_rebuild_count() const { return command_rebuilds; }
+	int64_t selection_rebuild_count() const { return static_cast<int64_t>(visible_records.build_count()); }
 	bool is_spatially_culled() const { return cull; }
 };
 

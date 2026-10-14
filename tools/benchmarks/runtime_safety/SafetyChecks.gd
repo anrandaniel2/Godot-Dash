@@ -9,6 +9,7 @@ var _failed: int = 0
 func _ready() -> void:
 	_test_frame_pacing()
 	_test_window_transitions()
+	_test_display_pacing()
 	_test_timing_requests()
 	_test_selection()
 	_test_download_policy()
@@ -304,3 +305,43 @@ func _test_window_transitions() -> void:
 		FramePacingPolicy.window_mode_steps(windowed, full, true) == PackedInt32Array([full]),
 		"ordinary enter-fullscreen remains a single transition"
 	)
+
+
+func _test_display_pacing() -> void:
+	var state: DisplayPacingState = DisplayPacingState.new()
+	var slow: PackedInt64Array = PackedInt64Array([0, 2, 60000, 0, 0, 1920, 1080])
+	var fast: PackedInt64Array = PackedInt64Array([1, 2, 240000, 1920, 0, 2560, 1440])
+	_check(not state.observe(slow), "initial display is already configured at startup")
+	for sample: int in 20:
+		_check(not state.observe(slow), "unchanged display never recreates the swapchain")
+	_check(not state.observe(fast), "monitor movement is debounced")
+	_check(state.observe(fast), "moving 60 to 240 Hz reapplies pacing once")
+	_check(not state.observe(fast), "new monitor settles without repeated resets")
+	_check(not state.observe(slow), "return transition pending")
+	_check(state.observe(slow), "moving back to 60 Hz reapplies pacing once")
+	var cloned: PackedInt64Array = PackedInt64Array([0, 1, 60000, 0, 0, 1920, 1080])
+	_check(not state.observe(cloned), "topology switch pending")
+	_check(state.observe(cloned), "Duplicate topology change detected without forcing a refresh")
+	_check(not state.observe(fast), "unsettled docking candidate")
+	_check(not state.observe(PackedInt64Array()), "invalid hotplug state ignored")
+	_check(not state.observe(fast), "invalid sample resets debounce")
+	_check(state.observe(fast), "hotplug recovery")
+	var faster: PackedInt64Array = fast.duplicate()
+	faster[2] = 360000
+	_check(not state.observe(faster), "same-screen Windows refresh change pending")
+	_check(state.observe(faster), "same-screen Windows refresh change applied")
+	var custom: ConfigFile = ConfigFile.new()
+	custom.set_value("Graphics", "frame_pacing_version", FramePacingPolicy.VERSION)
+	custom.set_value("Graphics", "max_fps", 165)
+	_check(
+		FramePacingPolicy.load_cap(custom, 360.0) == 165,
+		"monitor refresh never overwrites explicit cap"
+	)
+
+	var reused: PackedInt64Array = slow.duplicate()
+	var isolated: DisplayPacingState = DisplayPacingState.new()
+	_check(not isolated.observe(reused), "take initial snapshot independently")
+	reused[2] = 144000
+	_check(not isolated.observe(reused), "caller mutation cannot alter accepted state")
+	_check(isolated.observe(reused), "same array instance can be sampled repeatedly")
+	_check(reused.size() == 7 and reused[2] == 144000, "debounce never clears caller arrays")

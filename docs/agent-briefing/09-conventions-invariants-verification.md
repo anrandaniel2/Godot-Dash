@@ -232,3 +232,18 @@ The safety scene also tests paused blur-copy visibility, Windows public-download
 validation. Windows packaging adds a real Inno Setup install/upgrade/uninstall test with
 user-data hash comparisons. The display name is allowed to change; the explicit
 `custom_user_dir_name="godot-dash"` and replay version must stay stable across such updates.
+
+## 8. Decoration renderer cache verification
+
+`native/tests/test_decoration_visibility_cache.cpp` compiles without Godot and exercises the
+production header. It compares exact ordered emission against an independent set-based oracle,
+including overlapping cells, negative/extreme/empty ranges, generation wrap, same-size index
+rebuilds, live data on cache hits, and exact dirty-value updates. `--benchmark` compares the
+previous stamp-only traversal with the cache on fixed, occasionally changing and always-changing
+ranges (20k records, 2k redraws, median of five, alternating run order). It measures selector
+CPU cost and retained vector storage, not Godot draw submission/GPU performance.
+
+Windows CI runs that test via `tools/benchmarks/renderer_cache/SConstruct` and runs
+`tools/renderer_cache_selftest.tscn` with the built extension. The latter verifies real color,
+blend/transform updates, no-op redraw suppression, selection reuse, and reconfiguration
+invalidation. Headless tests cannot prove pixel parity. M1's picking-order gate remains unchanged.

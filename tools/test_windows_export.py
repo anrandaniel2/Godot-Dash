@@ -102,6 +102,19 @@ class WindowsExportTests(unittest.TestCase):
                 self.assertTrue(line.endswith(('.exe"', '.pck"')))
 
 
+    def test_no_monitor_status_text_or_polling_in_settings(self):
+        scene = (ROOT / "scenes/components/game_components/SettingsMenu.tscn").read_text()
+        script = (ROOT / "src/SettingsMenu.gd").read_text()
+        self.assertNotIn('name="DisplayStatus"', scene)
+        self.assertNotIn('_update_display_status', script)
+        self.assertNotIn('screen_get_refresh_rate', script)
+        watcher = (ROOT / "src/DisplayPacingWatcher.gd").read_text()
+        self.assertIn('window_get_current_screen()', watcher)
+        self.assertIn('screen_get_refresh_rate(screen)', watcher)
+        self.assertNotIn('Engine.max_fps', watcher)
+        self.assertNotIn('window_set_current_screen', watcher)
+
+
 
 if __name__ == "__main__":
     unittest.main()

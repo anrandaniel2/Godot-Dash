@@ -80,9 +80,16 @@ credentials are relayed. A failed direct request can add up to 15 seconds for a
 level/text request or 30 seconds for audio before the fallback. A server outage
 or unsupported/deleted level can still fail; include the level ID and error.
 
-Graphics settings display the active monitor's Windows-reported refresh rate,
-VSync mode and software limit. This is not proof of the physical presentation
-rate. The stale blur-copy visibility risk in paused menus is addressed, but
+The temporary monitor/refresh text has been removed. The game follows the
+window's current display and reapplies your chosen pacing once a monitor,
+refresh or topology change settles. It never copies the slowest/primary
+monitor's Hz into the FPS limit, or changes your Windows display configuration.
+Duplicate mode can share a presentation rate across monitors. For independent
+maximum refresh rates, choose Extend in Windows and select each monitor's
+highest supported rate in Advanced Display. The app cannot override clone-mode
+presentation limits; this needs real multi-monitor testing.
+
+The stale blur-copy visibility risk in paused menus is addressed, but
 whole-screen black flicker and 60-FPS VSync still require device verification.
 No rendering effects, physics, replay timing or level content were removed.
 
@@ -90,3 +97,12 @@ Fullscreen -> Exclusive Fullscreen now briefly passes through windowed mode to
 work around Godot 4.7.2 retaining normal fullscreen's oversized bounds. It keeps
 the active monitor and your chosen mode. A brief transition flash is possible;
 continuous flickering is not expected or considered verified fixed by this change.
+
+LEVEL RENDERER OPTIMISATION
+Decoration redraws reuse the ordered visible-record list until the visible
+cells or spatial index change. Colors, transforms, pulses and blending are
+still read live; no visual effects, geometry or collision data are removed.
+Exactly unchanged color/blend/transform updates no longer dirty draw commands.
+renderer-cache.log reports an isolated CPU selector benchmark and ordered-ID
+parity checks, not whole-game FPS. renderer-integration.log checks the real
+native renderer's live data and redraw counts headlessly, not pixel output.

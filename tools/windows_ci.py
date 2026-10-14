@@ -106,7 +106,8 @@ def safety() -> None:
                     ignore=shutil.ignore_patterns(".gdignore", ".godot"))
     for path in ("src/static/FramePacingPolicy.gd", "src/static/RenderTimingRequests.gd",
                  "src/refcounted/Selection.gd", "src/BlurBackBuffer.gd",
-                 "src/static/NativeDownloadPolicy.gd", "src/static/WindowsUpdatePolicy.gd"):
+                 "src/static/NativeDownloadPolicy.gd", "src/static/WindowsUpdatePolicy.gd",
+                 "src/static/DisplayPacingState.gd"):
         shutil.copy2(ROOT / path, project)
     imported = run([EDITOR, "--headless", "--path", project, "--editor", "--import"], "safety-import")
     check_log(imported, "safety-import")
@@ -124,6 +125,14 @@ def build() -> None:
          "target=template_release", "arch=x86_64", "api_version=4.7", "use_static_cpp=yes",
          "optimize=speed", "debug_symbols=no", "-j4"], "native-build", timeout=1800)
     check_pe(ROOT / "native/bin/windows" / DLL)
+    run([sys.executable, "-m", "SCons", "-f", ROOT / "tools/benchmarks/renderer_cache/SConstruct",
+         f"output={CACHE / 'renderer-cache'}"], "renderer-cache-build")
+    text = run([CACHE / "renderer-cache/visibility-test.exe", "--benchmark"], "renderer-cache")
+    if not re.search(r"DECORATION_CACHE_SUMMARY checks=\d+ failed=0", text):
+        raise RuntimeError("Decoration cache parity tests did not pass")
+    for line in text.splitlines():
+        if line.startswith("DECORATION_CACHE_"):
+            print(f"::notice title=decoration cache::{line}")
 
 
 def headless_project(text: str) -> str:
@@ -161,6 +170,14 @@ def export() -> None:
     imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-checked")
     # Match web CI: editor-only plugin runtime messages are not game failures.
     check_log(imported, "import-checked", include_runtime=False)
+    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/renderer_cache_selftest.tscn"],
+               "renderer-integration", timeout=120)
+    check_log(text, "renderer-integration")
+    if not re.search(r"RENDERER_CACHE_SELFTEST checks=\d+ failed=0", text):
+        raise RuntimeError("Native renderer cache integration failed")
+    for line in text.splitlines():
+        if line.startswith("RENDERER_CACHE_SELFTEST"):
+            print(f"::notice title=renderer integration::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
@@ -183,7 +200,7 @@ def export() -> None:
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
-    for name in ("runtime-safety",):
+    for name in ("runtime-safety", "renderer-cache", "renderer-integration"):
         shutil.copy2(LOGS / f"{name}.log", OUTPUT)
     shutil.make_archive(str(ROOT / "export/godot-dash-windows-x86_64"), "zip", OUTPUT)
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")

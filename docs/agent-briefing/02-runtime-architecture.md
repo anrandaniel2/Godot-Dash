@@ -224,8 +224,8 @@ counters: `stream Xms`, `live`, `deco <live>(+<building>)`.
 ## 8. Windows display follow-up
 
 The FPS control is labelled **FPS limit**, with 0/no-software-limit explained in its tooltip;
-VSync remains independent. Settings show the OS-reported active display refresh rate and
-software limit on demand (no per-frame polling). Editing the cap no longer reapplies VSync;
+VSync remains independent. The temporary display-status label was removed at the user's
+request. Editing the cap no longer reapplies VSync;
 window mode is only changed when needed. None of this proves the reported 60-Hz VSync
 presentation problem is solved on hardware.
 
@@ -241,3 +241,23 @@ See [upstream implementation](https://github.com/godotengine/godot/blob/4.7.2-st
 variants through WINDOWED and retains the active monitor. Unchanged modes and non-Windows
 transitions are untouched. This makes the Exclusive Fullscreen option set proper bounds;
 it is not hardware proof that the reported VSync/flicker problem has been resolved.
+
+## 9. Monitor changes and decoration redraw cache (2026-10-14)
+
+`Config` owns a Windows-only `DisplayPacingWatcher`. Every 0.5 real-time seconds it samples
+only the current window's display index/count, active Hz, position and size. Two matching
+changed samples request one VSync reapply through `Config.apply_frame_pacing(true)`.
+It does not derive `Engine.max_fps` from Hz, force a Windows mode, poll from Settings, or
+create a window on every monitor. `DisplayPacingState` covers moves, cloning/topology changes,
+invalid hotplug samples and active-refresh changes. Duplicate mode can impose shared
+presentation timing; independently maximizing each panel requires OS/driver support and,
+normally, Extend mode. Physical multi-monitor presentation is not established by these tests.
+
+`NativeDecorationRenderer` uses `decoration_visibility_cache.h` to reuse ordered record IDs
+while the indexed cell range stays the same. Index rebuilds explicitly invalidate the cache,
+even when the record count is unchanged. The old column/row/first-occurrence order is retained;
+only IDs are cached, so every emitted command reads live color/transform/blend/pulse state.
+Exact-equal mutations no longer dirty the command list (an already-dirty list remains dirty).
+This does not change culling bounds, worker timing, picking, animation clocks or visuals.
+The cache retains extra ID storage proportional to the largest selected set, not a second
+copy of the artwork. See `reports/renderer-cache-2026-10-14.md` for scope and measurements.
