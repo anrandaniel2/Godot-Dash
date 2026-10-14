@@ -133,6 +133,10 @@ def build() -> None:
     for line in text.splitlines():
         if line.startswith("DECORATION_CACHE_"):
             print(f"::notice title=decoration cache::{line}")
+    text = run([CACHE / "renderer-cache/ui-alignment-test.exe"], "ui-alignment")
+    if "ALL UI TRIGGER TESTS PASSED" not in text:
+        raise RuntimeError("Production UI alignment math failed")
+    print("::notice title=UI alignment::Production UI alignment math passed (including Relative with every reference).")
 
 
 def headless_project(text: str) -> str:
@@ -193,6 +197,14 @@ def export() -> None:
     for line in text.splitlines():
         if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH")):
             print(f"::notice title=renderer integration::{line}")
+    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/gameplay_presentation_selftest.tscn"],
+               "gameplay-presentation", timeout=120)
+    check_log(text, "gameplay-presentation")
+    if not re.search(r"PRESENTATION_SELFTEST checks=\d+ failed=0", text):
+        raise RuntimeError("Gameplay/presentation regressions failed")
+    for line in text.splitlines():
+        if line.startswith("PRESENTATION_SELFTEST"):
+            print(f"::notice title=gameplay presentation::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
@@ -215,7 +227,7 @@ def export() -> None:
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
-    for name in ("runtime-safety", "renderer-cache", "renderer-integration"):
+    for name in ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment", "gameplay-presentation"):
         shutil.copy2(LOGS / f"{name}.log", OUTPUT)
     shutil.make_archive(str(ROOT / "export/godot-dash-windows-x86_64"), "zip", OUTPUT)
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")

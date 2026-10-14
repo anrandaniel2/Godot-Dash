@@ -200,9 +200,11 @@ See *Compilation*.
 
 ### Multiple monitors and the next renderer performance pass
 
-The temporary monitor/Hz status text has been removed from Settings. On Windows,
-pacing now follows the current window's display and is refreshed once a display
-or topology change settles, without adding a monitor-derived software cap.
+The temporary monitor/Hz status text remains removed from Settings. Saved VSync
+and FPS preferences are applied at startup; Godot's display backend handles monitor
+changes. The experimental polling/reapply hook has been disconnected following a
+report of wavy distortion. No renderer, Windows display mode, or monitor-derived
+FPS cap is chosen automatically; physical-display verification is still needed.
 Windows **Duplicate** mode can share presentation timing; the app cannot guarantee
 independent maximum refresh rates for cloned displays. Use **Extend** and set each
 display's highest supported refresh rate in Windows for independent high-Hz use.
@@ -217,3 +219,16 @@ Static/spinning batches also stop running empty GDScript callbacks after enterin
 the scene tree (Godot had re-enabled them after off-tree construction). Native
 rendering/spin and monster animation clocks are retained. Windows CI covers this
 lifecycle and reports a 2,000-node callback microbenchmark.
+
+
+### Gameplay/presentation corrections
+
+The bottom-left menu label always shows the installed version (plus CI build/commit
+on Windows). Update availability remains clickable. Death freeze/marker debugging
+has been removed; the normal death effect and one-second restart track are restored.
+Hide/Show Player now shares both-slot state with Options and newly created duals.
+New and previously saved imported end portals use horizontal-only camera easing.
+UI decoration batches align individual object pivots, including Relative+Center,
+without stretching sprite parts, and refresh their layout when the viewport resizes.
+See `reports/presentation-parity-2026-10-14.md` for tests and remaining device/full-level
+verification limits.

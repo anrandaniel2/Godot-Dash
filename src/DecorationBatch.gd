@@ -549,3 +549,15 @@ func _process(delta: float) -> void:
 		return
 	if not monsters.is_empty():
 		_advance_monsters(delta)
+
+
+## Native UI applies alignment per object pivot, not the batch's placeholder
+## origin. Artwork stays batched, with original part sizes and animation data.
+func apply_ui_layout(layout: Dictionary) -> void:
+	if _native_canvas != null:
+		_native_canvas.call(&"apply_ui_layout", layout)
+
+
+func clear_ui_layout() -> void:
+	if _native_canvas != null:
+		_native_canvas.call(&"clear_ui_layout")

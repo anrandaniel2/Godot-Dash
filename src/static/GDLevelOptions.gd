@@ -43,9 +43,20 @@ static func apply(options: Dictionary) -> void:
 	_refresh()
 
 
+## Show / Hide Player (1613 / 1612) addresses both slots. Options can then
+## override either slot independently; unrelated options retain this state.
+static func set_players_visible(visible: bool) -> void:
+	hide_players.assign([not visible, not visible])
+	_refresh()
+
+
 ## Touch triggers ignore this block (gd_docs touch.md).
 static func are_controls_disabled(slot: int) -> bool:
 	return slot >= 1 and slot <= 2 and controls_disabled[slot - 1]
+
+
+static func refresh_player(player: Player) -> void:
+	player.set_gd_hidden(hide_players[mini(player.dual_index, 1)])
 
 
 static func _refresh() -> void:
@@ -54,7 +65,7 @@ static func _refresh() -> void:
 	if is_instance_valid(LevelManager.ground_up):
 		LevelManager.ground_up.visible = not hide_ground
 	if is_instance_valid(LevelManager.player):
-		LevelManager.player.set_gd_hidden(hide_players[0])
+		refresh_player(LevelManager.player)
 	for dual: Player in LevelManager.player_duals:
 		if is_instance_valid(dual):
-			dual.set_gd_hidden(hide_players[1])
+			refresh_player(dual)

@@ -7,45 +7,37 @@ func _ready() -> void:
 
 
 func refresh() -> void:
+	# This bottom-left control identifies the installed build in every state.
+	# Update status is secondary, never a replacement for the version.
+	text = UpdateManager.display_version()
+	tooltip_text = ""
 	disabled = true
 	add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.4))
 	modulate = Color.WHITE
 	if not Config.check_for_updates:
-		text = "v%s" % UpdateManager.version
 		return
 	if UpdateManager.status == UpdateManager.Status.CHECKING:
-		text = "v%s – Checking for updates..." % UpdateManager.version
+		tooltip_text = "Checking for updates…"
 		await UpdateManager.finished
 	disabled = false
-	if UpdateManager.uses_windows_channel():
-		match UpdateManager.status:
-			UpdateManager.Status.OUT_OF_DATE:
-				text = "Godot Dash — Update available. Download the installer (keeps your saves)."
-				add_theme_color_override("font_color", Color.WHITE)
-			UpdateManager.Status.UP_TO_DATE:
-				text = "Godot Dash — Up to date."
-			_:
-				text = "Godot Dash — Could not check for updates. Click to retry."
-		return
 	match UpdateManager.status:
-		UpdateManager.Status.UP_TO_DATE:
-			text = "v%s – Up to date." % UpdateManager.version
+		UpdateManager.Status.UP_TO_DATE, UpdateManager.Status.NEWER_THAN_UPSTREAM:
+			tooltip_text = "No newer release available. Click to check again."
 		UpdateManager.Status.OUT_OF_DATE:
-			text = "v%s – New update available: v%s! Click to download." % [UpdateManager.version, UpdateManager.latest_version]
+			text += " · Update available"
+			tooltip_text = "Download the installer (keeps your saves)." if UpdateManager.uses_windows_channel() else "Click to download the latest release."
 			add_theme_color_override("font_color", Color.WHITE)
-		UpdateManager.Status.NEWER_THAN_UPSTREAM:
-			text = "v%s – Current version is more recent than latest release (v%s)." % [UpdateManager.version, UpdateManager.latest_version]
 		UpdateManager.Status.DISABLED:
 			if OS.has_feature("web"):
-				text = "Updates are handled by the web host."
+				tooltip_text = "Updates are handled by the web host."
+				disabled = true
 			elif OS.has_feature("windows") and not UpdateManager.uses_windows_channel():
-				text = "Run the Windows installer to update; your saves are kept."
+				tooltip_text = "Run the Windows installer to update; your saves are kept."
+				disabled = true
 			else:
-				text = "Click to check for updates."
+				tooltip_text = "Click to check for updates."
 		UpdateManager.Status.FAILED:
-			text = "v%s – Could not check for updates." % UpdateManager.version
-			add_theme_color_override("font_color", Color.WHITE)
-			modulate = Color.DARK_RED
+			tooltip_text = "Could not check for updates. Click to retry."
 
 
 func _on_pressed() -> void:
@@ -55,9 +47,7 @@ func _on_pressed() -> void:
 		return
 	if UpdateManager.status == UpdateManager.Status.OUT_OF_DATE:
 		OS.shell_open(UpdateManager.latest_release_url)
-		text = "Link opened!"
-		await get_tree().create_timer(1.0).timeout
-		refresh()
+		tooltip_text = "Download link opened."
 		return
 	UpdateManager.check_for_updates()
 	refresh()

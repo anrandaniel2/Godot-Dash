@@ -16,101 +16,13 @@ struct Vector2D {
 	Vector2D(double px, double py) : x(px), y(py) {}
 };
 
-enum class UIRef : int32_t {
-	DEFAULT = 0,
-	AUTO_X = 1,
-	CENTER_X = 2,
-	LEFT = 3,
-	RIGHT = 4,
-	AUTO_Y = 5,
-	CENTER_Y = 6,
-	BOTTOM = 7,
-	TOP = 8,
-};
+#include "../src/ui_alignment.h"
 
-static constexpr double PLAYER_CAMERA_DEFAULT_ZOOM = 0.8;
-
-static Vector2D compute_ui_anchor(
-	const Vector2D &offset_from_target,
-	int32_t xref_pos,
-	int32_t yref_pos,
-	bool xref_relative,
-	bool yref_relative,
-	const Vector2D &viewport_size,
-	double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
-{
-	const double aspect = (viewport_size.y > 0.0) ? (viewport_size.x / viewport_size.y) : (16.0 / 9.0);
-	constexpr double ref_aspect = 1.5; // 3:2 GD reference aspect ratio
-
-	const double safe_zoom = (zoom > 0.0) ? zoom : PLAYER_CAMERA_DEFAULT_ZOOM;
-	double W_ref = 0.0, H_ref = 0.0, W_active = 0.0, H_active = 0.0, delta_x = 0.0, delta_y = 0.0;
-
-	if (aspect >= ref_aspect) {
-		// Wider than 3:2: vertical dimension is fixed to reference height
-		H_ref = viewport_size.y / safe_zoom;
-		W_ref = H_ref * ref_aspect;
-		H_active = H_ref;
-		W_active = H_ref * aspect;
-		delta_x = (W_active - W_ref) * 0.5;
-		delta_y = 0.0;
-	} else {
-		// Taller than 3:2: horizontal dimension is fixed to reference width
-		W_ref = viewport_size.x / safe_zoom;
-		H_ref = W_ref / ref_aspect;
-		W_active = W_ref;
-		H_active = W_ref / aspect;
-		delta_x = 0.0;
-		delta_y = (H_active - H_ref) * 0.5;
-	}
-
-	double new_x = offset_from_target.x;
-	if (aspect >= ref_aspect) {
-		int xref = xref_pos;
-		if (xref == static_cast<int32_t>(UIRef::AUTO_X)) {
-			xref = (offset_from_target.x < 0.0) ? static_cast<int32_t>(UIRef::LEFT) : static_cast<int32_t>(UIRef::RIGHT);
-		}
-		if (xref == static_cast<int32_t>(UIRef::LEFT)) {
-			if (xref_relative) {
-				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
-			} else {
-				new_x = offset_from_target.x - delta_x;
-			}
-		} else if (xref == static_cast<int32_t>(UIRef::RIGHT)) {
-			if (xref_relative) {
-				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
-			} else {
-				new_x = offset_from_target.x + delta_x;
-			}
-		} else if (xref == static_cast<int32_t>(UIRef::CENTER_X) || xref == static_cast<int32_t>(UIRef::DEFAULT)) {
-			new_x = offset_from_target.x;
-		}
-	}
-
-	double new_y = offset_from_target.y;
-	if (aspect < ref_aspect) {
-		int yref = yref_pos;
-		if (yref == static_cast<int32_t>(UIRef::AUTO_Y)) {
-			// In Godot, Y increases downwards, so offset.y < 0 is TOP, offset.y >= 0 is BOTTOM
-			yref = (offset_from_target.y < 0.0) ? static_cast<int32_t>(UIRef::TOP) : static_cast<int32_t>(UIRef::BOTTOM);
-		}
-		if (yref == static_cast<int32_t>(UIRef::TOP)) {
-			if (yref_relative) {
-				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
-			} else {
-				new_y = offset_from_target.y - delta_y;
-			}
-		} else if (yref == static_cast<int32_t>(UIRef::BOTTOM)) {
-			if (yref_relative) {
-				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
-			} else {
-				new_y = offset_from_target.y + delta_y;
-			}
-		} else if (yref == static_cast<int32_t>(UIRef::CENTER_Y) || yref == static_cast<int32_t>(UIRef::DEFAULT)) {
-			new_y = offset_from_target.y;
-		}
-	}
-
-	return Vector2D(new_x, new_y);
+static Vector2D compute_ui_anchor(Vector2D offset, int32_t xref, int32_t yref,
+        bool rx, bool ry, Vector2D viewport, double zoom = 0.8) {
+    const auto point = gdash::ui_anchor({offset.x, offset.y}, xref, yref, rx, ry,
+            {viewport.x, viewport.y}, zoom);
+    return Vector2D(point.x, point.y);
 }
 
 static int failures = 0;
@@ -123,6 +35,15 @@ static void expect_close(const char *name, double actual, double expected, doubl
 }
 
 int main() {
+    for (int ref = 0; ref <= 8; ++ref) {
+        auto p = compute_ui_anchor(Vector2D(1012.5, 80), ref, ref, true, true, Vector2D(2560, 1080));
+        expect_close("relative overrides every XRef", p.x, 1600);
+        expect_close("relative inactive Y unchanged", p.y, 80);
+        p = compute_ui_anchor(Vector2D(80, -600), ref, ref, true, true, Vector2D(1440, 1440));
+        expect_close("relative overrides every YRef", p.y, -900);
+        expect_close("relative inactive X unchanged", p.x, 80);
+    }
+
 	std::printf("--- Testing GD 2.2 UI Trigger (ID 3613) Alignment Math ---\n");
 
 	// 1. Reference Aspect Ratio (3:2) - delta_x = 0, delta_y = 0

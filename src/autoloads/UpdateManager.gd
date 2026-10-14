@@ -21,6 +21,18 @@ var latest_release_url: String
 var status: Status = Status.CHECKING
 
 
+## Always identify the installed game, even when update checks are disabled.
+func display_version() -> String:
+	var label: String = "v%s" % version
+	var build: int = int(ProjectSettings.get_setting("application/config/windows_build_number", 0))
+	var sha: String = str(ProjectSettings.get_setting("application/config/windows_build_sha", ""))
+	if build > 0:
+		label += " · Build %d" % build
+	if not sha.is_empty():
+		label += " (%s)" % sha.left(8)
+	return label
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	check_for_updates()

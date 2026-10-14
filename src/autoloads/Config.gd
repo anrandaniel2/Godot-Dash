@@ -371,11 +371,6 @@ static func web_texture_filtering(mode: TextureFilteringMode, is_web: bool) -> T
 
 func _ready() -> void:
 	apply_frame_pacing()
-	if OS.has_feature("windows") and DisplayServer.get_name() != "headless":
-		var display_watcher: DisplayPacingWatcher = DisplayPacingWatcher.new()
-		display_watcher.name = "DisplayPacingWatcher"
-		display_watcher.presentation_changed.connect(apply_frame_pacing.bind(true))
-		add_child(display_watcher)
 	TimescaleChangerComponent.apply_game_speed()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
@@ -389,11 +384,13 @@ func _ready() -> void:
 		add_child(effects)
 
 
-## Apply on startup and after a window/presentation-mode change. This never
-## touches physics_ticks_per_second, time_scale or replay tick semantics.
-func apply_frame_pacing(force_vsync: bool = false) -> void:
+## Apply saved preferences at startup. Godot's display backend owns monitor /
+## swapchain changes; repeatedly re-setting VSync on display notifications can
+## disturb presentation. Never infer a renderer or FPS cap from refresh rate.
+## Physics ticks, time scale and replay semantics are untouched.
+func apply_frame_pacing() -> void:
 	Engine.max_fps = maxi(0, max_fps)
-	if force_vsync or DisplayServer.window_get_vsync_mode() != vsync:
+	if DisplayServer.window_get_vsync_mode() != vsync:
 		DisplayServer.window_set_vsync_mode(vsync)
 
 

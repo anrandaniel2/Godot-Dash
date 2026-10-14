@@ -437,6 +437,11 @@ func apply_gd_options(options: Dictionary) -> void:
 	GDLevelOptions.apply(options)
 
 
+## Shared by the native Show/Hide arms and their component twins.
+func apply_gd_player_visibility(visible: bool) -> void:
+	GDLevelOptions.set_players_visible(visible)
+
+
 ## Background Speed (3606, gd_docs bg_speed.md): BGMove = CMove * (1 - speed),
 ## i.e. the parallax scroll scale equals the speed.
 func apply_gd_bg_speed(speed: Vector2) -> void:

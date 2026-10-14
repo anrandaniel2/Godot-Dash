@@ -1580,6 +1580,7 @@ static func _level_end_entry(level_length: float) -> Dictionary:
 		"components": {
 			"TargetObjectComponent": { "target": NodePath("%s/%s" % [IMPORTED_LAYER_NAME, LEVEL_END_NAME]) },
 			"TriggerHitboxComponent": { "line_height": LEVEL_END_LINE_CELLS },
+			"EndLevelComponent": { "gd_import": true },
 		},
 		"markers": [],
 	}
@@ -1830,7 +1831,7 @@ static func _components_from_properties(
 					"target_group": target_groups[0] if not target_groups.is_empty() else "",
 					"animation_id": int(properties.get("76", "0")),
 				}
-		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899, 3016, 3618, 3660, 3661, 3608, 3606, 1616: # twins of the native gameplay arms
+		1917, 3607, 3614, 3615, 3617, 3619, 3620, 3641, 1815, 3609, 1812, 1595, 1814, 3604, 2899, 3016, 3618, 3660, 3661, 3608, 3606, 1616, 1612, 1613: # twins of the native gameplay arms
 			if "GameplayTriggerComponent" in supported:
 				var raw: Dictionary[String, String] = {}
 				for key: Variant in properties:

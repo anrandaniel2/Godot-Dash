@@ -78,13 +78,24 @@ func start(player: Player) -> void:
 
 ## Imported GD End: the unique Target Pos member, else the trigger itself.
 func _gd_target() -> Node2D:
-	if not gd_import:
+	if not gd_import and not _is_legacy_imported_end():
 		return null
 	if not target_group.is_empty() and target_group != "0":
 		var members: Array[Node] = get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + target_group))
 		if members.size() == 1 and members[0] is Node2D:
 			return members[0] as Node2D
 	return parent as Node2D
+
+
+## Pre-fix saved imports have the converter's unique name and self target,
+## but no gd_import field. Keep authored end triggers on their original path.
+func _is_legacy_imported_end() -> bool:
+	if parent.name != GMDConverter.LEVEL_END_NAME or parent.get_parent() == null:
+		return false
+	if parent.get_parent().name != GMDConverter.IMPORTED_LAYER_NAME:
+		return false
+	var target: TargetObjectComponent = parent.query(TargetObjectComponent)
+	return target != null and target.target == NodePath("%s/%s" % [GMDConverter.IMPORTED_LAYER_NAME, GMDConverter.LEVEL_END_NAME])
 
 
 func reset() -> void:

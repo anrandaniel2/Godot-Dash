@@ -12,3 +12,5 @@ else:
     env.Append(CXXFLAGS=['-std=c++17', '-O2', '-Wall', '-Wextra', '-Werror'])
 obj = env.Object(str(output / 'visibility'), str(root / 'native/tests/test_decoration_visibility_cache.cpp'))
 Default(env.Program(str(output / 'visibility-test'), obj))
+ui_obj = env.Object(str(output / 'ui-alignment'), str(root / 'native/tests/test_ui_trigger.cpp'))
+Default(env.Program(str(output / 'ui-alignment-test'), ui_obj))

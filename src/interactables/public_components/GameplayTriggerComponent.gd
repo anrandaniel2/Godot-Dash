@@ -31,6 +31,8 @@ enum Kind {
 	STOP,
 	RESET_GROUP,
 	END_WALL, ## Retired: 1931 is a Subzero leftover with no effect in GD 2.2.
+	HIDE_PLAYER,
+	SHOW_PLAYER,
 }
 
 const KIND_BY_ID: Dictionary[int, Kind] = {
@@ -49,6 +51,8 @@ const KIND_BY_ID: Dictionary[int, Kind] = {
 	1814: Kind.FOLLOW_PLAYER_Y,
 	3604: Kind.EVENT,
 	2899: Kind.OPTIONS,
+	1612: Kind.HIDE_PLAYER,
+	1613: Kind.SHOW_PLAYER,
 	3016: Kind.ADV_FOLLOW,
 	3660: Kind.ADV_FOLLOW_EDIT,
 	3661: Kind.ADV_FOLLOW_RETARGET,
@@ -673,6 +677,8 @@ func _on_interacted(player: Player = null) -> void:
 			for node: Node in get_tree().get_nodes_in_group(StringName(Constants.GROUP_PREFIX + properties.get("51", ""))):
 				if node.has_method(&"gd_reset"):
 					node.call(&"gd_reset")
+		Kind.HIDE_PLAYER, Kind.SHOW_PLAYER:
+			GDLevelOptions.set_players_visible(kind == Kind.SHOW_PLAYER)
 		Kind.OPTIONS:
 			if LevelManager.current_level != null:
 				LevelManager.current_level.apply_gd_options(properties)

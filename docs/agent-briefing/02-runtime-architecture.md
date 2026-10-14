@@ -244,14 +244,12 @@ it is not hardware proof that the reported VSync/flicker problem has been resolv
 
 ## 9. Monitor changes and decoration redraw cache (2026-10-14)
 
-`Config` owns a Windows-only `DisplayPacingWatcher`. Every 0.5 real-time seconds it samples
-only the current window's display index/count, active Hz, position and size. Two matching
-changed samples request one VSync reapply through `Config.apply_frame_pacing(true)`.
-It does not derive `Engine.max_fps` from Hz, force a Windows mode, poll from Settings, or
-create a window on every monitor. `DisplayPacingState` covers moves, cloning/topology changes,
-invalid hotplug samples and active-refresh changes. Duplicate mode can impose shared
-presentation timing; independently maximizing each panel requires OS/driver support and,
-normally, Extend mode. Physical multi-monitor presentation is not established by these tests.
+`Config` no longer instantiates `DisplayPacingWatcher`: after a reported wavy-display
+regression, the automatic display-poll/VSync-reapply hook was disconnected. Saved
+VSync/FPS choices still apply at startup and explicit setting changes; Godot owns
+swapchain/display transitions. `DisplayPacingState` and its unit tests remain as unused
+policy-test infrastructure, not active presentation logic. Do not claim an optimal
+renderer or independent cloned-display rates from reported monitor Hz.
 
 `NativeDecorationRenderer` uses `decoration_visibility_cache.h` to reuse ordered record IDs
 while the indexed cell range stays the same. Index rebuilds explicitly invalidate the cache,
@@ -272,3 +270,20 @@ building/adopting, and enables processing for late monster registration. Its dea
 GDScript `_spinning` list is removed; native spinning remains unchanged. This removes
 empty callbacks, not drawing or effects. The selftest covers post-ready flags, native
 spin, monster timing and in-tree rebuilds, plus a 2,000-node callback microbenchmark.
+
+
+### Gameplay/presentation follow-up (2026-10-14)
+
+- `UpdateManager.display_version` supplies installed version/Windows CI build and SHA;
+  UpdateChecker retains it in every status, including checks disabled/offline.
+- Player death freeze/marker code is removed, not merely toggled. Existing animation
+  restart timing and practice/editor branches are retained.
+- Native Hide/Show calls Level -> GDLevelOptions like Options; component twins are
+  appended enum entries. P1/P2 state also initializes later-created duals; ghosts hide.
+- Synthetic imported end entries set EndLevelComponent.gd_import. Older saved converter
+  end names + self-target paths get a narrow compatibility check, not all authored ends.
+- UI alignment uses `native/src/ui_alignment.h` (same production/test math), with
+  Relative overriding all references. Retained UI draw offsets align per object pivot,
+  preserve multi-sprite/spin geometry, bypass only UI's now-invalid world cull index,
+  resize without replaying triggers, and clear on restore. Full Amethyst/device parity
+  is not established by headless synthetic tests.

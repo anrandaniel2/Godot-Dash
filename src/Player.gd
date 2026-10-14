@@ -284,6 +284,8 @@ func _ready() -> void:
 		LevelManager.player = self
 	else:
 		LevelManager.player_duals.append(self)
+	# A dual created after Hide Player inherits the current slot state.
+	GDLevelOptions.refresh_player(self)
 	_set_particles_visibility.call_deferred()
 	if not Editor.in_editor:
 		reset_replay.call_deferred()
@@ -360,7 +362,7 @@ func _physics_process(delta: float) -> void:
 		_trail.add_points = true
 	if _trail.add_points:
 		_trail.material.set_shader_parameter(&"bias", float(_trail.get_point_count()) / float(_trail.length) * 1.2)
-	if ghost_trail and dual_index == 0:
+	if ghost_trail and dual_index == 0 and not gd_hidden and is_visible_in_tree():
 		_ghost_timer -= delta
 		if _ghost_timer <= 0.0:
 			_ghost_timer = GHOST_INTERVAL
@@ -1438,10 +1440,18 @@ func _check_max_gameplay_y() -> void:
 		_death_animator.play("DeathAnimation")
 
 
-## Options trigger (2899) Hide P1 / P2: hides every player visual.
+## Options and Show/Hide Player share state without touching collisions.
 func set_gd_hidden(hidden: bool) -> void:
 	gd_hidden = hidden
 	modulate.a = 0.0 if hidden else 1.0
+	if is_inside_tree():
+		# Ghosts are siblings, so the player's modulate does not cover them.
+		for ghost: Node2D in get_tree().get_nodes_in_group(_ghost_group()):
+			ghost.visible = not hidden
+
+
+func _ghost_group() -> StringName:
+	return StringName("player_ghost_%d" % get_instance_id())
 
 
 ## Event trigger (3604) sources detected from this tick's state changes:
@@ -1469,40 +1479,13 @@ func _emit_gd_events(jump_state: int) -> void:
 	_event_last_gamemode = internal_gamemode
 
 
-## Debug: freeze the game at the point of death instead of playing the death
-## animation and restarting. Set to false to restore normal death handling.
-static var freeze_on_death_debug: bool = true
-
-
 func _player_death() -> void:
-	# Death cause for the bli probes: where the cube was and which path killed it.
-	var frames := get_stack()
-	print("[gdash-death] pos=%s stack=%s" % [str(position), str(frames.slice(0, 4))])
 	if not GDLevelOptions.audio_on_death:
 		AudioServer.set_bus_mute(AudioServer.get_bus_index(&"Music"), true)
 	dead = true
 	_event_last_gamemode = -1
 	NativeTriggerBridge.notify_player_death(self)
 	last_automatic_checkpoint_position = position
-	if freeze_on_death_debug:
-		# Debug: stop the whole game where the cube died and keep the cube visible.
-		# R (restart_level) unpauses and restarts through the always-running pause menu.
-		# Draw the cube above every level object: it dies inside blocks (sandwich,
-		# walls), and those can be drawn over it. Visual only.
-		z_as_relative = false
-		z_index = RenderingServer.CANVAS_ITEM_Z_MAX
-		var canvas_position: Vector2 = get_global_transform_with_canvas().origin
-		print("[gdash-freeze] frozen at pos=%s canvas=%s viewport=%s; press R to restart" % [
-			str(position), str(canvas_position), str(get_viewport().get_visible_rect().size)])
-		_show_death_marker(canvas_position)
-		# The hide-player option (levels 162/163) zeroes modulate; reveal the players
-		# so the death spot can be seen. Gameplay is not changed.
-		modulate.a = 1.0
-		for dual: Player in LevelManager.player_duals:
-			if is_instance_valid(dual):
-				dual.modulate.a = 1.0
-		get_tree().paused = true
-		return
 	_icon.hide()
 	_death_effect.frame = 0
 	_death_effect.play()
@@ -1512,18 +1495,6 @@ func _player_death() -> void:
 	_trail.clear_points()
 	if not GDLevelOptions.no_death_sfx:
 		SFXManager.play_sfx("res://assets/sounds/sfx/game_sfx/DeathSound.mp3", &"In Level SFX")
-
-
-## Debug: red marker at the frozen cube's screen position (see DeathFreezeMarker).
-func _show_death_marker(canvas_position: Vector2) -> void:
-	var layer := CanvasLayer.new()
-	layer.layer = 128
-	layer.process_mode = Node.PROCESS_MODE_ALWAYS
-	var marker := DeathFreezeMarker.new()
-	marker.marker_position = canvas_position
-	marker.label_text = "DEAD HERE (%d, %d)" % [roundi(canvas_position.x), roundi(canvas_position.y)]
-	layer.add_child(marker)
-	get_tree().root.add_child(layer)
 
 
 func _on_death_restart() -> void:
@@ -1699,6 +1670,7 @@ func _spawn_ghost() -> void:
 		ghost.free()
 		return
 	host.add_child(ghost)
+	ghost.add_to_group(_ghost_group())
 	var tween: Tween = ghost.create_tween().set_parallel()
 	tween.tween_property(ghost, ^"modulate:a", 0.0, GHOST_FADE)
 	tween.tween_property(ghost, ^"scale", Vector2(GHOST_SCALE, GHOST_SCALE), GHOST_FADE)

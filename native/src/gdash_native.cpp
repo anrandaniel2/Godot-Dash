@@ -44,6 +44,8 @@
 
 #include <godot_cpp/templates/hash_map.hpp>
 
+#include "ui_alignment.h"
+
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -176,19 +178,6 @@ enum class TriggerEffectKind : int32_t {
 	CHECKPOINT,         // 2063 platformer checkpoint
 	TOGGLE_BLOCK,       // 3643
 	ANIMATE_KEYFRAME,   // 3033
-};
-
-// Alignment references for GD 2.2 UI Trigger (key 385 xref_pos, key 386 yref_pos).
-enum class UIRef : int32_t {
-	DEFAULT = 0,
-	AUTO_X = 1,
-	CENTER_X = 2,
-	LEFT = 3,
-	RIGHT = 4,
-	AUTO_Y = 5,
-	CENTER_Y = 6,
-	BOTTOM = 7,
-	TOP = 8,
 };
 
 // GD easing index to curve, mirroring GMDConverter._easing_from_property:
@@ -2190,78 +2179,10 @@ static Vector2 compute_ui_anchor(
 	const Vector2 &viewport_size,
 	double zoom = PLAYER_CAMERA_DEFAULT_ZOOM)
 {
-	const double aspect = (viewport_size.y > 0.0) ? (viewport_size.x / viewport_size.y) : (16.0 / 9.0);
-	constexpr double ref_aspect = 1.5; // 3:2 GD reference aspect ratio
-
-	const double safe_zoom = (zoom > 0.0) ? zoom : PLAYER_CAMERA_DEFAULT_ZOOM;
-	double W_ref = 0.0, H_ref = 0.0, W_active = 0.0, H_active = 0.0, delta_x = 0.0, delta_y = 0.0;
-
-	if (aspect >= ref_aspect) {
-		// Wider than 3:2: vertical dimension is fixed to reference height
-		H_ref = viewport_size.y / safe_zoom;
-		W_ref = H_ref * ref_aspect;
-		H_active = H_ref;
-		W_active = H_ref * aspect;
-		delta_x = (W_active - W_ref) * 0.5;
-		delta_y = 0.0;
-	} else {
-		// Taller than 3:2: horizontal dimension is fixed to reference width
-		W_ref = viewport_size.x / safe_zoom;
-		H_ref = W_ref / ref_aspect;
-		W_active = W_ref;
-		H_active = W_ref / aspect;
-		delta_x = 0.0;
-		delta_y = (H_active - H_ref) * 0.5;
-	}
-
-	double new_x = offset_from_target.x;
-	if (aspect >= ref_aspect) {
-		int xref = xref_pos;
-		if (xref == static_cast<int32_t>(UIRef::AUTO_X)) {
-			xref = (offset_from_target.x < 0.0) ? static_cast<int32_t>(UIRef::LEFT) : static_cast<int32_t>(UIRef::RIGHT);
-		}
-		if (xref == static_cast<int32_t>(UIRef::LEFT)) {
-			if (xref_relative) {
-				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
-			} else {
-				new_x = offset_from_target.x - delta_x;
-			}
-		} else if (xref == static_cast<int32_t>(UIRef::RIGHT)) {
-			if (xref_relative) {
-				new_x = (W_ref > 0.0) ? (offset_from_target.x * (W_active / W_ref)) : offset_from_target.x;
-			} else {
-				new_x = offset_from_target.x + delta_x;
-			}
-		} else if (xref == static_cast<int32_t>(UIRef::CENTER_X) || xref == static_cast<int32_t>(UIRef::DEFAULT)) {
-			new_x = offset_from_target.x;
-		}
-	}
-
-	double new_y = offset_from_target.y;
-	if (aspect < ref_aspect) {
-		int yref = yref_pos;
-		if (yref == static_cast<int32_t>(UIRef::AUTO_Y)) {
-			// In Godot, Y increases downwards, so offset.y < 0 is TOP, offset.y >= 0 is BOTTOM
-			yref = (offset_from_target.y < 0.0) ? static_cast<int32_t>(UIRef::TOP) : static_cast<int32_t>(UIRef::BOTTOM);
-		}
-		if (yref == static_cast<int32_t>(UIRef::TOP)) {
-			if (yref_relative) {
-				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
-			} else {
-				new_y = offset_from_target.y - delta_y;
-			}
-		} else if (yref == static_cast<int32_t>(UIRef::BOTTOM)) {
-			if (yref_relative) {
-				new_y = (H_ref > 0.0) ? (offset_from_target.y * (H_active / H_ref)) : offset_from_target.y;
-			} else {
-				new_y = offset_from_target.y + delta_y;
-			}
-		} else if (yref == static_cast<int32_t>(UIRef::CENTER_Y) || yref == static_cast<int32_t>(UIRef::DEFAULT)) {
-			new_y = offset_from_target.y;
-		}
-	}
-
-	return Vector2(static_cast<real_t>(new_x), static_cast<real_t>(new_y));
+	const gdash::UIPoint result = gdash::ui_anchor(
+		{offset_from_target.x, offset_from_target.y}, xref_pos, yref_pos,
+		xref_relative, yref_relative, {viewport_size.x, viewport_size.y}, zoom);
+	return Vector2(static_cast<real_t>(result.x), static_cast<real_t>(result.y));
 }
 
 // The copy-chain recursion budget, matching ColorChannelWatcher.COPY_ITERATIONS
@@ -3286,6 +3207,7 @@ class NativeTriggerRuntime : public RefCounted {
 	ObjectID ui_layer_id;
 	ObjectID ui_root_id;
 	bool ui_triggers_applied = false;
+	Vector2 ui_viewport_size;
 
 	struct UIObjectState {
 		ObjectID node_id;
@@ -3300,8 +3222,9 @@ class NativeTriggerRuntime : public RefCounted {
 		bool original_monitoring = false;
 		bool original_monitorable = false;
 		bool was_area = false;
-		bool original_cull = false;
 		bool was_batch = false;
+		Dictionary layout;
+		Vector2 anchor;
 	};
 	std::vector<UIObjectState> ui_objects;
 	std::unordered_set<uint64_t> ui_affected_objects;
@@ -4277,7 +4200,13 @@ class NativeTriggerRuntime : public RefCounted {
 		}
 	}
 
-	static void set_player_visible(Object *player, bool visible) {
+	void set_player_visible(Object *player, bool visible) {
+		Object *level = ObjectDB::get_instance(level_id);
+		if (level && level->has_method("apply_gd_player_visibility")) {
+			level->call("apply_gd_player_visibility", visible);
+			return;
+		}
+		// Standalone runtime clients without a Level keep the old local API.
 		CanvasItem *item = Object::cast_to<CanvasItem>(player);
 		if (item) item->set_visible(visible);
 	}
@@ -7295,6 +7224,7 @@ public:
 
 		Node2D *ui_root = ensure_ui_root();
 		const Vector2 vp_size = get_viewport_size();
+		ui_viewport_size = vp_size;
 
 		for (size_t i = 0; i < records.size(); ++i) {
 			Record &rec = records[i];
@@ -7362,29 +7292,59 @@ public:
 					node->call("set_monitoring", false);
 					node->call("set_monitorable", false);
 				}
-				if (is_decoration_batch(node)) {
-					state.was_batch = true;
-					state.original_cull = node->get("_cull");
-					node->set("_cull", false);
-					node->queue_redraw();
-				}
-
-				ui_objects.push_back(state);
-
 				const Vector2 offset = node->get_global_position() - target_center;
 				const Vector2 ui_anchor = compute_ui_anchor(
 					offset, effect.xref_pos, effect.yref_pos,
 					effect.xref_relative, effect.yref_relative,
 					vp_size, PLAYER_CAMERA_DEFAULT_ZOOM);
 
+				state.anchor = ui_anchor;
+				state.layout["world_transform"] = node->get_global_transform();
+				state.layout["target_center"] = target_center;
+				state.layout["viewport_size"] = vp_size;
+				state.layout["xref"] = effect.xref_pos;
+				state.layout["yref"] = effect.yref_pos;
+				state.layout["relative_x"] = effect.xref_relative;
+				state.layout["relative_y"] = effect.yref_relative;
+				state.was_batch = is_decoration_batch(node) && node->has_method("apply_ui_layout");
+				if (state.was_batch) node->call("apply_ui_layout", state.layout);
+				ui_objects.push_back(state);
+
 				if (ui_root && parent) {
+					Transform2D pose = node->get_global_transform();
+					pose.set_origin(ui_anchor);
 					parent->remove_child(node);
 					ui_root->add_child(node);
-					node->set_position(ui_anchor);
+					node->set_transform(pose);
 				} else {
 					node->set_global_position(target_center + ui_anchor);
 				}
 			}
+		}
+	}
+
+	// Resize changes alignment, not elapsed cutscene time or live group motion.
+	void refresh_ui_layout() {
+		if (!ui_triggers_applied || ui_objects.empty()) return;
+		const Vector2 size = get_viewport_size();
+		if (size == ui_viewport_size) return;
+		ui_viewport_size = size;
+		ensure_ui_root();
+		for (UIObjectState &state : ui_objects) {
+			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(state.node_id));
+			if (!node) continue;
+			const Transform2D world = state.layout["world_transform"];
+			const Vector2 center = state.layout["target_center"];
+			const Vector2 anchor = compute_ui_anchor(world.get_origin() - center,
+				state.layout["xref"], state.layout["yref"], state.layout["relative_x"],
+				state.layout["relative_y"], size, PLAYER_CAMERA_DEFAULT_ZOOM);
+			// Preserve a Move/Rotate/Scale already applied to this UI object.
+			// The anchor delta belongs to its initial UI pose, not live axes.
+			const Vector2 local_delta = world.affine_inverse().basis_xform(anchor - state.anchor);
+			node->set_position(node->get_position() + node->get_transform().basis_xform(local_delta));
+			state.anchor = anchor;
+			state.layout["viewport_size"] = size;
+			if (state.was_batch) node->call("apply_ui_layout", state.layout);
 		}
 	}
 
@@ -7417,10 +7377,7 @@ public:
 					node->call("set_monitoring", state.original_monitoring);
 					node->call("set_monitorable", state.original_monitorable);
 				}
-				if (state.was_batch) {
-					node->set("_cull", state.original_cull);
-					node->queue_redraw();
-				}
+				if (state.was_batch) node->call("clear_ui_layout");
 			}
 		}
 		ui_objects.clear();
@@ -8085,6 +8042,7 @@ protected:
 			return;
 		}
 		if (what == Node::NOTIFICATION_PROCESS) {
+			triggers->refresh_ui_layout();
 			update_registered_decoration_renderers(get_process_delta_time());
 			return;
 		}
@@ -8159,6 +8117,7 @@ public:
 	}
 	void apply_ui_triggers() {
 		triggers->apply_ui_triggers();
+		triggers->refresh_ui_layout();
 	}
 	void restore_ui_objects() {
 		triggers->restore_ui_objects();
@@ -10716,6 +10675,11 @@ class NativeDecorationRenderer : public RefCounted {
 	Ref<CanvasItemMaterial> additive_material;
 	Ref<Resource> fade_plain, fade_additive;
 	std::vector<Record> records;
+	// UI changes object placement, never sprite size / part offsets. World
+	// records stay intact for spin/monster updates and exact restart restore.
+	std::vector<Vector2> ui_offsets;
+	bool ui_layout_active = false;
+	bool ui_saved_cull = true;
 	// Dense indices are effectively a small SoA hot set: animation touches only
 	// transform/spin data for rotating records, never every static Record.
 	std::vector<size_t> spinning_indices;
@@ -10766,13 +10730,14 @@ class NativeDecorationRenderer : public RefCounted {
 		if (canvas_item_add.is_valid()) server->canvas_item_clear(canvas_item_add);
 		last_drawn_items = 0;
 		if (!range_has_records && cull) return;
-		auto draw_record = [&](const Record &record) {
+		auto draw_record = [&](size_t index) {
+			const Record &record = records[index];
 			// Flipped records draw on their own canvas item; everything else
 			// keeps the batch's import-time material through the parent.
 			RID target = canvas_item;
 			if (record.blend == 1 && canvas_item_add.is_valid()) target = canvas_item_add;
 			else if (record.blend == 2 && canvas_item_plain.is_valid()) target = canvas_item_plain;
-			server->canvas_item_add_set_transform(target, record.transform);
+			server->canvas_item_add_set_transform(target, ui_layout_active ? get_draw_transform(index) : record.transform);
 			server->canvas_item_add_texture_rect_region(
 					target, Rect2(-record.region.size * 0.5, record.region.size),
 					record.texture->get_rid(), record.region,
@@ -10781,17 +10746,20 @@ class NativeDecorationRenderer : public RefCounted {
 			++last_drawn_items;
 		};
 		if (!cull) {
-			for (const Record &record : records) draw_record(record);
+			for (size_t index = 0; index < records.size(); ++index) draw_record(index);
 			return;
 		}
 		visible_records.for_each(sections, records.size(),
 				{ first_bucket, last_bucket, first_row, last_row },
-				[&](size_t index) { draw_record(records[index]); });
+				draw_record);
 	}
 
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
+		ClassDB::bind_method(D_METHOD("apply_ui_layout", "layout"), &NativeDecorationRenderer::apply_ui_layout);
+		ClassDB::bind_method(D_METHOD("clear_ui_layout"), &NativeDecorationRenderer::clear_ui_layout);
+		ClassDB::bind_method(D_METHOD("get_draw_transform", "index"), &NativeDecorationRenderer::get_draw_transform);
 		ClassDB::bind_method(D_METHOD("queue_redraw"), &NativeDecorationRenderer::request_redraw);
 		ClassDB::bind_method(D_METHOD("update_camera_range"), &NativeDecorationRenderer::update_camera_range);
 		ClassDB::bind_method(D_METHOD("set_visible_buckets", "first", "last"), &NativeDecorationRenderer::set_visible_buckets);
@@ -10902,6 +10870,8 @@ public:
 	// NativePackedDecorationBuilder hands its std::vector here directly, so no
 	// per-sprite Variant crosses the boundary.
 	void index_records(std::vector<Record> &&p_records, bool enable_culling, double width, double margin) {
+		ui_layout_active = false;
+		ui_offsets.clear();
 		records = std::move(p_records);
 		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
 		bucket_width = width > 0.0 ? width : 256.0;
@@ -10928,6 +10898,55 @@ public:
 		cull = enable_culling; cull_margin = std::max(0.0, margin);
 		view_initialized = false; range_has_records = !cull;
 		if (!cull) rebuild_commands();
+	}
+
+	void apply_ui_layout(const Dictionary &layout) {
+		const Transform2D world = layout["world_transform"];
+		const Transform2D inverse = world.affine_inverse();
+		const Vector2 center = layout["target_center"];
+		const Vector2 viewport = layout["viewport_size"];
+		const int32_t xref = layout["xref"], yref = layout["yref"];
+		const bool relative_x = layout["relative_x"], relative_y = layout["relative_y"];
+		const Vector2 batch_anchor = compute_ui_anchor(world.get_origin() - center,
+			xref, yref, relative_x, relative_y, viewport);
+		ui_offsets.resize(records.size());
+		for (size_t i = 0; i < records.size(); ++i) {
+			const Vector2 pivot = records[i].spin_pivot;
+			const Vector2 anchored = compute_ui_anchor(world.xform(pivot) - center,
+				xref, yref, relative_x, relative_y, viewport);
+			ui_offsets[i] = inverse.basis_xform(anchored - batch_anchor) - pivot;
+		}
+		if (!ui_layout_active) ui_saved_cull = cull;
+		ui_layout_active = true;
+		// UI records no longer live in the world-space spatial index. Only
+		// explicitly UI-marked batches bypass it; world batches are unchanged.
+		cull = false;
+		range_has_records = true;
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server) {
+			if (canvas_item.is_valid()) server->canvas_item_set_visible(canvas_item, true);
+			if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, true);
+			if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, true);
+		}
+		commands_dirty = true;
+	}
+
+	void clear_ui_layout() {
+		if (!ui_layout_active) return;
+		ui_layout_active = false;
+		ui_offsets.clear();
+		cull = ui_saved_cull;
+		view_initialized = false;
+		commands_dirty = true;
+		if (cull) update_camera_range();
+	}
+
+	// Same transform consumed by command emission; useful for headless parity.
+	Transform2D get_draw_transform(int64_t index) const {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return Transform2D();
+		Transform2D result = records[index].transform;
+		if (ui_layout_active) result.set_origin(result.get_origin() + ui_offsets[index]);
+		return result;
 	}
 
 	void advance_animation(double delta) {
@@ -10963,6 +10982,8 @@ public:
 	}
 
 	void apply_cull_job(const DecorationCullJob &job) {
+		// A world-space worker job captured before reparenting cannot hide UI.
+		if (!cull) return;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
 		if (view_initialized && job.first == first_bucket && job.last == last_bucket &&

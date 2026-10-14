@@ -253,6 +253,8 @@ const MAP: Dictionary[int, Dictionary] = {
 	1595: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "TouchTrigger", "components": ["GameplayTriggerComponent"] },
 	1814: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "FollowPlayerYTrigger", "components": ["GameplayTriggerComponent"] },
 	3604: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "EventTrigger", "components": ["GameplayTriggerComponent"] },
+	1612: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "HidePlayerTrigger", "components": ["GameplayTriggerComponent"] },
+	1613: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "ShowPlayerTrigger", "components": ["GameplayTriggerComponent"] },
 	2899: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "OptionsTrigger", "components": ["GameplayTriggerComponent"] },
 	3016: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "AdvancedFollowTrigger", "components": ["GameplayTriggerComponent"] },
 	3660: { "scene": TRIGGERS + "GameplayTrigger.tscn", "name": "EditAdvancedFollowTrigger", "components": ["GameplayTriggerComponent"] },

@@ -80,10 +80,11 @@ credentials are relayed. A failed direct request can add up to 15 seconds for a
 level/text request or 30 seconds for audio before the fallback. A server outage
 or unsupported/deleted level can still fail; include the level ID and error.
 
-The temporary monitor/refresh text has been removed. The game follows the
-window's current display and reapplies your chosen pacing once a monitor,
-refresh or topology change settles. It never copies the slowest/primary
-monitor's Hz into the FPS limit, or changes your Windows display configuration.
+The temporary monitor/refresh text remains removed. Saved VSync/FPS preferences
+are applied at startup; Godot handles display transitions. The experimental
+display-polling/VSync-reapply hook is disconnected after a wavy-distortion report.
+The game never chooses a renderer from monitor Hz, adds a monitor-derived FPS cap,
+or changes your Windows display configuration. Physical-display retesting is needed.
 Duplicate mode can share a presentation rate across monitors. For independent
 maximum refresh rates, choose Extend in Windows and select each monitor's
 highest supported rate in Advanced Display. The app cannot override clone-mode
