@@ -98,6 +98,11 @@ class ProductionBuildTests(unittest.TestCase):
                 if not line.startswith('web.'):
                     self.assertIn(line, first)
 
+    def test_windows_channel_tint_benchmark_sets_msvc_language_mode(self):
+        sconstruct = (ROOT / 'tools/benchmarks/channel_tint/SConstruct').read_text()
+        self.assertIn("'/std:c++17'", sconstruct)
+        self.assertIn("'/Zc:__cplusplus'", sconstruct)
+
     def test_no_template_contract_or_gameplay_shortcut(self):
         project = (ROOT / 'project.godot').read_text()
         for setting in ('renderer/rendering_method.web="mobile"',

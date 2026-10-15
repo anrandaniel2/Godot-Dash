@@ -12,7 +12,7 @@ includes = [sdk / 'include', sdk / 'gen/include', sdk / 'gdextension']
 if env['PLATFORM'] == 'win32':
     # Same static CRT and link-time optimization as the native Windows build.
     env.Append(CPPPATH=[str(path) for path in includes])
-    env.Append(CXXFLAGS=['/std:c++17', '/O2', '/EHsc', '/W4', '/MT', '/GL'])
+    env.Append(CXXFLAGS=['/std:c++17', '/Zc:__cplusplus', '/O2', '/EHsc', '/W4', '/MT', '/GL'])
     env.Append(LINKFLAGS=['/LTCG'])
     library = sdk / 'bin/libgodot-cpp.windows.template_release.x86_64.lib'
 else:
