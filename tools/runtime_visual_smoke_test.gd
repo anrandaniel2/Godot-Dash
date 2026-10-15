@@ -836,6 +836,10 @@ func _check_triangle_array_pixel_parity() -> bool:
 	var native_drawn_pixels := 0
 	var reference_drawn_pixels := 0
 	var first_mismatch := Vector2i(-1, -1)
+	var first_native := Color.TRANSPARENT
+	var first_reference := Color.TRANSPARENT
+	var max_component_delta := 0.0
+	var max_delta_pixel := Vector2i(-1, -1)
 	# The two owners differ by exactly 128 viewport pixels. Compare the whole
 	# 96x96 neighborhood, including transformed edges and all overlaps.
 	for y in range(0, 96):
@@ -846,6 +850,13 @@ func _check_triangle_array_pixel_parity() -> bool:
 				native_drawn_pixels += 1
 			if legacy_pixel.a > 0.05:
 				reference_drawn_pixels += 1
+			var component_delta := maxf(
+				maxf(absf(native_pixel.r - legacy_pixel.r), absf(native_pixel.g - legacy_pixel.g)),
+				maxf(absf(native_pixel.b - legacy_pixel.b), absf(native_pixel.a - legacy_pixel.a))
+			)
+			if component_delta > max_component_delta:
+				max_component_delta = component_delta
+				max_delta_pixel = Vector2i(x, y)
 			if (
 				absf(native_pixel.r - legacy_pixel.r) > 1.0 / 255.0
 				or absf(native_pixel.g - legacy_pixel.g) > 1.0 / 255.0
@@ -855,10 +866,22 @@ func _check_triangle_array_pixel_parity() -> bool:
 				mismatches += 1
 				if first_mismatch.x < 0:
 					first_mismatch = Vector2i(x, y)
+					first_native = native_pixel
+					first_reference = legacy_pixel
 	print(
 		(
-			"NATIVE_TRIANGLE_PARITY pixels=%d mismatches=%d covered=%d/%d first=%s"
-			% [96 * 96, mismatches, native_drawn_pixels, reference_drawn_pixels, first_mismatch]
+			"NATIVE_TRIANGLE_PARITY pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
+			% [
+				96 * 96,
+				mismatches,
+				native_drawn_pixels,
+				reference_drawn_pixels,
+				first_mismatch,
+				first_native,
+				first_reference,
+				max_component_delta,
+				max_delta_pixel
+			]
 		)
 	)
 	return mismatches == 0 and native_drawn_pixels > 10 and reference_drawn_pixels > 10
