@@ -1,5 +1,5 @@
 extends Node
-## Real-renderer regression test for both Geometry Dash artwork paths. This is
+## Real-renderer regression test for generated artwork and native renderer behavior. This is
 ## launched as a project scene (not with --script) so normal autoloads and
 ## class-name dependencies are present, matching the exported game.
 
@@ -22,13 +22,13 @@ var _direct: Node2D
 var _batch: DecorationBatch
 var _native_canvas: Object
 var _level_runtime: Node
-var _triangle_viewport: SubViewport
-var _triangle_renderer: Object
-var _triangle_owner: Node2D
-var _triangle_reference_owner: Node2D
-var _triangle_reference_rid: RID
-var _triangle_texture: Texture2D
-var _triangle_pixel_parity_checked := false
+var _renderer_viewport: SubViewport
+var _renderer_parity_canvas: Object
+var _renderer_owner: Node2D
+var _renderer_reference_owner: Node2D
+var _renderer_reference_rid: RID
+var _renderer_texture: Texture2D
+var _renderer_pixel_parity_checked := false
 
 
 ## Stand-in for Level's colour properties during the native effect-engine
@@ -753,22 +753,22 @@ func _ready() -> void:
 			)
 		)
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
-		_setup_triangle_array_parity_smoke()
+		_setup_native_renderer_parity_smoke()
 
 
-func _setup_triangle_array_parity_smoke() -> void:
-	_triangle_viewport = SubViewport.new()
-	_triangle_viewport.size = Vector2i(256, 128)
-	_triangle_viewport.disable_3d = true
-	_triangle_viewport.transparent_bg = true
-	_triangle_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(_triangle_viewport)
-	_triangle_owner = Node2D.new()
-	_triangle_owner.position = Vector2(16, 16)
-	_triangle_viewport.add_child(_triangle_owner)
-	_triangle_reference_owner = Node2D.new()
-	_triangle_reference_owner.position = Vector2(144, 16)
-	_triangle_viewport.add_child(_triangle_reference_owner)
+func _setup_native_renderer_parity_smoke() -> void:
+	_renderer_viewport = SubViewport.new()
+	_renderer_viewport.size = Vector2i(256, 128)
+	_renderer_viewport.disable_3d = true
+	_renderer_viewport.transparent_bg = true
+	_renderer_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_renderer_viewport)
+	_renderer_owner = Node2D.new()
+	_renderer_owner.position = Vector2(16, 16)
+	_renderer_viewport.add_child(_renderer_owner)
+	_renderer_reference_owner = Node2D.new()
+	_renderer_reference_owner.position = Vector2(144, 16)
+	_renderer_viewport.add_child(_renderer_reference_owner)
 
 	var image := Image.create(16, 8, false, Image.FORMAT_RGBA8)
 	for y in image.get_height():
@@ -777,7 +777,7 @@ func _setup_triangle_array_parity_smoke() -> void:
 			if x >= 8:
 				color = Color(0.1, 0.3, 0.9, 1.0)
 			image.set_pixel(x, y, color)
-	_triangle_texture = ImageTexture.create_from_image(image)
+	_renderer_texture = ImageTexture.create_from_image(image)
 	var regions: Array[Rect2] = [Rect2(0, 0, 8, 8), Rect2(8, 0, 8, 8), Rect2(0, 0, 8, 8)]
 	var transforms: Array[Transform2D] = [
 		Transform2D(Vector2(1.2, 0.25), Vector2(-0.1, 0.8), Vector2(32, 28)),
@@ -787,13 +787,13 @@ func _setup_triangle_array_parity_smoke() -> void:
 	var colors := PackedColorArray(
 		[Color(1.0, 0.6, 0.4, 0.72), Color(0.5, 1.0, 0.6, 0.61), Color(0.6, 0.7, 1.0, 0.83)]
 	)
-	var textures: Array[Texture2D] = [_triangle_texture, _triangle_texture, _triangle_texture]
+	var textures: Array[Texture2D] = [_renderer_texture, _renderer_texture, _renderer_texture]
 	var native_canvas: Object = ClassDB.instantiate(&"NativeDecorationRenderer")
-	assert(native_canvas != null, "native smoke: triangle renderer is unavailable")
-	_triangle_renderer = native_canvas
-	_triangle_renderer.call(
+	assert(native_canvas != null, "native smoke: decoration renderer is unavailable")
+	_renderer_parity_canvas = native_canvas
+	_renderer_parity_canvas.call(
 		&"configure",
-		_triangle_owner,
+		_renderer_owner,
 		textures,
 		regions,
 		transforms,
@@ -807,19 +807,19 @@ func _setup_triangle_array_parity_smoke() -> void:
 		256.0,
 		0.0
 	)
-	_triangle_renderer.call(&"update_camera_range")
+	_renderer_parity_canvas.call(&"update_camera_range")
 
-	_triangle_reference_rid = RenderingServer.canvas_item_create()
+	_renderer_reference_rid = RenderingServer.canvas_item_create()
 	RenderingServer.canvas_item_set_parent(
-		_triangle_reference_rid, _triangle_reference_owner.get_canvas_item()
+		_renderer_reference_rid, _renderer_reference_owner.get_canvas_item()
 	)
-	RenderingServer.canvas_item_set_use_parent_material(_triangle_reference_rid, true)
+	RenderingServer.canvas_item_set_use_parent_material(_renderer_reference_rid, true)
 	for index in transforms.size():
-		RenderingServer.canvas_item_add_set_transform(_triangle_reference_rid, transforms[index])
+		RenderingServer.canvas_item_add_set_transform(_renderer_reference_rid, transforms[index])
 		RenderingServer.canvas_item_add_texture_rect_region(
-			_triangle_reference_rid,
+			_renderer_reference_rid,
 			Rect2(-regions[index].size * 0.5, regions[index].size),
-			_triangle_texture.get_rid(),
+			_renderer_texture.get_rid(),
 			regions[index],
 			colors[index],
 			false,
@@ -827,10 +827,10 @@ func _setup_triangle_array_parity_smoke() -> void:
 		)
 
 
-func _check_triangle_array_pixel_parity() -> bool:
-	var triangle_image := _triangle_viewport.get_texture().get_image()
-	if triangle_image == null or triangle_image.is_empty():
-		push_error("native smoke: triangle-array parity viewport capture failed")
+func _check_native_renderer_pixel_parity() -> bool:
+	var parity_image := _renderer_viewport.get_texture().get_image()
+	if parity_image == null or parity_image.is_empty():
+		push_error("native smoke: native renderer pixel parity viewport capture failed")
 		return false
 	var mismatches := 0
 	var native_drawn_pixels := 0
@@ -844,33 +844,39 @@ func _check_triangle_array_pixel_parity() -> bool:
 	# 96x96 neighborhood, including transformed edges and all overlaps.
 	for y in range(0, 96):
 		for x in range(0, 96):
-			var native_pixel := triangle_image.get_pixel(x, y)
-			var legacy_pixel := triangle_image.get_pixel(x + 128, y)
+			var native_pixel := parity_image.get_pixel(x, y)
+			var reference_pixel := parity_image.get_pixel(x + 128, y)
 			if native_pixel.a > 0.05:
 				native_drawn_pixels += 1
-			if legacy_pixel.a > 0.05:
+			if reference_pixel.a > 0.05:
 				reference_drawn_pixels += 1
 			var component_delta := maxf(
-				maxf(absf(native_pixel.r - legacy_pixel.r), absf(native_pixel.g - legacy_pixel.g)),
-				maxf(absf(native_pixel.b - legacy_pixel.b), absf(native_pixel.a - legacy_pixel.a))
+				maxf(
+					absf(native_pixel.r - reference_pixel.r),
+					absf(native_pixel.g - reference_pixel.g)
+				),
+				maxf(
+					absf(native_pixel.b - reference_pixel.b),
+					absf(native_pixel.a - reference_pixel.a)
+				)
 			)
 			if component_delta > max_component_delta:
 				max_component_delta = component_delta
 				max_delta_pixel = Vector2i(x, y)
 			if (
-				absf(native_pixel.r - legacy_pixel.r) > 1.0 / 255.0
-				or absf(native_pixel.g - legacy_pixel.g) > 1.0 / 255.0
-				or absf(native_pixel.b - legacy_pixel.b) > 1.0 / 255.0
-				or absf(native_pixel.a - legacy_pixel.a) > 1.0 / 255.0
+				absf(native_pixel.r - reference_pixel.r) > 1.0 / 255.0
+				or absf(native_pixel.g - reference_pixel.g) > 1.0 / 255.0
+				or absf(native_pixel.b - reference_pixel.b) > 1.0 / 255.0
+				or absf(native_pixel.a - reference_pixel.a) > 1.0 / 255.0
 			):
 				mismatches += 1
 				if first_mismatch.x < 0:
 					first_mismatch = Vector2i(x, y)
 					first_native = native_pixel
-					first_reference = legacy_pixel
+					first_reference = reference_pixel
 	print(
 		(
-			"NATIVE_TRIANGLE_PARITY pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
+			"NATIVE_RENDERER_PARITY pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
 			% [
 				96 * 96,
 				mismatches,
@@ -898,18 +904,18 @@ func _process(_delta: float) -> void:
 		return
 	var image := get_viewport().get_texture().get_image()
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
-	if _triangle_renderer != null and not _triangle_pixel_parity_checked:
-		_triangle_pixel_parity_checked = true
-		if not _check_triangle_array_pixel_parity():
-			_triangle_viewport.get_texture().get_image().save_png(
-				"user://triangle_array_parity_failure.png"
+	if _renderer_parity_canvas != null and not _renderer_pixel_parity_checked:
+		_renderer_pixel_parity_checked = true
+		if not _check_native_renderer_pixel_parity():
+			_renderer_viewport.get_texture().get_image().save_png(
+				"user://native_renderer_parity_failure.png"
 			)
-			push_error("native smoke: triangle-array rendering differs from texture-rect reference")
+			push_error("native smoke: native renderer differs from texture-rect reference")
 			get_tree().quit(1)
 			return
-		RenderingServer.free_rid(_triangle_reference_rid)
-		_triangle_reference_rid = RID()
-		_triangle_renderer = null
+		RenderingServer.free_rid(_renderer_reference_rid)
+		_renderer_reference_rid = RID()
+		_renderer_parity_canvas = null
 	if _native_canvas != null:
 		var drawn := int(_native_canvas.call(&"last_drawn_count"))
 		var total := int(_native_canvas.call(&"item_count"))

@@ -5,10 +5,12 @@
 - All frames in the currently generated runtime decoration atlas point to one packed page:
   `assets/textures/gd_atlas/gd_objects_atlas_0.png`. `gd_objects_atlas.json` lists one page.
   A second global atlas or texture array would not reduce atlas switches for this workload.
-- Rendering is already implemented in C++ using retained RenderingServer canvas-item RIDs and
-  indexed `canvas_item_add_triangle_array` batches. In the production packed-atlas path, a
-  same-texture run is one RenderingServer geometry command per blend-target canvas. The last
-  change's renderer counter records these API commands; it is not a GPU-driver draw-call count.
+- Rendering is implemented in C++ using retained RenderingServer canvas-item RIDs and
+  clipped texture-rectangle commands. A triangle-array aggregation experiment was reverted
+  after Android Mobile pixel parity failed (11 mismatches in 9,216 pixels; maximum channel
+  delta 0.219608). The candidate omitted Godot's `clip_uv` half-texel clamp, so it could sample
+  outside atlas regions. The active renderer preserves the prior clipped rectangle behavior.
+  Its counter records API submissions, not GPU-driver draw calls.
 - Sprite nodes have already been eliminated. Decoration is represented by approximately
   800 `DecorationBatch` Node2D group proxies for a large ~170k-sprite level (repository
   architecture estimate), not one node per sprite. Those proxies are the current targets for
@@ -22,10 +24,22 @@
   are not physics bodies. Migrating gameplay colliders to low-level server handles would be a
   separate high-risk physics change and is not included.
 
+## Parity blocker
+
+Android Mobile run `38819120173` reported `NATIVE_TRIANGLE_PARITY pixels=9216 mismatches=11
+covered=167/167`, with `max_delta=0.219608` at `(54,55)`. Godot's `texture_rect_region`
+path honors `clip_uv` by clamping fragment UVs half a texel inside the source region. The
+triangle-array path had no equivalent clamp, so it sampled across atlas-region boundaries.
+The production renderer has therefore been restored to clipped texture-rectangle commands;
+no visual-parity or batching claim is made for the rejected path. The reference-image smoke
+gate remains and now compares the active native renderer against the RenderingServer rect
+reference. A correct future batched implementation must reproduce clip-UV semantics before
+it can be reconsidered.
+
 ## Instrumentation
 
 `NativeLevelRuntime.render_stats()` now includes `batch_owner_nodes` (unique CanvasItem owners),
-`canvas_draw_commands` (last emitted indexed-array/rect commands summed across native
+`canvas_draw_commands` (last emitted texture-rectangle submissions summed across native
 renderers), and existing renderer/record/culling counts. The native runtime visual smoke now
 requires these counters to be populated. These metrics provide a real-level baseline when
 run in Godot; they intentionally do not label RenderingServer calls as actual GPU draw calls.

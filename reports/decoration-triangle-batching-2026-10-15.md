@@ -1,65 +1,39 @@
-# Decoration triangle-array batching — 2026-10-15
+# Decoration triangle-array aggregation — rejected 2026-10-15
 
-## Goal and change
+## Outcome
 
-The retained native decoration renderer previously emitted one texture-rectangle command
-per visible sprite. `NativeDecorationRenderer::rebuild_commands()` now bakes each sprite's
-current transform into four vertices and emits one indexed `canvas_item_add_triangle_array`
-per consecutive run of the same texture on each blend-target canvas RID. Vertices carry the
-sprite's normalized atlas UVs and repeated per-vertex modulation color.
+The indexed triangle-array candidate in `NativeDecorationRenderer::rebuild_commands()` was
+reverted and is **not** the production rendering path. The active renderer uses ordered
+`canvas_item_add_texture_rect_region` commands with `clip_uv=true`, retaining Godot's atlas
+sampling behavior, blend routing, transforms, pulse/tint, UI layout, culling, draw order, and
+spin behavior. No batching, draw-call, or FPS gain is claimed for the reverted candidate.
 
-This reduces RenderingServer canvas command construction and gives the canvas renderer a
-single geometry command for a whole same-texture run rather than transform/texture-rect
-commands for each sprite. It is batching, not hardware instancing. It preserves each
-sprite's content and current transforms, colors, pulse/tint, culling selection, draw order,
-blend routing, UI layout, and spin state. It does not reorder texture runs or records. The
-GDScript fallback is unchanged. No compute shader was introduced: the rendering work here
-is sprite geometry/texture sampling, not a demonstrated parallel compute bottleneck; a
-compute path would also require a behavior-identical WebGL/GLES fallback and careful
-synchronization.
+## Failure evidence
 
-## Synthetic gate
+Android Mobile run `38819120173` reported:
 
-`tools/renderer_cache_selftest.gd` now configures 256 sprite records with the same texture
-and checks that all 256 remain submitted while `draw_commands_last_rebuild()` reports one
-triangle-array canvas command. That fixture corresponds to 256-to-1 (99.6%) fewer
-RenderingServer commands. It also checks different transforms share a batch without being
-equalized, near-equal geometry stays distinct, and a separate additive target receives its
-own batch. These are assertions added to the engine test; the Godot executable is not
-available in this workspace, so the fixture has **not run** here. Do not report its expected
-ratio as a completed runtime measurement.
+```text
+NATIVE_TRIANGLE_PARITY pixels=9216 mismatches=11 covered=167/167
+max_delta=0.219608 at (54,55)
+```
 
-The command counter measures calls handed to RenderingServer—not backend driver draw calls,
-GPU frame time, or FPS. Because array geometry must be baked and copied, CPU-side rebuild
-time and allocation cost also need profiling. A real-renderer SubViewport pixel-comparison test has been added to
-`tools/runtime_visual_smoke_test.gd`; it covers atlas regions, translucent overlap, rotated,
-nonuniform-scaled and sheared transforms against the legacy texture-rect path. That engine
-test is not available to execute here, so actual pixel parity and runtime behavior remain
-unverified.
+The first mismatch was `(58,42)`; both screenshots covered all 167 expected pixels. The
+reference path was `canvas_item_add_texture_rect_region(..., clip_uv=true)`. Godot clamps the
+fragment UV to half a texture pixel inside the source region. `canvas_item_add_triangle_array`
+does not expose this rectangle flag, and the candidate passed edge UVs through unchanged,
+allowing samples outside the intended atlas region. The run then reported leaked CanvasItem
+RIDs/ObjectDB objects and segfaulted during teardown. Diagnostics are not evidence of parity.
 
-## Verification and limits
+The implementation was reverted to the clipped rectangle path rather than weakening the pixel
+tolerance or accepting visual differences. `tools/runtime_visual_smoke_test.gd` retains a
+reference-image smoke check for the active native renderer; `tools/renderer_cache_selftest.gd`
+now checks ordered rect submissions and blend routing rather than triangle batching.
 
-- Linux x86-64 release native GDExtension compiled and linked against pinned Godot 4.7
-  godot-cpp after the change.
-- The `canvas_item_add_triangle_array` generated Godot binding signature is available and
-  compiles with the implementation.
-- No Godot runtime is installed here: `tools/renderer_cache_selftest.tscn`, visual/pixel
-  parity, Windows CI, WebGL/GLES, WebGPU, Android Mobile, GPU captures, real-level frame
-  time, and device FPS have not run.
-- Need parity coverage for rotated/scaled sprites, atlas UVs, translucent overlap and all
-  blend/material paths before relying on this as visually equivalent. Need same-device
-  before/after profiling with representative levels to determine whether CPU/GPU time
-  actually improves. Roll back or gate this path if parity fails or end-to-end timing loses.
-- The previous exact-transform-state coalescing report is historical and superseded by this
-  implementation. It did not claim measured FPS.
+## Historical scope (not a current result)
 
-## Changed files
-
-- `native/src/gdash_native.cpp`
-- `tools/renderer_cache_selftest.gd`
-- `tools/runtime_visual_smoke_test.gd`
-- `docs/agent-briefing/06-native-extension.md`
-- `docs/agent-briefing/09-conventions-invariants-verification.md`
-- This report
-
-No commit or push performed. Unrelated working-tree changes were left intact.
+A synthetic test had expected 256 same-texture records to become one triangle-array command,
+which would have been a 99.6% reduction in calls to the RenderingServer API. That expectation
+was never an actual driver draw-call or GPU/FPS measurement, and it is no longer a valid current
+renderer result. The Godot canvas backend's own batching behavior was not measured. A future
+aggregation approach must reproduce clip-UV semantics and pass real-renderer pixel parity on
+the target renderer before it can replace the current path.

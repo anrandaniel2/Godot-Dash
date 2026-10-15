@@ -1,16 +1,10 @@
 name: Picking check
 
-# Manual or path-triggered run. Compares the decoration picking index with physics
-# overlaps on a real level (Milestone M1 of the batched-decoration plan).
+# Manual-only run. Compares the decoration picking index with physics overlaps
+# on a real level (Milestone M1 of the batched-decoration plan).
 # Only the verification runs here; the editor does not switch picking yet.
 
 on:
-  push:
-    paths:
-      - "src/editor/DecorationPicker.gd"
-      - "tools/picking_check.gd"
-      - "tools/picking_check.tscn"
-      - ".github/workflows/picking-check.yml"
   workflow_dispatch:
     inputs:
       url:

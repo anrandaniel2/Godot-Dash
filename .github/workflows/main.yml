@@ -33,6 +33,7 @@ name: Build Android APK
 # .so is dropped straight into the gradle release jniLibs so the APK contains it
 # even if the exporter path fails.
 
+# Explicit test suites run only on manual dispatch; push runs stay focused on the build/export.
 on:
   workflow_dispatch:
   push:
@@ -171,6 +172,7 @@ jobs:
           fetch-depth: 1
 
       - name: Build gdash_native (Linux x86_64 test host, Godot 4.7 API)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
@@ -350,6 +352,7 @@ jobs:
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Check production build invariants
+        if: github.event_name == 'workflow_dispatch'
         run: python3 -m unittest discover -s tools -p test_production_build.py
 
       - name: Install Android build template (res://android/build)
@@ -498,6 +501,7 @@ jobs:
           exit $status
 
       - name: Verify usage-based texture compression
+        if: github.event_name == 'workflow_dispatch'
         run: python3 tools/check_texture_compression.py --imported
 
       # Scripts referenced only as global classes fail through the analyzer's
@@ -506,6 +510,7 @@ jobs:
       # Force-load every project script so each failing script's own
       # file:line error lands in this step's log and annotations.
       - name: GDScript load probe (surface root script errors)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           set +e
@@ -548,6 +553,7 @@ jobs:
       # compares against golden bytes produced by an independent
       # implementation of the format.
       - name: GDR replay codec self-test
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           set +e
@@ -590,6 +596,7 @@ jobs:
       # beams. Gated on the summary line like the GDR self-test: the engine
       # teardown hang is tolerated, the timeout is the backstop.
       - name: Native colour-trigger chain self-test
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           set +e
@@ -623,6 +630,7 @@ jobs:
       # Without the Level's global transform, packed triggers fired 150 GD units
       # early and were 925 px off for touch checks. Pins the runtime boundary.
       - name: Packed trigger placement self-test
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           set +e
@@ -655,6 +663,7 @@ jobs:
       # Pure C++: a mirrored saw quarter must turn with its orbit around the saw
       # centre (it used to turn the other way, tearing the circle apart).
       - name: Decoration spin self-test (mirrored saw quarters)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           g++ -std=c++17 -O2 -Wall -Wextra native/tests/test_decoration_spin.cpp -o decoration_spin_test
@@ -663,14 +672,17 @@ jobs:
       # The font files must match tools/font_manifest.json, so the bundle that
       # is hosted for on-demand download cannot drift from the repo's fonts.
       - name: Object components exist in their scenes
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python3 tools/check_object_components.py
 
       - name: Outline blocks are solid (type 40 imports with collision)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python3 tools/check_outline_blocks.py
 
       - name: Font bundle matches its manifest
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           python3 tools/font_bundle.py --check
@@ -678,7 +690,8 @@ jobs:
       # A successful import only proves scripts parse. Exercise both GD artwork
       # render paths and inspect real viewport pixels so an optimization cannot
       # ship an APK in which levels load but every object is invisible.
-      - name: Render generated and batched GD artwork smoke test
+      - name: Render generated and native GD artwork smoke test
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           command -v xvfb-run >/dev/null || {

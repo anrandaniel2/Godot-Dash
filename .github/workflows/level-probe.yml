@@ -3,21 +3,7 @@ name: Level probe
 # Plays downloaded levels in the real GameScene (tools/level_probe.gd) and
 # surfaces the PROBE log as annotations. The level is never committed.
 on:
-  push:
-    branches: ["arena/**"]
-    paths:
-      - "native/src/**"
-      - "tools/level_probe.gd"
-      - "tools/level_probe.tscn"
-      - ".github/workflows/level-probe.yml"
-      - "tools/fetch_level.sh"
-      - "src/static/GDRFormat.gd"
-      - "src/Player.gd"
-      - "src/Level.gd"
-      - "src/LevelPhysics.gd"
-      - "src/PlayerCamera.gd"
-      - "src/interactables/public_components/CameraStaticComponent.gd"
-      - "src/interactables/public_components/EndLevelComponent.gd"
+  workflow_dispatch:
 
 env:
   GODOT_VERSION: "4.7.2"

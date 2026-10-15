@@ -210,11 +210,12 @@ required before any production picking-order change.
 `tools/renderer_cache_selftest.tscn` exercises the actual native renderer's mutable records,
 command/selection rebuild counts, channel tint, group pulse, spin reconfiguration and compact
 spatial reconfiguration. `tools/runtime_visual_smoke_test.gd` is the real-renderer pixel gate
-for generated and batched artwork, plus native dynamic culling and channel behavior. Headless
-command counters are not pixel, GPU, or device proof; the visual scene must run with the
-native extension on Windows CI. The triangle-array implementation adds a SubViewport comparison
-against the legacy texture-rect path for atlas UVs, translucent overlaps, and rotated/scaled/
-and sheared transforms; actual engine output remains pending until that gate runs.
+for generated artwork and native dynamic culling/channel behavior. Headless command counters
+are not pixel, GPU, or device proof; the visual scene should run with the native extension.
+Triangle-array aggregation was reverted after Android Mobile pixel parity detected atlas-edge
+mismatches because it did not reproduce `clip_uv`. The retained SubViewport gate compares the
+active clipped-rectangle path against a direct RenderingServer texture-rect reference for atlas
+UVs, translucent overlaps, and rotated/scaled/sheared transforms.
 
 Static frustum movement uses edge-band traversal only for overlapping old/new ranges; first
 setup and disjoint/teleport views reconcile full ranges. `test_frustum_transition_ranges.cpp`
@@ -230,14 +231,15 @@ oracle tests and synthetic benchmarks. These measurements are local C++ CPU/help
 not level-open time, full-level FPS, GPU time, or device results. Preserve the reports' exact
 benchmark scope when quoting them; see the linked `reports/decoration-*-2026-10-15.md` files.
 
-Renderer command rebuilding bakes sprite transforms into indexed triangle arrays and batches
-consecutive same-texture runs per blend-target canvas RID. `renderer_cache_selftest.gd` checks
-sprite retention and the synthetic 256-to-1 RenderingServer command case. `render_stats()`
-reports `batch_owner_nodes` and `canvas_draw_commands`; the latter counts RenderingServer
-geometry submissions, not driver draw calls. The current production atlas manifest has one
-page, so a texture-array/global-atlas rewrite will not reduce texture switches for packed
-objects. Group, z-layer and blend ordering remain separate constraints. See
-`reports/decoration-triangle-batching-2026-10-15.md` and
+Renderer command rebuilding preserves per-sprite clipped texture-rectangle submissions and
+ordered transform/blend behavior. The triangle-array candidate was rejected after Android
+Mobile pixel parity found atlas-region edge mismatches; its historical 256-to-1 synthetic
+command reduction is not a current result. `renderer_cache_selftest.gd` checks sprite
+retention and ordered rect submissions. `render_stats()` reports `batch_owner_nodes` and
+`canvas_draw_commands`; the latter counts RenderingServer API submissions, not driver draw
+calls. The current production atlas manifest has one page, so a texture-array/global-atlas
+rewrite will not reduce texture switches for packed objects. Group, z-layer and blend ordering
+remain separate constraints. See `reports/decoration-triangle-batching-2026-10-15.md` and
 `reports/decoration-node-and-draw-call-review-2026-10-15.md`.
 
 ## 9. Render/recolor follow-up (2026-10-14)

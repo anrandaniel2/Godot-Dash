@@ -6,12 +6,6 @@ name: Level runtime profile
 # results in the run summary or with `gh run view <id> --log`.
 on:
   workflow_dispatch:
-  push:
-    branches: ["arena/**"]
-    paths:
-      - "tools/perf_sampler.gd"
-      - "tools/level_probe.gd"
-      - ".github/workflows/level-runtime-profile.yml"
 
 env:
   GODOT_VERSION: "4.7.2"

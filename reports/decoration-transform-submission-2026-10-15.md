@@ -1,6 +1,9 @@
 # Historical: exact transform-command coalescing — 2026-10-15
 
-> Superseded by `reports/decoration-triangle-batching-2026-10-15.md`. The renderer now bakes transforms into triangle-array batches; this report records the short-lived predecessor only. Do not read its implementation description as the current renderer.
+> Historical only. Transform-state coalescing was superseded by the triangle-array candidate,
+> which was subsequently reverted after the Android Mobile parity failure documented in
+> `reports/decoration-triangle-batching-2026-10-15.md`. The active renderer restores the
+> ordered texture-rectangle path; do not read this report as its current implementation.
 
 ## Goal and change
 

@@ -15,6 +15,7 @@ from pin_windows_extension import DLL, check_pe, pin
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERSION = os.environ.get("GODOT_VERSION", "4.7.2")
+FAST_BUILD = os.environ.get("GDASH_FAST_BUILD") == "1"
 CACHE = pathlib.Path(os.environ.get("RUNNER_TEMP", os.environ.get("TEMP", "."))) / "godot-windows"
 LOGS = ROOT / "export/windows-logs"
 OUTPUT = ROOT / "export/Windows"
@@ -125,6 +126,9 @@ def build() -> None:
          "target=template_release", "arch=x86_64", "api_version=4.7", "use_static_cpp=yes",
          "optimize=speed", "lto=full", "dev_build=no", "debug_symbols=no", "-j4"], "native-build", timeout=1800)
     check_pe(ROOT / "native/bin/windows" / DLL)
+    if FAST_BUILD:
+        print("::notice title=Fast Windows build::Standalone native parity/benchmark suites are available in the manual Windows validation workflow.")
+        return
     run([sys.executable, "-m", "SCons", "-f", ROOT / "tools/benchmarks/renderer_cache/SConstruct",
          f"output={CACHE / 'renderer-cache'}"], "renderer-cache-build")
     text = run([CACHE / "renderer-cache/visibility-test.exe", "--benchmark"], "renderer-cache")
@@ -211,54 +215,59 @@ def export() -> None:
     pin(ROOT)
     # Prevent Godot from scanning a build-time dependency clone.
     (ROOT / "native/godot-cpp/.gdignore").touch()
-    run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-warm", allow_failure=True)
-    imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-checked")
-    if needs_asset_import_retry(imported):
-        print("::notice title=asset import::Retrying one editor pass after a missing generated asset cache; final parse gate remains strict.")
-        imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-rechecked")
-    # Match web CI: editor-only plugin runtime messages are not game failures.
-    check_log(imported, "import-checked", include_runtime=False)
-    run([sys.executable, ROOT / "tools/check_texture_compression.py", "--imported"], "texture-compression")
-    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/renderer_cache_selftest.tscn"],
-               "renderer-integration", timeout=120)
-    check_log(text, "renderer-integration")
-    if not re.search(r"RENDERER_CACHE_SELFTEST checks=\d+ failed=0", text):
-        raise RuntimeError("Native renderer cache integration failed")
-    for line in text.splitlines():
-        if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH", "RENDERER_COALESCE")):
-            print(f"::notice title=renderer integration::{line}")
-    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/gameplay_presentation_selftest.tscn"],
-               "gameplay-presentation", timeout=120)
-    check_log(text, "gameplay-presentation")
-    if not re.search(r"PRESENTATION_SELFTEST checks=\d+ failed=0", text):
-        raise RuntimeError("Gameplay/presentation regressions failed")
-    for line in text.splitlines():
-        if line.startswith("PRESENTATION_SELFTEST"):
-            print(f"::notice title=gameplay presentation::{line}")
-    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/color_refresh_selftest.tscn"],
-               "color-refresh", timeout=120)
-    check_log(text, "color-refresh")
-    if not re.search(r"COLOR_REFRESH_SELFTEST checks=\d+ failed=0", text):
-        raise RuntimeError("Channel refresh parity failed")
-    for line in text.splitlines():
-        if line.startswith(("COLOR_REFRESH_SELFTEST", "COLOR_REFRESH_BENCH")):
-            print(f"::notice title=color refresh::{line}")
-    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/monster_timeline_selftest.tscn"],
-               "monster-timeline", timeout=120)
-    check_log(text, "monster-timeline")
-    if not re.search(r"MONSTER_TIMELINE_SELFTEST checks=\d+ failed=0", text):
-        raise RuntimeError("Native monster timeline parity failed")
-    for line in text.splitlines():
-        if line.startswith(("MONSTER_TIMELINE_SELFTEST", "MONSTER_TIMELINE_BENCH")):
-            print(f"::notice title=monster timeline::{line}")
-    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/packed_trigger_origin_selftest.tscn"],
-               "packed-trigger", timeout=120)
-    check_log(text, "packed-trigger")
-    if not re.search(r"PACKED_TRIGGER_SELFTEST_SUMMARY.*failed=0", text):
-        raise RuntimeError("Packed trigger origin/schema parity failed")
-    for line in text.splitlines():
-        if line.startswith("PACKED_TRIGGER_SELFTEST_SUMMARY"):
-            print(f"::notice title=packed triggers::{line}")
+    if FAST_BUILD:
+        imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-fast")
+        check_log(imported, "import-fast", include_runtime=False)
+        print("::notice title=Fast Windows build::Runtime, renderer, and texture-payload tests are deferred to manual validation.")
+    else:
+        run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-warm", allow_failure=True)
+        imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-checked")
+        if needs_asset_import_retry(imported):
+            print("::notice title=asset import::Retrying one editor pass after a missing generated asset cache; final parse gate remains strict.")
+            imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-rechecked")
+        # Match web CI: editor-only plugin runtime messages are not game failures.
+        check_log(imported, "import-checked", include_runtime=False)
+        run([sys.executable, ROOT / "tools/check_texture_compression.py", "--imported"], "texture-compression")
+        text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/renderer_cache_selftest.tscn"],
+                   "renderer-integration", timeout=120)
+        check_log(text, "renderer-integration")
+        if not re.search(r"RENDERER_CACHE_SELFTEST checks=\d+ failed=0", text):
+            raise RuntimeError("Native renderer cache integration failed")
+        for line in text.splitlines():
+            if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH", "RENDERER_COALESCE", "RENDERER_RECT_COMMANDS")):
+                print(f"::notice title=renderer integration::{line}")
+        text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/gameplay_presentation_selftest.tscn"],
+                   "gameplay-presentation", timeout=120)
+        check_log(text, "gameplay-presentation")
+        if not re.search(r"PRESENTATION_SELFTEST checks=\d+ failed=0", text):
+            raise RuntimeError("Gameplay/presentation regressions failed")
+        for line in text.splitlines():
+            if line.startswith("PRESENTATION_SELFTEST"):
+                print(f"::notice title=gameplay presentation::{line}")
+        text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/color_refresh_selftest.tscn"],
+                   "color-refresh", timeout=120)
+        check_log(text, "color-refresh")
+        if not re.search(r"COLOR_REFRESH_SELFTEST checks=\d+ failed=0", text):
+            raise RuntimeError("Channel refresh parity failed")
+        for line in text.splitlines():
+            if line.startswith(("COLOR_REFRESH_SELFTEST", "COLOR_REFRESH_BENCH")):
+                print(f"::notice title=color refresh::{line}")
+        text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/monster_timeline_selftest.tscn"],
+                   "monster-timeline", timeout=120)
+        check_log(text, "monster-timeline")
+        if not re.search(r"MONSTER_TIMELINE_SELFTEST checks=\d+ failed=0", text):
+            raise RuntimeError("Native monster timeline parity failed")
+        for line in text.splitlines():
+            if line.startswith(("MONSTER_TIMELINE_SELFTEST", "MONSTER_TIMELINE_BENCH")):
+                print(f"::notice title=monster timeline::{line}")
+        text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/packed_trigger_origin_selftest.tscn"],
+                   "packed-trigger", timeout=120)
+        check_log(text, "packed-trigger")
+        if not re.search(r"PACKED_TRIGGER_SELFTEST_SUMMARY.*failed=0", text):
+            raise RuntimeError("Packed trigger origin/schema parity failed")
+        for line in text.splitlines():
+            if line.startswith("PACKED_TRIGGER_SELFTEST_SUMMARY"):
+                print(f"::notice title=packed triggers::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
@@ -270,19 +279,27 @@ def export() -> None:
     if len(libraries) != 1:
         raise RuntimeError(f"Expected one exported native DLL, found {libraries}")
     check_pe(libraries[0])
-    smoke = run([OUTPUT / "Godot Dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
-                "exported-native-smoke", timeout=120)
-    check_log(smoke, "exported-native-smoke")
-    if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
-        raise RuntimeError("Exported native smoke did not pass")
-    print("::notice title=Windows smoke::Exported x86-64 EXE loaded the native DLL; configured renderer is Forward+. Headless test only.")
+    if not FAST_BUILD:
+        smoke = run([OUTPUT / "Godot Dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
+                    "exported-native-smoke", timeout=120)
+        check_log(smoke, "exported-native-smoke")
+        if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
+            raise RuntimeError("Exported native smoke did not pass")
+        print("::notice title=Windows smoke::Exported x86-64 EXE loaded the native DLL; configured renderer is Forward+. Headless test only.")
     for name in ("Profile-Windows.ps1", "README-Windows.txt"):
         shutil.copy2(ROOT / "tools/windows" / name, OUTPUT)
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
-    for name in ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment", "gameplay-presentation", "color-refresh", "monster-timeline", "packed-trigger"):
-        shutil.copy2(LOGS / f"{name}.log", OUTPUT)
+    if FAST_BUILD:
+        log_names = ("import-fast", "export")
+    else:
+        log_names = ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment",
+                     "gameplay-presentation", "color-refresh", "monster-timeline", "packed-trigger")
+    for name in log_names:
+        log = LOGS / f"{name}.log"
+        if log.is_file():
+            shutil.copy2(log, OUTPUT)
     shutil.make_archive(str(ROOT / "export/godot-dash-windows-x86_64"), "zip", OUTPUT)
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")
 
@@ -304,6 +321,9 @@ def installer() -> None:
         return exe
 
     published = compile_setup(ROOT / "export", number)
+    if FAST_BUILD:
+        print("::notice title=Fast Windows build::Installer package built; install/upgrade/uninstall verification is deferred to manual validation.")
+        return
     upgrade = compile_setup(CACHE / "installer-upgrade", number + 1)
     installed = CACHE / "Installed Godot Dash"
     user_data = pathlib.Path(os.environ["APPDATA"]) / "godot-dash"

@@ -64,7 +64,7 @@ func _ready() -> void:
 		RenderingServer.free_rid(probe)
 		_test_compact_spatial_reconfigure()
 		_test_draw_submission()
-		_test_triangle_array_batching()
+		_test_ordered_rect_submissions()
 		_test_hsv_snapshots()
 		print("RENDERER_CACHE_NOTE retained-command counters checked; no pixel/GPU validation")
 	else:
@@ -615,7 +615,7 @@ func _test_compact_spatial_reconfigure() -> void:
 	_configure(Color.WHITE)
 
 
-func _test_triangle_array_batching() -> void:
+func _test_ordered_rect_submissions() -> void:
 	var repeated: Transform2D = Transform2D(0.25, Vector2(12, 16))
 	var distinct: Transform2D = Transform2D(0.5, Vector2(12, 16))
 	(
@@ -637,18 +637,18 @@ func _test_triangle_array_batching() -> void:
 			0.0,
 		)
 	)
-	_check(int(_canvas.call(&"last_drawn_count")) == 4, "triangle batching keeps every sprite")
+	_check(int(_canvas.call(&"last_drawn_count")) == 4, "ordered rect path keeps every sprite")
 	_check(
-		int(_canvas.call(&"draw_commands_last_rebuild")) == 1,
-		"same-texture sprites with independent transforms share one triangle-array draw",
+		int(_canvas.call(&"draw_commands_last_rebuild")) == 4,
+		"each sprite retains its clipped texture-rect command",
 	)
 	var almost_same: Transform2D = repeated
 	almost_same.origin.x += 0.0001
 	_canvas.call(&"set_item_transform", 1, almost_same)
 	_canvas.call(&"flush_commands")
 	_check(
-		int(_canvas.call(&"draw_commands_last_rebuild")) == 1,
-		"nearby transforms remain distinct geometry inside the same batch",
+		int(_canvas.call(&"draw_commands_last_rebuild")) == 4,
+		"transform edits preserve one ordered rect command per sprite",
 	)
 
 	var textures: Array[Texture2D] = []
@@ -682,10 +682,10 @@ func _test_triangle_array_batching() -> void:
 	)
 	_check(int(_canvas.call(&"last_drawn_count")) == 256, "256-item batch retains all sprites")
 	_check(
-		int(_canvas.call(&"draw_commands_last_rebuild")) == 1,
-		"256 same-texture sprites collapse to one canvas draw command",
+		int(_canvas.call(&"draw_commands_last_rebuild")) == 256,
+		"256 sprites keep their exact texture-rect submissions",
 	)
-	print("RENDERER_TRIANGLE_BATCH sprites=256 texture_runs=1 command_reduction=99.6%")
+	print("RENDERER_RECT_COMMANDS sprites=256 submissions=256 backend_batching_unmeasured")
 
 	(
 		_canvas
@@ -710,6 +710,6 @@ func _test_triangle_array_batching() -> void:
 	_canvas.call(&"flush_commands")
 	_check(int(_canvas.call(&"last_drawn_count")) == 3, "blend routing keeps every sprite")
 	_check(
-		int(_canvas.call(&"draw_commands_last_rebuild")) == 2,
-		"each blend target receives one ordered same-texture batch",
+		int(_canvas.call(&"draw_commands_last_rebuild")) == 3,
+		"blend routing preserves one ordered rect command per sprite",
 	)

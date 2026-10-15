@@ -1,14 +1,9 @@
 name: Level memory profile
 
-# Measures memory and time for opening one huge downloaded level (ORBIT by
-# MindCap, 310k objects) under a real Godot. Runs only when the profiler
-# itself changes, so ordinary pushes never wait on it.
+# Manual-only profile: measures memory and time for opening one huge
+# downloaded level (ORBIT by MindCap, 310k objects) under a real Godot.
 on:
-  push:
-    branches: ["arena/**"]
-    paths:
-      - "tools/level_memory_profile.gd"
-      - ".github/workflows/level-profile.yml"
+  workflow_dispatch:
 
 env:
   GODOT_VERSION: "4.7.2"

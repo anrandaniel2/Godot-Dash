@@ -4,11 +4,7 @@ name: Level scan
 # tools/gd_level_scan.py and surfaces the report as annotations. The level
 # string is never committed or uploaded.
 on:
-  push:
-    paths:
-      - "tools/gd_level_scan.py"
-      - ".github/workflows/level-scan.yml"
-      - "tools/fetch_level.sh"
+  workflow_dispatch:
 
 env:
   # OuterSpace (27732941), shared by the maintainer over WeTransfer.

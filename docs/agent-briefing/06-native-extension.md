@@ -51,7 +51,7 @@ its packed builder/renderer. Do not mistake the contract below for verified fall
 | `NativeFrustumIndex` | packed node-visibility index: `configure`, `build_x_buckets`, `set_view`, `set_visible_buckets`, `visible_bucket_keys`, `hidden_count`, `tracked_count` |
 | `NativeColorChannelIndex` | one-call channel propagation: `configure`, `set_group_members`, `apply_channel_color`, `set_channel_blending`, `clear` |
 | `NativeLevelBuildJob` | incremental construction: `initialize(data, drop_decoration)`, `step(ms)`, `is_finished`, `get_level` |
-| `NativeDecorationRenderer` | retained-RID sprite renderer: `configure`, `set_item_transform`, `set_item_color`, `get_item_*`, `sort_decoration_indices`, `render_stats`, `queue_redraw`, `item_count`, `last_drawn_count`, `draw_commands_last_rebuild`; consecutive same-texture sprites submit as indexed triangle-array batches |
+| `NativeDecorationRenderer` | retained-RID sprite renderer: `configure`, `set_item_transform`, `set_item_color`, `get_item_*`, `sort_decoration_indices`, `render_stats`, `queue_redraw`, `item_count`, `last_drawn_count`, `draw_commands_last_rebuild`; submits ordered clipped texture-rectangle commands |
 | `NativeMonsterTimeline` | batched per-frame monster clocks; `configure`, `advance`, `size`; metadata cached per definition, mirrors public Monster state, returns only changed sprite-frame indices |
 | `NativeDecorationCullWorker` | worker-thread culling coordinator (enter/exit, frame updates, stats) |
 | `GdashNative` | entry point: `build_string`, `version`, `add` (self-check used by `GameScene._probe_native_core`), plus the parsing/CORS/audio helpers used by `NativeCore` |
@@ -281,28 +281,26 @@ execution. Compaction trades a small construction pass for lower retained index 
 and faster changing-range queries; see `reports/decoration-sections-2026-10-15.md` for
 measured construction peaks (including concentrated input) and limitations.
 
-## 13. Decoration triangle-array batching
+## 13. Decoration geometry batching status
 
-`NativeDecorationRenderer::rebuild_commands` bakes each selected sprite's current 2D
-transform into its four quad vertices and submits indexed `canvas_item_add_triangle_array`
-commands, coalescing consecutive records that share a texture and blend-target canvas RID.
-The run order is never sorted or changed: each blend target receives its original ordered
-subsequence, preserving overlapping translucent composition. Per-vertex UVs, colors,
-channel tint, group pulse, UI offsets, spin, and the three inherited/normal/additive material
-paths are retained. The fallback renderers in GDScript are untouched.
+The indexed `canvas_item_add_triangle_array` aggregation experiment was reverted after the
+Android Mobile pixel-parity gate found 11 mismatched pixels in 9,216 (`max_delta=0.219608` at
+`(54,55)`). The candidate emitted atlas UVs without the `clip_uv` semantics used by
+`canvas_item_add_texture_rect_region`: Godot clamps fragment UVs half a texel inside the
+source region. This made region-edge sampling visibly different. The active
+`NativeDecorationRenderer::rebuild_commands` therefore retains ordered, clipped
+texture-rectangle submissions per sprite, with the original draw order, blend routing,
+transforms, pulse/tint, UI layout and spin behavior. It does not claim reduced RenderingServer
+command counts or draw calls.
 
-`tools/renderer_cache_selftest.gd` asserts every sprite is retained, that 256 same-texture
-records become one triangle-array command (synthetic 99.6% command-count reduction), that
-unequal transforms remain distinct geometry, and that separate blend targets stay separate.
-This counter is a RenderingServer canvas command count, not measured driver draw calls or FPS.
-`tools/runtime_visual_smoke_test.gd` adds a SubViewport image comparison against the old
-texture-rect path, including atlas regions, alpha overlap, rotation, scale and shear; it still
-needs an engine run. The native release extension compiles locally; pixel parity, Windows CI,
-real-level frame time, and target GPU performance remain unverified. The implementation uses
-portable canvas triangle arrays, not compute shaders or MultiMesh instancing: those would
-require materially more shader/UV/material work and a GLES/WebGL-compatible fallback, and
-no compute-workload bottleneck has been measured. See
-`reports/decoration-triangle-batching-2026-10-15.md`.
+`tools/renderer_cache_selftest.gd` checks sprite retention, ordered rect submissions and
+blend routing; `tools/runtime_visual_smoke_test.gd` compares the active native renderer against
+a direct RenderingServer texture-rect reference. The prior triangle-array benchmark and
+parity report are historical only; see
+`reports/decoration-triangle-batching-2026-10-15.md` and
+`reports/decoration-node-and-draw-call-review-2026-10-15.md`. A future aggregation must
+reproduce clip-UV behavior and pass the Android Mobile pixel gate before it can replace this
+path. No whole-game frame-time, GPU, or device FPS improvement is established.
 
 ## 14. Static frustum edge-band traversal
 
@@ -329,8 +327,8 @@ passed; Godot/Windows/device runtime remains pending. See
 ## 15. Batch-node / global draw-call limits
 
 The current packed decoration asset manifest has one page (`gd_objects_atlas_0.png`), and
-rendering already uses C++ `RenderingServer` canvas-item RIDs with indexed triangle-array
-runs. A texture-array/global-atlas rewrite cannot collapse calls for the present packed-art
+rendering uses C++ `RenderingServer` canvas-item RIDs with ordered clipped texture-rectangle
+submissions; triangle-array aggregation is rejected pending clip-UV parity. A texture-array/global-atlas rewrite cannot collapse calls for the present packed-art
 path. The remaining `DecorationBatch` nodes are group-transform/effect proxies, not per-sprite
 nodes. Whole-level call collapse would have to respect intervening gameplay z layers and
 normal/additive materials; PhysicsServer is unrelated to static decorations. The native

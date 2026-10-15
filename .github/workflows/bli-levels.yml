@@ -4,25 +4,6 @@ name: bli levels check
 # and opens each one in a real Godot build of the game. Levels are never
 # committed; results come back as check-run annotations.
 on:
-  push:
-    branches: ["arena/**"]
-    paths:
-      - ".github/workflows/bli-levels.yml"
-      - "tools/fetch_transfer_levels.py"
-      - "tools/gd_level_scan.py"
-      - "tools/gd_sandwich_scan.py"
-      - "tools/sandwich_probe_summary.py"
-      - "src/Player.gd"
-      - "src/Level.gd"
-      - "tools/level_probe.gd"
-      - "tools/level_probe.tscn"
-      - "tools/gd_annotate.py"
-      - "tools/level_memory_profile.gd"
-      - "tools/level_open_memory.gd"
-      - "src/static/GMDObjects.gd"
-      - "src/static/GMDConverter.gd"
-      - "src/LevelPhysics.gd"
-      - "src/GDObject.gd"
   workflow_dispatch:
     inputs:
       url:

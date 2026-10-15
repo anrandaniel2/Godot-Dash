@@ -10737,96 +10737,22 @@ class NativeDecorationRenderer : public RefCounted {
 		last_draw_commands = 0;
 		if (!range_has_records && cull) return;
 
-		// Bake each sprite's exact CanvasItem transform into its four vertices,
-		// then emit one indexed triangle-array command per consecutive texture
-		// run and blend target. Never reorder sprites: overlapping translucent
-		// decorations retain their original first-occurrence compositing order.
-		struct TriangleBatch {
-			Ref<Texture2D> texture;
-			int texture_width = 0;
-			int texture_height = 0;
-			std::vector<Vector2> points;
-			std::vector<Color> colors;
-			std::vector<Vector2> uvs;
-		};
-		std::array<TriangleBatch, 3> batches;
-		const std::array<RID, 3> targets = { canvas_item, canvas_item_add, canvas_item_plain };
-		auto flush_batch = [&](size_t slot) {
-			TriangleBatch &batch = batches[slot];
-			if (!batch.texture.is_valid() || batch.points.empty()) return;
-			const size_t quad_count = batch.points.size() / 4;
-			PackedVector2Array points;
-			PackedColorArray colors;
-			PackedVector2Array uvs;
-			PackedInt32Array indices;
-			points.resize(static_cast<int64_t>(batch.points.size()));
-			colors.resize(static_cast<int64_t>(batch.colors.size()));
-			uvs.resize(static_cast<int64_t>(batch.uvs.size()));
-			indices.resize(static_cast<int64_t>(quad_count * 6));
-			std::memcpy(points.ptrw(), batch.points.data(), batch.points.size() * sizeof(Vector2));
-			std::memcpy(colors.ptrw(), batch.colors.data(), batch.colors.size() * sizeof(Color));
-			std::memcpy(uvs.ptrw(), batch.uvs.data(), batch.uvs.size() * sizeof(Vector2));
-			int32_t *index_data = indices.ptrw();
-			for (size_t quad = 0; quad < quad_count; ++quad) {
-				const int32_t base = static_cast<int32_t>(quad * 4);
-				const size_t offset = quad * 6;
-				index_data[offset] = base;
-				index_data[offset + 1] = base + 1;
-				index_data[offset + 2] = base + 2;
-				index_data[offset + 3] = base;
-				index_data[offset + 4] = base + 2;
-				index_data[offset + 5] = base + 3;
-			}
-			server->canvas_item_add_triangle_array(
-					targets[slot], indices, points, colors, uvs,
-					PackedInt32Array(), PackedFloat32Array(), batch.texture->get_rid(), -1);
-			++last_draw_commands;
-			batch.texture.unref();
-			batch.texture_width = 0;
-			batch.texture_height = 0;
-			batch.points.clear();
-			batch.colors.clear();
-			batch.uvs.clear();
-		};
 		auto draw_record = [&](size_t index) {
 			const Record &record = records[index];
 			// Flipped records draw on their own canvas item; everything else
 			// keeps the batch's import-time material through the parent.
-			size_t target_slot = 0;
-			if (record.blend == 1 && canvas_item_add.is_valid()) target_slot = 1;
-			else if (record.blend == 2 && canvas_item_plain.is_valid()) target_slot = 2;
-			TriangleBatch &batch = batches[target_slot];
-			if (batch.texture.is_valid() && batch.texture->get_rid() != record.texture->get_rid()) {
-				flush_batch(target_slot);
-			}
-			if (!batch.texture.is_valid()) {
-				batch.texture = record.texture;
-				batch.texture_width = record.texture->get_width();
-				batch.texture_height = record.texture->get_height();
-			}
-			const Transform2D draw_transform = ui_layout_active ? get_draw_transform(index) : record.transform;
-			const Vector2 size = record.region.size;
-			const Vector2 top_left(-size.x * 0.5, -size.y * 0.5);
-			const Vector2 top_right(size.x * 0.5, -size.y * 0.5);
-			const Vector2 bottom_right(size.x * 0.5, size.y * 0.5);
-			const Vector2 bottom_left(-size.x * 0.5, size.y * 0.5);
-			batch.points.push_back(draw_transform.xform(top_left));
-			batch.points.push_back(draw_transform.xform(top_right));
-			batch.points.push_back(draw_transform.xform(bottom_right));
-			batch.points.push_back(draw_transform.xform(bottom_left));
-			const Color color = pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color;
-			for (int corner = 0; corner < 4; ++corner) batch.colors.push_back(color);
-			const real_t inverse_width = batch.texture_width > 0 ? static_cast<real_t>(1.0 / batch.texture_width) : 0.0;
-			const real_t inverse_height = batch.texture_height > 0 ? static_cast<real_t>(1.0 / batch.texture_height) : 0.0;
-			const real_t u0 = record.region.position.x * inverse_width;
-			const real_t v0 = record.region.position.y * inverse_height;
-			const real_t u1 = record.region.get_end().x * inverse_width;
-			const real_t v1 = record.region.get_end().y * inverse_height;
-			batch.uvs.emplace_back(u0, v0);
-			batch.uvs.emplace_back(u1, v0);
-			batch.uvs.emplace_back(u1, v1);
-			batch.uvs.emplace_back(u0, v1);
+			RID target = canvas_item;
+			if (record.blend == 1 && canvas_item_add.is_valid()) target = canvas_item_add;
+			else if (record.blend == 2 && canvas_item_plain.is_valid()) target = canvas_item_plain;
+			server->canvas_item_add_set_transform(
+					target, ui_layout_active ? get_draw_transform(index) : record.transform);
+			server->canvas_item_add_texture_rect_region(
+					target, Rect2(-record.region.size * 0.5, record.region.size),
+					record.texture->get_rid(), record.region,
+					pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color,
+					false, true);
 			++last_drawn_items;
+			++last_draw_commands;
 		};
 		if (!cull) {
 			for (size_t index = 0; index < records.size(); ++index) draw_record(index);
@@ -10835,7 +10761,6 @@ class NativeDecorationRenderer : public RefCounted {
 					{ first_bucket, last_bucket, first_row, last_row },
 					draw_record);
 		}
-		for (size_t slot = 0; slot < batches.size(); ++slot) flush_batch(slot);
 	}
 
 protected:
