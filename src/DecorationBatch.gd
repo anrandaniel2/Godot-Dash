@@ -134,6 +134,8 @@ var _items_released: bool = false
 var _sort_key: int = 0
 ## Animated monsters in this batch; empty for nearly every batch.
 var monsters: Array[Monster] = []
+## Optional batched clock; public Monster state stays mirrored for save/tools.
+var _monster_timeline: Object
 
 
 ## Geometry Dash groups this batch belongs to, mirrored onto the node so
@@ -204,6 +206,7 @@ func add_item(item: Item) -> Item:
 ## Finalises the batch: sorts for correct layering and texture locality, then
 ## buckets for culling. Call once, after all items are added.
 func build() -> void:
+	_monster_timeline = null
 	# Sorting on a precomputed integer key beats comparing object fields inside
 	# the callable, which matters when a batch holds tens of thousands of items.
 	#
@@ -406,6 +409,7 @@ func register_monster(monster_name: String, object_transform: Transform2D, art_s
 		monster.sprite_indices.append(index)
 		monster.trim_offsets.append(atlas_frame.offset)
 	if not monster.bound_items.is_empty():
+		_monster_timeline = null
 		monsters.append(monster)
 		set_process(_built)
 		add_to_group(MONSTER_BATCH_GROUP)
@@ -427,6 +431,7 @@ func reset_monster_animations() -> void:
 
 
 func _start_animation(monster: Monster, animation: String) -> void:
+	_monster_timeline = null
 	monster.animation = animation
 	monster.frame = 0
 	monster.elapsed = 0.0
@@ -434,6 +439,25 @@ func _start_animation(monster: Monster, animation: String) -> void:
 
 
 func _advance_monsters(delta: float) -> void:
+	if Config.use_native_core and ClassDB.class_exists(&"NativeMonsterTimeline"):
+		if _monster_timeline == null or int(_monster_timeline.call(&"size")) != monsters.size():
+			_monster_timeline = ClassDB.instantiate(&"NativeMonsterTimeline")
+			var definitions: Dictionary = {}
+			for monster: Monster in monsters:
+				if not definitions.has(monster.name):
+					definitions[monster.name] = MonsterAnimations.monster(monster.name)
+			_monster_timeline.call(&"configure", monsters, definitions)
+		var changed: PackedInt32Array = _monster_timeline.call(&"advance", delta)
+		for index: int in changed:
+			_place_monster(monsters[index])
+		return
+	# Invalidate before fallback advancement so re-enabling native snapshots
+	# the live clock, not the old one. Trigger restarts/builds invalidate too.
+	_monster_timeline = null
+	_advance_monsters_portable(delta)
+
+
+func _advance_monsters_portable(delta: float) -> void:
 	for monster: Monster in monsters:
 		var animation: Dictionary = MonsterAnimations.monster(monster.name).get("animations", {}).get(monster.animation, {})
 		var delay: float = maxf(float(animation.get("delay", 0.05)), 0.001)

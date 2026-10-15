@@ -158,7 +158,7 @@ Runtime constraints on Android that show up in code:
   The renderer change is user-requested, not a measured performance win.
 - `.github/workflows/windows.yml` (**Build Windows Forward+**) builds on Windows 2022 using
   the pinned godot-cpp, `platform=windows target=template_release arch=x86_64 api_version=4.7
-  use_static_cpp=yes optimize=speed debug_symbols=no`. `tools/windows_ci.py` installs matching
+  use_static_cpp=yes optimize=speed lto=full dev_build=no debug_symbols=no`. `tools/windows_ci.py` installs matching
   editor/templates outside the project, runs runtime safety/selection benchmarks, imports,
   exports, validates PE x86-64 artifacts and runs the exported EXE's headless native smoke.
   The CI workspace regenerates the unavailable LFS ICO from the tracked logo PNG and
@@ -189,12 +189,12 @@ Order of significance:
 
 1. Godot 4.7.2 binary + export templates (cached).
 2. Android SDK/JDK/keystore setup; NDK install.
-3. Build `gdash_native` for **linux debug** (kept symbols) then **android arm64 release**;
+3. Build `gdash_native` for **linux debug** (kept symbols) then **android arm64 release** (speed, ThinLTO, stripped);
    asserts the trimmed build profile and a size tripwire.
 4. Install the Android build template; patch the manifest (`largeHeap`, game category); drop the
    `.so` into Gradle `jniLibs`.
 5. `godot --headless --path . --import` (import errors surface here).
-6. **GDScript load probe**: `xvfb-run -a godot --path . --rendering-method gl_compatibility
+6. **GDScript load probe**: `godot --headless --path . --rendering-method gl_compatibility
    --audio-driver Dummy res://tools/gdscript_probe.tscn` — gate: `^PROBE_SUMMARY` present, no
    `^PROBE FAIL`. (Scene-run shape because a `--script` SceneTree probe hung in CI.)
 7. **GDR replay codec self-test**: `res://tools/gdr_selftest.tscn` — gate
@@ -214,7 +214,7 @@ Order of significance:
 
 1. Check the CORS relay Worker (`web_relay_worker_selftest.mjs`).
 2. Install scons + Emscripten 6.0.8; patch the pinned godot-cpp for wasm64
-   (`tools/godot_cpp_wasm64.py`); build `gdash_native` for wasm64 (threads), release and debug.
+   (`tools/godot_cpp_wasm64.py`); build `gdash_native` for wasm64 (threads), release only.
 3. Download/cache the hogdot editor; patch the hogdot source (`tools/hogdot_wasm64.py`); build/cache
    the **unstripped threaded WebGPU template** (wasm64, 16 GB maximum memory); assert `Line2D` is
    present in the wasm.
@@ -282,3 +282,26 @@ blocked/transient public downloads or HTML/error bodies. Both the target-host al
 credential guard must pass. Web and Android transport routing is unchanged. Live endpoint
 access may be unavailable in the coding sandbox; mocked policy checks do not prove any
 particular remote level downloads successfully on the user's network.
+
+## 9. Production and build-time audit (2026-10-14)
+
+- All three ship `--export-release`, compiled GDScript, shader baking, optimized native
+  release targets, and exclude tools/native source/docs/reports. No visual content is removed.
+- Web engine already uses `production=yes optimize=speed`; Windows/Android use stock release
+  templates, not custom stripped engines. `production=yes` is an engine option, not a godot-cpp
+  option. Native resolved settings print as `NATIVE_BUILD_SETTINGS`.
+- Web only compiles its release side module; `pin_web_extension.py` stages every Web selector
+  to it in CI. wasm64/threads/WebGPU-first/GLES fallback and both template cache keys unchanged.
+- Native caches use source/build-policy keys plus restore prefixes, and save immediately after
+  compilation even if later runtime tests fail. Android pins the actual NDK to its cache identity.
+  No host `scons -c` between Linux and ARM builds. Compilation uses available Linux CPU cores.
+- Android extracts only Android templates and saves the downloaded archive before tests.
+  Its four CPU/script tests are headless scenes, not Xvfb/GLES sessions. Visual smoke remains
+  under Xvfb with pixel assertions; no tests or completion/error gates removed.
+- ZIP/APK/installer artifact uploads disable redundant outer compression (already compressed).
+- `tools/test_production_build.py` checks these contracts on each platform. Windows exported
+  EXE additionally asserts `not OS.is_debug_build()`, alongside native/data-preservation checks.
+- Android's `android-debug` release tag/debug signing key are distribution names/credentials,
+  not evidence of a debug engine: the export command and native target are release.
+
+See `reports/build-production-native-2026-10-14.md` for measured versus pending results.

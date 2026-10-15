@@ -20,6 +20,7 @@ var failures: PackedStringArray = []
 
 
 func _ready() -> void:
+	_test_optional_packed_fields()
 	var level_runtime := ClassDB.instantiate(&"NativeLevelRuntime") as Node
 	if level_runtime == null:
 		_fail("NativeLevelRuntime could not be instantiated")
@@ -110,3 +111,34 @@ func _fail(description: String) -> void:
 func _finish() -> void:
 	print("PACKED_TRIGGER_SELFTEST_SUMMARY total=", checks, " failed=", failures.size())
 	get_tree().quit(1 if not failures.is_empty() else 0)
+
+
+func _test_optional_packed_fields() -> void:
+	# The importer now always supplies extended_collision; previously its extra
+	# key caused every trigger to fall back to expensive dictionaries.
+	var was_editor: bool = Editor.in_editor
+	Editor.in_editor = false
+	var report: GMDConverter.ImportReport = GMDConverter.ImportReport.new()
+	var level_data: Dictionary = GMDConverter.import_online_level_string(
+		"kA2,0;1,899,2,30,3,30,121,0;1,899,2,60,3,30,121,1;", "Packed fields", report
+	)
+	Editor.in_editor = was_editor
+	var table: Dictionary = level_data.get(PackedTriggers.DATA_KEY, {})
+	_expect("real importer packs both extended-collision values", PackedTriggers.size_of(table) == 2)
+	if PackedTriggers.size_of(table) != 2:
+		return
+	for i: int in 2:
+		var entry: Dictionary = PackedTriggers.row(table, i)
+		_expect("extended collision preserved", entry.get("extended_collision") == (i == 1))
+		var packed: PackedTriggers = PackedTriggers.new()
+		_expect("new entry repacks", packed.append_entry(entry))
+		_expect("new entry roundtrips exactly", PackedTriggers.row(packed.to_data(), 0) == entry)
+		entry.erase("extended_collision")
+		packed = PackedTriggers.new()
+		_expect("legacy entry packs", packed.append_entry(entry))
+		var legacy: Dictionary = packed.to_data()
+		legacy.erase("extended_collision")
+		_expect("old table without new column still loads", PackedTriggers.row(legacy, 0) == entry)
+		entry["unrecognized_field"] = true
+		_expect("unknown data still uses lossless dictionary fallback", not packed.append_entry(entry))
+		_expect("rejected entry does not mutate table", packed.count() == 1)

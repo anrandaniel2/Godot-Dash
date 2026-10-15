@@ -33,6 +33,8 @@ var gd_id := PackedInt32Array()
 var source_order := PackedInt32Array()
 var flags := PackedByteArray()
 var hidden := PackedByteArray()
+## 0 = legacy entry without the key, 1 = false, 2 = true. Preserve presence.
+var extended_collision := PackedByteArray()
 var xform := PackedFloat32Array()
 var scene_index := PackedInt32Array()
 var scenes := PackedStringArray()
@@ -61,11 +63,13 @@ var _scene_lookup: Dictionary[String, int] = { }
 ## unchanged, when the entry cannot be rebuilt exactly by [method row]; the
 ## caller then keeps it as a Dictionary.
 func append_entry(entry: Dictionary) -> bool:
-	if entry.size() != ENTRY_KEYS.size():
+	if entry.size() != ENTRY_KEYS.size() + int(entry.has("extended_collision")):
 		return false
 	for key: String in ENTRY_KEYS:
 		if not entry.has(key):
 			return false
+	if entry.has("extended_collision") and not entry.extended_collision is bool:
+		return false
 	if not bool(entry.native_only_trigger):
 		return false
 	var id: int = int(entry.gd_object_id)
@@ -123,6 +127,7 @@ func append_entry(entry: Dictionary) -> bool:
 	source_order.append(order)
 	flags.append(int(entry.gd_trigger_flags))
 	hidden.append(1 if bool(entry.hidden) else 0)
+	extended_collision.append((2 if entry.extended_collision else 1) if entry.has("extended_collision") else 0)
 	xform.append_array(PackedFloat32Array([t.x.x, t.x.y, t.y.x, t.y.y, t.origin.x, t.origin.y]))
 	var scene: String = entry.scene_file_path
 	if not _scene_lookup.has(scene):
@@ -156,6 +161,7 @@ func to_data() -> Dictionary:
 		"source_order": source_order,
 		"flags": flags,
 		"hidden": hidden,
+		"extended_collision": extended_collision,
 		"xform": xform,
 		"scene_index": scene_index,
 		"scenes": scenes,
@@ -212,7 +218,7 @@ static func row(table: Dictionary, i: int) -> Dictionary:
 	var bytes: PackedByteArray = table.value_bytes
 	for k: int in range(prop_offsets_column[i], prop_offsets_column[i + 1]):
 		properties[str(keys[k])] = bytes.slice(value_offsets_column[k], value_offsets_column[k + 1]).get_string_from_utf8()
-	return {
+	var entry: Dictionary = {
 		"name": _entry_name(id, order),
 		"scene_file_path": (table.scenes as PackedStringArray)[(table.scene_index as PackedInt32Array)[i]],
 		"gd_object_id": id,
@@ -228,6 +234,10 @@ static func row(table: Dictionary, i: int) -> Dictionary:
 		"gd_properties": properties,
 		"hidden": (table.hidden as PackedByteArray)[i] != 0,
 	}
+	var extended: PackedByteArray = table.get("extended_collision", PackedByteArray())
+	if i < extended.size() and extended[i] != 0:
+		entry["extended_collision"] = extended[i] == 2
+	return entry
 
 
 ## Every row of [param table] as entries, for builds that need trigger nodes.

@@ -266,3 +266,14 @@ Both tests are strict Windows packaging gates (completion marker plus script-err
 The script probe respects `.gdignore` so isolated benchmark projects are not loaded with
 the main project's res:// root. Ordinary runtime and test scripts remain checked.
 No full-level FPS, GPU/pixel parity, or M1 picking-order acceptance follows from these tests.
+
+## 10. Build production / monster timeline gates
+
+`tools/test_production_build.py` runs in Windows/Android/Web CI: release command/flags,
+resource filters, bytecode/shader baking, wasm64/threads, architecture, native cache rollover,
+and idempotent fail-closed Web release staging. Windows exported smoke rejects debug builds.
+Windows also runs the strict monster timeline parity/timing and packed trigger origin/schema
+scenes; Android retains its origin and visual gates. CPU-only Android tests now run headless,
+not in Xvfb, to avoid spending whole timeouts on GL teardown after completion. This is not a
+substitute for visual tests. Native clock performance acceptance requires the actual benchmark,
+not just successful compilation. See the build-production report for current evidence.

@@ -135,11 +135,11 @@ cd native
 # Linux test host, debug symbols kept so native crashes symbolize:
 scons platform=linux   target=template_debug   arch=x86_64 api_version=4.7 debug_symbols=yes lto=none -j2
 # Android release (arm64 only), NDK 28.1.13356709:
-scons platform=android target=template_release arch=arm64  api_version=4.7 -j2
+scons platform=android target=template_release arch=arm64 api_version=4.7 optimize=speed lto=thin dev_build=no debug_symbols=yes -j"$(nproc)"
 # Web (wasm64, threads). godot-cpp must be patched first: tools/godot_cpp_wasm64.py native/godot-cpp
-scons platform=web     target=template_release arch=wasm64 threads=yes api_version=4.7 debug_symbols=no -j2
-# (CI also builds template_debug with debug_symbols=yes; the web lib must be wasm64 or the engine
-#  cannot load it.)
+scons platform=web target=template_release arch=wasm64 threads=yes api_version=4.7 optimize=speed lto=full dev_build=no debug_symbols=no -j"$(nproc)"
+# Web CI stages all Web selectors to the release library (no second debug compile).
+# Android symbols are kept separately for crash decoding; the APK copy is stripped.
 ```
 
 CI asserts the build profile was honoured: **~29 generated godot-cpp class files** (fails at
@@ -155,7 +155,8 @@ Node (no deps) for `web_relay_worker_selftest.mjs`.
 ## 6. Hard constraints (violating these is a bug)
 
 1. **Godot 4.7 only.** Never introduce APIs from other versions.
-2. **GDScript-only game code.** No new native-only features: every native path has a GDScript
+2. **Portable behaviour, native acceleration.** C++ hot-path conversions are explicitly
+   requested; no new native-only behaviour: every native path has a GDScript
    fallback, and native classes are reached only via `ClassDB` string lookups
    (`src/static/NativeCore.gd` is the contract; `GameScene._probe_native_core()` is the probe).
    This is a requirement, not proof of current coverage: see `06 §1–2` for the checkout

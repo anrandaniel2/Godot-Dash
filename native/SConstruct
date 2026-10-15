@@ -21,6 +21,11 @@ ARGUMENTS.setdefault("use_hot_reload", "no")
 ARGUMENTS.setdefault("symbols_visibility", "hidden")
 
 env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
+# Print resolved flags, not just requested defaults: lto=auto is platform
+# dependent (notably none on MSVC/Android). CI passes explicit release choices.
+print("NATIVE_BUILD_SETTINGS platform={} target={} optimize={} lto={} dev_build={} debug_symbols={}".format(
+    env["platform"], env["target"], env["optimize"], env["lto"],
+    env.dev_build, env["debug_symbols"]))
 env.Append(CPPPATH=["src/"])
 if env["platform"] in ("linux", "android"):
     env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])

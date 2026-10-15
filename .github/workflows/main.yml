@@ -102,11 +102,18 @@ jobs:
         if: steps.cache-templates.outputs.cache-hit != 'true'
         run: wget -q "$GODOT_TPZ_URL" -O godot-export-templates.tpz
 
+      - name: Save downloaded export templates
+        if: steps.cache-templates.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: godot-export-templates.tpz
+          key: godot-templates-${{ env.GODOT_VERSION }}
+
       - name: Install export templates
         run: |
           TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
           mkdir -p "$TPZ_DIR"
-          unzip -q -o godot-export-templates.tpz -d "$TPZ_DIR"
+          unzip -q -o godot-export-templates.tpz 'templates/android*' 'templates/version.txt' -d "$TPZ_DIR"
           # The archive nests everything under templates/; Godot wants the
           # files directly in the version folder.
           if [ -d "$TPZ_DIR/templates" ]; then
@@ -140,17 +147,18 @@ jobs:
 
       # ------------------------------------------------- Native GDExtension
       # Builds native/src/gdash_native.cpp into the .so bundled into the APK by
-      # native/bin/gdash_native.gdextension. The extension only registers a boot
-      # probe class today (Config.use_native_core); game systems port to C++
-      # behind that flag incrementally.
+      # native/bin/gdash_native.gdextension. Renderer, trigger, import/build and
+      # animation kernels live here. Only the ARM release library ships.
       - name: Install scons
         run: pip3 install --break-system-packages -q scons
 
       - name: Cache scons build cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: native-cache
         with:
           path: native/scons-cache
-          key: native-scons-${{ env.GODOT_CPP_REF }}-api47-profile-v2-release
+          key: native-scons-android-${{ env.GODOT_CPP_REF }}-${{ env.NDK_VERSION }}-${{ hashFiles('native/src/**', 'native/SConstruct', 'native/build_profile.json', '.github/workflows/main.yml') }}
+          restore-keys: native-scons-android-${{ env.GODOT_CPP_REF }}-${{ env.NDK_VERSION }}-
 
       # godot-cpp is cloned fresh each run (small, shallow) rather than cached:
       # caching it alongside the multi-GB NDK made cache restore unreliable.
@@ -184,9 +192,8 @@ jobs:
           cd native
           # The CI test-host library keeps debug symbols (and skips LTO) so a
           # native crash in the smoke/boot tests symbolizes with addr2line.
-          # It never ships: the APK carries the android arm64 library, whose
-          # own build resolves lto=auto to none anyway.
-          if ! scons platform=linux target=template_debug arch=x86_64 api_version=4.7 debug_symbols=yes lto=none -j2 > /tmp/scons_linux.log 2>&1; then
+          # It never ships: the APK carries the optimized ARM release library.
+          if ! scons platform=linux target=template_debug arch=x86_64 api_version=4.7 debug_symbols=yes lto=none -j"$(nproc)" > /tmp/scons_linux.log 2>&1; then
             emit_scons_error /tmp/scons_linux.log
             exit 1
           fi
@@ -221,24 +228,15 @@ jobs:
             echo "::error::linux gdash_native .so is $SO_SIZE bytes stripped (tripwire: < 3000000)"
             exit 1
           fi
-          # Preserve the host library while cleaning shared intermediates before
-          # the ARM build. Restore it for the visual smoke test afterward.
-          cp "$SO" /tmp/libgdash_native.linux.so
-          if ! scons -c platform=linux target=template_debug arch=x86_64 api_version=4.7 > /tmp/scons_linux_clean.log 2>&1; then
-            emit_scons_error /tmp/scons_linux_clean.log
-            exit 1
-          fi
-          mkdir -p bin/linux
-          cp /tmp/libgdash_native.linux.so "$SO"
-          ls -lh bin/linux/
+          # SCons tracks changed command lines; godot-cpp objects are also
+          # platform/target-suffixed. Do not delete the host objects before ARM.
 
       - name: Locate or install Android NDK
         run: |
           : "${ANDROID_HOME:?ANDROID_HOME not set on this runner}"
-          # Use an already-installed NDK if present (runners ship one), else
-          # install the pinned version. Any modern NDK compiles godot-cpp.
-          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1 || true)
-          if [ -z "$NDK_DIR" ]; then
+          # Match the cache identity and compiler version on every runner.
+          NDK_DIR="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
+          if [ ! -d "$NDK_DIR" ]; then
             SDKMANAGER=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
             if [ ! -x "$SDKMANAGER" ]; then
               echo "no NDK installed and sdkmanager not found at $SDKMANAGER"; exit 1
@@ -284,7 +282,7 @@ jobs:
           # template_release matches the exported APK. debug_symbols=yes adds only
           # debug sections so addr2line still works; the APK copy is stripped below.
           if ! scons platform=android target=template_release arch=arm64 \
-               api_version=4.7 ndk_version="$NDK_VERSION" debug_symbols=yes -j2 > /tmp/scons_android.log 2>&1; then
+               api_version=4.7 ndk_version="$NDK_VERSION" optimize=speed lto=thin dev_build=no debug_symbols=yes -j"$(nproc)" > /tmp/scons_android.log 2>&1; then
             emit_scons_error /tmp/scons_android.log
             exit 1
           fi
@@ -335,8 +333,7 @@ jobs:
             echo "::error::fast_noise_lite.cpp binding missing (generated set incomplete)"
             exit 1
           }
-          # Loose tripwire against symbol/stdlib bloat only (android builds
-          # without LTO via clang from the NDK).
+          # Loose tripwire against symbol/stdlib bloat, after NDK ThinLTO/strip.
           SO_SIZE=$(stat -c%s "$SO")
           if [ "$SO_SIZE" -ge 4000000 ]; then
             echo "::error::android gdash_native .so is $SO_SIZE bytes (tripwire: < 4000000)"
@@ -345,6 +342,16 @@ jobs:
           ls -lh bin/android/
 
       # ------------------------------------------------- Android build template
+      - name: Save native compilation before runtime tests
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/scons-cache
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Check production build invariants
+        run: python3 -m unittest discover -s tools -p test_production_build.py
+
       - name: Install Android build template (res://android/build)
         run: |
           TPZ_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
@@ -498,16 +505,12 @@ jobs:
       - name: GDScript load probe (surface root script errors)
         run: |
           set -euo pipefail
-          command -v xvfb-run >/dev/null || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb
-          }
           set +e
           # Scene-run shape (same as the smoke test, autoloads up) because a
           # --script SceneTree probe hung in CI. Hard timeout as a backstop;
           # success is judged from the log below, because the engine's
           # shutdown can hang after the probe itself completed cleanly.
-          timeout 240s xvfb-run -a "$GODOT_BIN" --path . \
+          timeout 240s "$GODOT_BIN" --headless --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/gdscript_probe.tscn \
@@ -524,7 +527,7 @@ jobs:
             echo "::error title=Probe hung or crashed (tail)::${tail_details}"
             exit 1
           fi
-          if grep -q "^PROBE FAIL" probe.log; then
+          if grep -qE "^PROBE FAIL|SCRIPT ERROR|Parse Error|Failed to load script" probe.log; then
             # The root errors print immediately before each PROBE FAIL line
             # (a script's own parse/analyze errors print during its load()).
             context=$(grep -B30 "^PROBE FAIL" probe.log | head -n 55 || true)
@@ -544,12 +547,8 @@ jobs:
       - name: GDR replay codec self-test
         run: |
           set -euo pipefail
-          command -v xvfb-run >/dev/null || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb
-          }
           set +e
-          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+          timeout 90s "$GODOT_BIN" --headless --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/gdr_selftest.tscn \
@@ -590,12 +589,8 @@ jobs:
       - name: Native colour-trigger chain self-test
         run: |
           set -euo pipefail
-          command -v xvfb-run >/dev/null || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb
-          }
           set +e
-          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+          timeout 90s "$GODOT_BIN" --headless --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/native_color_selftest.tscn \
@@ -627,12 +622,8 @@ jobs:
       - name: Packed trigger placement self-test
         run: |
           set -euo pipefail
-          command -v xvfb-run >/dev/null || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb
-          }
           set +e
-          timeout 90s xvfb-run -a "$GODOT_BIN" --path . \
+          timeout 90s "$GODOT_BIN" --headless --path . \
             --rendering-method gl_compatibility \
             --audio-driver Dummy \
             res://tools/packed_trigger_origin_selftest.tscn \
@@ -1045,6 +1036,7 @@ jobs:
           name: godot-dash-android-debug-${{ github.sha }}
           path: ${{ env.APK_PATH }}
           if-no-files-found: error
+          compression-level: 0
 
       - name: Attach APK to release (release* tags only)
         if: startsWith(github.ref, 'refs/tags/release')

@@ -159,12 +159,15 @@ func _native_smoke() -> void:
 	)
 	var native: Object = NativeCore.backend()
 	var ok: bool = native != null and method == "forward_plus" and OS.has_feature("windows")
+	ok = ok and not OS.is_debug_build()
+	print("WINDOWS_PRODUCTION release=%s" % (not OS.is_debug_build()))
 	for required: StringName in [
 		&"NativeLevelBuildJob",
 		&"NativeDecorationRenderer",
 		&"NativePackedDecorationBuilder",
 		&"NativeTriggerRuntime",
 		&"NativeColorChannelIndex",
+		&"NativeMonsterTimeline",
 	]:
 		ok = ok and ClassDB.class_exists(required)
 	if native != null:

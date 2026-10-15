@@ -76,6 +76,7 @@
 #include "decoration_spin.h"
 #include "decoration_visibility_cache.h"
 #include "neutral_hsv.h"
+#include "native_monster_timeline.h"
 #include "gd_physics_constants.h"
 
 namespace godot {
@@ -11539,6 +11540,7 @@ void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(godot::NativeDecorationRenderer);
 		GDREGISTER_CLASS(godot::NativePackedDecorationBuilder);
 		GDREGISTER_CLASS(godot::NativeColorChannelIndex);
+		GDREGISTER_CLASS(godot::NativeMonsterTimeline);
 	}
 }
 void gdash_native_terminate(godot::ModuleInitializationLevel) {}

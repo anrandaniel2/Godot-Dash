@@ -34,7 +34,9 @@ jobs:
           python-version: "3.12"
 
       - name: Check export staging and renderer invariants
-        run: python -m unittest discover -s tools -p test_windows_export.py
+        run: |
+          python -m unittest discover -s tools -p test_windows_export.py
+          python -m unittest discover -s tools -p test_production_build.py
 
       - name: Cache Godot editor and templates outside the project
         uses: actions/cache@v4
@@ -57,10 +59,11 @@ jobs:
           fetch-depth: 1
 
       - name: Cache native compilation
-        uses: actions/cache@v4
+        id: native-cache
+        uses: actions/cache/restore@v4
         with:
           path: native/scons-cache
-          key: native-windows-x64-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**', 'native/SConstruct', 'native/build_profile.json') }}
+          key: native-windows-x64-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**', 'native/SConstruct', 'native/build_profile.json', '.github/workflows/windows.yml', 'tools/windows_ci.py') }}
           restore-keys: native-windows-x64-${{ env.GODOT_CPP_REF }}-
 
       - name: Install build tools
@@ -68,6 +71,13 @@ jobs:
 
       - name: Build optimized x86-64 extension with static C++ runtime
         run: python tools/windows_ci.py build
+
+      - name: Save native compilation before export tests
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/scons-cache
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Import, export Forward+, verify exported DLL, package
         run: python tools/windows_ci.py export
@@ -83,6 +93,7 @@ jobs:
             export/godot-dash-windows-x86_64.zip
             export/GodotDashSetup-x86_64.exe
           if-no-files-found: error
+          compression-level: 0
 
       - name: Publish this build without replacing another branch's release
         env:

@@ -21,7 +21,8 @@ its packed builder/renderer. Do not mistake the contract below for verified fall
    not all calls go through this helper and not every helper has a complete fallback.
 4. The web GDExtension is a wasm side module **bundled into the web export**. The web library
    is **wasm64** (`libgdash_native.web.template_release.wasm64.wasm`,
-   and the matching `.template_debug.wasm64.wasm`); CI checks that the release file is present. A
+   CI stages all Web selectors to that release binary with `tools/pin_web_extension.py`);
+   CI checks that the release file is present. A
    wasm32 library cannot load into the wasm64 engine template.
    Android bundles the arm64 `.so`; native-free desktop/source builds have the gaps noted in §1.
 5. Every native-only behaviour needs a GDScript equivalent that stays correct.
@@ -51,6 +52,7 @@ its packed builder/renderer. Do not mistake the contract below for verified fall
 | `NativeColorChannelIndex` | one-call channel propagation: `configure`, `set_group_members`, `apply_channel_color`, `set_channel_blending`, `clear` |
 | `NativeLevelBuildJob` | incremental construction: `initialize(data, drop_decoration)`, `step(ms)`, `is_finished`, `get_level` |
 | `NativeDecorationRenderer` | retained-RID sprite renderer: `configure`, `set_item_transform`, `set_item_color`, `get_item_*`, `sort_decoration_indices`, `render_stats`, `queue_redraw`, `item_count`, `last_drawn_count` |
+| `NativeMonsterTimeline` | batched per-frame monster clocks; `configure`, `advance`, `size`; metadata cached per definition, mirrors public Monster state, returns only changed sprite-frame indices |
 | `NativeDecorationCullWorker` | worker-thread culling coordinator (enter/exit, frame updates, stats) |
 | `GdashNative` | entry point: `build_string`, `version`, `add` (self-check used by `GameScene._probe_native_core`), plus the parsing/CORS/audio helpers used by `NativeCore` |
 
@@ -130,8 +132,9 @@ loudly rather than building wasm32. Do not commit the patched clone.
 - `build_profile.json` trims godot-cpp bindings (CI asserts ~29 generated class files and that
   `fast_noise_lite.cpp`/`camera2d.cpp` exist).
 - CI compiles a Linux debug lib (symbols kept for addr2line) before the in-engine selftests,
-  then the Android arm64 release lib for the APK, and the web wasm64 lib (release and debug) in the
-  web workflow.
+  then the Android arm64 release lib (speed + ThinLTO, stripped APK copy). Windows uses
+  speed + full LTO/static CRT; Web builds one speed + full-LTO wasm64 release lib.
+  Debug selectors in Web CI use that release lib, not a second compilation.
 - `native/godot-cpp/` is cloned at the pinned commit; `native/bin/` is gitignored
   (`.gitignore`: `native/godot-cpp/`, `native/bin/`, `native/.sconsign.dblite`, `native/.scons-*`,
   `*.os`).
@@ -185,3 +188,18 @@ capture_color_target → fade → apply_color → ColorChannelData.color changes
    `native/tests/test_ui_trigger.cpp`.
 6. Remember the build profile: adding a class binding grows `gen/src/classes/*` (CI asserts the
    trimmed count).
+
+## 9. Monster-clock acceleration
+
+`DecorationBatch._advance_monsters` uses `NativeMonsterTimeline` when enabled/available,
+otherwise the unchanged `_advance_monsters_portable`. Build/registration/Animate/restart
+invalidate the snapshot, as does switching to fallback. Metadata is immutable until the
+next configure; public frame/animation/elapsed values remain mirrored, and sprite placement
+still runs in GDScript at the original callback/frame boundary. No new ticking node, thread,
+physics clock, per-frame transform bake, or fmod/quotient shortcut is introduced.
+
+`tools/monster_timeline_selftest.tscn` is a strict Windows gate (including script errors).
+It compares against frozen d15e8de code across all bundled clip definitions, frame boundaries,
+large/zero/negative deltas, default/next clips, missing/empty clips, restarts, fallback switching
+and same-size reconfiguration. It times 2000 tracks / 240 ticks with placement included,
+configuration excluded, warmup, three trials and rotated order. Not a full-level FPS test.

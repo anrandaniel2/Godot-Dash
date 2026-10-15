@@ -65,7 +65,9 @@ jobs:
       # tools/web_relay_worker.js; its request translation is covered here
       # because the Godot export cannot exercise it.
       - name: Check the CORS relay Worker
-        run: node tools/web_relay_worker_selftest.mjs
+        run: |
+          node tools/web_relay_worker_selftest.mjs
+          python3 -m unittest discover -s tools -p test_production_build.py
 
       # ------------------------------------------------- Native GDExtension (WebAssembly)
       - name: Install scons
@@ -80,10 +82,12 @@ jobs:
         run: emcc -v
 
       - name: Cache scons build cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: native-cache
         with:
           path: native/scons-cache
-          key: native-scons-web-wasm64-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}
+          key: native-scons-web-wasm64-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}-${{ hashFiles('native/src/**', 'native/SConstruct', 'native/build_profile.json', 'tools/godot_cpp_wasm64.py', 'tools/pin_web_extension.py', '.github/workflows/web.yml') }}
+          restore-keys: native-scons-web-wasm64-${{ env.GODOT_CPP_REF }}-${{ env.EM_VERSION }}-
 
       - name: Checkout pinned godot-cpp
         uses: actions/checkout@v4
@@ -115,22 +119,24 @@ jobs:
           }
 
           echo "Compiling template_release (threads=yes)..."
-          if ! scons platform=web target=template_release arch=wasm64 threads=yes api_version=4.7 debug_symbols=no -j2 > /tmp/scons_web_release.log 2>&1; then
+          if ! scons platform=web target=template_release arch=wasm64 threads=yes api_version=4.7 optimize=speed lto=full dev_build=no debug_symbols=no -j"$(nproc)" > /tmp/scons_web_release.log 2>&1; then
             emit_scons_error /tmp/scons_web_release.log
             exit 1
           fi
           tail -n 5 /tmp/scons_web_release.log
 
-          echo "Compiling template_debug (threads=yes)..."
-          if ! scons platform=web target=template_debug arch=wasm64 threads=yes api_version=4.7 debug_symbols=yes -j2 > /tmp/scons_web_debug.log 2>&1; then
-            emit_scons_error /tmp/scons_web_debug.log
-            exit 1
-          fi
-          tail -n 5 /tmp/scons_web_debug.log
+          test -f bin/web/libgdash_native.web.template_release.wasm64.wasm
+          cd ..
+          python3 tools/pin_web_extension.py
+          # The editor import runs on Linux; the browser ships this one release
+          # module. A second Web debug compile served neither path.
 
-          ls -lh bin/web/
-          test -f bin/web/libgdash_native.web.template_release.wasm64.wasm || { echo "::error::Release wasm missing"; exit 1; }
-          test -f bin/web/libgdash_native.web.template_debug.wasm64.wasm || { echo "::error::Debug wasm missing"; exit 1; }
+      - name: Save native compilation before export tests
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/scons-cache
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       # ------------------------------------------------------- hogdot WebGPU editor
       # The editor bakes shaders. The published web zips are not used: their
@@ -412,6 +418,7 @@ jobs:
           name: godot-dash-web-html5-${{ github.sha }}
           path: ${{ env.ZIP_NAME }}
           if-no-files-found: error
+          compression-level: 0
 
       - name: Attach Web zip to release (release* tags only)
         if: startsWith(github.ref, 'refs/tags/release')

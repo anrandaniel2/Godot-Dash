@@ -123,7 +123,7 @@ def safety() -> None:
 def build() -> None:
     run([sys.executable, "-m", "SCons", "-C", ROOT / "native", "platform=windows",
          "target=template_release", "arch=x86_64", "api_version=4.7", "use_static_cpp=yes",
-         "optimize=speed", "debug_symbols=no", "-j4"], "native-build", timeout=1800)
+         "optimize=speed", "lto=full", "dev_build=no", "debug_symbols=no", "-j4"], "native-build", timeout=1800)
     check_pe(ROOT / "native/bin/windows" / DLL)
     run([sys.executable, "-m", "SCons", "-f", ROOT / "tools/benchmarks/renderer_cache/SConstruct",
          f"output={CACHE / 'renderer-cache'}"], "renderer-cache-build")
@@ -213,6 +213,22 @@ def export() -> None:
     for line in text.splitlines():
         if line.startswith(("COLOR_REFRESH_SELFTEST", "COLOR_REFRESH_BENCH")):
             print(f"::notice title=color refresh::{line}")
+    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/monster_timeline_selftest.tscn"],
+               "monster-timeline", timeout=120)
+    check_log(text, "monster-timeline")
+    if not re.search(r"MONSTER_TIMELINE_SELFTEST checks=\d+ failed=0", text):
+        raise RuntimeError("Native monster timeline parity failed")
+    for line in text.splitlines():
+        if line.startswith(("MONSTER_TIMELINE_SELFTEST", "MONSTER_TIMELINE_BENCH")):
+            print(f"::notice title=monster timeline::{line}")
+    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/packed_trigger_origin_selftest.tscn"],
+               "packed-trigger", timeout=120)
+    check_log(text, "packed-trigger")
+    if not re.search(r"PACKED_TRIGGER_SELFTEST_SUMMARY.*failed=0", text):
+        raise RuntimeError("Packed trigger origin/schema parity failed")
+    for line in text.splitlines():
+        if line.startswith("PACKED_TRIGGER_SELFTEST_SUMMARY"):
+            print(f"::notice title=packed triggers::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
@@ -235,7 +251,7 @@ def export() -> None:
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
-    for name in ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment", "gameplay-presentation", "color-refresh"):
+    for name in ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment", "gameplay-presentation", "color-refresh", "monster-timeline", "packed-trigger"):
         shutil.copy2(LOGS / f"{name}.log", OUTPUT)
     shutil.make_archive(str(ROOT / "export/godot-dash-windows-x86_64"), "zip", OUTPUT)
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")

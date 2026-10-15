@@ -72,7 +72,52 @@ Windows headless gates added/extended:
   ordinary runtime/reference scripts remain discoverable.
 - Existing 54 presentation checks and installer/user-data gates remain mandatory.
 
-CI execution/timings are pending at the initial commit of this report. These tests
-measure CPU operations/state, not whole-level FPS, physical VSync, pixel/GPU equivalence,
-full Amethyst performance or total application memory. M1's real-level zero-mismatch
-picking gate is unchanged; M2/M3 still need their real-level/editor measurements.
+## CI results for d15e8de5
+
+- [Web 38660171790](https://github.com/anrandaniel2/Godot-Dash/actions/runs/38660171790):
+  SUCCESS, including wasm64 threaded extension, WebGPU/Mobile export, artifact
+  validation and the workflow's headless Chrome smoke test. Observed using the
+  required JSON status/conclusion polling loop; no `gh run watch`.
+- [Windows 38660171800](https://github.com/anrandaniel2/Godot-Dash/actions/runs/38660171800):
+  SUCCESS. Color refresh **11,527/0**, renderer **2,166/0**, presentation **54/0**,
+  standalone cache/classification **8,426/0**, runtime safety **1,655/0**. UI math,
+  native DLL smoke and installer upgrade/uninstall with preserved user-data hashes
+  passed. Counts and timings retrieved from check-run 116179300293 annotations.
+- Coordinator fixture: **120 rebuilds over 120 frames, maximum 1 per frame**, with
+  **30 range changes** while spin/pulses were active. Retained-command state only,
+  not pixel/GPU proof.
+- Android 38660171706 was still in progress at inspection; no Android export success
+  claimed and no wait performed for it.
+- Level probe 38660171753 failed at **Download level**, before import/probing.
+  No real-level measurements were produced.
+
+### Color refresh CPU comparison
+
+Same Windows headless process, 2,000 watchers × 60 updates; median of three trials
+with rotated timed order after warming each path:
+
+| Path | Time |
+| --- | ---: |
+| Frozen Build 15 portable loop | 1,016.147 ms |
+| Current portable loop | 177.268 ms |
+| Current native index | 25.671 ms |
+
+The portable loop used **82.6% less CPU time (5.73× faster)** in this synthetic
+copy-channel workload, with bit-exact portable output checks. The native number is
+**current-only**, not a native before/after result. Levels already using the native
+path do not inherit the portable speedup. Copy resolution and common HSV work are
+amortized here; this is not an end-to-end game benchmark or an FPS multiplier.
+
+The unrelated callback timing stayed flat (690.003 → 690.014 ms); no callback win
+is claimed. Existing stamp-vs-cache numbers still measure the unchanged Build 15
+algorithm, not this pass.
+
+Windows downloads for this verified code commit:
+- [Installer](https://github.com/anrandaniel2/Godot-Dash/releases/download/windows-d15e8de5/GodotDashSetup-x86_64.exe)
+- [Portable ZIP](https://github.com/anrandaniel2/Godot-Dash/releases/download/windows-d15e8de5/godot-dash-windows-x86_64.zip)
+
+These tests measure CPU operations/state, not whole-level FPS, physical VSync,
+pixel/GPU equivalence, full Amethyst performance or total application memory.
+The Chrome smoke result is CI evidence, not proof of fixing a user-reported browser
+runtime issue. M1's real-level zero-mismatch picking gate is unchanged; M2/M3 still
+need their real-level/editor measurements.

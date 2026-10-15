@@ -214,3 +214,12 @@ Vendored MIT TypeScript reference implementation of GD level rendering (licence 
 `VENDOR_NOTE.md` inside). Used as the semantics reference for colour channels, copy channels and
 trigger tracks — changes that touch those semantics should be checked against it. Attribution is
 in `CREDITS.md` (object geometry/defaults/z-order data by Opstic & Maxnut via GDRWeb).
+
+## 7. Packed trigger optional fields
+
+`PackedTriggers` keeps the optional `extended_collision` entry field in a byte column:
+0 means absent (legacy entry), 1 false, 2 true. Tables without that column remain readable;
+row expansion preserves both value and key presence. This prevents the current importer's
+extra field from rejecting all triggers into dictionary fallback. Unknown fields still reject
+packing rather than lose data. Raw GD properties and native activation/collision rules do not
+change. The origin/schema selftest covers old tables and exact new-entry round trips.
