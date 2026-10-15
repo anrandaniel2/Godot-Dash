@@ -216,7 +216,13 @@ def export() -> None:
     # Prevent Godot from scanning a build-time dependency clone.
     (ROOT / "native/godot-cpp/.gdignore").touch()
     if FAST_BUILD:
+        # Keep the editor warm-up/retry needed for first-scan generated resources;
+        # these are import/export prerequisites, not runtime validation suites.
+        run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-warm", allow_failure=True)
         imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-fast")
+        if needs_asset_import_retry(imported):
+            print("::notice title=asset import::Retrying one editor pass after a missing generated asset cache; final parse gate remains strict.")
+            imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-rechecked")
         check_log(imported, "import-fast", include_runtime=False)
         print("::notice title=Fast Windows build::Runtime, renderer, and texture-payload tests are deferred to manual validation.")
     else:
