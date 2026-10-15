@@ -2810,13 +2810,12 @@ func _assert_level_end() -> void:
 	var platformer := GMDConverter.import_online_level_string(
 		"kA2,0,kA22,1;1,1,2,30,3,105;", "Platformer end smoke", GMDConverter.ImportReport.new()
 	)
-	assert(
-		(platformer.layers[0].objects as Array).all(
-			func(entry: Dictionary) -> bool:
-				return entry.get("name", "") != GMDConverter.LEVEL_END_NAME
-		),
-		"native smoke: platformer levels have no end wall in GD"
-	)
+	var platformer_has_end := false
+	for entry: Dictionary in platformer.layers[0].objects:
+		if entry.get("name", "") == GMDConverter.LEVEL_END_NAME:
+			platformer_has_end = true
+			break
+	assert(not platformer_has_end, "native smoke: platformer levels have no end wall in GD")
 	assert(
 		is_equal_approx(float(classic.gd_level_end_x), 1540.0),
 		"native smoke: the camera end stop must match the end portal X"
