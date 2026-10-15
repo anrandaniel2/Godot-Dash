@@ -33,8 +33,8 @@ func _ready() -> void:
 		else:
 			print("PROBE OK ", path)
 	print("PROBE_SUMMARY total=", paths.size(), " failed=", failed.size())
-	# Quitting during initial scene construction can strand Linux loader/driver
-	# teardown. Let startup's deferred work run through one complete frame;
+	# Let startup's deferred work run through one complete frame before these
+	# short-lived tests request shutdown;
 	# do not skip shutdown or suppress errors to make CI finish sooner.
 	await get_tree().process_frame
 	await get_tree().process_frame

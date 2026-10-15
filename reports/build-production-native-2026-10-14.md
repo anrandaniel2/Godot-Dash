@@ -91,3 +91,36 @@ semantics and collision logic are untouched.
 - No local Godot executable: runtime parity/benchmark and platform builds pending CI.
 - No measured artifact-size reduction, full-level FPS, GPU/pixel, physical VSync or
   total-memory claim. Report actual CI timings before accepting the native kernel.
+
+## First CI observations — 55e37b09
+
+- Windows 38662859067 **SUCCESS**: new timeline **96,049/0**, packed-origin/schema
+  **27/0**, color **11,527/0**, renderer **2,166/0**, presentation **54/0**;
+  exported release check and install/upgrade/uninstall/data hashes passed.
+- Timeline benchmark: legacy **1242.703 ms**, native **232.424 ms** for 2000 tracks ×
+  240 updates, placement included: **81.3% less CPU time / 5.35× faster** in this
+  synthetic workload. Both paths ran in the same process; no total FPS multiplier.
+  Follow-up coverage preserves initial non-default clips instead of resetting them
+  at tick zero. The production clock algorithm is unchanged in that follow-up.
+- Web 38662859079 **SUCCESS**, **300 s vs 330 s** previous job (single samples,
+  runner/cache variance applies). Native step **49 s vs 48 s**, so the first new-key
+  run does not demonstrate faster compilation yet. Template cache was hit.
+- Windows first full-LTO run took **369 s vs 285 s**; native/test step **62 s vs 30 s**.
+  It also includes new tests and a cold set of LTO objects, on a different runner.
+  No Windows build-time or LTO runtime-speed improvement claimed.
+- Web ZIP **48,160,077 vs 48,152,409 bytes**; Windows ZIP **69,246,182 vs 69,201,891**;
+  installer **64,316,471 vs 64,249,383**. Essentially flat/slightly larger, not a
+  package-size win. Optimized release configuration is confirmed, not new size savings.
+- Android Linux native **48 vs 62 s**, ARM native **28 vs 52 s**, template extraction
+  **3 vs 12 s** in this run. These are observed steps, not a controlled LTO experiment.
+  Its headless script probe still took **240 s**: the renderer change alone did NOT
+  resolve the shutdown stall. Do not credit a seven-minute saving.
+- Follow-up CPU-scene experiment allows a complete first frame/deferred startup work
+  before requesting shutdown; assertions/error gates and shutdown remain enabled.
+  Its effect is pending, not a diagnosed/fixed engine teardown bug.
+- The Web browser smoke is **report-only and not clean**: this run logged failed
+  pack/resource loads for `ToggleOn.svg.import`. Previous d15e8de smoke logged WebGPU
+  device loss/buffer errors instead. Neither green workflow proves a working browser
+  runtime; no browser fix claimed. Engine template and memory64 contract unchanged.
+- Level probe again failed at download, before producing measurements. Android was
+  still running at inspection and was superseded by the CPU-scene follow-up.

@@ -23,10 +23,10 @@ func _ready() -> void:
 	var current: DecorationBatch = _make_batch(false, 100)
 	var deltas: Array[float] = [0.0, 1.0 / 240.0, 0.025, 0.06, 0.5, -0.001, 0.001, 1.25]
 	for tick: int in 320:
-		if tick % 43 == 0:
+		if tick > 0 and tick % 43 == 0:
 			legacy.play_monster_animation(tick % 10)
 			current.play_monster_animation(tick % 10)
-		if tick % 79 == 0:
+		if tick > 0 and tick % 79 == 0:
 			legacy.reset_monster_animations()
 			current.reset_monster_animations()
 		# Switch between fallback/native while clocks are live.

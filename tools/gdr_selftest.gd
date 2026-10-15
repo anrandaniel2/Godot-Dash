@@ -29,8 +29,8 @@ func _ready() -> void:
 	print("GDR_SELFTEST_SUMMARY total=", checks, " failed=", failures.size())
 	for failure in failures:
 		print("GDR_SELFTEST_FAIL ", failure)
-	# Quitting during initial scene construction can strand Linux loader/driver
-	# teardown. Let startup's deferred work run through one complete frame;
+	# Let startup's deferred work run through one complete frame before these
+	# short-lived tests request shutdown;
 	# do not skip shutdown or suppress errors to make CI finish sooner.
 	await get_tree().process_frame
 	await get_tree().process_frame
