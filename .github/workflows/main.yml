@@ -811,6 +811,7 @@ jobs:
       # APK: a crash here is reported through annotations (with symbolized
       # native frames) and the build keeps going.
       - name: Boot Amethyst through the native runtime (device crash repro)
+        if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -872,6 +873,7 @@ jobs:
       # objects and colour-copy channels sit in Amethyst. Downloaded through
       # the same chain as the boot test; diagnostic only, never blocks the APK.
       - name: Amethyst glow analysis (level data)
+        if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
         run: |
           set -euo pipefail
