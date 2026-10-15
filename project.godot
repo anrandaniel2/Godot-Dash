@@ -117,6 +117,16 @@ import/blender/enabled=false
 
 theme/custom="uid://cntfsyilhn2ic"
 
+[importer_defaults]
+
+; Safe defaults for newly discovered font/data textures. Assign gameplay/UI
+; imports with tools/check_texture_compression.py --apply before export.
+; Per-file policy selects VRAM for gameplay and lossy WebP for UI.
+texture={
+"compress/mode": 0,
+"detect_3d/compress_to": 0
+}
+
 [input]
 
 ui_left={
@@ -452,10 +462,10 @@ renderer/rendering_method.mobile="mobile"
 renderer/rendering_method.web="mobile"
 rendering_device/fallback_to_gl_compatibility=true
 textures/canvas_textures/default_texture_filter=2
-; Android export requires this so the exporter can emit ETC2 when a texture
-; is imported as VRAM-compressed. The imported textures stay lossless on
-; purpose: this art is pixel and UI, and ETC2 plus mipmaps is about 40 MB
-; against about 7 MB of PNGs, so forcing it would grow the APK.
+; Import both GPU families for gameplay: S3TC on desktop and ETC2 on mobile.
+; UI uses lossy WebP; fonts/data masks stay lossless. Neither source PNG size
+; nor import mode alone establishes package-size or FPS gains.
+textures/vram_compression/import_s3tc_bptc=true
 textures/vram_compression/import_etc2_astc=true
 viewport/hdr_2d=true
 anti_aliasing/quality/msaa_2d=0

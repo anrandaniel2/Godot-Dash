@@ -198,74 +198,61 @@ touchboxes and wall-kill behaviour, and check the editor selection.
 
 ## 6. Editor picking gate (M1)
 
-`tools/picking_check.tscn` compares hit **sets**, not selection order, for 3,000 cursor
-circles and 600 rectangles against a real level's enabled rectangular GDObject selectors.
-Run with `GDASH_MEM_LEVEL=/path/level.gmd` after importing project resources. The
-`picking-check.yml` workflow builds the Linux extension and imports before running this scene.
-It requires exit 0, no script errors, and `saturated_queries=0 result=PASS`; missing input,
-empty/no-hit coverage, mismatches and saturated physics queries fail closed. Full logs are
-uploaded even after failure. A passing sample is not exhaustive geometric or ordering proof.
-Do not change production picking order before the real-level check reports zero mismatches.
+`tools/picking_check.tscn` compares hit sets (not selection order) for 3,000 cursor circles
+and 600 rectangles against a real level's enabled rectangular GDObject selectors. Run with
+`GDASH_MEM_LEVEL=/path/level.gmd` after importing project resources. The `picking-check.yml`
+workflow builds the Linux extension and imports before running this scene. Do not change
+production picking order based on synthetic candidates: the M1 picking-order gate is still
+required before any production picking-order change.
 
-The probe logs editor construction time, the existing 60 settling-frame intervals
-(mean/p95/max and elapsed sampling time; no additional frame wait), static memory and Linux RSS/HWM, and index-plus-oracle setup memory/time.
-Query timings include ID filtering/sorting but exclude physics query-shape allocation.
-These are diagnostic costs, not production editor overhead. Startup/headless intervals are
-not steady-state browser rendering benchmarks; static memory is not total wasm linear memory or GPU memory.
-Use the same level, machine, renderer and build for before/after comparisons. M2/M3 still need
-browser memory/frame-time measurements and save/undo/visual parity checks.
+## 7. Renderer cache and decoration ordering gates
 
-## 7. Frame pacing / selection / diagnostic ownership checks
+`tools/renderer_cache_selftest.tscn` exercises the actual native renderer's mutable records,
+command/selection rebuild counts, channel tint, group pulse, spin reconfiguration and compact
+spatial reconfiguration. `tools/runtime_visual_smoke_test.gd` is the real-renderer pixel gate
+for generated and batched artwork, plus native dynamic culling and channel behavior. Headless
+command counters are not pixel, GPU, or device proof; the visual scene must run with the
+native extension on Windows CI. The triangle-array implementation adds a SubViewport comparison
+against the legacy texture-rect path for atlas UVs, translucent overlaps, and rotated/scaled/
+and sheared transforms; actual engine output remains pending until that gate runs.
 
-Windows CI's `tools/windows_ci.py safety` runs a standalone scene in
-`tools/benchmarks/runtime_safety/`, copying the production `Selection`, `FramePacingPolicy`
-and `RenderTimingRequests` scripts into an isolated project. It gates on
-`RUNTIME_SAFETY_SUMMARY … failed=0` and logs `SELECTION_BENCH` times/retained memory for
-20,000 objects. Tests cover cap migration/idempotence/custom caps, untouched physics tick
-rate, shared timing owners, ordered set operations, duplicate/null entries, clone independence
-and callback mutation snapshots. The exported native smoke also requires the default hidden
-HUD to have no process callback or GPU-timing request. These checks do not prove GPU speed,
-real-level FPS, or high-refresh VSync on a user's Windows compositor/driver.
+Static frustum movement uses edge-band traversal only for overlapping old/new ranges; first
+setup and disjoint/teleport views reconcile full ranges. `test_frustum_transition_ranges.cpp`
+compares against a full-state oracle; the dynamic path keeps fresh ObjectDB lookups because
+visibility callbacks can free nodes synchronously. See `06 §§13–15` and the frustum/node
+reports for exact scope and measurements.
 
-The safety scene also tests paused blur-copy visibility, Windows public-download relay policy
-(success/permanent failures/credential guard/other platforms), and Windows update-channel
-validation. Windows packaging adds a real Inno Setup install/upgrade/uninstall test with
-user-data hash comparisons. The display name is allowed to change; the explicit
-`custom_user_dir_name="godot-dash"` and replay version must stay stable across such updates.
+## 8. Renderer hot-path optimization evidence
 
-## 8. Decoration renderer cache verification
+Native spin coefficient reuse and channel-tint decomposition have standalone correctness tests
+against the prior formulas. The compact section index and frustum edge sweep have SDK-free
+oracle tests and synthetic benchmarks. These measurements are local C++ CPU/helper timings,
+not level-open time, full-level FPS, GPU time, or device results. Preserve the reports' exact
+benchmark scope when quoting them; see the linked `reports/decoration-*-2026-10-15.md` files.
 
-`native/tests/test_decoration_visibility_cache.cpp` compiles without Godot and exercises the
-production header. It compares exact ordered emission against an independent set-based oracle,
-including overlapping cells, negative/extreme/empty ranges, generation wrap, same-size index
-rebuilds, live data on cache hits, and exact dirty-value updates. `--benchmark` compares the
-previous stamp-only traversal with the cache on fixed, occasionally changing and always-changing
-ranges (20k records, 2k redraws, median of five, alternating run order). It measures selector
-CPU cost and retained vector storage, not Godot draw submission/GPU performance.
-
-Windows CI runs that test via `tools/benchmarks/renderer_cache/SConstruct` and runs
-`tools/renderer_cache_selftest.tscn` with the built extension. It checks native values and
-dirty flags through the real coordinator. A fixed-size isolated viewport plus synchronous
-production flush calls verify command/selection rebuild counts without a startup resize
-race. Headless Godot retains canvas commands but produces no pixels/GPU output; these
-counters are not pixel parity. The fixture also checks DecorationBatch processing flags
-after READY, native spin, monster timing, and a 2,000-node callback benchmark.
-M1's picking-order gate remains unchanged.
-
+Renderer command rebuilding bakes sprite transforms into indexed triangle arrays and batches
+consecutive same-texture runs per blend-target canvas RID. `renderer_cache_selftest.gd` checks
+sprite retention and the synthetic 256-to-1 RenderingServer command case. `render_stats()`
+reports `batch_owner_nodes` and `canvas_draw_commands`; the latter counts RenderingServer
+geometry submissions, not driver draw calls. The current production atlas manifest has one
+page, so a texture-array/global-atlas rewrite will not reduce texture switches for packed
+objects. Group, z-layer and blend ordering remain separate constraints. See
+`reports/decoration-triangle-batching-2026-10-15.md` and
+`reports/decoration-node-and-draw-call-review-2026-10-15.md`.
 
 ## 9. Render/recolor follow-up (2026-10-14)
 
-`tools/renderer_cache_selftest.tscn` also exercises simultaneous completed culling,
-spin and pulse updates, requiring at most one command rebuild per frame and actual
-cell-range changes. Renderer HSV snapshots are tested through same-size reconfiguration.
-`tools/color_refresh_selftest.tscn` compares the production portable recolor path bit-exactly
-against the frozen Build 15 loop, checks native values/base mirrors, copy cycles, opacity,
-neutral/non-neutral HSV and editor highlights, then reports synchronous CPU timings for
-2000 watchers/60 updates. Current native timing is NOT a before/after native benchmark.
-Both tests are strict Windows packaging gates (completion marker plus script-error checks).
-The script probe respects `.gdignore` so isolated benchmark projects are not loaded with
-the main project's res:// root. Ordinary runtime and test scripts remain checked.
-No full-level FPS, GPU/pixel parity, or M1 picking-order acceptance follows from these tests.
+`tools/renderer_cache_selftest.tscn` also exercises simultaneous completed culling, spin and
+pulse updates, requiring at most one command rebuild per frame and actual cell-range changes.
+Renderer HSV snapshots are tested through same-size reconfiguration. `tools/color_refresh_selftest.tscn`
+compares the production portable recolor path bit-exactly against the frozen Build 15 loop,
+checks native values/base mirrors, copy cycles, opacity, neutral/non-neutral HSV and editor
+highlights, then reports synchronous CPU timings for 2000 watchers/60 updates. Current native
+timing is NOT a before/after native benchmark. Both tests are strict Windows packaging gates
+(completion marker plus script-error checks). The script probe respects `.gdignore` so isolated
+benchmark projects are not loaded with the main project's res:// root. Ordinary runtime and
+test scripts remain checked. No full-level FPS, GPU/pixel parity, or M1 picking-order acceptance
+follows from these tests.
 
 ## 10. Build production / monster timeline gates
 
@@ -277,3 +264,33 @@ scenes; Android retains its origin and visual gates. CPU-only Android tests now 
 not in Xvfb, to avoid spending whole timeouts on GL teardown after completion. This is not a
 substitute for visual tests. Native clock performance acceptance requires the actual benchmark,
 not just successful compilation. See the build-production report for current evidence.
+
+## 11. Usage-based texture import policy
+
+The user explicitly replaced the lossless-only policy on 2026-10-15:
+`tools/check_texture_compression.py` assigns gameplay/atlas art to VRAM mode 2
+(S3TC + ETC2, high_quality=false for broad backend compatibility), UI/editor art
+to lossy mode 1 at quality 0.90, and font/data-mask textures to lossless mode 0.
+Run `--apply` after importing new textures; unknown asset categories fail closed.
+Project defaults remain safely lossless for newly generated font/data sidecars.
+Keep UIDs, dimensions, existing mipmaps and alpha-processing settings unchanged.
+Vendored editor addon icons and intentional keep/skip resources are outside this gate.
+
+Windows/Android/Web builds run `python3 tools/check_texture_compression.py --imported`
+after import and before export. The check requires both S3TC/ETC2 gameplay variants,
+verifies GPU block formats/payload sizes including mips (rejects uncompressed raw
+pixels), requires lossy VP8 for UI, and PNG/VP8L for lossless exceptions. It rejects
+stale remaps, missing outputs, auto-3D flags and malformed container bounds, and
+logs CTEX byte totals. It does not decode pixels or inspect final PCK/APK contents.
+`tools/test_production_build.py` covers role assignment, idempotence and codec gates.
+
+`TextureReadback` decompresses only CPU image copies before editor crop/blend work;
+original gameplay texture resources stay GPU-compressed. `ObjectThumbnail` keeps
+its decoded-page cache; `LayeredSprite` uses the same image preparation. Runtime
+SVG recoloring/custom player icons remain runtime-created textures, outside the
+Godot import pipeline. Windows renderer-cache tests include CPU DXT1/ETC2 fixtures;
+the visual smoke includes real imported atlas crop, blend and object thumbnail checks.
+Those new in-engine cases still require a Godot/CI run; Python/static checks alone
+are not device, visual, package-size or FPS proof.
+
+See `reports/godot-texture-compression-2026-10-15.md` for executed versus pending checks.

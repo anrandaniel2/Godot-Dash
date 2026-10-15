@@ -15,7 +15,7 @@ This tool does that work once, offline:
 * ``gd_objects_atlas.json`` records, per frame, the page and rectangle it
   landed in plus its trim offset and untrimmed size, i.e. exactly what the
   plists carried, in a shape ``GDSpriteSheet.gd`` can load in one pass;
-* a ``.png.import`` is written for each new page (lossless, no mipmaps),
+* a ``.png.import`` is written for each new page (VRAM compression, no mipmaps),
   keeping the page's existing Godot UID when the page is regenerated so the
   object scenes referencing it stay valid.
 
@@ -92,7 +92,7 @@ dest_files=["res://.godot/imported/{file}-{md5}.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -114,7 +114,7 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
 """
 
 

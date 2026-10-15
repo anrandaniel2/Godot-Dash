@@ -497,6 +497,9 @@ jobs:
           grep -n "SCRIPT ERROR\|Parse Error\|ERROR:" godot_import.log | head -40 || true
           exit $status
 
+      - name: Verify usage-based texture compression
+        run: python3 tools/check_texture_compression.py --imported
+
       # Scripts referenced only as global classes fail through the analyzer's
       # external-parser cache: dependents print "Could not resolve class X,
       # because of a parser error" while the actual error in X is never shown.

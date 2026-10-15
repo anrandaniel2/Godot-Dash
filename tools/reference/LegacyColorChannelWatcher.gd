@@ -38,4 +38,3 @@ func refresh_objects_color(hsv_watchers: Array[HSVWatcher] = [], _data: ColorCha
 		hsv_watcher.update_color()
 	_refresh_decoration_batches(_data)
 	_finish_fanout(owns_fanout, self_id)
-

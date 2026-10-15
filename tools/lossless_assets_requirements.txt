@@ -1,0 +1,3 @@
+# Offline asset optimization/verification only, not game/runtime dependencies.
+pyoxipng==9.1.1
+Pillow==12.3.0

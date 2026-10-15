@@ -30,4 +30,3 @@ func _advance_monsters(delta: float) -> void:
 			frame_count = maxi(animation.get("frames", []).size(), 1)
 		if advanced:
 			_place_monster(monster)
-

@@ -145,8 +145,16 @@ Runtime constraints on Android that show up in code:
 
 - Opening a level is paced (`Config.paced_level_open`, `level_open_frame_budget_ms = 40`) so
   Android never shows an ANR dialog.
-- Image import stays lossless (ETC2 + mipmaps would take the APK from ~7 MB of PNGs to ~40 MB);
-  `textures/vram_compression/import_etc2_astc=true` is required for the exporter.
+- Per the 2026-10-15 user revision, gameplay Texture2D imports (including the
+  packed atlas) use VRAM compression (`compress/mode=2`, `compress/high_quality=false`),
+  with S3TC and ETC2 import families enabled. UI/editor artwork uses lossy WebP
+  (`compress/mode=1`, quality 0.90). Fonts and particle-emission data masks remain
+  lossless. Automatic 3D recompression remains disabled; mipmaps/resolution unchanged.
+  `tools/check_texture_compression.py --apply` assigns the role-based policy to
+  existing sidecars; new/unclassified textures must pass the policy gate. Safe
+  project defaults remain lossless so newly discovered font pages are not damaged.
+  This supersedes the earlier lossless-only rule: artifacts are possible, GPU
+  memory may shrink, and package size can grow. No measured FPS/export-size win yet.
 - `driver/threads/thread_model = 0` (Safe): the experimental Separate model stalled texture
   uploads at startup on at least one device (Samsung Xclipse 540).
 - Memory diagnostics (`GameScene._print_process_memory`, `[gdash-mem]`) exist because the app was

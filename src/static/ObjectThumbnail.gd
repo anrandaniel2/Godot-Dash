@@ -11,14 +11,24 @@ static func _atlas_image(texture: AtlasTexture) -> Image:
 	if texture == null or texture.atlas == null:
 		return null
 	if not _page_images.has(texture.atlas):
-		var page: Image = texture.atlas.get_image()
+		var page: Image = TextureReadback.read(texture.atlas)
 		if page == null:
 			return null
 		_page_images[texture.atlas] = page
-	var region: Rect2i = Rect2i(texture.region)
+	var region: Rect2i = Rect2i(Rect2(texture.region.position, texture.region.size.floor()))
+	if region.size.x == 0:
+		region.size.x = texture.atlas.get_width()
+	if region.size.y == 0:
+		region.size.y = texture.atlas.get_height()
 	if region.size.x <= 0 or region.size.y <= 0:
 		return null
 	return _page_images[texture.atlas].get_region(region)
+
+
+static func _texture_image(texture: Texture2D) -> Image:
+	if texture is AtlasTexture:
+		return _atlas_image(texture)
+	return TextureReadback.read(texture)
 
 
 ## The root sprite of a placed Geometry Dash object - enough for an icon; the
@@ -49,18 +59,18 @@ static func get_object_thumbnail_image(object: CanvasItem) -> Array[Image]:
 		return _gd_object_images(object)
 	for child: Node in object.get_children():
 		if child is TriggerSprite:
-			images.append(crop_image_around_center(child.texture.get_image(), 0.5))
+			images.append(crop_image_around_center(_texture_image(child.texture), 0.5))
 		elif child is Label:
-			images.append(crop_image_around_center(TEXT_TEXTURE.get_image(), 0.7))
+			images.append(crop_image_around_center(_texture_image(TEXT_TEXTURE), 0.7))
 		elif child is ReboundOrbSprite:
-			images.append(REBOUND_ORB_TEXTURE.get_image())
+			images.append(_texture_image(REBOUND_ORB_TEXTURE))
 		elif child is ReboundPadSprite:
-			images.append(REBOUND_PAD_TEXTURE.get_image())
+			images.append(_texture_image(REBOUND_PAD_TEXTURE))
 		elif child is LayeredSprite:
 			images.append(child.get_composite_image())
 		elif child is Sprite2D or child is NinePatchSprite2D:
 			if child.texture:
-				images.append(child.texture.get_image())
+				images.append(_texture_image(child.texture))
 			else:
 				# Geometry Dash artwork swapped onto the sprite (see GDArtSwap)
 				# sits in a container beneath it; its own texture was cleared.
@@ -81,12 +91,14 @@ static func _swapped_art_images(node: Node) -> Array[Image]:
 		return images
 	for sprite: Node in art.get_children():
 		if sprite is Sprite2D and sprite.texture:
-			images.append(sprite.texture.get_image())
+			images.append(_texture_image(sprite.texture))
 			break
 	return images
 
 
 static func crop_image_around_center(image: Image, size_factor: float) -> Image:
+	if image == null:
+		return null
 	# Shift image to prepare for crop
 	var shift_factor: float = (1 - size_factor) / 2.0
 	var rect: Rect2i = Rect2i(Vector2i.ZERO, image.get_size())
@@ -113,7 +125,10 @@ static func generate(object: Node2D, side_length: int) -> ImageTexture:
 	if cache_path in AssetManager.generated_editor_object_thumbnails:
 		return AssetManager.generated_editor_object_thumbnails[cache_path]
 	var composite_image_size: Vector2i = Vector2i.ONE * side_length
-	var images: Array[Image] = get_object_thumbnail_image(object)
+	var images: Array[Image] = []
+	for image: Image in get_object_thumbnail_image(object):
+		if image != null and not image.is_empty():
+			images.append(image)
 	# An object with nothing drawable (a decoration placeholder, a scene whose
 	# artwork could not be resolved) gets a blank icon rather than an error.
 	if images.is_empty():

@@ -1,0 +1,4638 @@
+{
+  "import_settings_changed": 416,
+  "vram_textures": 299,
+  "lossy_ui_textures": 117,
+  "lossless_mask_textures": 1,
+  "source_payloads_unchanged": 223,
+  "godot_reimport_verified": false,
+  "files": [
+    {
+      "path": "assets/splash.png.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/logo/logo.png.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/logo/logo.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/ArrowedLine.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/Circle.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/Cross.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/Text.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/backgrounds/background1-3.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/checkpoints/Checkpoint.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_01_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_02_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_03_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_04_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_05_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_06_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_07_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_08_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_09_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_10_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_11_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_12_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_13_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_14_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_15_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_16_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_17_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_18_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_19_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_20_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_21_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_22_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_23_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_24_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_25_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_26_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_27_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_28_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_29_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_30_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_31_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_32_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_33_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_34_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_35_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_36_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_37_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_38_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_39_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_40_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_41_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_42_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_43_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_44_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_45_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_46_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_47_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_48_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_49_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_50_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_51_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_52_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_53_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_54_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_55_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_56_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_57_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_58_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/backgrounds/game_bg_59_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_01_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_02_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_03_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_04_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_05_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_06_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_07_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_08_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_08_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_09_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_09_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_10_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_10_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_11_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_11_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_12_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_12_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_13_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_13_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_14_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_14_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_15_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_15_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_16_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_16_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_17_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_17_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_18_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_18_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_19_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_19_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_20_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_20_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_21_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_21_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_22_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/grounds/groundSquare_22_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/middlegrounds/fg_01_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/middlegrounds/fg_01_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/middlegrounds/fg_02_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/middlegrounds/fg_02_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/middlegrounds/fg_03_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_art/middlegrounds/fg_03_2_001-hd.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/gd_atlas/gd_objects_atlas_0.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/grounds/Ground1.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorBlockPaletteTab-Selected.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorBlockPaletteTab.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorBuildButton-Pressed.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorBuildButton.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorButtonBackground-Pressed.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorButtonBackground.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorButtonGray.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorCheckbox-Checked.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorCheckbox.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorDeleteButton-Pressed.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorDeleteButton.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorEditButton-Pressed.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorEditButton.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorPlayMusic.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorPlayPlayer.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorRedo.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorSeparator.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/EditorUndo.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/Hazards.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/Interactables.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/ReboundOrbPreview.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/ReboundPadPreview.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/Slopes.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/Solids.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/block_palette/Triggers.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/DeleteMode.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/EnableSwipe.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/FlipObjectH.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/FlipObjectV.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectEigthStep.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectFiveSteps.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectFree.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectFullStep.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectHalfStep.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectQuarterStep.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/MoveObjectTenSteps.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/RotateObjectFree.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/RotateObjectLeft45.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/RotateObjectLeft90.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/RotateObjectRight45.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/RotateObjectRight90.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/edit_panel/ScaleObjectFree.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/render_modes/FoldDown.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/render_modes/FoldLeft.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/render_modes/FoldRight.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/editor/render_modes/FoldUp.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/title_screen/Title.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/title_screen/flashing-lights-warning.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/title_screen/placeholder.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/touchscreen/Down.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/touchscreen/Left.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/touchscreen/Pause.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/guis/touchscreen/Right.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/ground_spike/GroundSpikeDefault.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/sawblade/medium/RegularSawbladeMedium.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/sawblade/normal/RegularSawbladeNormal.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/sawblade/small/RegularSawbladeSmall.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/spike/flat/RegularSpikeFlat.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/spike/medium/RegularSpikeMedium.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/spike/normal/RegularSpikeNormal.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/hazards/spike/small/RegularSpikeSmall.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Add.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Edit.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/GuiVisibilityHidden.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/GuiVisibilityVisible.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Lock.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Play.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Remove.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Search.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Stop.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/TripleBar.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/godot/Unlock.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/bug.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/clapperboard.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/component.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/file.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/focus.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/layers.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/orbit.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/palette.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/settings.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/lucide/square-arrow-right-exit.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/icons/node_icons/layers.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/ArrowOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/ArrowOrbDirectionIndicator.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/BlackOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/BlueOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/DashOrbCyan.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/DashOrbGreen.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/DashOrbMagenta.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/GreenOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/PinkOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/ReboundOrbOutline.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/RedOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/SpiderOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/TeleportationOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/TeleportationOrbFill.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/TeleportationOrbOutline.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/ToggleOrbFill.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/ToggleOrbOutline.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/orbs/YellowOrb.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/pads/BlackPad.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/pads/BluePad.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/pads/PinkPad.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/pads/RedPad.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/pads/SpiderPad.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/pads/YellowPad.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/particles/Flame.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/particles/Square.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/FireBoost.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom1.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom2.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom3.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom4.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom5.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom6.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom7.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom8.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_boom/DashBoom9.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame1.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame10.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame11.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame12.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame2.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame3.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame4.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame5.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame6.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame7.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame8.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/dash_orb/dash_orb_flame/DashFlame9.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect01.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect02.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect03.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect04.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect05.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect06.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect07.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect08.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect09.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect10.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect11.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/death_effect/DeathEffect1/DeathEffect12.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/Ball.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/Cube.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/Jetpack.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotConnectorColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotConnectorGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotFootColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotFootGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotHeadColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotHeadGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotLegColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/RobotLegGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/Ship.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/SpiderHeadColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/SpiderHeadGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/SpiderLegColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/SpiderLegGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/SwingColor.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/SwingGlow.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/Ufo.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/placeholders/Wave.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail1.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail2.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail3.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail4.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail5.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail6.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail7.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/spider_trail/SpiderTrail8.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/trail/Trail1.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/player/trail/Trail2.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ball_portal/BallPortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ball_portal/BallPortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ball_portal/BallPortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ball_portal/BallPortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/cube_portal/CubePortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/cube_portal/CubePortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/cube_portal/CubePortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/cube_portal/CubePortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/robot_portal/RobotPortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/robot_portal/RobotPortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/robot_portal/RobotPortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/robot_portal/RobotPortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ship_portal/ShipPortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ship_portal/ShipPortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ship_portal/ShipPortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ship_portal/ShipPortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/spider_portal/SpiderPortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/spider_portal/SpiderPortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/spider_portal/SpiderPortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/spider_portal/SpiderPortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/swing_portal/SwingPortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/swing_portal/SwingPortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/swing_portal/SwingPortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/swing_portal/SwingPortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/ufo_portal/UFOPortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/wave_portal/WavePortalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/wave_portal/WavePortalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/wave_portal/WavePortalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/gamemode_portals/wave_portal/WavePortalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/count_portal_dual/CountPortalDualBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/count_portal_dual/CountPortalDualFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/count_portal_single/CountPortalSingleBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/count_portal_single/CountPortalSingleFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_flipped/GravityPortalFlippedBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_flipped/GravityPortalFlippedFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_flipped/GravityPortalFlippedIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_flipped/GravityPortalFlippedIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_normal/GravityPortalNormalIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_toggle/GravityPortalToggleBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_toggle/GravityPortalToggleFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_toggle/GravityPortalToggleIndicatorBG.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/gravity_portal_toggle/GravityPortalToggleIndicatorIcon.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/mirror_portal_off/MirrorPortalOffBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/mirror_portal_off/MirrorPortalOffFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/mirror_portal_on/MirrorPortalOnBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/mirror_portal_on/MirrorPortalOnFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/scale_portal_normal/ScalePortalNormalBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/scale_portal_normal/ScalePortalNormalFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/scale_portal_small/ScalePortalSmallBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/scale_portal_small/ScalePortalSmallFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/teleportal_in/TeleportalInBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/teleportal_in/TeleportalInFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/teleportal_out/TeleportalOutBack.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/other_portals/teleportal_out/TeleportalOutFront.png.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal05x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal0x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal1x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal2x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal3x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal4x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/portals/speed_portals/SpeedPortal5x.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/bricks/Bricks.webp.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/fill_blocks/FillBlock01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/fill_blocks/FillSlopeLarge01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/fill_blocks/FillSlopeRegular01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock02.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock03.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock04.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock05.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock06.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock07.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock08.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock09.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock10.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock11.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock12.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock13.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/grid_blocks/GridBlock14.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/outline_blocks/OutlineBlock01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/outline_blocks/OutlineSlopeLarge01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/outline_blocks/OutlineSlopeLarge02.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/outline_blocks/OutlineSlopeRegular01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/outline_blocks/OutlineSlopeRegular02.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/regular_blocks/RegularBlock01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/regular_blocks/RegularSlopeLarge01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/regular_blocks/RegularSlopeLarge02.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/regular_blocks/RegularSlopeRegular01.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/solids/regular_blocks/RegularSlopeRegular02.svg.import",
+      "mode": 2,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "2"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/AllowCeilingHit.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/AllowWaveSlide.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Alpha.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/AutoCheckpoint.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/CameraEdge.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/CameraGameplayOffset.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/CameraOffset.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/CameraRotate.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/CameraStatic.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/CameraZoom.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Color.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/EndLevel.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/EnterEffect.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/FlipGravity.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/FollowPosition.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/FollowRotation.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/GameplayRotate.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Gravity.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/LensCircle.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Move.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/NoAutoCheckpoints.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Rotate.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Scale.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Shake.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Song.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Spawn.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Speed.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/StopDash.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/StopHeldJump.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Teleport.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/Timewarp.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/ToggleFlip.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/ToggleMultipleGroups.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/ToggleOff.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    },
+    {
+      "path": "assets/textures/triggers/ToggleOn.svg.import",
+      "mode": 1,
+      "changes": {
+        "compress/mode": {
+          "before": "0",
+          "after": "1"
+        },
+        "compress/lossy_quality": {
+          "before": "0.7",
+          "after": "0.9"
+        }
+      }
+    }
+  ]
+}

@@ -6,12 +6,16 @@ func get_composite_image() -> Image:
 	var child_rects: Array[Rect2i]
 	var child_position_deltas: Array[Vector2i]
 	for child: Node2D in get_children():
-		var image: Image = child.texture.get_image()
+		var image: Image = TextureReadback.read(child.texture)
+		if image == null:
+			continue
 		var image_rect: Rect2i = Rect2i(Vector2i.ZERO, image.get_size())
 		var position_delta: Vector2i = Vector2i(child.position - position)
 		child_images.append(image)
 		child_rects.append(image_rect)
 		child_position_deltas.append(position_delta)
+	if child_images.is_empty():
+		return null
 	# Create an image with a size corresponding to
 	# the maximum bounding box of the sprites, avoiding cutoff.
 	var max_rect: Rect2i

@@ -164,9 +164,10 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
    pending), M4/M5 not started. Do not delete old component scenes or their SVG art yet.
 3. **Hitbox follow-ups.** Invisible slopes 1344/1345 (homology-resolved, wants a GD
    hitbox-viewer double-check); 2.1 persp blocks 1561–1569 (solids with no atlas art, no scenes).
-4. **Native test coverage is partial.** Windows CI runs visibility-cache/neutral-HSV and
-   UI-alignment standalone tests plus real native renderer/color/presentation scenes.
-   Other native tests still need explicit local/CI execution; see `06 §6`.
+4. **Native test coverage is partial.** Windows CI is wired for visibility-cache/neutral-HSV,
+   UI-alignment and spin standalone tests, an SDK-linked decoration-tint math test, plus
+   real native renderer/color/presentation scenes. New gates still need a CI run; other
+   native tests need explicit local/CI execution. See `06 §6` and `06 §10–11`.
 5. **Amethyst/Beam diagnostics** remain device-driven; `reports/amethyst_glow.md` currently
    records failed downloads rather than analysis.
 6. **`export_presets.cfg`** is tracked despite `.gitignore` listing it — keep that in mind when

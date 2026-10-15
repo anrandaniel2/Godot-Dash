@@ -45,6 +45,7 @@
 #include <godot_cpp/templates/hash_map.hpp>
 
 #include "ui_alignment.h"
+#include "decoration_channel_tint.h"
 
 #include <algorithm>
 #include <climits>
@@ -75,6 +76,7 @@
 #include "gravity_portal.h"
 #include "decoration_spin.h"
 #include "decoration_visibility_cache.h"
+#include "frustum_transition_ranges.h"
 #include "neutral_hsv.h"
 #include "native_monster_timeline.h"
 #include "gd_physics_constants.h"
@@ -10155,6 +10157,8 @@ class NativeFrustumIndex : public RefCounted {
 		int32_t link = -1;
 	};
 	std::vector<DynamicEntry> dynamic_entries;
+	// Reused per-frame scratch: moving/grouped objects are updated every frame.
+	std::vector<uint8_t> dynamic_desired;
 	std::vector<uint8_t> link_on_screen;
 	// OpenGD also partitions the level into fixed horizontal sections. Keep an
 	// index from section to entry here so normal camera motion touches only the
@@ -10267,8 +10271,11 @@ public:
 				std::fill(visited.begin(), visited.end(), 0);
 				visit_generation = 1;
 			}
-			visit_sections(current_first, current_last, left, right);
-			visit_sections(first, last, left, right);
+			const gdash::FrustumTransitionRanges ranges = gdash::frustum_transition_ranges(
+				current_left, current_right, left, right, section_width);
+			for (size_t i = 0; i < ranges.count; ++i) {
+				visit_sections(ranges.ranges[i].first, ranges.ranges[i].last, left, right);
+			}
 		}
 		current_first = first;
 		current_last = last;
@@ -10307,25 +10314,26 @@ public:
 			entry.link = links[i];
 			dynamic_entries.push_back(entry);
 		}
+		dynamic_desired.assign(dynamic_entries.size(), 0);
 		link_on_screen.assign(static_cast<size_t>(std::max<int64_t>(link_count, 0)), 0);
 	}
 
 	void update_dynamic(double left, double right) {
 		if (dynamic_entries.empty()) return;
 		if (right < left) std::swap(left, right);
-		std::vector<uint8_t> desired(dynamic_entries.size(), 0);
+		std::fill(dynamic_desired.begin(), dynamic_desired.end(), 0);
 		std::fill(link_on_screen.begin(), link_on_screen.end(), 0);
 		for (size_t i = 0; i < dynamic_entries.size(); ++i) {
 			const DynamicEntry &entry = dynamic_entries[i];
 			Node2D *node = Object::cast_to<Node2D>(ObjectDB::get_instance(ObjectID(entry.id)));
 			if (!node) continue;
 			const double x = node->get_global_position().x;
-			desired[i] = (x + entry.local_right >= left && x + entry.local_left <= right) ? 1 : 0;
-			if (desired[i] && entry.link >= 0 && size_t(entry.link) < link_on_screen.size()) link_on_screen[size_t(entry.link)] = 1;
+			dynamic_desired[i] = (x + entry.local_right >= left && x + entry.local_left <= right) ? 1 : 0;
+			if (dynamic_desired[i] && entry.link >= 0 && size_t(entry.link) < link_on_screen.size()) link_on_screen[size_t(entry.link)] = 1;
 		}
 		for (size_t i = 0; i < dynamic_entries.size(); ++i) {
 			const DynamicEntry &entry = dynamic_entries[i];
-			const bool shown = desired[i] || (entry.link >= 0 && size_t(entry.link) < link_on_screen.size() && link_on_screen[size_t(entry.link)]);
+			const bool shown = dynamic_desired[i] || (entry.link >= 0 && size_t(entry.link) < link_on_screen.size() && link_on_screen[size_t(entry.link)]);
 			CanvasItem *canvas = canvas_for(entry.id);
 			if (!canvas) continue;
 			if (shown) {
@@ -10684,10 +10692,11 @@ class NativeDecorationRenderer : public RefCounted {
 	// Dense indices are effectively a small SoA hot set: animation touches only
 	// transform/spin data for rotating records, never every static Record.
 	std::vector<size_t> spinning_indices;
+	bool reuse_spin_rotation = false;
 	// The candidate order changes only with the spatial index or cell range,
 	// not with the color/blend/spin changes that dirty the draw commands.
 	gdash::DecorationVisibilityCache<> visible_records;
-	gdash::DecorationSections sections;
+	gdash::CompactDecorationSections sections;
 	bool cull = true;
 	double bucket_width = 256.0;
 	double cull_margin = 0.0;
@@ -10700,6 +10709,7 @@ class NativeDecorationRenderer : public RefCounted {
 	bool range_has_records = false;
 	bool commands_dirty = false;
 	int64_t last_drawn_items = 0;
+	int64_t last_draw_commands = 0;
 	int64_t command_rebuilds = 0;
 	// Group pulse (1006, key 52 = 1): a batch holds one group set, so one
 	// pulse per renderer covers it. Weight 0 keeps the draw loop untouched;
@@ -10712,13 +10722,7 @@ class NativeDecorationRenderer : public RefCounted {
 	}
 
 	bool selected_range_has_records() const {
-		auto column = sections.lower_bound(first_bucket);
-		while (column != sections.end() && column->first <= last_bucket) {
-			auto row = column->second.lower_bound(first_row);
-			if (row != column->second.end() && row->first <= last_row && !row->second.empty()) return true;
-			++column;
-		}
-		return false;
+		return sections.has_records({first_bucket, last_bucket, first_row, last_row});
 	}
 
 	void rebuild_commands() {
@@ -10730,29 +10734,108 @@ class NativeDecorationRenderer : public RefCounted {
 		if (canvas_item_plain.is_valid()) server->canvas_item_clear(canvas_item_plain);
 		if (canvas_item_add.is_valid()) server->canvas_item_clear(canvas_item_add);
 		last_drawn_items = 0;
+		last_draw_commands = 0;
 		if (!range_has_records && cull) return;
+
+		// Bake each sprite's exact CanvasItem transform into its four vertices,
+		// then emit one indexed triangle-array command per consecutive texture
+		// run and blend target. Never reorder sprites: overlapping translucent
+		// decorations retain their original first-occurrence compositing order.
+		struct TriangleBatch {
+			Ref<Texture2D> texture;
+			int texture_width = 0;
+			int texture_height = 0;
+			std::vector<Vector2> points;
+			std::vector<Color> colors;
+			std::vector<Vector2> uvs;
+		};
+		std::array<TriangleBatch, 3> batches;
+		const std::array<RID, 3> targets = { canvas_item, canvas_item_add, canvas_item_plain };
+		auto flush_batch = [&](size_t slot) {
+			TriangleBatch &batch = batches[slot];
+			if (!batch.texture.is_valid() || batch.points.empty()) return;
+			const size_t quad_count = batch.points.size() / 4;
+			PackedVector2Array points;
+			PackedColorArray colors;
+			PackedVector2Array uvs;
+			PackedInt32Array indices;
+			points.resize(static_cast<int64_t>(batch.points.size()));
+			colors.resize(static_cast<int64_t>(batch.colors.size()));
+			uvs.resize(static_cast<int64_t>(batch.uvs.size()));
+			indices.resize(static_cast<int64_t>(quad_count * 6));
+			std::memcpy(points.ptrw(), batch.points.data(), batch.points.size() * sizeof(Vector2));
+			std::memcpy(colors.ptrw(), batch.colors.data(), batch.colors.size() * sizeof(Color));
+			std::memcpy(uvs.ptrw(), batch.uvs.data(), batch.uvs.size() * sizeof(Vector2));
+			int32_t *index_data = indices.ptrw();
+			for (size_t quad = 0; quad < quad_count; ++quad) {
+				const int32_t base = static_cast<int32_t>(quad * 4);
+				const size_t offset = quad * 6;
+				index_data[offset] = base;
+				index_data[offset + 1] = base + 1;
+				index_data[offset + 2] = base + 2;
+				index_data[offset + 3] = base;
+				index_data[offset + 4] = base + 2;
+				index_data[offset + 5] = base + 3;
+			}
+			server->canvas_item_add_triangle_array(
+					targets[slot], indices, points, colors, uvs,
+					PackedInt32Array(), PackedFloat32Array(), batch.texture->get_rid(), -1);
+			++last_draw_commands;
+			batch.texture.unref();
+			batch.texture_width = 0;
+			batch.texture_height = 0;
+			batch.points.clear();
+			batch.colors.clear();
+			batch.uvs.clear();
+		};
 		auto draw_record = [&](size_t index) {
 			const Record &record = records[index];
 			// Flipped records draw on their own canvas item; everything else
 			// keeps the batch's import-time material through the parent.
-			RID target = canvas_item;
-			if (record.blend == 1 && canvas_item_add.is_valid()) target = canvas_item_add;
-			else if (record.blend == 2 && canvas_item_plain.is_valid()) target = canvas_item_plain;
-			server->canvas_item_add_set_transform(target, ui_layout_active ? get_draw_transform(index) : record.transform);
-			server->canvas_item_add_texture_rect_region(
-					target, Rect2(-record.region.size * 0.5, record.region.size),
-					record.texture->get_rid(), record.region,
-					pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color,
-					false, true);
+			size_t target_slot = 0;
+			if (record.blend == 1 && canvas_item_add.is_valid()) target_slot = 1;
+			else if (record.blend == 2 && canvas_item_plain.is_valid()) target_slot = 2;
+			TriangleBatch &batch = batches[target_slot];
+			if (batch.texture.is_valid() && batch.texture->get_rid() != record.texture->get_rid()) {
+				flush_batch(target_slot);
+			}
+			if (!batch.texture.is_valid()) {
+				batch.texture = record.texture;
+				batch.texture_width = record.texture->get_width();
+				batch.texture_height = record.texture->get_height();
+			}
+			const Transform2D draw_transform = ui_layout_active ? get_draw_transform(index) : record.transform;
+			const Vector2 size = record.region.size;
+			const Vector2 top_left(-size.x * 0.5, -size.y * 0.5);
+			const Vector2 top_right(size.x * 0.5, -size.y * 0.5);
+			const Vector2 bottom_right(size.x * 0.5, size.y * 0.5);
+			const Vector2 bottom_left(-size.x * 0.5, size.y * 0.5);
+			batch.points.push_back(draw_transform.xform(top_left));
+			batch.points.push_back(draw_transform.xform(top_right));
+			batch.points.push_back(draw_transform.xform(bottom_right));
+			batch.points.push_back(draw_transform.xform(bottom_left));
+			const Color color = pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color;
+			for (int corner = 0; corner < 4; ++corner) batch.colors.push_back(color);
+			const real_t inverse_width = batch.texture_width > 0 ? static_cast<real_t>(1.0 / batch.texture_width) : 0.0;
+			const real_t inverse_height = batch.texture_height > 0 ? static_cast<real_t>(1.0 / batch.texture_height) : 0.0;
+			const real_t u0 = record.region.position.x * inverse_width;
+			const real_t v0 = record.region.position.y * inverse_height;
+			const real_t u1 = record.region.get_end().x * inverse_width;
+			const real_t v1 = record.region.get_end().y * inverse_height;
+			batch.uvs.emplace_back(u0, v0);
+			batch.uvs.emplace_back(u1, v0);
+			batch.uvs.emplace_back(u1, v1);
+			batch.uvs.emplace_back(u0, v1);
 			++last_drawn_items;
 		};
 		if (!cull) {
 			for (size_t index = 0; index < records.size(); ++index) draw_record(index);
-			return;
+		} else {
+			visible_records.for_each(sections, records.size(),
+					{ first_bucket, last_bucket, first_row, last_row },
+					draw_record);
 		}
-		visible_records.for_each(sections, records.size(),
-				{ first_bucket, last_bucket, first_row, last_row },
-				draw_record);
+		for (size_t slot = 0; slot < batches.size(); ++slot) flush_batch(slot);
 	}
 
 protected:
@@ -10776,6 +10859,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationRenderer::item_count);
 		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
 		ClassDB::bind_method(D_METHOD("command_rebuild_count"), &NativeDecorationRenderer::command_rebuild_count);
+		ClassDB::bind_method(D_METHOD("draw_commands_last_rebuild"), &NativeDecorationRenderer::draw_commands_last_rebuild);
 		ClassDB::bind_method(D_METHOD("selection_rebuild_count"), &NativeDecorationRenderer::selection_rebuild_count);
 		ClassDB::bind_method(D_METHOD("has_pending_redraw"), &NativeDecorationRenderer::has_pending_redraw);
 		ClassDB::bind_method(D_METHOD("flush_commands"), &NativeDecorationRenderer::flush_commands);
@@ -10875,6 +10959,8 @@ public:
 		ui_offsets.clear();
 		records = std::move(p_records);
 		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
+		gdash::DecorationSections section_builder;
+		SpinRunProfile spin_profile;
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (size_t index = 0; index < records.size(); ++index) {
 			Record &record = records[index];
@@ -10891,15 +10977,22 @@ public:
 			const Vector2 center = record.spin_pivot;
 			const double radius = record.transform.get_origin().distance_to(center) + (bounds.size * 0.5).length();
 			const Rect2 coverage(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0));
-			if (record.spin_radians != 0.0f) spinning_indices.push_back(index);
+			if (record.spin_radians != 0.0f) {
+				spinning_indices.push_back(index);
+				spin_profile.add(record.spin_radians);
+			}
 			const int64_t first_column = static_cast<int64_t>(std::floor(coverage.position.x / bucket_width));
 			const int64_t last_column = static_cast<int64_t>(std::floor(coverage.get_end().x / bucket_width));
 			const int64_t top_row = static_cast<int64_t>(std::floor(coverage.position.y / bucket_width));
 			const int64_t bottom_row = static_cast<int64_t>(std::floor(coverage.get_end().y / bucket_width));
 			for (int64_t column = first_column; column <= last_column; ++column) {
-				for (int64_t row = top_row; row <= bottom_row; ++row) sections[column][row].push_back(index);
+				for (int64_t row = top_row; row <= bottom_row; ++row) section_builder[column][row].push_back(index);
 			}
 		}
+		// Retain packed columns, not thousands of map nodes/small row vectors.
+		// Consume each builder column as it is copied to limit open-time peaks.
+		sections.build(std::move(section_builder));
+		reuse_spin_rotation = spin_profile.use_cache();
 		cull = enable_culling; cull_margin = std::max(0.0, margin);
 		view_initialized = false; range_has_records = !cull;
 		if (!cull) rebuild_commands();
@@ -10954,24 +11047,39 @@ public:
 		return result;
 	}
 
-	void advance_animation(double delta) {
-		if (spinning_indices.empty() || delta <= 0.0) return;
+	template <bool ReuseRotation>
+	void advance_spinning_records(double delta) {
+		// Reuse trig only for consecutive equal speeds within this call. Never
+		// cache poses or reorder records: triggers can change transforms/pivots.
+		SpinRotationRunCache rotation_cache(delta);
 		for (size_t index : spinning_indices) {
 			Record &record = records[index];
-			const double angle = static_cast<double>(record.spin_radians) * delta;
 			// Rigid rotation about the pivot in parent space. Rotating the
 			// basis locally (rotated_local) turned mirrored quarters the wrong
 			// way, so a sawblade built from mirrored quarters tore apart.
 			const Vector2 &x_axis = record.transform.columns[0];
 			const Vector2 &y_axis = record.transform.columns[1];
 			const Vector2 &origin = record.transform.columns[2];
-			SpinTransform2D spun = spin_about_pivot(
+			SpinRotation rotation;
+			if constexpr (ReuseRotation) {
+				rotation = rotation_cache.get(record.spin_radians);
+			} else {
+				const double angle = static_cast<double>(record.spin_radians) * delta;
+				rotation = { std::cos(angle), std::sin(angle) };
+			}
+			SpinTransform2D spun = spin_with_rotation(
 					SpinTransform2D{ x_axis.x, x_axis.y, y_axis.x, y_axis.y, origin.x, origin.y },
-					record.spin_pivot.x, record.spin_pivot.y, angle);
+					record.spin_pivot.x, record.spin_pivot.y, rotation);
 			record.transform.columns[0] = Vector2(static_cast<real_t>(spun.xx), static_cast<real_t>(spun.xy));
 			record.transform.columns[1] = Vector2(static_cast<real_t>(spun.yx), static_cast<real_t>(spun.yy));
 			record.transform.columns[2] = Vector2(static_cast<real_t>(spun.ox), static_cast<real_t>(spun.oy));
 		}
+	}
+
+	void advance_animation(double delta) {
+		if (spinning_indices.empty() || delta <= 0.0) return;
+		if (reuse_spin_rotation) advance_spinning_records<true>(delta);
+		else advance_spinning_records<false>(delta);
 		commands_dirty = true;
 	}
 
@@ -11046,6 +11154,7 @@ public:
 		return records[static_cast<size_t>(index)].blend;
 	}
 	void apply_channel_color(const PackedInt32Array &indices, const Color &channel_color) {
+		gdash::DecorationChannelTint<Color> channel_tint(channel_color);
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
 			Record &record = records[static_cast<size_t>(index)]; Color tinted = channel_color;
@@ -11055,12 +11164,8 @@ public:
 			// render the item as a black silhouette. GDRweb's
 			// HSVShift.shiftColor returns the colour unchanged then.
 
-			if (record.has_hsv) {
-				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
-				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
-				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
-				tinted = Color::from_hsv(hue, saturation, value, channel_color.a);
-			}
+			// All records use the same input RGB; decompose it once, lazily.
+			if (record.has_hsv) tinted = channel_tint.shifted(record.hsv);
 			tinted.a = channel_color.a * record.base_alpha;
 			gdash::assign_render_value(record.color, tinted, commands_dirty);
 		}
@@ -11079,8 +11184,10 @@ public:
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t animated_item_count() const { return static_cast<int64_t>(spinning_indices.size()); }
 	int64_t last_drawn_count() const { return last_drawn_items; }
+	uint64_t owner_instance_id() const { return owner_id; }
 	bool has_pending_redraw() const { return commands_dirty; }
 	int64_t command_rebuild_count() const { return command_rebuilds; }
+	int64_t draw_commands_last_rebuild() const { return last_draw_commands; }
 	int64_t selection_rebuild_count() const { return static_cast<int64_t>(visible_records.build_count()); }
 	bool is_spatially_culled() const { return cull; }
 };
@@ -11507,17 +11614,23 @@ static Dictionary registered_decoration_stats() {
 	int64_t records = 0;
 	int64_t animated_records = 0;
 	int64_t submitted = 0;
+	int64_t draw_commands = 0;
 	int64_t empty_canvases = 0;
 	int64_t culled_canvases = 0;
+	std::unordered_set<uint64_t> batch_owners;
 	for (NativeDecorationRenderer *canvas : registered_decoration_renderers) {
 		if (!canvas) continue;
 		records += canvas->item_count();
 		animated_records += canvas->animated_item_count();
 		submitted += canvas->last_drawn_count();
+		draw_commands += canvas->draw_commands_last_rebuild();
+		if (canvas->owner_instance_id() != 0) batch_owners.insert(canvas->owner_instance_id());
 		if (canvas->last_drawn_count() == 0) ++empty_canvases;
 		if (canvas->is_spatially_culled()) ++culled_canvases;
 	}
 	stats["canvases"] = static_cast<int64_t>(registered_decoration_renderers.size());
+	stats["batch_owner_nodes"] = static_cast<int64_t>(batch_owners.size());
+	stats["canvas_draw_commands"] = draw_commands;
 	stats["culled_canvases"] = culled_canvases;
 	stats["empty_canvases"] = empty_canvases;
 	stats["records"] = records;

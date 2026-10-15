@@ -3,20 +3,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <map>
+#include "decoration_sections.h"
 #include <type_traits>
 #include <vector>
 
 namespace gdash {
-
-using DecorationSections = std::map<int64_t, std::map<int64_t, std::vector<size_t>>>;
-
-struct DecorationRange {
-	int64_t first, last, top, bottom;
-	bool operator==(const DecorationRange &other) const {
-		return first == other.first && last == other.last && top == other.top && bottom == other.bottom;
-	}
-};
 
 // Cache ONLY the ordered record IDs, never their mutable drawing data. A color,
 // pulse, blend or spin update can redraw the same visible cells hundreds of
@@ -41,8 +32,8 @@ class DecorationVisibilityCache {
 public:
 	void invalidate() { valid = false; }
 
-	template <typename Emit>
-	void for_each(const DecorationSections &sections, size_t record_count, const DecorationRange &range, Emit emit) {
+	template <typename Sections, typename Emit>
+	void for_each(const Sections &sections, size_t record_count, const DecorationRange &range, Emit emit) {
 		if (valid && marks.size() == record_count && range == last_range) {
 			for (size_t index : selected) emit(index);
 			return;
@@ -55,21 +46,13 @@ public:
 			generation = 1;
 		}
 		++builds;
-		auto column = sections.lower_bound(range.first);
-		while (column != sections.end() && column->first <= range.last) {
-			auto row = column->second.lower_bound(range.top);
-			while (row != column->second.end() && row->first <= range.bottom) {
-				for (size_t index : row->second) {
-					if (marks[index] == generation) continue;
-					marks[index] = generation;
-					selected.push_back(index);
-					// Fuse building and emission on a miss: no second draw pass.
-					emit(index);
-				}
-				++row;
-			}
-			++column;
-		}
+		for_each_decoration_candidate(sections, range, [&](size_t index) {
+			if (marks[index] == generation) return;
+			marks[index] = generation;
+			selected.push_back(index);
+			// Fuse building and emission on a miss: no second draw pass.
+			emit(index);
+		});
 		last_range = range;
 		valid = true;
 	}

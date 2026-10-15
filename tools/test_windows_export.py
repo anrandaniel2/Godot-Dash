@@ -3,6 +3,7 @@ import pathlib
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from pin_windows_extension import DLL, check_pe, pin
 from windows_ci import headless_project, windows_project
@@ -122,6 +123,58 @@ class WindowsExportTests(unittest.TestCase):
         self.assertFalse(needs_asset_import_retry(prefix + 'res://assets/fonts/missing.ttf.\n'))
         self.assertFalse(needs_asset_import_retry(prefix + 'res://src/SettingsMenu.gd.\n'))
         self.assertFalse(needs_asset_import_retry('SCRIPT ERROR: Parse Error: broken GDScript'))
+
+
+    def test_build_runs_color_and_spin_correctness_and_benchmark_gates(self):
+        import windows_ci
+        outputs = {
+            "renderer-cache": "DECORATION_CACHE_SUMMARY checks=1 failed=0",
+            "compact-sections": "COMPACT_SECTIONS_TEST checks=1 failed=0",
+            "frustum-transition": "FRUSTUM_TRANSITION_TEST checks=1 failed=0",
+            "ui-alignment": "ALL UI TRIGGER TESTS PASSED",
+            "decoration-spin": "decoration spin: all checks passed",
+            "decoration-spin-cache": "SPIN_CACHE_TEST checks=1 failed=0",
+            "channel-tint": "CHANNEL_TINT_TEST checks=1 failed=0",
+        }
+        with patch.object(windows_ci, "check_pe"), patch("builtins.print"), patch.object(
+            windows_ci, "run", side_effect=lambda args, name, **kwargs: outputs.get(name, "")
+        ) as runner:
+            windows_ci.build()
+        calls = {call.args[1]: call.args[0] for call in runner.call_args_list}
+        self.assertEqual(calls["decoration-spin"][0].name, "spin-test.exe")
+        self.assertEqual(calls["decoration-spin-cache"][0].name, "spin-cache-test.exe")
+        self.assertIn("--benchmark", calls["decoration-spin-cache"])
+        self.assertEqual(calls["channel-tint"][0].name, "channel-tint-test.exe")
+        self.assertIn("--benchmark", calls["channel-tint"])
+        self.assertEqual(calls["compact-sections"][0].name, "compact-sections-test.exe")
+        self.assertIn("--benchmark", calls["compact-sections"])
+        self.assertEqual(calls["frustum-transition"][0].name, "frustum-transition-test.exe")
+        self.assertIn("--benchmark", calls["frustum-transition"])
+
+    def test_build_rejects_missing_optimization_gate_markers(self):
+        import windows_ci
+        for broken in (
+            "decoration-spin",
+            "decoration-spin-cache",
+            "channel-tint",
+            "compact-sections",
+            "frustum-transition",
+        ):
+            with self.subTest(gate=broken):
+                outputs = {
+                    "renderer-cache": "DECORATION_CACHE_SUMMARY checks=1 failed=0",
+                    "compact-sections": "COMPACT_SECTIONS_TEST checks=1 failed=0",
+                    "frustum-transition": "FRUSTUM_TRANSITION_TEST checks=1 failed=0",
+                    "ui-alignment": "ALL UI TRIGGER TESTS PASSED",
+                    "decoration-spin": "decoration spin: all checks passed",
+                    "decoration-spin-cache": "SPIN_CACHE_TEST checks=1 failed=0",
+                    "channel-tint": "CHANNEL_TINT_TEST checks=1 failed=0",
+                }
+                outputs[broken] = "incomplete output"
+                with patch.object(windows_ci, "check_pe"), patch("builtins.print"), patch.object(
+                    windows_ci, "run", side_effect=lambda args, name, **kwargs: outputs.get(name, "")
+                ), self.assertRaisesRegex(RuntimeError, "spin|tint|sections|frustum"):
+                    windows_ci.build()
 
 
 

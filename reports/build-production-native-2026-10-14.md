@@ -144,3 +144,24 @@ semantics and collision logic are untouched.
 - Native timing above uses the release extension in the headless Godot editor fixture;
   it is not a release-game frame-time measurement. The improved initial-clip coverage
   and final platform results must be read from their corresponding CI runs.
+
+## Final code verification — 52a64e4b
+
+- Web **38664245765 SUCCESS**, latest job **298 s (4:58)**; native build/link **11 s**.
+  Across the two warm runs the native step was **6–11 s**, versus baseline **48 s**;
+  whole jobs were **3:47–4:58**, versus **5:30**. The latest export step alone varied
+  to 69 s (previous warm run 21 s), so do not extrapolate a fixed percentage gain.
+- Windows **38664245812 SUCCESS**, including strict native/renderer/color/presentation
+  gates, exported release/DLL smoke, installer upgrade/uninstall and preserved data.
+  Final timeline **96,049/0** (including initial non-default clips), packed schema/origin
+  **27/0**. Final median CPU sample: **1212.956 → 213.690 ms**, approximately **5.68×**,
+  **82.4% less time**. Earlier independent job samples were 5.09× and 5.35×.
+- Final Windows ZIP **69,246,307 bytes**, installer **64,316,565 bytes**: still slightly
+  larger than the baseline, not a size-reduction claim. Full LTO cold-link cost and
+  extra regression coverage mean no Windows whole-build speedup demonstrated.
+- Final Android 38664245825 was still in its script probe at last inspection. Its
+  release compilation/configuration passed; completed APK/export not yet verified.
+  No wait for Windows/Android was used; only Web had the JSON polling wait loop.
+- Latest Web Chrome smoke still reports WebGPU device loss/buffer errors. The green
+  build is export validation only, not browser/GPU acceptance or a user-device fix.
+- Final installer: https://github.com/anrandaniel2/Godot-Dash/releases/download/windows-52a64e4b/GodotDashSetup-x86_64.exe

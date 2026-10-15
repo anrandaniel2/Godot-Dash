@@ -22,15 +22,22 @@ var _direct: Node2D
 var _batch: DecorationBatch
 var _native_canvas: Object
 var _level_runtime: Node
+var _triangle_viewport: SubViewport
+var _triangle_renderer: Object
+var _triangle_owner: Node2D
+var _triangle_reference_owner: Node2D
+var _triangle_reference_rid: RID
+var _triangle_texture: Texture2D
+var _triangle_pixel_parity_checked := false
 
 
 ## Stand-in for Level's colour properties during the native effect-engine
 ## checks: the C++ runtime reads them through Variant property access.
-class FakeLevel extends Node2D:
+class FakeLevel:
+	extends Node2D
 	var background_color := Color.WHITE
 	var ground_color := Color.WHITE
 	var line_color := Color.WHITE
-
 
 
 ## Regression test for the streamed-level batch ordering: every editor layer
@@ -62,7 +69,6 @@ func _test_batch_order() -> void:
 	)
 	front.free()
 	back.free()
-
 
 
 ## Regression test for the device-reported black silhouettes covering the
@@ -100,11 +106,14 @@ func _test_hsv_neutral() -> void:
 	else:
 		applied = item.modulate
 	assert(
-		is_equal_approx(applied.r, 0.9) and is_equal_approx(applied.g, 0.6) and is_equal_approx(applied.b, 0.3),
+		(
+			is_equal_approx(applied.r, 0.9)
+			and is_equal_approx(applied.g, 0.6)
+			and is_equal_approx(applied.b, 0.3)
+		),
 		"visual smoke: all-zero HSV shift must not black out a recoloured item"
 	)
 	batch.free()
-
 
 
 ## Imported gameplay objects must wear the Geometry Dash z mapping on every
@@ -122,27 +131,42 @@ func _test_gameplay_z() -> void:
 	)
 
 	# Generated-scene path: setup() consumes the converter's z keys.
-	var generated: GDObject = (load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene).instantiate() as GDObject
+	var generated: GDObject = (
+		(load("res://scenes/gd_objects/gd_%d.tscn" % TEST_ID) as PackedScene).instantiate()
+		as GDObject
+	)
 	assert(generated != null, "z smoke: generated GD scene missing")
-	generated.setup({
-		"gd_object_id": TEST_ID,
-		"z_layer": 5,
-		"z_order": 2,
-	})
+	(
+		generated
+		. setup(
+			{
+				"gd_object_id": TEST_ID,
+				"z_layer": 5,
+				"z_order": 2,
+			}
+		)
+	)
 	assert(generated.z_index == 66, "z smoke: generated scene ignored z keys")
 	generated.free()
 
 	# Hand-made scene path (artwork swap): must not render at z 0 anymore.
-	var swapped: Node2D = Level.instantiate_object_from_data({
-		"name": "ZSmokePortal",
-		"scene_file_path": "scenes/components/level_components/portals/other_portals/GravityPortalNormal.tscn",
-		"gd_object_id": 11,
-		"transform": Transform2D(0.0, Vector2.ZERO),
-		"groups": [],
-		"color_channels": {},
-		"z_layer": 5,
-		"z_order": 0,
-	}, null)
+	var swapped: Node2D = (
+		Level
+		. instantiate_object_from_data(
+			{
+				"name": "ZSmokePortal",
+				"scene_file_path":
+				"scenes/components/level_components/portals/other_portals/GravityPortalNormal.tscn",
+				"gd_object_id": 11,
+				"transform": Transform2D(0.0, Vector2.ZERO),
+				"groups": [],
+				"color_channels": {},
+				"z_layer": 5,
+				"z_order": 0,
+			},
+			null
+		)
+	)
 	assert(swapped != null, "z smoke: portal scene missing")
 	assert(swapped.z_index == 64, "z smoke: artwork-swapped object ignored z layer")
 	swapped.free()
@@ -154,52 +178,96 @@ func _test_gameplay_z() -> void:
 ## static art may include them - previously they rendered as full-size ghost
 ## squares over the level's actual decoration.
 func _test_invisible_blocks() -> void:
-	assert(not GMDObjects.is_static_gameplay_object(146), "invis smoke: 146 must not take the static-artwork path")
-	assert(not GMDObjects.is_static_gameplay_object(147), "invis smoke: 147 must not take the static-artwork path")
-	assert(not GMDObjects.is_fallback_block(146), "invis smoke: 146 must not fall back to a visible block")
-	assert(GMDObjects.get_object(146).scene.ends_with("GDInvisibleSquare.tscn"), "invis smoke: 146 lost its scene")
-	var block: Node2D = Level.instantiate_object_from_data({
-		"name": "InvisSmoke",
-		"scene_file_path": "scenes/components/level_components/solids/GDInvisibleSquare.tscn",
-		"gd_object_id": 146,
-		"transform": Transform2D(0.0, Vector2.ZERO),
-		"groups": [],
-		"color_channels": {},
-		"z_layer": 5,
-		"z_order": 2,
-	}, null)
+	assert(
+		not GMDObjects.is_static_gameplay_object(146),
+		"invis smoke: 146 must not take the static-artwork path"
+	)
+	assert(
+		not GMDObjects.is_static_gameplay_object(147),
+		"invis smoke: 147 must not take the static-artwork path"
+	)
+	assert(
+		not GMDObjects.is_fallback_block(146),
+		"invis smoke: 146 must not fall back to a visible block"
+	)
+	assert(
+		GMDObjects.get_object(146).scene.ends_with("GDInvisibleSquare.tscn"),
+		"invis smoke: 146 lost its scene"
+	)
+	var block: Node2D = (
+		Level
+		. instantiate_object_from_data(
+			{
+				"name": "InvisSmoke",
+				"scene_file_path":
+				"scenes/components/level_components/solids/GDInvisibleSquare.tscn",
+				"gd_object_id": 146,
+				"transform": Transform2D(0.0, Vector2.ZERO),
+				"groups": [],
+				"color_channels": {},
+				"z_layer": 5,
+				"z_order": 2,
+			},
+			null
+		)
+	)
 	assert(block != null, "invis smoke: invisible block scene missing")
-	assert(block.get_node_or_null(^"Base") == null, "invis smoke: invisible block must not wear artwork")
-	assert(block.get_child_count() == 2, "invis smoke: artwork swap injected nodes into the invisible block")
-	assert(block.get_node_or_null(^"Hitbox") != null, "invis smoke: invisible block lost its collision")
+	assert(
+		block.get_node_or_null(^"Base") == null,
+		"invis smoke: invisible block must not wear artwork"
+	)
+	assert(
+		block.get_child_count() == 2,
+		"invis smoke: artwork swap injected nodes into the invisible block"
+	)
+	assert(
+		block.get_node_or_null(^"Hitbox") != null, "invis smoke: invisible block lost its collision"
+	)
 	block.free()
 	# An invisible spike (hazard) and triangle (solid) import the same way.
-	var spike: Node2D = Level.instantiate_object_from_data({
-		"name": "InvisSpikeSmoke",
-		"scene_file_path": "scenes/components/level_components/hazards/GDInvisibleSpike.tscn",
-		"gd_object_id": 144,
-		"transform": Transform2D(0.0, Vector2.ZERO),
-		"groups": [],
-		"color_channels": {},
-		"z_layer": 5,
-		"z_order": 2,
-	}, null)
+	var spike: Node2D = (
+		Level
+		. instantiate_object_from_data(
+			{
+				"name": "InvisSpikeSmoke",
+				"scene_file_path":
+				"scenes/components/level_components/hazards/GDInvisibleSpike.tscn",
+				"gd_object_id": 144,
+				"transform": Transform2D(0.0, Vector2.ZERO),
+				"groups": [],
+				"color_channels": {},
+				"z_layer": 5,
+				"z_order": 2,
+			},
+			null
+		)
+	)
 	assert(spike != null, "invis smoke: invisible spike scene missing")
 	assert(spike is Area2D, "invis smoke: invisible spike lost its hazard area")
 	assert(spike.get_child_count() == 2, "invis smoke: invisible spike gained artwork nodes")
 	spike.free()
-	var triangle: Node2D = Level.instantiate_object_from_data({
-		"name": "InvisTriangleSmoke",
-		"scene_file_path": "scenes/components/level_components/solids/GDInvisibleTriangle.tscn",
-		"gd_object_id": 673,
-		"transform": Transform2D(0.0, Vector2.ZERO),
-		"groups": [],
-		"color_channels": {},
-		"z_layer": 5,
-		"z_order": 2,
-	}, null)
+	var triangle: Node2D = (
+		Level
+		. instantiate_object_from_data(
+			{
+				"name": "InvisTriangleSmoke",
+				"scene_file_path":
+				"scenes/components/level_components/solids/GDInvisibleTriangle.tscn",
+				"gd_object_id": 673,
+				"transform": Transform2D(0.0, Vector2.ZERO),
+				"groups": [],
+				"color_channels": {},
+				"z_layer": 5,
+				"z_order": 2,
+			},
+			null
+		)
+	)
 	assert(triangle != null, "invis smoke: invisible triangle scene missing")
-	assert(triangle.get_node_or_null(^"Hitbox") != null, "invis smoke: invisible triangle lost its collision")
+	assert(
+		triangle.get_node_or_null(^"Hitbox") != null,
+		"invis smoke: invisible triangle lost its collision"
+	)
 	assert(triangle.get_child_count() == 2, "invis smoke: invisible triangle gained artwork nodes")
 	triangle.free()
 
@@ -212,14 +280,22 @@ func _test_slope_bodies_are_solid() -> void:
 	# CharacterBody2D passes straight through an Area2D.
 	var container := Node2D.new()
 	var body := LevelPhysics._body_for({}, container, LevelPhysics.SLOPE_LAYER, 0)
-	assert(body is StaticBody2D, "slope smoke: merged slope body is %s, not a StaticBody2D" % body.get_class())
-	assert(body.collision_layer == LevelPhysics.SLOPE_LAYER, "slope smoke: slope body lost its layer")
+	assert(
+		body is StaticBody2D,
+		"slope smoke: merged slope body is %s, not a StaticBody2D" % body.get_class()
+	)
+	assert(
+		body.collision_layer == LevelPhysics.SLOPE_LAYER, "slope smoke: slope body lost its layer"
+	)
 	container.free()
 
 
 func _test_gradient_ids_not_solid() -> void:
 	for id: int in [1886, 1887, 1888]:
-		assert(not GMDObjects.has_object_scene(id), "gradient smoke: %d must not get a generated solid scene" % id)
+		assert(
+			not GMDObjects.has_object_scene(id),
+			"gradient smoke: %d must not get a generated solid scene" % id
+		)
 
 
 ## Key 135 (Hide) is Geometry Dash 2.2's per-object hide flag: the node keeps
@@ -233,33 +309,50 @@ func _test_hidden_objects() -> void:
 	assert(bool(object_data.get("hidden", false)), "hide smoke: converter dropped key 135")
 	assert(not object_data.has("native_static_art"), "hide smoke: hidden block packed static art")
 
-	var hidden_block: Node2D = Level.instantiate_object_from_data({
-		"name": "HiddenSmoke",
-		"scene_file_path": "scenes/components/level_components/solids/GDInvisibleSquare.tscn",
-		"gd_object_id": 146,
-		"transform": Transform2D(0.0, Vector2.ZERO),
-		"groups": [],
-		"color_channels": {},
-		"z_layer": 5,
-		"z_order": 2,
-		"hidden": true,
-	}, null)
+	var hidden_block: Node2D = (
+		Level
+		. instantiate_object_from_data(
+			{
+				"name": "HiddenSmoke",
+				"scene_file_path":
+				"scenes/components/level_components/solids/GDInvisibleSquare.tscn",
+				"gd_object_id": 146,
+				"transform": Transform2D(0.0, Vector2.ZERO),
+				"groups": [],
+				"color_channels": {},
+				"z_layer": 5,
+				"z_order": 2,
+				"hidden": true,
+			},
+			null
+		)
+	)
 	assert(hidden_block != null, "hide smoke: hidden object failed to build")
 	assert(not hidden_block.visible, "hide smoke: hidden object renders")
-	assert(hidden_block.get_node_or_null(^"Hitbox") != null, "hide smoke: hidden object lost its collision")
+	assert(
+		hidden_block.get_node_or_null(^"Hitbox") != null,
+		"hide smoke: hidden object lost its collision"
+	)
 	hidden_block.free()
 	# A hidden hand-made object skips the artwork swap as well.
-	var hidden_portal: Node2D = Level.instantiate_object_from_data({
-		"name": "HiddenPortalSmoke",
-		"scene_file_path": "scenes/components/level_components/portals/other_portals/GravityPortalNormal.tscn",
-		"gd_object_id": 11,
-		"transform": Transform2D(0.0, Vector2.ZERO),
-		"groups": [],
-		"color_channels": {},
-		"z_layer": 5,
-		"z_order": 0,
-		"hidden": true,
-	}, null)
+	var hidden_portal: Node2D = (
+		Level
+		. instantiate_object_from_data(
+			{
+				"name": "HiddenPortalSmoke",
+				"scene_file_path":
+				"scenes/components/level_components/portals/other_portals/GravityPortalNormal.tscn",
+				"gd_object_id": 11,
+				"transform": Transform2D(0.0, Vector2.ZERO),
+				"groups": [],
+				"color_channels": {},
+				"z_layer": 5,
+				"z_order": 0,
+				"hidden": true,
+			},
+			null
+		)
+	)
 	assert(hidden_portal != null, "hide smoke: hidden portal failed to build")
 	assert(not hidden_portal.visible, "hide smoke: hidden portal renders")
 	hidden_portal.free()
@@ -269,34 +362,65 @@ func _test_hidden_objects() -> void:
 ## decoration artwork. They must resolve to their generated scene, carry a
 ## real hitbox shape and stay out of the native decoration table.
 func _test_generated_static_hitboxes() -> void:
-	var flags: PackedByteArray = GMDConverter._native_import_tables({}).get("id_flags", PackedByteArray())
+	var flags: PackedByteArray = GMDConverter._native_import_tables({}).get(
+		"id_flags", PackedByteArray()
+	)
 	for gd_id: int in [294, 363, 9, 183, 40, 143, 918, 919, 1911]:
-		assert(GMDObjects.is_static_gameplay_object(gd_id), "static hitbox: %d is not a static gameplay object" % gd_id)
+		assert(
+			GMDObjects.is_static_gameplay_object(gd_id),
+			"static hitbox: %d is not a static gameplay object" % gd_id
+		)
 		var scene_path: String = GMDObjects.get_object(gd_id).get("scene", "")
-		assert(scene_path == "scenes/gd_objects/gd_%d.tscn" % gd_id, "static hitbox: %d has scene '%s'" % [gd_id, scene_path])
-		assert(gd_id >= flags.size() or (flags[gd_id] & GMDConverter.NATIVE_ID_DECORATION) == 0,
-				"static hitbox: %d is still imported as decoration" % gd_id)
+		assert(
+			scene_path == "scenes/gd_objects/gd_%d.tscn" % gd_id,
+			"static hitbox: %d has scene '%s'" % [gd_id, scene_path]
+		)
+		assert(
+			gd_id >= flags.size() or (flags[gd_id] & GMDConverter.NATIVE_ID_DECORATION) == 0,
+			"static hitbox: %d is still imported as decoration" % gd_id
+		)
 		var node: Node = (load("res://" + scene_path) as PackedScene).instantiate()
 		var hitbox := node.get_node_or_null(^"Collision/Hitbox") as CollisionShape2D
-		assert(hitbox != null and hitbox.shape != null, "static hitbox: %d has no collision shape" % gd_id)
+		assert(
+			hitbox != null and hitbox.shape != null,
+			"static hitbox: %d has no collision shape" % gd_id
+		)
 		node.free()
-	assert(not GMDObjects.is_static_gameplay_object(1154), "static hitbox: outline decoration 1154 gained collision")
+	assert(
+		not GMDObjects.is_static_gameplay_object(1154),
+		"static hitbox: outline decoration 1154 gained collision"
+	)
 
 
 ## Rings scale with the per-speed jump (gdsolver ringScaleFor); pads and the
 ## black drop ring do not.
 func _test_ring_speed_scaling() -> void:
-	assert(JumpBoostComponent.speed_tier(0.806) == 0 and JumpBoostComponent.speed_tier(1.0) == 1
-			and JumpBoostComponent.speed_tier(1.85) == 4, "ring speed: tier mapping drifted from gd_physics::speed_index")
-	assert(is_equal_approx(JumpBoostComponent.SPEED_JUMP_RATIO[2], 11.42 / 11.180032), "ring speed: 2x ratio")
+	assert(
+		(
+			JumpBoostComponent.speed_tier(0.806) == 0
+			and JumpBoostComponent.speed_tier(1.0) == 1
+			and JumpBoostComponent.speed_tier(1.85) == 4
+		),
+		"ring speed: tier mapping drifted from gd_physics::speed_index"
+	)
+	assert(
+		is_equal_approx(JumpBoostComponent.SPEED_JUMP_RATIO[2], 11.42 / 11.180032),
+		"ring speed: 2x ratio"
+	)
 	for path: String in ["orbs/YellowOrb", "orbs/BlackOrb", "pads/YellowPad"]:
-		var node: Node = (load("res://scenes/components/level_components/%s.tscn" % path) as PackedScene).instantiate()
+		var node: Node = (
+			(load("res://scenes/components/level_components/%s.tscn" % path) as PackedScene)
+			. instantiate()
+		)
 		var boost: JumpBoostComponent = null
 		for child: Node in node.get_children():
 			if child is JumpBoostComponent:
 				boost = child
 		assert(boost != null, "ring speed: %s has no JumpBoostComponent" % path)
-		assert(boost.scales_with_speed_jump == (path == "orbs/YellowOrb"), "ring speed: %s scaling flag is wrong" % path)
+		assert(
+			boost.scales_with_speed_jump == (path == "orbs/YellowOrb"),
+			"ring speed: %s scaling flag is wrong" % path
+		)
 		node.free()
 
 
@@ -306,12 +430,18 @@ func _test_ring_speed_scaling() -> void:
 func _test_interactable_hitboxes() -> void:
 	var level := "res://scenes/components/level_components/"
 	var expected: Dictionary[String, Vector2] = {
-		"orbs/YellowOrb.tscn": Vector2(36, 36), "orbs/PinkOrb.tscn": Vector2(36, 36),
-		"orbs/BlueOrb.tscn": Vector2(36, 36), "orbs/RedOrb.tscn": Vector2(36, 36),
-		"orbs/GreenOrb.tscn": Vector2(36, 36), "orbs/BlackOrb.tscn": Vector2(36, 36),
-		"orbs/DashOrbGreen.tscn": Vector2(36, 36), "orbs/DashOrbMagenta.tscn": Vector2(36, 36),
-		"pads/YellowPad.tscn": Vector2(25, 4), "pads/PinkPad.tscn": Vector2(25, 5),
-		"pads/BluePad.tscn": Vector2(25, 6), "pads/RedPad.tscn": Vector2(29, 7),
+		"orbs/YellowOrb.tscn": Vector2(36, 36),
+		"orbs/PinkOrb.tscn": Vector2(36, 36),
+		"orbs/BlueOrb.tscn": Vector2(36, 36),
+		"orbs/RedOrb.tscn": Vector2(36, 36),
+		"orbs/GreenOrb.tscn": Vector2(36, 36),
+		"orbs/BlackOrb.tscn": Vector2(36, 36),
+		"orbs/DashOrbGreen.tscn": Vector2(36, 36),
+		"orbs/DashOrbMagenta.tscn": Vector2(36, 36),
+		"pads/YellowPad.tscn": Vector2(25, 4),
+		"pads/PinkPad.tscn": Vector2(25, 5),
+		"pads/BluePad.tscn": Vector2(25, 6),
+		"pads/RedPad.tscn": Vector2(29, 7),
 		"portals/gamemode_portals/CubePortal.tscn": Vector2(34, 86),
 		"portals/gamemode_portals/ShipPortal.tscn": Vector2(34, 86),
 		"portals/gamemode_portals/BallPortal.tscn": Vector2(34, 86),
@@ -335,18 +465,33 @@ func _test_interactable_hitboxes() -> void:
 	for rel: String in expected:
 		var node: Node = (load(level + rel) as PackedScene).instantiate()
 		var hitbox := node.get_node_or_null(^"Hitbox") as CollisionShape2D
-		assert(hitbox != null and hitbox.shape is RectangleShape2D, "hitbox: %s has no rectangle Hitbox" % rel)
+		assert(
+			hitbox != null and hitbox.shape is RectangleShape2D,
+			"hitbox: %s has no rectangle Hitbox" % rel
+		)
 		var px: Vector2 = (hitbox.shape as RectangleShape2D).size * hitbox.scale
 		var gd_units: Vector2 = px * 30.0 / Constants.CELL_SIZE
-		assert(gd_units.distance_to(expected[rel]) < 0.05,
-				"hitbox: %s is %s GD units, expected %s" % [rel, gd_units, expected[rel]])
+		assert(
+			gd_units.distance_to(expected[rel]) < 0.05,
+			"hitbox: %s is %s GD units, expected %s" % [rel, gd_units, expected[rel]]
+		)
 		node.free()
 	# Object IDs: the red jump orb (1333) and the green dash orb (1704) must not
 	# swap scenes, and 34 must resolve to its collider with no trigger shell.
-	assert(GMDObjects.get_object(1333).get("scene", "") == "scenes/components/level_components/orbs/RedOrb.tscn",
-			"hitbox: 1333 (Red Jump Orb) does not load RedOrb")
-	assert(GMDObjects.get_object(1704).get("scene", "") == "scenes/components/level_components/orbs/DashOrbGreen.tscn",
-			"hitbox: 1704 (Green Dash Orb) does not load DashOrbGreen")
+	assert(
+		(
+			GMDObjects.get_object(1333).get("scene", "")
+			== "scenes/components/level_components/orbs/RedOrb.tscn"
+		),
+		"hitbox: 1333 (Red Jump Orb) does not load RedOrb"
+	)
+	assert(
+		(
+			GMDObjects.get_object(1704).get("scene", "")
+			== "scenes/components/level_components/orbs/DashOrbGreen.tscn"
+		),
+		"hitbox: 1704 (Green Dash Orb) does not load DashOrbGreen"
+	)
 	assert(GMDObjects.is_static_gameplay_object(34), "hitbox: 34 is not a static solid")
 	assert(not GMDObjects.TRIGGER_IDS.has(34), "hitbox: 34 still imports as an inert trigger")
 
@@ -358,24 +503,58 @@ func _test_interactable_hitboxes() -> void:
 func _test_camera_floor_view() -> void:
 	var floor_y: float = 925.0
 	var below_floor: float = PlayerCamera.gd_floor_view_bottom(floor_y) - floor_y
-	assert(is_equal_approx(below_floor, 90.0 / 30.0 * Constants.CELL_SIZE),
-			"camera floor: view bottom sits %s px below the floor, GD is 90 units (384 px)" % below_floor)
+	assert(
+		is_equal_approx(below_floor, 90.0 / 30.0 * Constants.CELL_SIZE),
+		(
+			"camera floor: view bottom sits %s px below the floor, GD is 90 units (384 px)"
+			% below_floor
+		)
+	)
 	assert(below_floor <= 240.0 * 2.5, "camera floor: view bottom shows past the ground art")
 
 
 func _test_camera_end_holds_height() -> void:
 	var stop: float = 1000.0
-	assert(not PlayerCamera.gd_end_holds_height(false, 900.0, stop), "camera end: height must follow the player before the end stop engages")
-	assert(PlayerCamera.gd_end_holds_height(false, 1000.0, stop), "camera end: height must hold once the end stop engages")
-	assert(PlayerCamera.gd_end_holds_height(true, 900.0, stop), "camera end: height must hold through the end animation")
-	assert(not PlayerCamera.gd_end_holds_height(false, 5000.0, INF), "camera end: no end stop, so no hold")
+	assert(
+		not PlayerCamera.gd_end_holds_height(false, 900.0, stop),
+		"camera end: height must follow the player before the end stop engages"
+	)
+	assert(
+		PlayerCamera.gd_end_holds_height(false, 1000.0, stop),
+		"camera end: height must hold once the end stop engages"
+	)
+	assert(
+		PlayerCamera.gd_end_holds_height(true, 900.0, stop),
+		"camera end: height must hold through the end animation"
+	)
+	assert(
+		not PlayerCamera.gd_end_holds_height(false, 5000.0, INF),
+		"camera end: no end stop, so no hold"
+	)
 
 
 func _test_camera_gp_offset_scale() -> void:
-	var default_factor: float = CameraGameplayOffsetChangerComponent.gd_offset_factor(CameraGameplayOffsetChangerComponent.GD_DEFAULT_OFFSET_VALUE)
-	assert(is_equal_approx(default_factor, 1.0), "camera GP offset: GD's default value 25 must be the default look-ahead (factor 1)")
-	assert(is_equal_approx(default_factor * PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS, 75.0), "camera GP offset: default value must keep the 75-unit look-ahead")
-	assert(is_equal_approx(CameraGameplayOffsetChangerComponent.gd_offset_factor(12.5) * PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS, 37.5), "camera GP offset: a value of 12.5 must halve the look-ahead")
+	var default_factor: float = CameraGameplayOffsetChangerComponent.gd_offset_factor(
+		CameraGameplayOffsetChangerComponent.GD_DEFAULT_OFFSET_VALUE
+	)
+	assert(
+		is_equal_approx(default_factor, 1.0),
+		"camera GP offset: GD's default value 25 must be the default look-ahead (factor 1)"
+	)
+	assert(
+		is_equal_approx(default_factor * PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS, 75.0),
+		"camera GP offset: default value must keep the 75-unit look-ahead"
+	)
+	assert(
+		is_equal_approx(
+			(
+				CameraGameplayOffsetChangerComponent.gd_offset_factor(12.5)
+				* PlayerCamera.GD_GAMEPLAY_OFFSET_UNITS
+			),
+			37.5
+		),
+		"camera GP offset: a value of 12.5 must halve the look-ahead"
+	)
 
 
 ## A restart drops running Shake fades without their final zero-offset tick,
@@ -384,19 +563,70 @@ func _test_camera_reset_clears_shake() -> void:
 	var camera := PlayerCamera.new()
 	camera.shake_offset = Vector2(12.0, -7.0)
 	camera.reset()
-	assert(camera.shake_offset == Vector2.ZERO, "camera reset: shake offset %s survives a restart" % camera.shake_offset)
+	assert(
+		camera.shake_offset == Vector2.ZERO,
+		"camera reset: shake offset %s survives a restart" % camera.shake_offset
+	)
 	camera.free()
 
 
 func _test_web_graphics_forced() -> void:
 	# The web build forces anti-aliasing off and Nearest filtering; desktop keeps the choice.
-	assert(Config.web_anti_aliasing(Viewport.MSAA.MSAA_8X, true) == Viewport.MSAA.MSAA_DISABLED, "web MSAA must be forced off")
-	assert(Config.web_anti_aliasing(Viewport.MSAA.MSAA_8X, false) == Viewport.MSAA.MSAA_8X, "desktop MSAA must not change")
-	assert(Config.web_texture_filtering(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, true) == Config.TextureFilteringMode.NEAREST_NEIGHBOR, "web filtering must be forced to nearest")
-	assert(Config.web_texture_filtering(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, false) == Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, "desktop filtering must not change")
+	assert(
+		Config.web_anti_aliasing(Viewport.MSAA.MSAA_8X, true) == Viewport.MSAA.MSAA_DISABLED,
+		"web MSAA must be forced off"
+	)
+	assert(
+		Config.web_anti_aliasing(Viewport.MSAA.MSAA_8X, false) == Viewport.MSAA.MSAA_8X,
+		"desktop MSAA must not change"
+	)
+	assert(
+		(
+			Config.web_texture_filtering(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, true)
+			== Config.TextureFilteringMode.NEAREST_NEIGHBOR
+		),
+		"web filtering must be forced to nearest"
+	)
+	assert(
+		(
+			Config.web_texture_filtering(Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS, false)
+			== Config.TextureFilteringMode.LINEAR_WITH_MIPMAPS
+		),
+		"desktop filtering must not change"
+	)
+
+
+func _test_compressed_atlas_thumbnails() -> void:
+	var page: Texture2D = load("res://assets/textures/gd_atlas/gd_objects_atlas_0.png")
+	var image: Image = TextureReadback.read(page)
+	assert(image != null and not image.is_compressed(), "texture smoke: readable atlas")
+	var region := AtlasTexture.new()
+	region.atlas = page
+	region.region = Rect2(0, 0, 8, 8)
+	var cropped: Image = TextureReadback.read(region)
+	assert(cropped != null and cropped.get_size() == Vector2i(8, 8), "texture smoke: atlas crop")
+	assert(
+		cropped.get_data() == image.get_region(Rect2i(0, 0, 8, 8)).get_data(),
+		"texture smoke: crop bytes"
+	)
+	var layers := LayeredSprite.new()
+	var sprite := Sprite2D.new()
+	sprite.texture = region
+	layers.add_child(sprite)
+	var composite: Image = layers.get_composite_image()
+	assert(
+		composite != null and composite.get_format() == Image.FORMAT_RGBA8, "texture smoke: blend"
+	)
+	layers.free()
+	var packed: PackedScene = load("res://scenes/gd_objects/gd_1.tscn")
+	var object: Node2D = packed.instantiate()
+	var thumbnail: ImageTexture = ObjectThumbnail.generate(object, 32)
+	assert(thumbnail != null and thumbnail.get_width() == 32, "texture smoke: object thumbnail")
+	object.free()
 
 
 func _ready() -> void:
+	_test_compressed_atlas_thumbnails()
 	_test_web_graphics_forced()
 	_test_ring_speed_scaling()
 	_test_camera_floor_view()
@@ -461,39 +691,177 @@ func _ready() -> void:
 				# All-zero HSV with multiplicative sliders: the channel
 				# colour must survive the recolour untouched.
 				var neutral_canvas: Object = batch.get("_native_canvas")
-				assert(neutral_canvas != null, "native smoke: DecorationBatch did not create native renderer")
+				assert(
+					neutral_canvas != null,
+					"native smoke: DecorationBatch did not create native renderer"
+				)
 				batch.apply_channel_color(&"hsv_neutral_smoke", Color(0.9, 0.6, 0.3, 1.0))
 				var neutral_color: Color = neutral_canvas.call(&"get_item_color", 0)
 				assert(
-					is_equal_approx(neutral_color.r, 0.9)
-					and is_equal_approx(neutral_color.g, 0.6)
-					and is_equal_approx(neutral_color.b, 0.3),
+					(
+						is_equal_approx(neutral_color.r, 0.9)
+						and is_equal_approx(neutral_color.g, 0.6)
+						and is_equal_approx(neutral_color.b, 0.3)
+					),
 					"native smoke: all-zero HSV shift blacked out the streamed item"
 				)
 			else:
 				var native_canvas: Object = batch.get("_native_canvas")
 				_native_canvas = native_canvas
-				assert(native_canvas != null, "native smoke: DecorationBatch did not create native renderer")
-				assert(batch.get_node_or_null("NativeCanvas") == null, "native smoke: renderer still consumes a child Node")
-				assert(int(native_canvas.call(&"item_count")) == batch.items.size(), "native smoke: packed item count")
+				assert(
+					native_canvas != null,
+					"native smoke: DecorationBatch did not create native renderer"
+				)
+				assert(
+					batch.get_node_or_null("NativeCanvas") == null,
+					"native smoke: renderer still consumes a child Node"
+				)
+				assert(
+					int(native_canvas.call(&"item_count")) == batch.items.size(),
+					"native smoke: packed item count"
+				)
 				# The child is configured before its parent enters the SceneTree, so
 				# is_processing() is not meaningful yet. Pixel/count checks below prove
 				# that its native visibility callback runs once it is attached.
 				batch.apply_channel_color(&"native_smoke", Color(0.8, 0.2, 0.1, 0.75))
 				var native_color: Color = native_canvas.call(&"get_item_color", 0)
-				assert(is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75), "native smoke: channel update")
+				assert(
+					is_equal_approx(native_color.r, 0.8) and is_equal_approx(native_color.a, 0.75),
+					"native smoke: channel update"
+				)
 				# A colour trigger's Blending flip re-routes the channel's records
 				# between the batch's own canvas item and the additive override.
-				assert(int(native_canvas.call(&"get_item_blend", 0)) == 0, "native smoke: records must start on the inherited blend")
+				assert(
+					int(native_canvas.call(&"get_item_blend", 0)) == 0,
+					"native smoke: records must start on the inherited blend"
+				)
 				batch.apply_channel_blending(&"native_smoke", true)
-				assert(int(native_canvas.call(&"get_item_blend", 0)) == 1, "native smoke: blending flip did not flag the record additive")
+				assert(
+					int(native_canvas.call(&"get_item_blend", 0)) == 1,
+					"native smoke: blending flip did not flag the record additive"
+				)
 				batch.apply_channel_blending(&"native_smoke", false)
-				assert(int(native_canvas.call(&"get_item_blend", 0)) == 2, "native smoke: blending flip did not flag the record normal")
+				assert(
+					int(native_canvas.call(&"get_item_blend", 0)) == 2,
+					"native smoke: blending flip did not flag the record normal"
+				)
 		var item: DecorationBatch.Item = batch.items[0]
 		print(
-			"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
-			% [batch.items.size(), item.transform, item.region, item.modulate, item.texture]
+			(
+				"VISUAL_SMOKE_BATCH items=%d transform=%s region=%s color=%s texture=%s"
+				% [batch.items.size(), item.transform, item.region, item.modulate, item.texture]
+			)
 		)
+	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
+		_setup_triangle_array_parity_smoke()
+
+
+func _setup_triangle_array_parity_smoke() -> void:
+	_triangle_viewport = SubViewport.new()
+	_triangle_viewport.size = Vector2i(256, 128)
+	_triangle_viewport.disable_3d = true
+	_triangle_viewport.transparent_bg = true
+	_triangle_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_triangle_viewport)
+	_triangle_owner = Node2D.new()
+	_triangle_owner.position = Vector2(16, 16)
+	_triangle_viewport.add_child(_triangle_owner)
+	_triangle_reference_owner = Node2D.new()
+	_triangle_reference_owner.position = Vector2(144, 16)
+	_triangle_viewport.add_child(_triangle_reference_owner)
+
+	var image := Image.create(16, 8, false, Image.FORMAT_RGBA8)
+	for y in image.get_height():
+		for x in image.get_width():
+			var color := Color(0.9, 0.2, 0.1, 1.0)
+			if x >= 8:
+				color = Color(0.1, 0.3, 0.9, 1.0)
+			image.set_pixel(x, y, color)
+	_triangle_texture = ImageTexture.create_from_image(image)
+	var regions: Array[Rect2] = [Rect2(0, 0, 8, 8), Rect2(8, 0, 8, 8), Rect2(0, 0, 8, 8)]
+	var transforms: Array[Transform2D] = [
+		Transform2D(Vector2(1.2, 0.25), Vector2(-0.1, 0.8), Vector2(32, 28)),
+		Transform2D(Vector2(-0.9, 0.1), Vector2(0.2, 0.8), Vector2(40, 30)),
+		Transform2D(0.1, Vector2(35, 36)),
+	]
+	var colors := PackedColorArray(
+		[Color(1.0, 0.6, 0.4, 0.72), Color(0.5, 1.0, 0.6, 0.61), Color(0.6, 0.7, 1.0, 0.83)]
+	)
+	var textures: Array[Texture2D] = [_triangle_texture, _triangle_texture, _triangle_texture]
+	var native_canvas: Object = ClassDB.instantiate(&"NativeDecorationRenderer")
+	assert(native_canvas != null, "native smoke: triangle renderer is unavailable")
+	_triangle_renderer = native_canvas
+	_triangle_renderer.call(
+		&"configure",
+		_triangle_owner,
+		textures,
+		regions,
+		transforms,
+		colors,
+		PackedFloat32Array([0.0, 0.0, 0.0]),
+		PackedFloat32Array([1.0, 1.0, 1.0]),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		true,
+		256.0,
+		0.0
+	)
+	_triangle_renderer.call(&"update_camera_range")
+
+	_triangle_reference_rid = RenderingServer.canvas_item_create()
+	RenderingServer.canvas_item_set_parent(
+		_triangle_reference_rid, _triangle_reference_owner.get_canvas_item()
+	)
+	RenderingServer.canvas_item_set_use_parent_material(_triangle_reference_rid, true)
+	for index in transforms.size():
+		RenderingServer.canvas_item_add_set_transform(_triangle_reference_rid, transforms[index])
+		RenderingServer.canvas_item_add_texture_rect_region(
+			_triangle_reference_rid,
+			Rect2(-regions[index].size * 0.5, regions[index].size),
+			_triangle_texture.get_rid(),
+			regions[index],
+			colors[index],
+			false,
+			true
+		)
+
+
+func _check_triangle_array_pixel_parity() -> bool:
+	var triangle_image := _triangle_viewport.get_texture().get_image()
+	if triangle_image == null or triangle_image.is_empty():
+		push_error("native smoke: triangle-array parity viewport capture failed")
+		return false
+	var mismatches := 0
+	var native_drawn_pixels := 0
+	var reference_drawn_pixels := 0
+	var first_mismatch := Vector2i(-1, -1)
+	# The two owners differ by exactly 128 viewport pixels. Compare the whole
+	# 96x96 neighborhood, including transformed edges and all overlaps.
+	for y in range(0, 96):
+		for x in range(0, 96):
+			var native_pixel := triangle_image.get_pixel(x, y)
+			var legacy_pixel := triangle_image.get_pixel(x + 128, y)
+			if native_pixel.a > 0.05:
+				native_drawn_pixels += 1
+			if legacy_pixel.a > 0.05:
+				reference_drawn_pixels += 1
+			if (
+				absf(native_pixel.r - legacy_pixel.r) > 1.0 / 255.0
+				or absf(native_pixel.g - legacy_pixel.g) > 1.0 / 255.0
+				or absf(native_pixel.b - legacy_pixel.b) > 1.0 / 255.0
+				or absf(native_pixel.a - legacy_pixel.a) > 1.0 / 255.0
+			):
+				mismatches += 1
+				if first_mismatch.x < 0:
+					first_mismatch = Vector2i(x, y)
+	print(
+		(
+			"NATIVE_TRIANGLE_PARITY pixels=%d mismatches=%d covered=%d/%d first=%s"
+			% [96 * 96, mismatches, native_drawn_pixels, reference_drawn_pixels, first_mismatch]
+		)
+	)
+	return mismatches == 0 and native_drawn_pixels > 10 and reference_drawn_pixels > 10
 
 
 func _process(_delta: float) -> void:
@@ -507,41 +875,73 @@ func _process(_delta: float) -> void:
 		return
 	var image := get_viewport().get_texture().get_image()
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
+	if _triangle_renderer != null and not _triangle_pixel_parity_checked:
+		_triangle_pixel_parity_checked = true
+		if not _check_triangle_array_pixel_parity():
+			_triangle_viewport.get_texture().get_image().save_png(
+				"user://triangle_array_parity_failure.png"
+			)
+			push_error("native smoke: triangle-array rendering differs from texture-rect reference")
+			get_tree().quit(1)
+			return
+		RenderingServer.free_rid(_triangle_reference_rid)
+		_triangle_reference_rid = RID()
+		_triangle_renderer = null
 	if _native_canvas != null:
 		var drawn := int(_native_canvas.call(&"last_drawn_count"))
 		var total := int(_native_canvas.call(&"item_count"))
-		assert(drawn > 0 and drawn < total, "native smoke: off-screen grid rejection (%d/%d)" % [drawn, total])
+		assert(
+			drawn > 0 and drawn < total,
+			"native smoke: off-screen grid rejection (%d/%d)" % [drawn, total]
+		)
 		if _level_runtime == null:
 			_level_runtime = ClassDB.instantiate(&"NativeLevelRuntime") as Node
 			add_child(_level_runtime)
 		var render_stats: Dictionary = _level_runtime.call(&"render_stats")
 		print("NATIVE_RENDER_STATS %s" % render_stats)
 		if (
-				int(render_stats.get("canvases", 0)) <= 0
-				or render_stats.get("culled_canvases") != render_stats.get("canvases")
-				or int(render_stats.get("submitted_records", 0)) >= int(render_stats.get("records", 0))
+			int(render_stats.get("canvases", 0)) <= 0
+			or int(render_stats.get("batch_owner_nodes", 0)) <= 0
+			or int(render_stats.get("canvas_draw_commands", 0)) <= 0
+			or render_stats.get("culled_canvases") != render_stats.get("canvases")
+			or int(render_stats.get("submitted_records", 0)) >= int(render_stats.get("records", 0))
 		):
-			push_error("native smoke: render coordinator/culling invariant failed: %s" % render_stats)
+			push_error(
+				"native smoke: render coordinator/culling invariant failed: %s" % render_stats
+			)
 			get_tree().quit(1)
 			return
 	# Canvas stretch/aspect settings vary with the test window. Ask each
 	# CanvasItem for the actual world-to-viewport transform instead of assuming
 	# a scale ratio.
 	var viewport_to_screen := get_viewport().get_screen_transform()
-	var direct_center := viewport_to_screen * _direct.get_global_transform_with_canvas() * Vector2.ZERO
+	var direct_center := (
+		viewport_to_screen * _direct.get_global_transform_with_canvas() * Vector2.ZERO
+	)
 	var batch_center := viewport_to_screen * _batch.get_global_transform_with_canvas() * BATCH_LOCAL
 	var direct_pixels := _opaque_pixels(image, direct_center)
 	var batch_pixels := _opaque_pixels(image, batch_center)
 	var opaque_bounds := _opaque_bounds(image)
 	print(
+		(
 			"VISUAL_SMOKE size=%s bounds=%s centers=%s/%s direct=%d batch=%d"
-			% [image.get_size(), opaque_bounds, direct_center, batch_center, direct_pixels, batch_pixels]
+			% [
+				image.get_size(),
+				opaque_bounds,
+				direct_center,
+				batch_center,
+				direct_pixels,
+				batch_pixels
+			]
+		)
 	)
 	if direct_pixels < 100 or batch_pixels < 100:
 		image.save_png("user://runtime_visual_smoke_failure.png")
 		push_error(
+			(
 				"visual smoke failed: generated scene=%d pixels, decoration batch=%d pixels"
 				% [direct_pixels, batch_pixels]
+			)
 		)
 		get_tree().quit(1)
 		return
@@ -580,60 +980,120 @@ func _test_native_core() -> void:
 	var native := NativeCore.backend()
 	assert(native != null, "native smoke: GdashNative did not load")
 	assert(int(native.call(&"version")) >= 19, "native smoke: old kernel ABI")
-	var parsed_online: Dictionary = native.call(
+	var parsed_online: Dictionary = (
+		native
+		. call(
 			&"parse_online_level",
 			"kA2,0,kA4,0;1,1,2,30,3,30;1,8,2,60,3,30;",
+		)
 	)
-	assert(parsed_online.get("header", {}).get("kA2") == "0", "native smoke: online header parser failed")
-	assert(parsed_online.get("objects", []).size() == 2, "native smoke: online object parser failed")
-	assert(parsed_online.get("valid_objects", 0) == 2, "native smoke: online parser validity count failed")
-	assert(parsed_online.get("malformed_objects", 0) == 0, "native smoke: valid objects marked malformed")
-	assert(parsed_online.get("min_x", 0.0) == 30.0 and parsed_online.get("max_x", 0.0) == 60.0, "native smoke: online parser bounds failed")
-	assert(parsed_online.get("objects", [])[1].get("1") == "8", "native smoke: online parser lost source order")
+	assert(
+		parsed_online.get("header", {}).get("kA2") == "0",
+		"native smoke: online header parser failed"
+	)
+	assert(
+		parsed_online.get("objects", []).size() == 2, "native smoke: online object parser failed"
+	)
+	assert(
+		parsed_online.get("valid_objects", 0) == 2,
+		"native smoke: online parser validity count failed"
+	)
+	assert(
+		parsed_online.get("malformed_objects", 0) == 0,
+		"native smoke: valid objects marked malformed"
+	)
+	assert(
+		parsed_online.get("min_x", 0.0) == 30.0 and parsed_online.get("max_x", 0.0) == 60.0,
+		"native smoke: online parser bounds failed"
+	)
+	assert(
+		parsed_online.get("objects", [])[1].get("1") == "8",
+		"native smoke: online parser lost source order"
+	)
 	# Test SFX extraction and SFX trigger parsing in native:
-	var sfx_online: Dictionary = native.call(
+	var sfx_online: Dictionary = (
+		native
+		. call(
 			&"parse_online_level",
 			"kA2,0;1,3602,2,30,3,30,392,10000001,406,0.8;1,1,2,60,3,30;1,3602,2,90,3,30,392,10000002;",
+		)
 	)
 	var sfx_ids: PackedInt32Array = sfx_online.get("sfx_ids", PackedInt32Array())
-	assert(sfx_ids.size() == 2 and sfx_ids[0] == 10000001 and sfx_ids[1] == 10000002, "native smoke: SFX ID collection failed")
-	var direct_sfx_ids: PackedInt32Array = native.call(&"extract_level_sfx_ids", "kA2,0;1,3602,2,30,3,30,392,10000005;")
-	assert(direct_sfx_ids.size() == 1 and direct_sfx_ids[0] == 10000005, "native smoke: direct extract_level_sfx_ids failed")
+	assert(
+		sfx_ids.size() == 2 and sfx_ids[0] == 10000001 and sfx_ids[1] == 10000002,
+		"native smoke: SFX ID collection failed"
+	)
+	var direct_sfx_ids: PackedInt32Array = native.call(
+		&"extract_level_sfx_ids", "kA2,0;1,3602,2,30,3,30,392,10000005;"
+	)
+	assert(
+		direct_sfx_ids.size() == 1 and direct_sfx_ids[0] == 10000005,
+		"native smoke: direct extract_level_sfx_ids failed"
+	)
 	# Test proxy URL resolution, CORS error detection, and audio stream checking in native:
-	var resolved_proxy: String = native.call(&"resolve_proxy_url", "https://example.com/test", "https://api.codetabs.com/v1/proxy?quest=")
-	assert(resolved_proxy.begins_with("https://api.codetabs.com/v1/proxy?quest=https%3A%2F%2Fexample.com"), "native smoke: resolve_proxy_url codetabs failed")
+	var resolved_proxy: String = native.call(
+		&"resolve_proxy_url", "https://example.com/test", "https://api.codetabs.com/v1/proxy?quest="
+	)
+	assert(
+		resolved_proxy.begins_with(
+			"https://api.codetabs.com/v1/proxy?quest=https%3A%2F%2Fexample.com"
+		),
+		"native smoke: resolve_proxy_url codetabs failed"
+	)
 	var is_cors: bool = native.call(&"is_cors_error", 2, 0, true)
 	assert(is_cors, "native smoke: is_cors_error failed")
 	var ogg_bytes := PackedByteArray([0x4f, 0x67, 0x67, 0x53])
 	ogg_bytes.resize(64)
-	assert(bool(native.call(&"is_audio_stream", ogg_bytes, "ogg")), "native smoke: is_audio_stream OGG failed")
+	assert(
+		bool(native.call(&"is_audio_stream", ogg_bytes, "ogg")),
+		"native smoke: is_audio_stream OGG failed"
+	)
 	# Empty trigger values must remain attached to their key. Dropping empties
 	# shifts the rest of the comma stream and can turn duration/group/activation
 	# fields into unrelated values.
 	var lossless_pairs: Dictionary = native.call(&"parse_gd_pairs", "1,901,51,,10,2.5,56,1")
-	assert(lossless_pairs == {"1": "901", "51": "", "10": "2.5", "56": "1"}, "native smoke: empty GD value shifted trigger properties")
-	var malformed: Dictionary = native.call(&"parse_online_level", "kA2,0;1,901,2,nope,3,30;1,35,2,60,3,30,51;")
+	assert(
+		lossless_pairs == {"1": "901", "51": "", "10": "2.5", "56": "1"},
+		"native smoke: empty GD value shifted trigger properties"
+	)
+	var malformed: Dictionary = native.call(
+		&"parse_online_level", "kA2,0;1,901,2,nope,3,30;1,35,2,60,3,30,51;"
+	)
 	assert(int(malformed.get("valid_objects", 0)) == 0, "native smoke: malformed objects accepted")
-	assert(int(malformed.get("invalid_numeric_objects", 0)) == 1, "native smoke: invalid numeric diagnostic missing")
-	assert(int(malformed.get("odd_pair_chunks", 0)) == 1, "native smoke: odd trigger pair diagnostic missing")
+	assert(
+		int(malformed.get("invalid_numeric_objects", 0)) == 1,
+		"native smoke: invalid numeric diagnostic missing"
+	)
+	assert(
+		int(malformed.get("odd_pair_chunks", 0)) == 1,
+		"native smoke: odd trigger pair diagnostic missing"
+	)
 	# Exercise the actual typed GDScript/C++ boundary, not only the C++ return
 	# value. Native dictionaries do not carry GDScript's typed Dictionary
 	# metadata, so the converter must accept them without a typed assignment.
 	var conversion_report := GMDConverter.ImportReport.new()
-	var converted := GMDConverter.import_online_level_string(
+	var converted := (
+		GMDConverter
+		. import_online_level_string(
 			"kA2,0,kA4,0,kA13,1.75;1,1,2,30,3,30;1,8,2,60,3,30;",
 			"Native conversion smoke",
 			conversion_report,
+		)
 	)
 	assert(conversion_report.imported == 2, "native smoke: converter rejected native dictionaries")
 	var converted_objects: Array = _imported_entries(converted)
 	assert(converted_objects.size() == 2, "native smoke: online conversion produced an empty level")
 	for static_data: Dictionary in converted_objects:
-		assert(not static_data.get("native_static_art", {}).is_empty(), "native smoke: static gameplay art was not packed")
+		assert(
+			not static_data.get("native_static_art", {}).is_empty(),
+			"native smoke: static gameplay art was not packed"
+		)
 	var static_job: Object = ClassDB.instantiate(&"NativeLevelBuildJob")
 	static_job.call(&"initialize", converted, false)
 	static_job.call(&"step", 1000)
-	assert(bool(static_job.call(&"is_finished")), "native smoke: packed static build did not finish")
+	assert(
+		bool(static_job.call(&"is_finished")), "native smoke: packed static build did not finish"
+	)
 	var static_level := static_job.call(&"get_level") as Level
 	var static_layer := static_level.layers[0] as Layer
 	var found_static_batch := false
@@ -641,26 +1101,42 @@ func _test_native_core() -> void:
 		if built_child is DecorationBatch:
 			found_static_batch = true
 		elif built_child is GDObject:
-			assert(built_child.get_node_or_null(^"Base") == null, "native smoke: duplicate static Sprite2D tree retained")
+			assert(
+				built_child.get_node_or_null(^"Base") == null,
+				"native smoke: duplicate static Sprite2D tree retained"
+			)
 	assert(found_static_batch, "native smoke: packed static artwork batch missing")
 	LevelPhysics.rebuild(static_level)
 	for built_child: Node in static_layer.get_children():
 		assert(built_child is not GDObject, "native smoke: collision-only static root retained")
 	var physics_container := static_level.get_node_or_null(LevelPhysics.CONTAINER_NAME)
-	assert(physics_container != null and physics_container.get_child_count() > 0, "native smoke: shared static collision missing")
+	assert(
+		physics_container != null and physics_container.get_child_count() > 0,
+		"native smoke: shared static collision missing"
+	)
 	static_level.free()
-	assert(is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75), "native smoke: song offset was dropped")
+	assert(
+		is_equal_approx(float(converted.get("song_start_time", 0.0)), 1.75),
+		"native smoke: song offset was dropped"
+	)
 	# Every 2.2 trigger ID must survive import. Dedicated families retain their
 	# component scenes in editor/fallback builds; with the native library
 	# available, effect families (and the generic shell) import as packed C++
 	# records so a 5000-trigger level builds no trigger nodes at all.
 	var trigger_chunks := PackedStringArray(["kA2,0,kA4,0"])
 	for trigger_id: int in GMDObjects.TRIGGER_IDS:
-		trigger_chunks.append("1,%d,2,%d,3,30,62,1,57,7" % [trigger_id, 30 + trigger_chunks.size() * 30])
+		trigger_chunks.append(
+			"1,%d,2,%d,3,30,62,1,57,7" % [trigger_id, 30 + trigger_chunks.size() * 30]
+		)
 	var trigger_report := GMDConverter.ImportReport.new()
-	var trigger_level := GMDConverter.import_online_level_string(";".join(trigger_chunks) + ";", "2.2 trigger inventory", trigger_report)
+	var trigger_level := GMDConverter.import_online_level_string(
+		";".join(trigger_chunks) + ";", "2.2 trigger inventory", trigger_report
+	)
 	var trigger_entries: Array = _imported_entries(trigger_level)
-	assert(trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(), "native smoke: one or more 2.2 trigger IDs were dropped")
+	assert(
+		trigger_entries.size() == GMDObjects.TRIGGER_IDS.size(),
+		"native smoke: one or more 2.2 trigger IDs were dropped"
+	)
 	var native_import := NativeCore.available() and not Editor.in_editor
 	_assert_packed_trigger_table(trigger_level, native_import)
 	for trigger_data: Dictionary in trigger_entries:
@@ -669,15 +1145,31 @@ func _test_native_core() -> void:
 		# end-level trigger, which needs no component data, and the generic
 		# shell in editor/fallback builds). A trigger must be one or the
 		# other.
-		var packed: bool = trigger_data.has("gd_trigger_flags") and trigger_data.has("gd_properties")
-		assert(packed or not str(trigger_data.get("scene_file_path", "")).is_empty(),
-			"native smoke: trigger neither packed as a record nor backed by a scene")
-		if native_import and (int(trigger_data.get("gd_object_id", 0)) in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS or not GMDObjects.MAP.has(int(trigger_data.get("gd_object_id", 0)))):
+		var packed: bool = (
+			trigger_data.has("gd_trigger_flags") and trigger_data.has("gd_properties")
+		)
+		assert(
+			packed or not str(trigger_data.get("scene_file_path", "")).is_empty(),
+			"native smoke: trigger neither packed as a record nor backed by a scene"
+		)
+		if (
+			native_import
+			and (
+				int(trigger_data.get("gd_object_id", 0)) in GMDObjects.NATIVE_EFFECT_TRIGGER_IDS
+				or not GMDObjects.MAP.has(int(trigger_data.get("gd_object_id", 0)))
+			)
+		):
 			# Effect families and generic families pack as C++ records with no
 			# scene and no component data; scene-backed families outside the
 			# native set (camera static, edge, end level) keep their components.
-			assert(bool(trigger_data.get("native_only_trigger", false)), "native smoke: runtime import must pack effect triggers as records")
-			assert(not trigger_data.has("components"), "native smoke: packed records must not carry component data")
+			assert(
+				bool(trigger_data.get("native_only_trigger", false)),
+				"native smoke: runtime import must pack effect triggers as records"
+			)
+			assert(
+				not trigger_data.has("components"),
+				"native smoke: packed records must not carry component data"
+			)
 	# Online import of the 2.1 pulse/follow vocabulary (GD 2.11
 	# EffectGameObject::customObjectSetup cases 1006/1347): an HSV pulse and a
 	# Follow are executable on both paths, as is the group pulse (key 52 = 1),
@@ -685,46 +1177,76 @@ func _test_native_core() -> void:
 	# parse_online_level.
 	var mode_report := GMDConverter.ImportReport.new()
 	var mode_level := GMDConverter.import_online_level_string(
-		"kA2,0,kA4,0;1,1006,2,30,3,30,51,6,48,1,50,3,49,30a1a1a0a0,45,0.1,47,0.1;"
-		+ "1,1006,2,60,3,30,51,6,52,1,45,0.1,47,0.1;"
-		+ "1,1347,2,90,3,30,51,7,71,8,72,0.5,73,1,10,2;",
-		"pulse/follow modes", mode_report)
+		(
+			"kA2,0,kA4,0;1,1006,2,30,3,30,51,6,48,1,50,3,49,30a1a1a0a0,45,0.1,47,0.1;"
+			+ "1,1006,2,60,3,30,51,6,52,1,45,0.1,47,0.1;"
+			+ "1,1347,2,90,3,30,51,7,71,8,72,0.5,73,1,10,2;"
+		),
+		"pulse/follow modes",
+		mode_report
+	)
 	var mode_entries: Array = _imported_entries(mode_level)
 	assert(mode_entries.size() == 3, "native smoke: online pulse/follow triggers were dropped")
 	assert(not mode_report.inert_trigger_ids.has(1006), "native smoke: no pulse mode may be inert")
 	var pulse_tint := Color(0.5, 0.25, 1.0)
 	var pulse_factor: Color = GroupPulse.self_modulate_for(pulse_tint, Color(1.0, 0.0, 0.5), 0.5)
-	assert(is_equal_approx(pulse_tint.r * pulse_factor.r, 0.75) and is_equal_approx(pulse_tint.g * pulse_factor.g, 0.125),
-		"group pulse: layer tint times factor must equal the lerp")
-	assert(GroupPulse.self_modulate_for(pulse_tint, Color.RED, 0.0) == Color.WHITE, "group pulse: weight 0 must release")
-	assert(not mode_report.inert_trigger_ids.has(1347), "native smoke: Follow must not be reported inert")
+	assert(
+		(
+			is_equal_approx(pulse_tint.r * pulse_factor.r, 0.75)
+			and is_equal_approx(pulse_tint.g * pulse_factor.g, 0.125)
+		),
+		"group pulse: layer tint times factor must equal the lerp"
+	)
+	assert(
+		GroupPulse.self_modulate_for(pulse_tint, Color.RED, 0.0) == Color.WHITE,
+		"group pulse: weight 0 must release"
+	)
+	assert(
+		not mode_report.inert_trigger_ids.has(1347),
+		"native smoke: Follow must not be reported inert"
+	)
 	for mode_data: Dictionary in mode_entries:
 		if int(mode_data.get("gd_object_id", 0)) == 1347:
 			var follow_props: Dictionary = mode_data.get("gd_properties", {})
-			assert(str(follow_props.get("72", "")) == "0.5" and str(follow_props.get("71", "")) == "8",
-				"native smoke: online parse lost the Follow keys 71/72")
+			assert(
+				str(follow_props.get("72", "")) == "0.5" and str(follow_props.get("71", "")) == "8",
+				"native smoke: online parse lost the Follow keys 71/72"
+			)
 	# Item triggers (GD 2.11 customObjectSetup cases 1611/1811/1817): Pickup,
 	# Count and Instant Count execute on both paths, so none is inert, and
 	# their item keys (80 item, 77 count, 104 multi) survive the online parse.
 	var item_report := GMDConverter.ImportReport.new()
 	var item_level := GMDConverter.import_online_level_string(
-		"kA2,0,kA4,0;1,1817,2,30,3,30,80,4,77,2;"
-		+ "1,1611,2,60,3,30,51,9,80,4,77,2,56,1,104,1;"
-		+ "1,1811,2,90,3,30,51,9,80,4,77,1,88,1;",
-		"item triggers", item_report)
+		(
+			"kA2,0,kA4,0;1,1817,2,30,3,30,80,4,77,2;"
+			+ "1,1611,2,60,3,30,51,9,80,4,77,2,56,1,104,1;"
+			+ "1,1811,2,90,3,30,51,9,80,4,77,1,88,1;"
+		),
+		"item triggers",
+		item_report
+	)
 	var item_entries: Array = _imported_entries(item_level)
 	assert(item_entries.size() == 3, "native smoke: online item triggers were dropped")
 	for item_id: int in [1611, 1811, 1817]:
-		assert(not item_report.inert_trigger_ids.has(item_id), "native smoke: item trigger %d reported inert" % item_id)
+		assert(
+			not item_report.inert_trigger_ids.has(item_id),
+			"native smoke: item trigger %d reported inert" % item_id
+		)
 	for item_data: Dictionary in item_entries:
 		var item_props: Dictionary = item_data.get("gd_properties", {})
 		assert(str(item_props.get("80", "")) == "4", "native smoke: online parse lost item key 80")
 		if int(item_data.get("gd_object_id", 0)) == 1611:
-			assert(str(item_props.get("104", "")) == "1", "native smoke: online parse lost Count key 104")
+			assert(
+				str(item_props.get("104", "")) == "1",
+				"native smoke: online parse lost Count key 104"
+			)
 	ToggleComponent.reset_items()
 	ToggleComponent.change_item(4, 2, null)
 	ToggleComponent.change_item(4, -3, null)
-	assert(ToggleComponent.item_counts.get(4, 0) == -1, "native smoke: Pickup must add its count to the item")
+	assert(
+		ToggleComponent.item_counts.get(4, 0) == -1,
+		"native smoke: Pickup must add its count to the item"
+	)
 	ToggleComponent.reset_items()
 	assert(ToggleComponent.item_counts.is_empty(), "native smoke: restart must clear item counts")
 	# Animate (1585, GD 2.11 customObjectSetup keys 51/76) is executable on
@@ -732,36 +1254,126 @@ func _test_native_core() -> void:
 	# (tools/build_monster_animations.py) maps IDs, chains and binds sprites.
 	var animate_report := GMDConverter.ImportReport.new()
 	var animate_level := GMDConverter.import_online_level_string(
-		"kA2,0,kA4,0;1,1585,2,30,3,30,51,5,76,1;", "animate trigger", animate_report)
+		"kA2,0,kA4,0;1,1585,2,30,3,30,51,5,76,1;", "animate trigger", animate_report
+	)
 	var animate_entries: Array = _imported_entries(animate_level)
-	assert(animate_entries.size() == 1 and not animate_report.inert_trigger_ids.has(1585), "native smoke: Animate must not be inert")
-	assert(str(animate_entries[0].get("gd_properties", {}).get("76", "")) == "1", "native smoke: online parse lost Animate key 76")
-	assert(MonsterAnimations.monster_for(918) == "GJBeast01" and MonsterAnimations.monster_for(1584) == "GJBeast04", "monsters: object table missing")
-	assert(MonsterAnimations.name_for_id("GJBeast01", 1) == "attack01" and MonsterAnimations.name_for_id("GJBeast04", 8) == "sleep_end", "monsters: animation IDs")
-	assert(MonsterAnimations.name_for_id("GJBeast01", 9).is_empty(), "monsters: unknown animation ID must be ignored")
+	assert(
+		animate_entries.size() == 1 and not animate_report.inert_trigger_ids.has(1585),
+		"native smoke: Animate must not be inert"
+	)
+	assert(
+		str(animate_entries[0].get("gd_properties", {}).get("76", "")) == "1",
+		"native smoke: online parse lost Animate key 76"
+	)
+	assert(
+		(
+			MonsterAnimations.monster_for(918) == "GJBeast01"
+			and MonsterAnimations.monster_for(1584) == "GJBeast04"
+		),
+		"monsters: object table missing"
+	)
+	assert(
+		(
+			MonsterAnimations.name_for_id("GJBeast01", 1) == "attack01"
+			and MonsterAnimations.name_for_id("GJBeast04", 8) == "sleep_end"
+		),
+		"monsters: animation IDs"
+	)
+	assert(
+		MonsterAnimations.name_for_id("GJBeast01", 9).is_empty(),
+		"monsters: unknown animation ID must be ignored"
+	)
 	var beast: Dictionary = MonsterAnimations.monster("GJBeast01")
-	assert(str(beast.get("default", "")) == "bite" and beast.animations.bite.frames.size() == 16, "monsters: Big Beast bite clip")
-	assert(str(beast.animations.attack01.get("next", "")) == "attack01_loop", "monsters: attack01 chains into its loop")
+	assert(
+		str(beast.get("default", "")) == "bite" and beast.animations.bite.frames.size() == 16,
+		"monsters: Big Beast bite clip"
+	)
+	assert(
+		str(beast.animations.attack01.get("next", "")) == "attack01_loop",
+		"monsters: attack01 chains into its loop"
+	)
 	var bite_rest: Array = beast.animations.bite.frames[0]
-	assert(MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_02_glow_001.png", Vector2(0.225, -10.45)) == 0, "monsters: glow copy follows its base sprite")
-	assert(MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_03_001.png", Vector2(0.775, 11.5)) == 1, "monsters: overlay follows the sprite it sits on")
-	assert(MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_03_001.png", Vector2(33.5, 19.5)) == -1, "monsters: unrelated sprite stays static")
-	var rest_local := MonsterAnimations.sprite_local([ "x", 3.0, 6.0, 1.0, 1.0, 0.0, 1, 0, 0 ])
-	assert(rest_local.origin.is_equal_approx(Vector2(3.0, -6.0) * Constants.CELL_SIZE / GMDConverter.GD_CELL_SIZE) and rest_local.x.x < 0.0,
-		"monsters: sprite placement must match the loader's part transform (y up, flip mirrors)")
+	assert(
+		(
+			MonsterAnimations.bind_sprite(
+				bite_rest, "GJBeast01_02_glow_001.png", Vector2(0.225, -10.45)
+			)
+			== 0
+		),
+		"monsters: glow copy follows its base sprite"
+	)
+	assert(
+		MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_03_001.png", Vector2(0.775, 11.5)) == 1,
+		"monsters: overlay follows the sprite it sits on"
+	)
+	assert(
+		MonsterAnimations.bind_sprite(bite_rest, "GJBeast01_03_001.png", Vector2(33.5, 19.5)) == -1,
+		"monsters: unrelated sprite stays static"
+	)
+	var rest_local := MonsterAnimations.sprite_local(["x", 3.0, 6.0, 1.0, 1.0, 0.0, 1, 0, 0])
+	assert(
+		(
+			rest_local.origin.is_equal_approx(
+				Vector2(3.0, -6.0) * Constants.CELL_SIZE / GMDConverter.GD_CELL_SIZE
+			)
+			and rest_local.x.x < 0.0
+		),
+		"monsters: sprite placement must match the loader's part transform (y up, flip mirrors)"
+	)
 	# Cube vertical camera (HDanke GD Editor Docs, Default Camera Properties):
 	# symmetric 40-unit padding dead zone, 1/10 ease; 1/30 in fly modes.
 	var half_view: float = 675.0
 	var cube_padding: float = 40.0 / 30.0 * Constants.CELL_SIZE
-	assert(is_zero_approx(PlayerCamera.gd_vertical_step(cube_padding - 1.0, half_view, true, false, 1.0)), "camera: inside the 40-unit padding must not move")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(cube_padding + 100.0, half_view, true, false, 1.0), 10.0), "camera: below the padding eases 1/10")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(-cube_padding - 100.0, half_view, true, false, 1.0), -10.0), "camera: above the padding eases 1/10")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(cube_padding + 100.0, half_view, true, true, 1.0), 10.0), "camera: cube padding ignores gravity flip")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(300.0, half_view, false, false, 1.0), 10.0), "camera: fly modes ease 1/30")
+	assert(
+		is_zero_approx(
+			PlayerCamera.gd_vertical_step(cube_padding - 1.0, half_view, true, false, 1.0)
+		),
+		"camera: inside the 40-unit padding must not move"
+	)
+	assert(
+		is_equal_approx(
+			PlayerCamera.gd_vertical_step(cube_padding + 100.0, half_view, true, false, 1.0), 10.0
+		),
+		"camera: below the padding eases 1/10"
+	)
+	assert(
+		is_equal_approx(
+			PlayerCamera.gd_vertical_step(-cube_padding - 100.0, half_view, true, false, 1.0), -10.0
+		),
+		"camera: above the padding eases 1/10"
+	)
+	assert(
+		is_equal_approx(
+			PlayerCamera.gd_vertical_step(cube_padding + 100.0, half_view, true, true, 1.0), 10.0
+		),
+		"camera: cube padding ignores gravity flip"
+	)
+	assert(
+		is_equal_approx(PlayerCamera.gd_vertical_step(300.0, half_view, false, false, 1.0), 10.0),
+		"camera: fly modes ease 1/30"
+	)
 	var padding_half: float = PlayerCamera.gd_padding_deadzone_px(0.5)
-	assert(is_equal_approx(padding_half, 66.0 / 30.0 * Constants.CELL_SIZE), "camera mode: padding 0.5 is a 66-point dead zone")
-	assert(is_zero_approx(PlayerCamera.gd_vertical_step(padding_half - 1.0, half_view, true, false, 1.0, padding_half)), "camera mode: inside the padding dead zone holds")
-	assert(is_equal_approx(PlayerCamera.gd_vertical_step(padding_half + 100.0, half_view, true, false, 1.0, padding_half), 10.0), "camera mode: past the padding eases")
+	assert(
+		is_equal_approx(padding_half, 66.0 / 30.0 * Constants.CELL_SIZE),
+		"camera mode: padding 0.5 is a 66-point dead zone"
+	)
+	assert(
+		is_zero_approx(
+			PlayerCamera.gd_vertical_step(
+				padding_half - 1.0, half_view, true, false, 1.0, padding_half
+			)
+		),
+		"camera mode: inside the padding dead zone holds"
+	)
+	assert(
+		is_equal_approx(
+			PlayerCamera.gd_vertical_step(
+				padding_half + 100.0, half_view, true, false, 1.0, padding_half
+			),
+			10.0
+		),
+		"camera mode: past the padding eases"
+	)
 	# Colour triggers must keep their colour source: an explicit RGB, a copied
 	# channel (key 50, with the copy HSV of key 49 and the opacity copy of key
 	# 60), a player colour (keys 15/16), or the channel's own colour when the
@@ -770,42 +1382,120 @@ func _test_native_core() -> void:
 	# native runtime the source survives in the raw properties and the fade is
 	# executed by C++ (asserted further below against a live channel).
 	var color_report := GMDConverter.ImportReport.new()
-	var color_level := GMDConverter.import_online_level_string(
-		"kA2,0,kA4,0;1,899,2,30,3,30,23,4,7,10,8,200,9,30;1,899,2,60,3,30,23,4,50,7,49,90a-0.5a0a1a1,60,1;1,899,2,90,3,30,23,4,15,1;1,899,2,120,3,30,23,4,10,0.5,35,0.2;1,899,2,150,3,30,23,4,17,1;",
-		"Color trigger sources",
-		color_report,
+	var color_level := (
+		GMDConverter
+		. import_online_level_string(
+			"kA2,0,kA4,0;1,899,2,30,3,30,23,4,7,10,8,200,9,30;1,899,2,60,3,30,23,4,50,7,49,90a-0.5a0a1a1,60,1;1,899,2,90,3,30,23,4,15,1;1,899,2,120,3,30,23,4,10,0.5,35,0.2;1,899,2,150,3,30,23,4,17,1;",
+			"Color trigger sources",
+			color_report,
+		)
 	)
 	var color_entries: Array = _imported_entries(color_level)
 	assert(color_entries.size() == 5, "native smoke: colour triggers were dropped")
 	if native_import:
 		for entry: Dictionary in color_entries:
-			assert(bool(entry.get("native_only_trigger", false)), "native smoke: colour trigger was not packed at runtime import")
-			assert(not entry.has("components"), "native smoke: packed colour trigger must not carry components")
+			assert(
+				bool(entry.get("native_only_trigger", false)),
+				"native smoke: colour trigger was not packed at runtime import"
+			)
+			assert(
+				not entry.has("components"),
+				"native smoke: packed colour trigger must not carry components"
+			)
 		var rgb_properties: Dictionary = color_entries[0].get("gd_properties", {})
-		assert(rgb_properties.get("7", "") == "10" and rgb_properties.get("8", "") == "200" and rgb_properties.get("9", "") == "30", "native smoke: colour trigger lost its explicit RGB")
+		assert(
+			(
+				rgb_properties.get("7", "") == "10"
+				and rgb_properties.get("8", "") == "200"
+				and rgb_properties.get("9", "") == "30"
+			),
+			"native smoke: colour trigger lost its explicit RGB"
+		)
 		var copy_properties: Dictionary = color_entries[1].get("gd_properties", {})
-		assert(copy_properties.get("50", "") == "7" and copy_properties.get("60", "") == "1" and copy_properties.get("49", "") == "90a-0.5a0a1a1",
-			"native smoke: copy colour trigger lost its source keys: %s" % [copy_properties])
+		assert(
+			(
+				copy_properties.get("50", "") == "7"
+				and copy_properties.get("60", "") == "1"
+				and copy_properties.get("49", "") == "90a-0.5a0a1a1"
+			),
+			"native smoke: copy colour trigger lost its source keys: %s" % [copy_properties]
+		)
 		var player_properties: Dictionary = color_entries[2].get("gd_properties", {})
-		assert(player_properties.get("15", "") == "1", "native smoke: player colour trigger lost its source")
+		assert(
+			player_properties.get("15", "") == "1",
+			"native smoke: player colour trigger lost its source"
+		)
 		var opacity_properties: Dictionary = color_entries[3].get("gd_properties", {})
-		assert(not opacity_properties.has("7") and not opacity_properties.has("8") and not opacity_properties.has("9"), "native smoke: opacity-only trigger must not carry a colour")
+		assert(
+			(
+				not opacity_properties.has("7")
+				and not opacity_properties.has("8")
+				and not opacity_properties.has("9")
+			),
+			"native smoke: opacity-only trigger must not carry a colour"
+		)
 		var blend_properties: Dictionary = color_entries[4].get("gd_properties", {})
-		assert(blend_properties.get("17", "") == "1", "native smoke: blending checkbox (key 17) was dropped from the colour trigger")
+		assert(
+			blend_properties.get("17", "") == "1",
+			"native smoke: blending checkbox (key 17) was dropped from the colour trigger"
+		)
 	else:
 		var color_sources := color_entries.map(
-			func(entry: Dictionary): return entry.get("components", {}).get("ColorChannelChangerComponent", {})
+			func(entry: Dictionary):
+				return entry.get("components", {}).get("ColorChannelChangerComponent", {})
 		)
-		assert(color_sources[0].get("color", Color.BLACK) == Color8(10, 200, 30), "native smoke: colour trigger lost its explicit RGB")
-		assert(int(color_sources[0].get("color_space", -1)) == ColorChannelChangerComponent.ColorSpace.SRGB, "native smoke: colour trigger must fade in sRGB")
-		assert(int(color_sources[1].get("source", -1)) == ColorChannelChangerComponent.ColorSource.COPY_CHANNEL, "native smoke: copy colour trigger lost its source")
-		assert(int(color_sources[1].get("copied_channel_id", 0)) == 7, "native smoke: copy colour trigger lost its channel")
-		assert(bool(color_sources[1].get("copy_opacity", false)), "native smoke: copy colour trigger lost its opacity copy")
-		assert(is_equal_approx(float(color_sources[1].get("copy_saturation", 0.0)), -0.5), "native smoke: copy colour trigger lost its HSV adjustment")
-		assert(int(color_sources[2].get("source", -1)) == ColorChannelChangerComponent.ColorSource.PLAYER_1, "native smoke: player colour trigger lost its source")
-		assert(int(color_sources[3].get("source", -1)) == ColorChannelChangerComponent.ColorSource.KEEP, "native smoke: opacity-only trigger must keep the channel colour")
-		assert(not color_sources[3].has("color"), "native smoke: opacity-only trigger must not carry a colour")
-		assert(bool(color_sources[4].get("blending", false)), "native smoke: blending checkbox was lost in trigger conversion")
+		assert(
+			color_sources[0].get("color", Color.BLACK) == Color8(10, 200, 30),
+			"native smoke: colour trigger lost its explicit RGB"
+		)
+		assert(
+			(
+				int(color_sources[0].get("color_space", -1))
+				== ColorChannelChangerComponent.ColorSpace.SRGB
+			),
+			"native smoke: colour trigger must fade in sRGB"
+		)
+		assert(
+			(
+				int(color_sources[1].get("source", -1))
+				== ColorChannelChangerComponent.ColorSource.COPY_CHANNEL
+			),
+			"native smoke: copy colour trigger lost its source"
+		)
+		assert(
+			int(color_sources[1].get("copied_channel_id", 0)) == 7,
+			"native smoke: copy colour trigger lost its channel"
+		)
+		assert(
+			bool(color_sources[1].get("copy_opacity", false)),
+			"native smoke: copy colour trigger lost its opacity copy"
+		)
+		assert(
+			is_equal_approx(float(color_sources[1].get("copy_saturation", 0.0)), -0.5),
+			"native smoke: copy colour trigger lost its HSV adjustment"
+		)
+		assert(
+			(
+				int(color_sources[2].get("source", -1))
+				== ColorChannelChangerComponent.ColorSource.PLAYER_1
+			),
+			"native smoke: player colour trigger lost its source"
+		)
+		assert(
+			(
+				int(color_sources[3].get("source", -1))
+				== ColorChannelChangerComponent.ColorSource.KEEP
+			),
+			"native smoke: opacity-only trigger must keep the channel colour"
+		)
+		assert(
+			not color_sources[3].has("color"),
+			"native smoke: opacity-only trigger must not carry a colour"
+		)
+		assert(
+			bool(color_sources[4].get("blending", false)),
+			"native smoke: blending checkbox was lost in trigger conversion"
+		)
 	# kS38 copy entries keep their link instead of being flattened to a
 	# literal: the runtime channel carries the source id, the copy HSV of key
 	# 10 and the opacity-copy flag of key 17, so it can follow the source live
@@ -814,23 +1504,34 @@ func _test_native_core() -> void:
 	# channel before key 23 existed) import like any colour trigger, and a
 	# bare 899 without key 23 falls back to channel 1.
 	var link_report := GMDConverter.ImportReport.new()
-	var link_level := GMDConverter.import_online_level_string(
-		"kA2,0,kA4,0,kS38,1_0_2_0_3_255_6_5_7_1|6_10_7_1_9_5_10_180a1a1a0a0|6_11_7_1_9_10|6_12_7_0.25_9_5_17_1;1,1,2,30,3,30,21,5;1,1,2,60,3,30,21,10;1,1,2,90,3,30,21,11;1,1,2,120,3,30,21,12;1,30,2,30,3,150;1,899,2,30,3,180,7,255,8,255,9,255;",
-		"Copy channel import",
-		link_report,
+	var link_level := (
+		GMDConverter
+		. import_online_level_string(
+			"kA2,0,kA4,0,kS38,1_0_2_0_3_255_6_5_7_1|6_10_7_1_9_5_10_180a1a1a0a0|6_11_7_1_9_10|6_12_7_0.25_9_5_17_1;1,1,2,30,3,30,21,5;1,1,2,60,3,30,21,10;1,1,2,90,3,30,21,11;1,1,2,120,3,30,21,12;1,30,2,30,3,150;1,899,2,30,3,180,7,255,8,255,9,255;",
+			"Copy channel import",
+			link_report,
+		)
 	)
 	var link_channels: Array = link_level.get("color_channels", [])
 	var channel_data_by_group := {}
 	for entry: Dictionary in link_channels:
 		channel_data_by_group[entry.get("associated_group", "")] = entry
-	assert(int(channel_data_by_group.get("c_10", {}).get("copied_channel_id", 0)) == 5,
-			"native smoke: kS38 copy link was not kept on the runtime channel")
-	assert(is_equal_approx(float(channel_data_by_group.get("c_10", {}).get("copy_hue", 0.0)), 0.5),
-			"native smoke: kS38 copy HSV was not kept on the runtime channel")
-	assert(int(channel_data_by_group.get("c_11", {}).get("copied_channel_id", 0)) == 10,
-			"native smoke: copy chain link was not kept on the runtime channel")
-	assert(bool(channel_data_by_group.get("c_12", {}).get("copy_opacity", false)),
-			"native smoke: kS38 opacity-copy flag was not kept on the runtime channel")
+	assert(
+		int(channel_data_by_group.get("c_10", {}).get("copied_channel_id", 0)) == 5,
+		"native smoke: kS38 copy link was not kept on the runtime channel"
+	)
+	assert(
+		is_equal_approx(float(channel_data_by_group.get("c_10", {}).get("copy_hue", 0.0)), 0.5),
+		"native smoke: kS38 copy HSV was not kept on the runtime channel"
+	)
+	assert(
+		int(channel_data_by_group.get("c_11", {}).get("copied_channel_id", 0)) == 10,
+		"native smoke: copy chain link was not kept on the runtime channel"
+	)
+	assert(
+		bool(channel_data_by_group.get("c_12", {}).get("copy_opacity", false)),
+		"native smoke: kS38 opacity-copy flag was not kept on the runtime channel"
+	)
 	var link_entries: Array = _imported_entries(link_level)
 	assert(link_entries.size() == 6, "native smoke: copy import dropped objects or triggers")
 	var legacy_trigger: Dictionary = {}
@@ -843,52 +1544,101 @@ func _test_native_core() -> void:
 	assert(not legacy_trigger.is_empty(), "native smoke: legacy colour trigger was dropped")
 	assert(not bare_trigger.is_empty(), "native smoke: bare colour trigger was dropped")
 	if native_import:
-		assert(bool(legacy_trigger.get("native_only_trigger", false)),
-				"native smoke: legacy colour trigger was not packed as a record")
+		assert(
+			bool(legacy_trigger.get("native_only_trigger", false)),
+			"native smoke: legacy colour trigger was not packed as a record"
+		)
 	else:
-		var legacy_target: Dictionary = legacy_trigger.get("components", {}).get("TargetColorChannelComponent", {})
-		assert(int(legacy_target.get("target_level_channel", -1)) == Constants.SpecialColorChannel.GROUND,
-				"native smoke: legacy ground trigger did not target the ground colour")
-		var bare_target: Dictionary = bare_trigger.get("components", {}).get("TargetColorChannelComponent", {})
-		assert(bare_target.get("target_color_channel", "") == Constants.COLOR_CHANNEL_GROUP_PREFIX + "1",
-				"native smoke: bare colour trigger did not fall back to channel 1")
+		var legacy_target: Dictionary = legacy_trigger.get("components", {}).get(
+			"TargetColorChannelComponent", {}
+		)
+		assert(
+			(
+				int(legacy_target.get("target_level_channel", -1))
+				== Constants.SpecialColorChannel.GROUND
+			),
+			"native smoke: legacy ground trigger did not target the ground colour"
+		)
+		var bare_target: Dictionary = bare_trigger.get("components", {}).get(
+			"TargetColorChannelComponent", {}
+		)
+		assert(
+			(
+				bare_target.get("target_color_channel", "")
+				== Constants.COLOR_CHANNEL_GROUP_PREFIX + "1"
+			),
+			"native smoke: bare colour trigger did not fall back to channel 1"
+		)
 	# Imported pads keep their hand-authored Area2D behaviour but replace the
 	# full-cell placeholder image with GD's tightly trimmed atlas sprite. Their
 	# hitbox must follow that sprite to the object origin.
 	var pad_report := GMDConverter.ImportReport.new()
-	var pad_level := GMDConverter.import_online_level_string(
+	var pad_level := (
+		GMDConverter
+		. import_online_level_string(
 			"kA2,0,kA4,0;1,35,2,30,3,30;1,67,2,60,3,30;",
 			"Native pad smoke",
 			pad_report,
+		)
 	)
 	var pad_entries: Array = _imported_entries(pad_level)
 	assert(pad_entries.size() == 2, "native smoke: jump/gravity pads were not converted")
 	for pad_data: Dictionary in pad_entries:
 		var pad := Level.instantiate_object_from_data(pad_data) as PadInteractable
 		assert(pad != null, "native smoke: imported pad lost interactive scene")
-		assert(pad.get_node_or_null(^"JumpBoostComponent") != null, "native smoke: imported pad lost jump behavior")
-		assert((pad.get_node(^"Hitbox") as CollisionShape2D).position.y == 0.0, "native smoke: imported pad hitbox does not match GD art")
+		assert(
+			pad.get_node_or_null(^"JumpBoostComponent") != null,
+			"native smoke: imported pad lost jump behavior"
+		)
+		assert(
+			(pad.get_node(^"Hitbox") as CollisionShape2D).position.y == 0.0,
+			"native smoke: imported pad hitbox does not match GD art"
+		)
 		pad.free()
 	# GD stores a blue teleport portal (747) alone: the orange exit exists only
 	# as TeleportPortalObject::m_teleportYOffset (key 54). The import must
 	# create the exit and target the portal at it - without it every portal
 	# fired with "target UNSET" and teleported nothing.
-	var portal_level := GMDConverter.import_online_level_string(
+	var portal_level := (
+		GMDConverter
+		. import_online_level_string(
 			"kA2,0;1,747,2,300,3,105,54,90;",
 			"Teleport portal smoke",
 			GMDConverter.ImportReport.new(),
 		)
+	)
 	var portal_entries: Array = _imported_entries(portal_level)
-	assert(portal_entries.size() == 2, "native smoke: teleport portal import did not create its exit")
+	assert(
+		portal_entries.size() == 2, "native smoke: teleport portal import did not create its exit"
+	)
 	var portal_data: Dictionary = portal_entries[0]
 	var exit_data: Dictionary = portal_entries[1]
-	assert(str(exit_data.scene_file_path).ends_with("TeleportalOut.tscn"), "native smoke: teleport exit has the wrong scene")
-	assert(is_equal_approx((portal_data.transform as Transform2D).origin.y - (exit_data.transform as Transform2D).origin.y, 90.0 / 30.0 * Constants.CELL_SIZE),
-		"native smoke: teleport exit is not key 54 above the portal")
-	assert(is_equal_approx((portal_data.transform as Transform2D).origin.x, (exit_data.transform as Transform2D).origin.x),
-		"native smoke: teleport exit left the portal's X")
+	assert(
+		str(exit_data.scene_file_path).ends_with("TeleportalOut.tscn"),
+		"native smoke: teleport exit has the wrong scene"
+	)
+	assert(
+		is_equal_approx(
+			(
+				(portal_data.transform as Transform2D).origin.y
+				- (exit_data.transform as Transform2D).origin.y
+			),
+			90.0 / 30.0 * Constants.CELL_SIZE
+		),
+		"native smoke: teleport exit is not key 54 above the portal"
+	)
+	assert(
+		is_equal_approx(
+			(portal_data.transform as Transform2D).origin.x,
+			(exit_data.transform as Transform2D).origin.x
+		),
+		"native smoke: teleport exit left the portal's X"
+	)
 	var portal_target: NodePath = portal_data.components.TargetObjectComponent.target
-	assert(bool(portal_data.components.TeleportComponent.keep_player_x), "native smoke: teleport portal must keep the player's X (GD 747 rule)")
+	assert(
+		bool(portal_data.components.TeleportComponent.keep_player_x),
+		"native smoke: teleport portal must keep the player's X (GD 747 rule)"
+	)
 	var portal_holder := Level.new()
 	var portal_layer := Layer.new()
 	portal_layer.name = GMDConverter.IMPORTED_LAYER_NAME
@@ -896,34 +1646,79 @@ func _test_native_core() -> void:
 	var exit_node := Level.instantiate_object_from_data(exit_data, portal_holder)
 	assert(exit_node != null, "native smoke: teleport exit did not instantiate")
 	portal_layer.add_child(exit_node)
-	assert(portal_holder.get_node_or_null(portal_target) == exit_node, "native smoke: teleport target does not resolve to the exit")
+	assert(
+		portal_holder.get_node_or_null(portal_target) == exit_node,
+		"native smoke: teleport target does not resolve to the exit"
+	)
 	portal_holder.free()
 	# Missing key 54 is m_teleportYOffset = 0 (TeleportPortalObject ctor), and
 	# the 2.2 options and unlinked 2902 / orb 3027 targets reach the component.
-	var options_level := GMDConverter.import_online_level_string(
+	var options_level := (
+		GMDConverter
+		. import_online_level_string(
 			"kA2,0;1,747,2,300,3,105,351,1,352,1,354,2,345,1,346,8,464,1;1,2902,2,600,3,105,51,7,353,1;1,3027,2,900,3,105,51,9;",
 			"Teleport options smoke",
 			GMDConverter.ImportReport.new(),
 		)
+	)
 	var options_entries: Array = _imported_entries(options_level)
-	assert(options_entries.size() == 4, "native smoke: teleport options import produced the wrong objects")
+	assert(
+		options_entries.size() == 4,
+		"native smoke: teleport options import produced the wrong objects"
+	)
 	var default_portal: Dictionary = options_entries[0]
-	assert(is_equal_approx((default_portal.transform as Transform2D).origin.y, (options_entries[1].transform as Transform2D).origin.y),
-		"native smoke: a 747 without key 54 must exit at offset 0")
+	assert(
+		is_equal_approx(
+			(default_portal.transform as Transform2D).origin.y,
+			(options_entries[1].transform as Transform2D).origin.y
+		),
+		"native smoke: a 747 without key 54 must exit at offset 0"
+	)
 	var portal_options: Dictionary = default_portal.components.TeleportComponent
-	assert(bool(portal_options.save_offset) and bool(portal_options.ignore_x) and int(portal_options.gravity_mode) == 2,
-		"native smoke: teleport keys 351/352/354 were dropped")
-	assert(bool(portal_options.static_force_enabled) and is_equal_approx(float(portal_options.static_force), 8.0) and bool(portal_options.instant_camera),
-		"native smoke: teleport keys 345/346/464 were dropped")
-	assert(not portal_options.has("target_group"), "native smoke: a linked 747 must not target a group")
+	assert(
+		(
+			bool(portal_options.save_offset)
+			and bool(portal_options.ignore_x)
+			and int(portal_options.gravity_mode) == 2
+		),
+		"native smoke: teleport keys 351/352/354 were dropped"
+	)
+	assert(
+		(
+			bool(portal_options.static_force_enabled)
+			and is_equal_approx(float(portal_options.static_force), 8.0)
+			and bool(portal_options.instant_camera)
+		),
+		"native smoke: teleport keys 345/346/464 were dropped"
+	)
+	assert(
+		not portal_options.has("target_group"), "native smoke: a linked 747 must not target a group"
+	)
 	var unlinked: Dictionary = options_entries[2].components.TeleportComponent
-	assert(str(unlinked.target_group) == Constants.GROUP_PREFIX + "7" and bool(unlinked.ignore_y), "native smoke: unlinked 2902 lost its key 51 target")
-	assert(str(options_entries[3].components.TeleportComponent.target_group) == Constants.GROUP_PREFIX + "9", "native smoke: teleport orb lost its key 51 target")
-	var landed := GDTeleport.destination(Vector2(100, 50), Vector2(110, 60), Vector2(500, -200), true, true, false, false)
-	assert(landed.is_equal_approx(Vector2(90, -210)), "native smoke: GDTeleport save-offset twin differs from the C++ helper")
+	assert(
+		str(unlinked.target_group) == Constants.GROUP_PREFIX + "7" and bool(unlinked.ignore_y),
+		"native smoke: unlinked 2902 lost its key 51 target"
+	)
+	assert(
+		(
+			str(options_entries[3].components.TeleportComponent.target_group)
+			== Constants.GROUP_PREFIX + "9"
+		),
+		"native smoke: teleport orb lost its key 51 target"
+	)
+	var landed := GDTeleport.destination(
+		Vector2(100, 50), Vector2(110, 60), Vector2(500, -200), true, true, false, false
+	)
+	assert(
+		landed.is_equal_approx(Vector2(90, -210)),
+		"native smoke: GDTeleport save-offset twin differs from the C++ helper"
+	)
 	_assert_level_end()
 	assert(ClassDB.class_exists(&"NativeTriggerRuntime"), "native smoke: trigger scheduler missing")
-	assert(ClassDB.class_exists(&"NativeDecorationCullWorker"), "native smoke: worker-pool culler missing")
+	assert(
+		ClassDB.class_exists(&"NativeDecorationCullWorker"),
+		"native smoke: worker-pool culler missing"
+	)
 	assert(ClassDB.class_exists(&"NativeLevelRuntime"), "native smoke: level runtime missing")
 	_level_runtime = ClassDB.instantiate(&"NativeLevelRuntime") as Node
 	assert(_level_runtime != null, "native smoke: NativeLevelRuntime did not instantiate")
@@ -939,7 +1734,9 @@ func _test_native_core() -> void:
 	trigger_b.connect(&"interacted", func(_player: Object): fired.append(2))
 	# Register out of X order. The native spatial index must activate by X and
 	# source order, and a normal trigger may only activate once.
-	scheduler.call(&"register_trigger", trigger_b, 20.0, 0.0, 0, 2, PackedStringArray(["g_7"]), 0, {})
+	scheduler.call(
+		&"register_trigger", trigger_b, 20.0, 0.0, 0, 2, PackedStringArray(["g_7"]), 0, {}
+	)
 	scheduler.call(&"register_trigger", trigger_a, 10.0, 0.0, 0, 1, PackedStringArray(), 0, {})
 	scheduler.call(&"finalize")
 	scheduler.call(&"advance", scheduler_player, 0.0, 30.0)
@@ -957,13 +1754,21 @@ func _test_native_core() -> void:
 	scheduler.call(&"tick", 0.05)
 	assert(fired == [2], "native smoke: delayed spawn group did not fire")
 	var trigger_state: Dictionary = scheduler.call(&"snapshot")
-	assert(trigger_state.get("active", PackedByteArray()).size() == 2, "native smoke: trigger checkpoint state")
+	assert(
+		trigger_state.get("active", PackedByteArray()).size() == 2,
+		"native smoke: trigger checkpoint state"
+	)
 	var packed_scheduler: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
-	packed_scheduler.call(&"register_packed_trigger", 12.0, 0.0, 0, 0, PackedStringArray(["g_9"]), 2904, {"1": "2904"})
+	packed_scheduler.call(
+		&"register_packed_trigger", 12.0, 0.0, 0, 0, PackedStringArray(["g_9"]), 2904, {"1": "2904"}
+	)
 	packed_scheduler.call(&"finalize")
 	packed_scheduler.call(&"advance", scheduler_player, 0.0, 20.0)
 	var packed_state: Dictionary = packed_scheduler.call(&"snapshot")
-	assert(packed_state.get("active", PackedByteArray()) == PackedByteArray([1]), "native smoke: node-free trigger record")
+	assert(
+		packed_state.get("active", PackedByteArray()) == PackedByteArray([1]),
+		"native smoke: node-free trigger record"
+	)
 	trigger_a.free()
 	trigger_b.free()
 	scheduler_player.free()
@@ -1010,37 +1815,127 @@ func _test_native_core() -> void:
 	effect_level.add_child(effect_player)
 	# 901 Move: 60 units right, 30 units up over 1s. 30 GD units = 128 px,
 	# with +Y pointing down in Godot: the full offset is (256, -128).
-	effect_runtime.call(&"register_packed_trigger", 50.0, 0.0, 0, 0, PackedStringArray(), 901,
-		{"1": "901", "51": "3", "28": "60", "29": "30", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		50.0,
+		0.0,
+		0,
+		0,
+		PackedStringArray(),
+		901,
+		{"1": "901", "51": "3", "28": "60", "29": "30", "10": "1.0"}
+	)
 	# 899 Colour: fade channel c_5 to an explicit RGB, plus its opacity.
-	effect_runtime.call(&"register_packed_trigger", 60.0, 0.0, 0, 1, PackedStringArray(), 899,
-		{"1": "899", "23": "5", "7": "10", "8": "200", "9": "30", "35": "0.5", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		60.0,
+		0.0,
+		0,
+		1,
+		PackedStringArray(),
+		899,
+		{"1": "899", "23": "5", "7": "10", "8": "200", "9": "30", "35": "0.5", "10": "1.0"}
+	)
 	# 899 Colour with the Blending checkbox (key 17): flips channel c_5
 	# additive the moment it fires. Effect levels build their glow out of
 	# these flips, so dropping the key leaves everything past the intro unlit.
-	effect_runtime.call(&"register_packed_trigger", 65.0, 0.0, 0, 7, PackedStringArray(), 899,
-		{"1": "899", "23": "5", "17": "1", "10": "0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		65.0,
+		0.0,
+		0,
+		7,
+		PackedStringArray(),
+		899,
+		{"1": "899", "23": "5", "17": "1", "10": "0"}
+	)
 	# 1006 Pulse: 0.5s fade in, 0.5s fade out against its own channel.
-	effect_runtime.call(&"register_packed_trigger", 70.0, 0.0, 0, 2, PackedStringArray(), 1006,
-		{"1": "1006", "51": "6", "52": "0", "7": "255", "8": "0", "9": "0", "45": "0.5", "46": "0", "47": "0.5"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		70.0,
+		0.0,
+		0,
+		2,
+		PackedStringArray(),
+		1006,
+		{
+			"1": "1006",
+			"51": "6",
+			"52": "0",
+			"7": "255",
+			"8": "0",
+			"9": "0",
+			"45": "0.5",
+			"46": "0",
+			"47": "0.5"
+		}
+	)
 	# 1049 Toggle: hide group 8.
-	effect_runtime.call(&"register_packed_trigger", 80.0, 0.0, 0, 3, PackedStringArray(), 1049,
-		{"1": "1049", "51": "8", "56": "0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		80.0,
+		0.0,
+		0,
+		3,
+		PackedStringArray(),
+		1049,
+		{"1": "1049", "51": "8", "56": "0"}
+	)
 	# 1913 Zoom Camera: 50% (half of the 0.8 default) over 1s.
-	effect_runtime.call(&"register_packed_trigger", 85.0, 0.0, 0, 4, PackedStringArray(), 1913,
-		{"1": "1913", "371": "0.5", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		85.0,
+		0.0,
+		0,
+		4,
+		PackedStringArray(),
+		1913,
+		{"1": "1913", "371": "0.5", "10": "1.0"}
+	)
 	# 1935 Timewarp: 50% over 1s.
-	effect_runtime.call(&"register_packed_trigger", 90.0, 0.0, 0, 5, PackedStringArray(), 1935,
-		{"1": "1935", "120": "0.5", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		90.0,
+		0.0,
+		0,
+		5,
+		PackedStringArray(),
+		1935,
+		{"1": "1935", "120": "0.5", "10": "1.0"}
+	)
 	# 2919 Grayscale: fade to 1.0 over 1s.
-	effect_runtime.call(&"register_packed_trigger", 92.0, 0.0, 0, 8, PackedStringArray(), 2919,
-		{"1": "2919", "176": "1.0", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		92.0,
+		0.0,
+		0,
+		8,
+		PackedStringArray(),
+		2919,
+		{"1": "2919", "176": "1.0", "10": "1.0"}
+	)
 	# 2920 Sepia: fade to 0.8 over 1s.
-	effect_runtime.call(&"register_packed_trigger", 94.0, 0.0, 0, 9, PackedStringArray(), 2920,
-		{"1": "2920", "176": "0.8", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		94.0,
+		0.0,
+		0,
+		9,
+		PackedStringArray(),
+		2920,
+		{"1": "2920", "176": "0.8", "10": "1.0"}
+	)
 	# 2913 Lens Circle: fade to 1.0 over 1s.
-	effect_runtime.call(&"register_packed_trigger", 96.0, 0.0, 0, 10, PackedStringArray(), 2913,
-		{"1": "2913", "176": "1.0", "10": "1.0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		96.0,
+		0.0,
+		0,
+		10,
+		PackedStringArray(),
+		2913,
+		{"1": "2913", "176": "1.0", "10": "1.0"}
+	)
 	# 3613 UI Trigger: anchor group 20 to left edge relative to guide group 21
 	var ui_node := Node2D.new()
 	ui_node.position = Vector2(-1012.5, 0.0)
@@ -1052,66 +1947,174 @@ func _test_native_core() -> void:
 	ui_guide.add_to_group(&"g_21")
 	effect_level.add_child(ui_guide)
 	effect_runtime.call(&"set_group_members", &"g_21", [ui_guide])
-	effect_runtime.call(&"register_packed_trigger", 98.0, 0.0, 0, 11, PackedStringArray(), 3613,
-		{"1": "3613", "51": "20", "71": "21", "385": "3", "386": "0", "387": "0", "388": "0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		98.0,
+		0.0,
+		0,
+		11,
+		PackedStringArray(),
+		3613,
+		{"1": "3613", "51": "20", "71": "21", "385": "3", "386": "0", "387": "0", "388": "0"}
+	)
 	# 3602 SFX Trigger
-	effect_runtime.call(&"register_packed_trigger", 99.0, 0.0, 0, 12, PackedStringArray(), 3602,
-		{"1": "3602", "392": "10000001", "406": "0.8", "407": "1.2"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		99.0,
+		0.0,
+		0,
+		12,
+		PackedStringArray(),
+		3602,
+		{"1": "3602", "392": "10000001", "406": "0.8", "407": "1.2"}
+	)
 	# 1612 Hide Player has no fade at all.
-	effect_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"})
+	effect_runtime.call(
+		&"register_packed_trigger", 100.0, 0.0, 0, 6, PackedStringArray(), 1612, {"1": "1612"}
+	)
 	effect_runtime.call(&"finalize")
 	var expected_anchor: Vector2 = effect_runtime.call(
 		&"compute_ui_anchor",
-		Vector2(-1012.5, 0.0), 3, 0, false, false,
-		effect_camera.get_viewport().get_visible_rect().size, 0.8)
+		Vector2(-1012.5, 0.0),
+		3,
+		0,
+		false,
+		false,
+		effect_camera.get_viewport().get_visible_rect().size,
+		0.8
+	)
 	var static_1080p: Vector2 = effect_runtime.call(
 		&"compute_ui_anchor",
-		Vector2(-1012.5, 0.0), 3, 0, false, false,
-		Vector2(1920.0, 1080.0), 0.8)
+		Vector2(-1012.5, 0.0),
+		3,
+		0,
+		false,
+		false,
+		Vector2(1920.0, 1080.0),
+		0.8
+	)
 	assert(is_equal_approx(static_1080p.x, -1200.0), "native smoke: 1080p UI anchor computation")
-	assert(ui_node.get_parent() != effect_level, "native smoke: UI trigger reparented node to UI root")
-	assert(is_equal_approx(ui_node.position.x, expected_anchor.x), "native smoke: UI left alignment applied on finalize")
+	assert(
+		ui_node.get_parent() != effect_level, "native smoke: UI trigger reparented node to UI root"
+	)
+	assert(
+		is_equal_approx(ui_node.position.x, expected_anchor.x),
+		"native smoke: UI left alignment applied on finalize"
+	)
 	effect_runtime.call(&"advance", effect_player, 0.0, 120.0)
 	assert(toggled.visible == false, "native smoke: toggle trigger did not hide its group")
 	assert(effect_player.visible == false, "native smoke: hide player trigger did not run")
-	assert(int(effect_runtime.call(&"active_fade_count")) == 5, "native smoke: move/colour/pulse/zoom/timewarp fades missing")
+	assert(
+		int(effect_runtime.call(&"active_fade_count")) == 5,
+		"native smoke: move/colour/pulse/zoom/timewarp fades missing"
+	)
 	effect_runtime.call(&"tick", 0.5)
-	assert(is_equal_approx(moved.global_position.x, 128.0) and is_equal_approx(moved.global_position.y, -64.0),
-		"native smoke: move trigger offset wrong at half weight")
-	assert(is_equal_approx(effect_channel.color.r, (1.0 + 10.0 / 255.0) / 2.0),
-		"native smoke: colour trigger did not fade halfway")
-	assert(effect_channel.blending, "native smoke: blending checkbox trigger did not flip its channel additive")
-	assert(pulse_channel.color.is_equal_approx(Color8(255, 0, 0)), "native smoke: pulse did not reach its colour at hold")
-	assert(is_equal_approx(effect_camera.zoom.x, 0.7), "native smoke: camera zoom did not ease halfway")
+	assert(
+		(
+			is_equal_approx(moved.global_position.x, 128.0)
+			and is_equal_approx(moved.global_position.y, -64.0)
+		),
+		"native smoke: move trigger offset wrong at half weight"
+	)
+	assert(
+		is_equal_approx(effect_channel.color.r, (1.0 + 10.0 / 255.0) / 2.0),
+		"native smoke: colour trigger did not fade halfway"
+	)
+	assert(
+		effect_channel.blending,
+		"native smoke: blending checkbox trigger did not flip its channel additive"
+	)
+	assert(
+		pulse_channel.color.is_equal_approx(Color8(255, 0, 0)),
+		"native smoke: pulse did not reach its colour at hold"
+	)
+	assert(
+		is_equal_approx(effect_camera.zoom.x, 0.7), "native smoke: camera zoom did not ease halfway"
+	)
 	assert(is_equal_approx(Engine.time_scale, 0.75), "native smoke: timewarp did not ease halfway")
 	# Shader triggers read their target from key 176 (gmdkit trigger.shader.*).
 	assert(post_rect.visible, "native smoke: GD post-process did not become visible")
-	assert(is_equal_approx(float(post_mat.get_shader_parameter(&"_grayscaleValue")), 0.5), "native smoke: grayscale did not fade halfway")
-	assert(is_equal_approx(float(post_mat.get_shader_parameter(&"_sepiaValue")), 0.4), "native smoke: sepia did not fade halfway")
-	assert(is_equal_approx(float(post_mat.get_shader_parameter(&"_lensCircleStrength")), 0.5), "native smoke: lens circle did not fade halfway")
+	assert(
+		is_equal_approx(float(post_mat.get_shader_parameter(&"_grayscaleValue")), 0.5),
+		"native smoke: grayscale did not fade halfway"
+	)
+	assert(
+		is_equal_approx(float(post_mat.get_shader_parameter(&"_sepiaValue")), 0.4),
+		"native smoke: sepia did not fade halfway"
+	)
+	assert(
+		is_equal_approx(float(post_mat.get_shader_parameter(&"_lensCircleStrength")), 0.5),
+		"native smoke: lens circle did not fade halfway"
+	)
 	effect_runtime.call(&"tick", 0.5)
-	assert(moved.global_position == Vector2(256.0, -128.0), "native smoke: move trigger did not finish")
-	assert(effect_channel.color.is_equal_approx(Color8(10, 200, 30)), "native smoke: colour trigger did not reach its target")
-	assert(is_equal_approx(float(effect_channel.alpha), 0.5), "native smoke: colour trigger lost its opacity fade")
+	assert(
+		moved.global_position == Vector2(256.0, -128.0), "native smoke: move trigger did not finish"
+	)
+	assert(
+		effect_channel.color.is_equal_approx(Color8(10, 200, 30)),
+		"native smoke: colour trigger did not reach its target"
+	)
+	assert(
+		is_equal_approx(float(effect_channel.alpha), 0.5),
+		"native smoke: colour trigger lost its opacity fade"
+	)
 	assert(pulse_channel.color == Color.WHITE, "native smoke: pulse did not fade back out")
-	assert(is_equal_approx(effect_camera.zoom.x, 0.4), "native smoke: camera zoom did not reach its target")
-	assert(is_equal_approx(Engine.time_scale, 0.5), "native smoke: timewarp did not reach its target")
-	assert(is_equal_approx(float(post_mat.get_shader_parameter(&"_grayscaleValue")), 1.0), "native smoke: grayscale did not reach target")
-	assert(is_equal_approx(float(post_mat.get_shader_parameter(&"_sepiaValue")), 0.8), "native smoke: sepia did not reach target")
-	assert(is_equal_approx(float(post_mat.get_shader_parameter(&"_lensCircleStrength")), 1.0), "native smoke: lens circle did not reach target")
-	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: finished fades were not retired")
+	assert(
+		is_equal_approx(effect_camera.zoom.x, 0.4),
+		"native smoke: camera zoom did not reach its target"
+	)
+	assert(
+		is_equal_approx(Engine.time_scale, 0.5), "native smoke: timewarp did not reach its target"
+	)
+	assert(
+		is_equal_approx(float(post_mat.get_shader_parameter(&"_grayscaleValue")), 1.0),
+		"native smoke: grayscale did not reach target"
+	)
+	assert(
+		is_equal_approx(float(post_mat.get_shader_parameter(&"_sepiaValue")), 0.8),
+		"native smoke: sepia did not reach target"
+	)
+	assert(
+		is_equal_approx(float(post_mat.get_shader_parameter(&"_lensCircleStrength")), 1.0),
+		"native smoke: lens circle did not reach target"
+	)
+	assert(
+		int(effect_runtime.call(&"active_fade_count")) == 0,
+		"native smoke: finished fades were not retired"
+	)
 	Engine.time_scale = 1.0
 	# Reset clears activation state and running fades.
 	effect_runtime.call(&"reset")
-	assert(int(effect_runtime.call(&"active_fade_count")) == 0, "native smoke: reset left fades running")
-	assert(moved.global_position == moved_start, "native smoke: reset did not move the group back to its start")
-	assert(toggled.visible == toggled_start_visible, "native smoke: reset did not undo the toggle trigger")
+	assert(
+		int(effect_runtime.call(&"active_fade_count")) == 0,
+		"native smoke: reset left fades running"
+	)
+	assert(
+		moved.global_position == moved_start,
+		"native smoke: reset did not move the group back to its start"
+	)
+	assert(
+		toggled.visible == toggled_start_visible,
+		"native smoke: reset did not undo the toggle trigger"
+	)
 	assert(not post_rect.visible, "native smoke: GD post-process not hidden on reset")
-	assert(ui_node.get_parent() == effect_level, "native smoke: UI node restored to effect_level on reset")
-	assert(is_equal_approx(ui_node.position.x, -1012.5), "native smoke: UI node position restored on reset")
+	assert(
+		ui_node.get_parent() == effect_level,
+		"native smoke: UI node restored to effect_level on reset"
+	)
+	assert(
+		is_equal_approx(ui_node.position.x, -1012.5),
+		"native smoke: UI node position restored on reset"
+	)
 	effect_runtime.call(&"apply_ui_triggers")
-	assert(ui_node.get_parent() != effect_level, "native smoke: apply_ui_triggers reapplied UI parenting")
-	assert(is_equal_approx(ui_node.position.x, expected_anchor.x), "native smoke: apply_ui_triggers reapplied alignment")
+	assert(
+		ui_node.get_parent() != effect_level,
+		"native smoke: apply_ui_triggers reapplied UI parenting"
+	)
+	assert(
+		is_equal_approx(ui_node.position.x, expected_anchor.x),
+		"native smoke: apply_ui_triggers reapplied alignment"
+	)
 	effect_runtime.call(&"reset")
 	# --- 1007 Fade: GD's multiplicative group-opacity model ----------------
 	# A fade eases its GROUP's persistent opacity, and a member renders as
@@ -1134,19 +2137,44 @@ func _test_native_core() -> void:
 	solo_block.set_meta(Constants.HSV_WATCHER_META, solo_watcher)
 	effect_runtime.call(&"set_group_members", &"g_10", [shared_block])
 	effect_runtime.call(&"set_group_members", &"g_11", [shared_block, solo_block])
-	effect_runtime.call(&"register_packed_trigger", 200.0, 0.0, 0, 20, PackedStringArray(), 1007,
-		{"1": "1007", "51": "10", "35": "0", "10": "0"})
-	effect_runtime.call(&"register_packed_trigger", 210.0, 0.0, 0, 21, PackedStringArray(), 1007,
-		{"1": "1007", "51": "11", "35": "1", "10": "0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		200.0,
+		0.0,
+		0,
+		20,
+		PackedStringArray(),
+		1007,
+		{"1": "1007", "51": "10", "35": "0", "10": "0"}
+	)
+	effect_runtime.call(
+		&"register_packed_trigger",
+		210.0,
+		0.0,
+		0,
+		21,
+		PackedStringArray(),
+		1007,
+		{"1": "1007", "51": "11", "35": "1", "10": "0"}
+	)
 	effect_runtime.call(&"advance", effect_player, 120.0, 220.0)
 	effect_runtime.call(&"tick", 0.016)
-	assert(is_zero_approx(shared_watcher.alpha), "native smoke: fade did not hide the shared group member")
-	assert(is_equal_approx(solo_watcher.alpha, 1.0), "native smoke: fade to full lost its own group member")
+	assert(
+		is_zero_approx(shared_watcher.alpha),
+		"native smoke: fade did not hide the shared group member"
+	)
+	assert(
+		is_equal_approx(solo_watcher.alpha, 1.0),
+		"native smoke: fade to full lost its own group member"
+	)
 	assert(is_zero_approx(shared_block.modulate.a), "native smoke: hidden block still renders")
 	# A restart clears group opacity: members re-render from their own alpha
 	# until the same fades fire again.
 	effect_runtime.call(&"reset")
-	assert(is_equal_approx(shared_watcher.alpha, 1.0), "native smoke: reset did not clear group opacity")
+	assert(
+		is_equal_approx(shared_watcher.alpha, 1.0),
+		"native smoke: reset did not clear group opacity"
+	)
 	# --- Live copy channels (GDRweb CopyColor port) -----------------------
 	# Copies resolve their source live: B copies A, a trigger recolours A and
 	# B's members re-render from A's new colour. Chains, per-copy HSV shifts,
@@ -1161,9 +2189,9 @@ func _test_native_core() -> void:
 	source_channel.color = Color.WHITE
 	var copy_channel := ColorChannelData.new()
 	copy_channel.associated_group = "c_10"
-	copy_channel.color = Color.BLUE # import snapshot; the link decides at runtime
+	copy_channel.color = Color.BLUE  # import snapshot; the link decides at runtime
 	copy_channel.copied_channel_id = 5
-	copy_channel.copy_hue = 0.5 # +180 degrees
+	copy_channel.copy_hue = 0.5  # +180 degrees
 	var chain_channel := ColorChannelData.new()
 	chain_channel.associated_group = "c_11"
 	chain_channel.copied_channel_id = 10
@@ -1189,8 +2217,15 @@ func _test_native_core() -> void:
 	var link_target := ColorChannelData.new()
 	link_target.associated_group = "c_8"
 	watcher_level.color_channels = [
-		source_channel, copy_channel, chain_channel, opacity_channel,
-		special_channel, cycle_a, cycle_b, link_source, link_target,
+		source_channel,
+		copy_channel,
+		chain_channel,
+		opacity_channel,
+		special_channel,
+		cycle_a,
+		cycle_b,
+		link_source,
+		link_target,
 	]
 	watcher_level.setup_color_channel_watchers()
 	var make_member := func(channel_group: StringName) -> HSVWatcher:
@@ -1212,25 +2247,40 @@ func _test_native_core() -> void:
 	# source's 0.5 instead of its own 0.25.
 	source_channel.set_alpha(0.5)
 	source_channel.set_color(Color.RED)
-	assert(copy_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
-			"native smoke: copy channel did not follow its source's recolour")
-	assert(chain_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
-			"native smoke: copy chain did not resolve through its link")
-	assert(opacity_member.modulate.is_equal_approx(Color.RED) and is_equal_approx(opacity_member.base_alpha, 0.5),
-			"native smoke: opacity copy did not take the source's alpha")
+	assert(
+		copy_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
+		"native smoke: copy channel did not follow its source's recolour"
+	)
+	assert(
+		chain_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
+		"native smoke: copy chain did not resolve through its link"
+	)
+	assert(
+		(
+			opacity_member.modulate.is_equal_approx(Color.RED)
+			and is_equal_approx(opacity_member.base_alpha, 0.5)
+		),
+		"native smoke: opacity copy did not take the source's alpha"
+	)
 	# A recoloured level colour reaches the channels copying it: nothing else
 	# fires when the background itself changes, so the level setter must fan
 	# the refresh out itself.
 	watcher_level.background_color = Color.GREEN
-	assert(special_member.modulate.is_equal_approx(Color.GREEN),
-			"native smoke: background copy channel stayed frozen at import")
+	assert(
+		special_member.modulate.is_equal_approx(Color.GREEN),
+		"native smoke: background copy channel stayed frozen at import"
+	)
 	# A copy cycle terminates: both channels resolve to white (the iteration
 	# budget) instead of recursing, and the refresh fan-out returns.
-	assert(ColorChannelWatcher.resolve_channel_color(cycle_a) == Color.WHITE,
-			"native smoke: copy cycle did not hit the iteration budget")
+	assert(
+		ColorChannelWatcher.resolve_channel_color(cycle_a) == Color.WHITE,
+		"native smoke: copy cycle did not hit the iteration budget"
+	)
 	cycle_a.set_color(Color.YELLOW)
-	assert(chain_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
-			"native smoke: refresh fan-out disturbed an unrelated channel")
+	assert(
+		chain_member.modulate.is_equal_approx(Color(0.0, 1.0, 1.0)),
+		"native smoke: refresh fan-out disturbed an unrelated channel"
+	)
 	# --- Copy links as trigger target state -------------------------------
 	# A copy-colour trigger (key 50) re-points its channel at the source, so
 	# the channel keeps following that source's later recolours; an explicit
@@ -1239,40 +2289,84 @@ func _test_native_core() -> void:
 	effect_runtime.call(&"register_channel", "c_7", link_source)
 	effect_runtime.call(&"register_channel", "c_8", link_target)
 	# Recolour the source first: the copy trigger's fade resolves it live.
-	effect_runtime.call(&"register_packed_trigger", 130.0, 0.0, 0, 8, PackedStringArray(), 899,
-			{"1": "899", "23": "7", "7": "0", "8": "255", "9": "0", "10": "0"})
-	effect_runtime.call(&"register_packed_trigger", 131.0, 0.0, 0, 9, PackedStringArray(), 899,
-			{"1": "899", "23": "8", "50": "7", "49": "120a1a1a0a0", "10": "0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		130.0,
+		0.0,
+		0,
+		8,
+		PackedStringArray(),
+		899,
+		{"1": "899", "23": "7", "7": "0", "8": "255", "9": "0", "10": "0"}
+	)
+	effect_runtime.call(
+		&"register_packed_trigger",
+		131.0,
+		0.0,
+		0,
+		9,
+		PackedStringArray(),
+		899,
+		{"1": "899", "23": "8", "50": "7", "49": "120a1a1a0a0", "10": "0"}
+	)
 	# The later recolour (x=150) and the sever (x=160) must fire on their own
 	# advances: the asserts below read the link state between them, so firing
 	# them inside the first advance would sever the link before it is checked.
-	effect_runtime.call(&"register_packed_trigger", 150.0, 0.0, 0, 10, PackedStringArray(), 899,
-			{"1": "899", "23": "7", "7": "255", "8": "0", "9": "255", "10": "0"})
-	effect_runtime.call(&"register_packed_trigger", 160.0, 0.0, 0, 11, PackedStringArray(), 899,
-			{"1": "899", "23": "8", "7": "0", "8": "0", "9": "255", "10": "0"})
+	effect_runtime.call(
+		&"register_packed_trigger",
+		150.0,
+		0.0,
+		0,
+		10,
+		PackedStringArray(),
+		899,
+		{"1": "899", "23": "7", "7": "255", "8": "0", "9": "255", "10": "0"}
+	)
+	effect_runtime.call(
+		&"register_packed_trigger",
+		160.0,
+		0.0,
+		0,
+		11,
+		PackedStringArray(),
+		899,
+		{"1": "899", "23": "8", "7": "0", "8": "0", "9": "255", "10": "0"}
+	)
 	effect_runtime.call(&"finalize")
 	effect_runtime.call(&"advance", effect_player, 0.0, 140.0)
-	assert(link_target.copied_channel_id == 7,
-			"native smoke: copy trigger did not link its channel to the source")
-	assert(is_equal_approx(link_target.copy_hue, 120.0 / 360.0),
-			"native smoke: copy trigger lost its HSV adjustment")
+	assert(
+		link_target.copied_channel_id == 7,
+		"native smoke: copy trigger did not link its channel to the source"
+	)
+	assert(
+		is_equal_approx(link_target.copy_hue, 120.0 / 360.0),
+		"native smoke: copy trigger lost its HSV adjustment"
+	)
 	# The linked channel's members now render the source's colour with the
 	# link's +120 degree shift, re-resolved through the watcher fan-out.
-	assert(link_member.modulate.is_equal_approx(Color.from_hsv((120.0 + 120.0) / 360.0, 1.0, 1.0)),
-			"native smoke: linked channel member did not follow the source")
+	assert(
+		link_member.modulate.is_equal_approx(Color.from_hsv((120.0 + 120.0) / 360.0, 1.0, 1.0)),
+		"native smoke: linked channel member did not follow the source"
+	)
 	# A later recolour of the source reaches the linked channel with no
 	# trigger of its own - the whole point of the live link.
 	effect_runtime.call(&"advance", effect_player, 0.0, 150.0)
 	# Magenta (300 degrees) through the link's +120 shift wraps to 60 degrees.
-	assert(link_member.modulate.is_equal_approx(Color.from_hsv(60.0 / 360.0, 1.0, 1.0)),
-			"native smoke: linked channel did not follow its source's later recolour")
+	assert(
+		link_member.modulate.is_equal_approx(Color.from_hsv(60.0 / 360.0, 1.0, 1.0)),
+		"native smoke: linked channel did not follow its source's later recolour"
+	)
 	# An explicit RGB replaces the link: the channel becomes that literal
 	# colour and stops following the source.
 	effect_runtime.call(&"advance", effect_player, 0.0, 160.0)
-	assert(link_target.copied_channel_id == 0,
-			"native smoke: explicit RGB trigger did not sever the copy link")
-	assert(link_member.modulate.is_equal_approx(Color.BLUE),
-			"native smoke: severed link did not render the trigger's literal colour")
+	assert(
+		link_target.copied_channel_id == 0,
+		"native smoke: explicit RGB trigger did not sever the copy link"
+	)
+	assert(
+		link_member.modulate.is_equal_approx(Color.BLUE),
+		"native smoke: severed link did not render the trigger's literal colour"
+	)
 	LevelManager.current_level = previous_level
 	watcher_level.free()
 	# Stop / Pause / Resume (gd_docs stop.md) act on the triggers in the target
@@ -1285,12 +2379,59 @@ func _test_native_core() -> void:
 	var spawn_fired: Array[int] = []
 	spawn_target.connect(&"interacted", func(_player: Object): spawn_fired.append(1))
 	var spawn_runtime: Object = ClassDB.instantiate(&"NativeTriggerRuntime")
-	spawn_runtime.call(&"register_trigger", spawn_target, 5000.0, 0.0, 1, 0, PackedStringArray(["g_8"]), 0, {})
-	spawn_runtime.call(&"register_packed_trigger", 100.0, 0.0, 0, 1, PackedStringArray(["g_9"]), 1268, {"1": "1268", "51": "8", "63": "0.5"})
-	spawn_runtime.call(&"register_packed_trigger", 200.0, 0.0, 0, 2, PackedStringArray(), 1616, {"1": "1616", "51": "9", "580": "1"})
-	spawn_runtime.call(&"register_packed_trigger", 300.0, 0.0, 0, 3, PackedStringArray(), 1616, {"1": "1616", "51": "9", "580": "2"})
-	spawn_runtime.call(&"register_packed_trigger", 400.0, 0.0, 0, 4, PackedStringArray(["g_10"]), 1268, {"1": "1268", "51": "8", "63": "0.5", "534": "77"})
-	spawn_runtime.call(&"register_packed_trigger", 450.0, 0.0, 0, 5, PackedStringArray(), 1616, {"1": "1616", "51": "77", "535": "1"})
+	spawn_runtime.call(
+		&"register_trigger", spawn_target, 5000.0, 0.0, 1, 0, PackedStringArray(["g_8"]), 0, {}
+	)
+	spawn_runtime.call(
+		&"register_packed_trigger",
+		100.0,
+		0.0,
+		0,
+		1,
+		PackedStringArray(["g_9"]),
+		1268,
+		{"1": "1268", "51": "8", "63": "0.5"}
+	)
+	spawn_runtime.call(
+		&"register_packed_trigger",
+		200.0,
+		0.0,
+		0,
+		2,
+		PackedStringArray(),
+		1616,
+		{"1": "1616", "51": "9", "580": "1"}
+	)
+	spawn_runtime.call(
+		&"register_packed_trigger",
+		300.0,
+		0.0,
+		0,
+		3,
+		PackedStringArray(),
+		1616,
+		{"1": "1616", "51": "9", "580": "2"}
+	)
+	spawn_runtime.call(
+		&"register_packed_trigger",
+		400.0,
+		0.0,
+		0,
+		4,
+		PackedStringArray(["g_10"]),
+		1268,
+		{"1": "1268", "51": "8", "63": "0.5", "534": "77"}
+	)
+	spawn_runtime.call(
+		&"register_packed_trigger",
+		450.0,
+		0.0,
+		0,
+		5,
+		PackedStringArray(),
+		1616,
+		{"1": "1616", "51": "77", "535": "1"}
+	)
 	spawn_runtime.call(&"finalize")
 	spawn_runtime.call(&"advance", effect_player, 0.0, 150.0)
 	spawn_runtime.call(&"advance", effect_player, 150.0, 250.0)
@@ -1304,7 +2445,9 @@ func _test_native_core() -> void:
 	spawn_runtime.call(&"advance", effect_player, 350.0, 420.0)
 	spawn_runtime.call(&"advance", effect_player, 420.0, 470.0)
 	spawn_runtime.call(&"tick", 1.0)
-	assert(spawn_fired.size() == 1, "native smoke: stop by control ID did not cancel the pending spawn")
+	assert(
+		spawn_fired.size() == 1, "native smoke: stop by control ID did not cancel the pending spawn"
+	)
 	spawn_target.free()
 	effect_player.free()
 	toggled.free()
@@ -1318,9 +2461,15 @@ func _test_native_core() -> void:
 	add_child(near)
 	add_child(far)
 	var frustum: Object = ClassDB.instantiate(&"NativeFrustumIndex")
-	frustum.call(
-			&"configure", [near, far], PackedFloat32Array([0.0, 8.0]),
-			PackedFloat32Array([5.0, 9.0]), 10.0,
+	(
+		frustum
+		. call(
+			&"configure",
+			[near, far],
+			PackedFloat32Array([0.0, 8.0]),
+			PackedFloat32Array([5.0, 9.0]),
+			10.0,
+		)
 	)
 	frustum.call(&"set_view", 0.0, 6.0)
 	assert(near.visible and not far.visible, "native smoke: frustum rejection")
@@ -1331,6 +2480,52 @@ func _test_native_core() -> void:
 	assert(not near.visible and far.visible, "native smoke: exact in-section visibility update")
 	frustum.call(&"show_all")
 	assert(near.visible and far.visible, "native smoke: frustum restore")
+	var dynamic_near := Node2D.new()
+	var dynamic_moving := Node2D.new()
+	var linked_near := Node2D.new()
+	var linked_far := Node2D.new()
+	dynamic_moving.position.x = 20.0
+	linked_far.position.x = 30.0
+	add_child(dynamic_near)
+	add_child(dynamic_moving)
+	add_child(linked_near)
+	add_child(linked_far)
+	(
+		frustum
+		. call(
+			&"configure_dynamic",
+			[dynamic_near, dynamic_moving, linked_near, linked_far],
+			PackedFloat32Array([0.0, 18.0, 0.0, 30.0]),
+			PackedFloat32Array([2.0, 22.0, 2.0, 32.0]),
+			PackedInt32Array([-1, -1, 0, 0]),
+			1,
+		)
+	)
+	frustum.call(&"update_dynamic", 0.0, 5.0)
+	assert(
+		dynamic_near.visible and not dynamic_moving.visible,
+		"native smoke: dynamic culling initial state"
+	)
+	assert(
+		linked_near.visible and linked_far.visible,
+		"native smoke: link-visible group follows onscreen member"
+	)
+	dynamic_moving.position.x = 4.0
+	frustum.call(&"update_dynamic", 0.0, 5.0)
+	assert(dynamic_moving.visible, "native smoke: dynamic object follows current transform")
+	linked_near.position.x = 50.0
+	frustum.call(&"update_dynamic", 0.0, 5.0)
+	assert(
+		not linked_near.visible and not linked_far.visible,
+		"native smoke: link-visible group hides when all members leave"
+	)
+	frustum.call(&"update_dynamic", 0.0, 5.0)
+	assert(dynamic_moving.visible, "native smoke: repeated dynamic update preserves visible state")
+	frustum.call(&"show_all")
+	dynamic_near.queue_free()
+	dynamic_moving.queue_free()
+	linked_near.queue_free()
+	linked_far.queue_free()
 	near.queue_free()
 	far.queue_free()
 	var collision_body := Node2D.new()
@@ -1340,35 +2535,61 @@ func _test_native_core() -> void:
 	add_child(collision_source)
 	var shape := RectangleShape2D.new()
 	shape.size = Vector2(10, 12)
-	var committed: Array = native.call(&"commit_collision_shapes", collision_body, collision_source, [{
-		"resource": shape,
-		"debug_color": Color.RED,
-		"local_xform": Transform2D(0.0, Vector2(3, 4)),
-	}])
-	assert(committed.size() == 1 and collision_body.get_child_count() == 1, "native smoke: physics shape commit")
-	assert((committed[0] as CollisionShape2D).global_position == Vector2(28, 34), "native smoke: physics transform")
+	var committed: Array = (
+		native
+		. call(
+			&"commit_collision_shapes",
+			collision_body,
+			collision_source,
+			[
+				{
+					"resource": shape,
+					"debug_color": Color.RED,
+					"local_xform": Transform2D(0.0, Vector2(3, 4)),
+				}
+			]
+		)
+	)
+	assert(
+		committed.size() == 1 and collision_body.get_child_count() == 1,
+		"native smoke: physics shape commit"
+	)
+	assert(
+		(committed[0] as CollisionShape2D).global_position == Vector2(28, 34),
+		"native smoke: physics transform"
+	)
 	collision_body.queue_free()
 	collision_source.queue_free()
 	var pairs: Dictionary = native.call(&"parse_gd_pairs", "1,42,2,15.5,57,7")
 	assert(pairs == {"1": "42", "2": "15.5", "57": "7"}, "native smoke: GD pair parser")
-	var order: PackedInt32Array = native.call(
+	var order: PackedInt32Array = (
+		native
+		. call(
 			&"sort_decoration_indices",
 			PackedInt32Array([2, 1, 1]),
 			PackedInt32Array([0, 4, 3]),
 			PackedInt64Array([1, 1, 1]),
+		)
 	)
 	assert(order == PackedInt32Array([2, 1, 0]), "native smoke: decoration ordering")
 	var buckets: Dictionary = native.call(
-			&"build_x_buckets", PackedFloat32Array([-1.0, 5.0, 11.0]), 10.0
+		&"build_x_buckets", PackedFloat32Array([-1.0, 5.0, 11.0]), 10.0
 	)
 	assert(buckets.has(-1) and buckets.has(0) and buckets.has(1), "native smoke: spatial buckets")
 	var plain := "kS1,1,kS2,2;1,1,2,15,3,15;"
 	var encoded: String = native.call(&"encode_level_string", plain)
 	assert(not encoded.is_empty(), "native smoke: GMD encode")
 	assert(native.call(&"decode_level_string", encoded) == plain, "native smoke: GMD round trip")
-	var zlib_encoded := Marshalls.raw_to_base64(plain.to_utf8_buffer().compress(FileAccess.COMPRESSION_DEFLATE)) \
-			.replace("+", "-").replace("/", "_")
-	assert(native.call(&"decode_level_string", zlib_encoded) == plain, "native smoke: documented zlib level decode")
+	var zlib_encoded := (
+		Marshalls
+		. raw_to_base64(plain.to_utf8_buffer().compress(FileAccess.COMPRESSION_DEFLATE))
+		. replace("+", "-")
+		. replace("/", "_")
+	)
+	assert(
+		native.call(&"decode_level_string", zlib_encoded) == plain,
+		"native smoke: documented zlib level decode"
+	)
 	var col_flags: int = native.call(&"classify_collision_flags", deg_to_rad(5.0), deg_to_rad(45.0))
 	assert((col_flags & 1) != 0 and (col_flags & 4) == 0, "native smoke: collision flags floor")
 	var p_packed := PackedFloat64Array()
@@ -1380,9 +2601,14 @@ func _test_native_core() -> void:
 	p_packed[15] = 1.0
 	p_packed[16] = 1.0
 	p_packed[17] = 1.0
-	var packed_physics_res: PackedFloat64Array = native.call(&"compute_player_velocity_packed", p_packed)
+	var packed_physics_res: PackedFloat64Array = native.call(
+		&"compute_player_velocity_packed", p_packed
+	)
 	assert(packed_physics_res.size() == 11, "native smoke: packed physics result size")
-	assert(absf(packed_physics_res[3] - (Player.GRAVITY / 60.0)) < 0.1, "native smoke: packed physics gravity fall")
+	assert(
+		absf(packed_physics_res[3] - (Player.GRAVITY / 60.0)) < 0.1,
+		"native smoke: packed physics gravity fall"
+	)
 	print("NATIVE_SMOKE_OK %s" % native.call(&"build_string"))
 
 
@@ -1392,14 +2618,17 @@ func _test_camera_level_end_global() -> void:
 	add_child(level)
 	var end: Vector2 = Level.camera_level_end(level, 1500.0)
 	var local_x: float = 1500.0 / GMDConverter.GD_CELL_SIZE * Constants.CELL_SIZE
-	assert(is_equal_approx(end.x, local_x + 640.0), "camera end stop must be global: a level-local end stops the camera 150 GD units early")
+	assert(
+		is_equal_approx(end.x, local_x + 640.0),
+		"camera end stop must be global: a level-local end stops the camera 150 GD units early"
+	)
 	assert(not Level.camera_level_end(level, 0.0).is_finite(), "no end stop without a level end")
 	level.queue_free()
 
 
 func _test_composite_saw() -> void:
 	var data := _object_data(Vector2(321.0, 222.0))
-	data.gd_object_id = 88 # intentionally atlas-packed as two half-saw copies
+	data.gd_object_id = 88  # intentionally atlas-packed as two half-saw copies
 	data.spin = 180.0
 	var batches := GDDecorationLoader.build_batches([data], GDDecorationLoader.art_scale())
 	var saw_items: Array[DecorationBatch.Item] = []
@@ -1412,7 +2641,10 @@ func _test_composite_saw() -> void:
 	assert(saw_items.size() == 2, "visual smoke: half-saw was not reconstructed from two pieces")
 	var pivot: Vector2 = data.transform.origin
 	for item: DecorationBatch.Item in saw_items:
-		assert(item.spin_pivot.is_equal_approx(pivot), "visual smoke: composite saw has split spin pivots")
+		assert(
+			item.spin_pivot.is_equal_approx(pivot),
+			"visual smoke: composite saw has split spin pivots"
+		)
 	var before_a: Vector2 = saw_items[0].transform.origin - pivot
 	var before_b: Vector2 = saw_items[1].transform.origin - pivot
 	assert(before_a.dot(before_b) < 0.0, "visual smoke: reconstructed saw halves are not opposite")
@@ -1423,16 +2655,26 @@ func _test_composite_saw() -> void:
 	var after_b: Vector2
 	if saw_native != null:
 		saw_native.call(&"advance_animation", 0.5)
-		var native_a: Transform2D = saw_native.call(&"get_item_transform", saw_items[0].render_index)
-		var native_b: Transform2D = saw_native.call(&"get_item_transform", saw_items[1].render_index)
+		var native_a: Transform2D = saw_native.call(
+			&"get_item_transform", saw_items[0].render_index
+		)
+		var native_b: Transform2D = saw_native.call(
+			&"get_item_transform", saw_items[1].render_index
+		)
 		after_a = native_a.origin - pivot
 		after_b = native_b.origin - pivot
 	else:
 		saw_batch.call(&"_process", 0.5)
 		after_a = saw_items[0].transform.origin - pivot
 		after_b = saw_items[1].transform.origin - pivot
-	assert(after_a.is_equal_approx(before_a.rotated(PI * 0.5)), "visual smoke: saw does not rotate around full centre")
-	assert(after_b.is_equal_approx(before_b.rotated(PI * 0.5)), "visual smoke: second saw half left shared centre")
+	assert(
+		after_a.is_equal_approx(before_a.rotated(PI * 0.5)),
+		"visual smoke: saw does not rotate around full centre"
+	)
+	assert(
+		after_b.is_equal_approx(before_b.rotated(PI * 0.5)),
+		"visual smoke: second saw half left shared centre"
+	)
 	for batch: DecorationBatch in batches:
 		batch.free()
 
@@ -1469,32 +2711,57 @@ func _imported_entries(level_data: Dictionary) -> Array:
 	var entries: Array = level_data.get("layers", [{}])[0].get("objects", []).filter(
 		func(entry: Dictionary) -> bool: return entry.get("name", "") != GMDConverter.LEVEL_END_NAME
 	)
-	entries.append_array(PackedTriggers.rows(level_data.get(PackedTriggers.DATA_KEY, { })))
+	entries.append_array(PackedTriggers.rows(level_data.get(PackedTriggers.DATA_KEY, {})))
 	return entries
 
 
 ## Runtime imports keep native-only triggers once, as packed columns, and each
 ## row rebuilds exactly into the entry the importer made.
 func _assert_packed_trigger_table(level_data: Dictionary, native_import: bool) -> void:
-	var table: Dictionary = level_data.get(PackedTriggers.DATA_KEY, { })
+	var table: Dictionary = level_data.get(PackedTriggers.DATA_KEY, {})
 	var objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
 	if not native_import:
-		assert(PackedTriggers.size_of(table) == 0, "native smoke: fallback import must not pack triggers")
+		assert(
+			PackedTriggers.size_of(table) == 0,
+			"native smoke: fallback import must not pack triggers"
+		)
 		return
-	assert(PackedTriggers.size_of(table) > 0, "native smoke: runtime import did not pack its triggers into columns")
+	assert(
+		PackedTriggers.size_of(table) > 0,
+		"native smoke: runtime import did not pack its triggers into columns"
+	)
 	for object_data: Dictionary in objects:
-		assert(not bool(object_data.get("native_only_trigger", false)) or (level_data.native_trigger_records as Array).has(object_data),
-			"native smoke: a packed trigger is duplicated into the layer objects")
+		assert(
+			(
+				not bool(object_data.get("native_only_trigger", false))
+				or (level_data.native_trigger_records as Array).has(object_data)
+			),
+			"native smoke: a packed trigger is duplicated into the layer objects"
+		)
 	var repacked := PackedTriggers.new()
 	for i: int in PackedTriggers.size_of(table):
 		var entry: Dictionary = PackedTriggers.row(table, i)
-		assert(repacked.append_entry(entry.duplicate(true)), "native smoke: a rebuilt trigger row cannot be packed again")
-		assert(PackedTriggers.row(repacked.to_data(), i) == entry, "native smoke: trigger row did not round-trip")
+		assert(
+			repacked.append_entry(entry.duplicate(true)),
+			"native smoke: a rebuilt trigger row cannot be packed again"
+		)
+		assert(
+			PackedTriggers.row(repacked.to_data(), i) == entry,
+			"native smoke: trigger row did not round-trip"
+		)
 	var expanded: Dictionary = level_data.duplicate(true)
 	LevelBuildJob._expand_packed_triggers(expanded)
-	assert(not expanded.has(PackedTriggers.DATA_KEY), "native smoke: expanded level data kept its trigger table")
-	assert((expanded.layers[0].objects as Array).size() == objects.size() + PackedTriggers.size_of(table),
-		"native smoke: fallback expansion lost trigger rows")
+	assert(
+		not expanded.has(PackedTriggers.DATA_KEY),
+		"native smoke: expanded level data kept its trigger table"
+	)
+	assert(
+		(
+			(expanded.layers[0].objects as Array).size()
+			== objects.size() + PackedTriggers.size_of(table)
+		),
+		"native smoke: fallback expansion lost trigger rows"
+	)
 
 
 ## GD level end (m_levelLength = max(869, last X + 340), end portal at y 225)
@@ -1502,50 +2769,118 @@ func _assert_packed_trigger_table(level_data: Dictionary, native_import: bool) -
 ## this, imported levels had no end and a solid ceiling.
 func _assert_level_end() -> void:
 	var classic := GMDConverter.import_online_level_string(
-			"kA2,0;1,1,2,1200,3,105;1,1,2,30,3,4000;", "Level end smoke", GMDConverter.ImportReport.new())
+		"kA2,0;1,1,2,1200,3,105;1,1,2,30,3,4000;",
+		"Level end smoke",
+		GMDConverter.ImportReport.new()
+	)
 	var ends: Array = (classic.layers[0].objects as Array).filter(
-		func(entry: Dictionary) -> bool: return entry.get("name", "") == GMDConverter.LEVEL_END_NAME)
+		func(entry: Dictionary) -> bool: return entry.get("name", "") == GMDConverter.LEVEL_END_NAME
+	)
 	assert(ends.size() == 1, "native smoke: a classic import must end at GD's end portal")
 	var end_entry: Dictionary = ends[0]
-	assert(str(end_entry.scene_file_path) == GMDConverter.LEVEL_END_SCENE, "native smoke: level end has the wrong scene")
-	assert(is_equal_approx((end_entry.transform as Transform2D).origin.x, (1200.0 + 340.0) / 30.0 * Constants.CELL_SIZE),
-		"native smoke: level end is not 340 units past the last object")
-	assert(is_equal_approx(float(classic.gd_max_gameplay_y), 2790.0), "native smoke: fixed-height level must use GD's 2790 kill height")
+	assert(
+		str(end_entry.scene_file_path) == GMDConverter.LEVEL_END_SCENE,
+		"native smoke: level end has the wrong scene"
+	)
+	assert(
+		is_equal_approx(
+			(end_entry.transform as Transform2D).origin.x,
+			(1200.0 + 340.0) / 30.0 * Constants.CELL_SIZE
+		),
+		"native smoke: level end is not 340 units past the last object"
+	)
+	assert(
+		is_equal_approx(float(classic.gd_max_gameplay_y), 2790.0),
+		"native smoke: fixed-height level must use GD's 2790 kill height"
+	)
 	var dynamic := GMDConverter.import_online_level_string(
-			"kA2,0,kA37,1;1,1,2,30,3,4000;", "Dynamic height smoke", GMDConverter.ImportReport.new())
-	assert(is_equal_approx(float(dynamic.gd_max_gameplay_y), 4390.0), "native smoke: kA37 kill height must follow the top object")
-	var short_end: Dictionary = (dynamic.layers[0].objects as Array).filter(
-		func(entry: Dictionary) -> bool: return entry.get("name", "") == GMDConverter.LEVEL_END_NAME)[0]
-	assert(is_equal_approx((short_end.transform as Transform2D).origin.x, 869.0 / 30.0 * Constants.CELL_SIZE),
-		"native smoke: a short level must end at screenRight + 300")
+		"kA2,0,kA37,1;1,1,2,30,3,4000;", "Dynamic height smoke", GMDConverter.ImportReport.new()
+	)
+	assert(
+		is_equal_approx(float(dynamic.gd_max_gameplay_y), 4390.0),
+		"native smoke: kA37 kill height must follow the top object"
+	)
+	var short_end: Dictionary = (dynamic.layers[0].objects as Array).filter(func(entry: Dictionary) -> bool: return entry.get("name", "") == GMDConverter.LEVEL_END_NAME)[0]
+	assert(
+		is_equal_approx(
+			(short_end.transform as Transform2D).origin.x, 869.0 / 30.0 * Constants.CELL_SIZE
+		),
+		"native smoke: a short level must end at screenRight + 300"
+	)
 	var platformer := GMDConverter.import_online_level_string(
-			"kA2,0,kA22,1;1,1,2,30,3,105;", "Platformer end smoke", GMDConverter.ImportReport.new())
-	assert((platformer.layers[0].objects as Array).all(
-		func(entry: Dictionary) -> bool: return entry.get("name", "") != GMDConverter.LEVEL_END_NAME),
-		"native smoke: platformer levels have no end wall in GD")
-	assert(is_equal_approx(float(classic.gd_level_end_x), 1540.0), "native smoke: the camera end stop must match the end portal X")
-	assert(float(platformer.gd_level_end_x) == 0.0, "native smoke: platformer levels have no camera end stop")
+		"kA2,0,kA22,1;1,1,2,30,3,105;", "Platformer end smoke", GMDConverter.ImportReport.new()
+	)
+	assert(
+		(platformer.layers[0].objects as Array).all(
+			func(entry: Dictionary) -> bool:
+				return entry.get("name", "") != GMDConverter.LEVEL_END_NAME
+		),
+		"native smoke: platformer levels have no end wall in GD"
+	)
+	assert(
+		is_equal_approx(float(classic.gd_level_end_x), 1540.0),
+		"native smoke: the camera end stop must match the end portal X"
+	)
+	assert(
+		float(platformer.gd_level_end_x) == 0.0,
+		"native smoke: platformer levels have no camera end stop"
+	)
 	# Mode portal bands (gdsolver bands.hpp, internal coordinates): floor =
 	# max(90, floor30(y - H/2)); level-string Y is internal - 90, so max(0, ...),
 	# ceiling = floor + H; Free Mode (key 111) and cube/robot write no band.
 	var band_level := GMDConverter.import_online_level_string(
-			"kA2,1;1,13,2,300,3,705;1,13,2,600,3,600,111,1;1,12,2,900,3,105;1,47,2,1200,3,105;",
-			"Portal band smoke", GMDConverter.ImportReport.new())
-	assert(not bool(band_level.start_freefly), "native smoke: a ship-start level must start clamped (GD clears Free Mode on reset)")
+		"kA2,1;1,13,2,300,3,705;1,13,2,600,3,600,111,1;1,12,2,900,3,105;1,47,2,1200,3,105;",
+		"Portal band smoke",
+		GMDConverter.ImportReport.new()
+	)
+	assert(
+		not bool(band_level.start_freefly),
+		"native smoke: a ship-start level must start clamped (GD clears Free Mode on reset)"
+	)
 	var band_entries: Array = _imported_entries(band_level)
 	var ship_band: Dictionary = band_entries[0].components.GroundMoverComponent
-	assert(not bool(ship_band.freefly) and bool(ship_band.use_gd_band), "native smoke: a ship portal must clamp to its band")
-	assert(is_equal_approx(float(ship_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(540.0))
-			and is_equal_approx(float(ship_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(840.0)),
-		"native smoke: ship band must be floor30(y - 150) .. +300")
-	assert(is_equal_approx(float(ship_band.get("gd_band_height", 0.0)), 300.0),
-		"native smoke: a ship portal must keep its band height so a moved portal re-centres the band on touch")
-	assert(bool(band_entries[1].components.GroundMoverComponent.freefly), "native smoke: a Free Mode portal must not clamp")
-	assert(bool(band_entries[2].components.GroundMoverComponent.freefly), "native smoke: a cube portal must not clamp")
+	assert(
+		not bool(ship_band.freefly) and bool(ship_band.use_gd_band),
+		"native smoke: a ship portal must clamp to its band"
+	)
+	assert(
+		(
+			is_equal_approx(float(ship_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(540.0))
+			and is_equal_approx(
+				float(ship_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(840.0)
+			)
+		),
+		"native smoke: ship band must be floor30(y - 150) .. +300"
+	)
+	assert(
+		is_equal_approx(float(ship_band.get("gd_band_height", 0.0)), 300.0),
+		"native smoke: a ship portal must keep its band height so a moved portal re-centres the band on touch"
+	)
+	assert(
+		bool(band_entries[1].components.GroundMoverComponent.freefly),
+		"native smoke: a Free Mode portal must not clamp"
+	)
+	assert(
+		bool(band_entries[2].components.GroundMoverComponent.freefly),
+		"native smoke: a cube portal must not clamp"
+	)
 	var ball_band: Dictionary = band_entries[3].components.GroundMoverComponent
-	assert(is_equal_approx(float(ball_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(0.0))
-			and is_equal_approx(float(ball_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(240.0)),
-		"native smoke: a ground-level ball band must sit on the ground line (y 0), 240 high")
-	var twin: Dictionary = GMDConverter._level_bounds("kA2,0;1,1,2,600,3,105;1,8,2,15,3,4000;", true)
-	assert(is_equal_approx(float(twin.level_length), 940.0) and is_equal_approx(float(twin.max_gameplay_y), 4390.0),
-		"native smoke: level bounds twin differs from the C++ helper")
+	assert(
+		(
+			is_equal_approx(float(ball_band.gd_band_floor_y), GMDConverter.gd_to_godot_y(0.0))
+			and is_equal_approx(
+				float(ball_band.gd_band_ceiling_y), GMDConverter.gd_to_godot_y(240.0)
+			)
+		),
+		"native smoke: a ground-level ball band must sit on the ground line (y 0), 240 high"
+	)
+	var twin: Dictionary = GMDConverter._level_bounds(
+		"kA2,0;1,1,2,600,3,105;1,8,2,15,3,4000;", true
+	)
+	assert(
+		(
+			is_equal_approx(float(twin.level_length), 940.0)
+			and is_equal_approx(float(twin.max_gameplay_y), 4390.0)
+		),
+		"native smoke: level bounds twin differs from the C++ helper"
+	)

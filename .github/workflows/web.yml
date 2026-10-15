@@ -311,6 +311,9 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Verify usage-based texture compression
+        run: python3 tools/check_texture_compression.py --imported
+
       - name: Export Web (WebGPU, multi-threaded Mobile)
         run: |
           set -euo pipefail

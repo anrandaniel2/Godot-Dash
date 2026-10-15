@@ -133,10 +133,39 @@ def build() -> None:
     for line in text.splitlines():
         if line.startswith(("DECORATION_CACHE_", "DECORATION_INDEX_")):
             print(f"::notice title=decoration cache::{line}")
+    text = run([CACHE / "renderer-cache/compact-sections-test.exe", "--benchmark"], "compact-sections")
+    if not re.search(r"COMPACT_SECTIONS_TEST checks=\d+ failed=0", text):
+        raise RuntimeError("Compact decoration sections parity tests did not pass")
+    for line in text.splitlines():
+        if line.startswith("COMPACT_SECTIONS_"):
+            print(f"::notice title=decoration spatial index::{line}")
+    text = run([CACHE / "renderer-cache/frustum-transition-test.exe", "--benchmark"], "frustum-transition")
+    if not re.search(r"FRUSTUM_TRANSITION_TEST checks=\d+ failed=0", text):
+        raise RuntimeError("Static frustum transition parity tests did not pass")
+    for line in text.splitlines():
+        if line.startswith("FRUSTUM_TRANSITION_"):
+            print(f"::notice title=static frustum CPU::{line}")
     text = run([CACHE / "renderer-cache/ui-alignment-test.exe"], "ui-alignment")
     if "ALL UI TRIGGER TESTS PASSED" not in text:
         raise RuntimeError("Production UI alignment math failed")
     print("::notice title=UI alignment::Production UI alignment math passed (including Relative with every reference).")
+    text = run([CACHE / "renderer-cache/spin-test.exe"], "decoration-spin")
+    if "decoration spin: all checks passed" not in text:
+        raise RuntimeError("Decoration parent-space spin tests did not pass")
+    text = run([CACHE / "renderer-cache/spin-cache-test.exe", "--benchmark"], "decoration-spin-cache")
+    if not re.search(r"SPIN_CACHE_TEST checks=\d+ failed=0", text):
+        raise RuntimeError("Decoration spin cache parity tests did not pass")
+    for line in text.splitlines():
+        if line.startswith(("SPIN_CACHE_BENCH", "SPIN_CACHE_TEST")):
+            print(f"::notice title=decoration spin CPU::{line}")
+    run([sys.executable, "-m", "SCons", "-f", ROOT / "tools/benchmarks/channel_tint/SConstruct",
+         f"output={CACHE / 'channel-tint'}"], "channel-tint-build")
+    text = run([CACHE / "channel-tint/channel-tint-test.exe", "--benchmark"], "channel-tint")
+    if not re.search(r"CHANNEL_TINT_TEST checks=\d+ failed=0", text):
+        raise RuntimeError("Decoration channel tint parity tests did not pass")
+    for line in text.splitlines():
+        if line.startswith(("CHANNEL_TINT_BENCH", "CHANNEL_TINT_TEST")):
+            print(f"::notice title=decoration tint CPU::{line}")
 
 
 def headless_project(text: str) -> str:
@@ -189,6 +218,7 @@ def export() -> None:
         imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-rechecked")
     # Match web CI: editor-only plugin runtime messages are not game failures.
     check_log(imported, "import-checked", include_runtime=False)
+    run([sys.executable, ROOT / "tools/check_texture_compression.py", "--imported"], "texture-compression")
     text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/renderer_cache_selftest.tscn"],
                "renderer-integration", timeout=120)
     check_log(text, "renderer-integration")

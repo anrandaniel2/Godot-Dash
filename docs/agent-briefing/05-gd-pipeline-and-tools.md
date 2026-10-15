@@ -131,7 +131,8 @@ python3 tools/build_gd_object_scenes.py       # --keep-existing / --only 8,39 fo
   and writes `gd_objects_atlas.json` = per-frame page/rect/trim offset/untrimmed size, exactly
   what the plists carried, in a shape `GDSpriteSheet.gd` loads in one pass.
 - Writes/updates a `.png.import` per page, **preserving the Godot UID** so regenerating keeps
-  the generated scenes valid. Pages are lossless, no mipmaps.
+  the generated scenes valid. Source pages remain PNG; Godot imports use VRAM compression
+  (S3TC/ETC2) with no mipmaps, per the updated 2026-10-15 user request.
 
 ### Step 3 — `build_gd_object_scenes.py` → `scenes/gd_objects/gd_<id>.tscn`
 

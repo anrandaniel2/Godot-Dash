@@ -1,0 +1,32 @@
+"""Real godot-cpp Color math; run after building the native release dependency."""
+import os
+from pathlib import Path
+
+root = Path(Dir('#').abspath)
+output = Path(ARGUMENTS['output']).resolve()
+output.mkdir(parents=True, exist_ok=True)
+SConsignFile(str(output / '.sconsign'))
+sdk = root / 'native/godot-cpp'
+env = Environment(ENV=os.environ, TARGET_ARCH='amd64')
+includes = [sdk / 'include', sdk / 'gen/include', sdk / 'gdextension']
+if env['PLATFORM'] == 'win32':
+    # Same static CRT and link-time optimization as the native Windows build.
+    env.Append(CPPPATH=[str(path) for path in includes])
+    env.Append(CXXFLAGS=['/std:c++17', '/O2', '/EHsc', '/W4', '/MT', '/GL'])
+    env.Append(LINKFLAGS=['/LTCG'])
+    library = sdk / 'bin/libgodot-cpp.windows.template_release.x86_64.lib'
+else:
+    env.Append(CXXFLAGS=['-std=c++17', '-O3', '-flto', '-Wall', '-Wextra', '-Werror'])
+    for path in includes:
+        env.Append(CXXFLAGS=['-isystem', str(path)])
+    env.Append(LINKFLAGS=['-flto', '-pthread'])
+    library = sdk / 'bin/libgodot-cpp.linux.template_release.x86_64.a'
+if not library.is_file():
+    raise RuntimeError('Build the x86_64 template_release godot-cpp library first: ' + str(library))
+objects = [env.Object(str(output / 'channel-tint'), str(root / 'native/tests/test_decoration_channel_tint.cpp'))]
+if env['PLATFORM'] != 'win32':
+    # Linux verification may build the SDK without LTO. Include its actual Color
+    # source here so the benchmark cannot rely on opaque-call baseline overhead.
+    objects.append(env.Object(str(output / 'sdk-color'), str(sdk / 'src/variant/color.cpp')))
+env.Append(LIBS=[env.File(str(library))])
+Default(env.Program(str(output / 'channel-tint-test'), objects))
