@@ -190,6 +190,7 @@ class TextureCompressionTests(unittest.TestCase):
             root = Path(directory)
             (root / 'project.godot').write_text(self.DEFAULTS)
             (root / 'assets/fonts').mkdir(parents=True)
+            (root / 'assets/fonts/image.png').write_bytes(b'fixture')
             (root / 'assets/fonts/image.png.import').write_text(self.IMPORT.replace('compress/mode=2', 'compress/mode=0'))
             with self.assertRaises(ValueError):
                 audit(root, imported=True)
@@ -227,6 +228,32 @@ class TextureCompressionTests(unittest.TestCase):
             w, h = max(1, width >> level), max(1, height >> level)
             size += ((w + 3) // 4) * ((h + 3) // 4) * stride
         return header + bytes(size)
+
+    def test_imported_gate_reports_but_skips_stale_orphan_sidecars(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'project.godot').write_text(self.DEFAULTS)
+            ui_source = root / 'assets/textures/guis/button.png'
+            ui_source.parent.mkdir(parents=True)
+            ui_source.write_bytes(b'fixture')
+            ui_import = self.IMPORT.replace('compress/mode=2', 'compress/mode=1')
+            ui_import = ui_import.replace('compress/lossy_quality=0.7', 'compress/lossy_quality=0.9')
+            ui_import = re.sub(r'(?m)^path=.*$', 'path="res://.godot/imported/button.ctex"', ui_import)
+            ui_import = re.sub(r'(?m)^source_file=.*$', 'source_file="res://assets/textures/guis/button.png"', ui_import)
+            ui_import = re.sub(r'(?m)^dest_files=.*$', 'dest_files=["res://.godot/imported/button.ctex"]', ui_import)
+            (ui_source.parent / 'button.png.import').write_text(ui_import)
+            orphan_dir = root / 'assets/textures/orbs'
+            orphan_dir.mkdir(parents=True)
+            orphan = ui_import.replace('compress/mode=1', 'compress/mode=2')
+            orphan = re.sub(r'(?m)^source_file=.*$', 'source_file="res://assets/textures/orbs/Legacy.svg"', orphan)
+            (orphan_dir / 'Legacy.svg.import').write_text(orphan)
+            imported = root / '.godot/imported'
+            imported.mkdir(parents=True)
+            (imported / 'button.ctex').write_bytes(self.ctex(2, [self.LOSSY]))
+            result = audit(root, imported=True)
+            self.assertEqual(result['orphan_imports'], 1)
+            self.assertEqual(result['texture_imports'], 1)
+            self.assertEqual(result['ctex_files'], 1)
 
     def test_usage_classification_and_unknown_paths(self):
         for name in ('gd_atlas/page.png', 'gd_art/backgrounds/bg.png', 'solids/block.svg', 'player/trail/x.png'):
@@ -280,6 +307,7 @@ class TextureCompressionTests(unittest.TestCase):
             (root / 'project.godot').write_text(self.DEFAULTS)
             sidecar = root / 'assets/textures/gd_atlas/page.png.import'
             sidecar.parent.mkdir(parents=True)
+            (sidecar.parent / 'page.png').write_bytes(b'fixture')
             s3tc = 'res://.godot/imported/page.s3tc.ctex'
             etc2 = 'res://.godot/imported/page.etc2.ctex'
             text = re.sub(r'(?m)^path=.*$', f'path.s3tc="{s3tc}"\npath.etc2="{etc2}"', self.IMPORT)

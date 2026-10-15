@@ -205,7 +205,7 @@ def check_ctex(data: bytes, mode: int = 0) -> tuple[str, int]:
 
 def audit(root: Path, imported: bool = False) -> dict:
     check_defaults((root / "project.godot").read_text(encoding="utf-8"))
-    result = {"texture_imports": 0, "ctex_files": 0, "ctex_bytes": 0, "mip_levels": 0, "codecs": {}, "modes": {}}
+    result = {"texture_imports": 0, "orphan_imports": 0, "ctex_files": 0, "ctex_bytes": 0, "mip_levels": 0, "codecs": {}, "modes": {}}
     seen = set()
     for path in sorted((root / "assets").rglob("*.import")):
         try:
@@ -213,6 +213,14 @@ def audit(root: Path, imported: bool = False) -> dict:
             if not re.search(r'^importer="texture"$', text, re.MULTILINE):
                 continue  # Font imports can contain nested Object properties, not INI.
             config = flat_config(text)
+            source_path = path.with_suffix("").resolve()
+            if not source_path.is_relative_to(root.resolve()):
+                raise ValueError("Texture source escapes project root")
+            if not source_path.is_file():
+                # Keep stale sidecars visible in the summary but don't mistake
+                # their old remap for a newly imported shipping texture.
+                result["orphan_imports"] += 1
+                continue
             mode = texture_mode(path.relative_to(root))
             check_import(config, mode)
             result["modes"][str(mode)] = result["modes"].get(str(mode), 0) + 1
