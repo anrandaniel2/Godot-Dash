@@ -1,9 +1,8 @@
-@abstract
-class_name ObjectThumbnail
+@abstract class_name ObjectThumbnail
 
 ## Decoded atlas pages, so a thousand Geometry Dash object icons don't each
 ## pull the whole page back from the GPU.
-static var _page_images: Dictionary[Texture2D, Image] = { }
+static var _page_images: Dictionary[Texture2D, Image] = {}
 
 
 ## The image of one atlas region, via the page cache.
@@ -40,7 +39,12 @@ static func _gd_object_images(object: GDObject) -> Array[Image]:
 		if layer == null:
 			continue
 		var root: Node = layer.get_node_or_null(^"Root")
-		var candidates: Array[Node] = [root] if root != null else layer.get_children()
+		var candidates: Array[Node] = []
+		if root != null:
+			candidates.append(root)
+		else:
+			for child: Node in layer.get_children():
+				candidates.append(child)
 		for sprite: Node in candidates:
 			if sprite is Sprite2D and sprite.texture is AtlasTexture and sprite.name != &"Glow":
 				var image: Image = _atlas_image(sprite.texture)
@@ -51,8 +55,12 @@ static func _gd_object_images(object: GDObject) -> Array[Image]:
 
 
 static func get_object_thumbnail_image(object: CanvasItem) -> Array[Image]:
-	const REBOUND_ORB_TEXTURE: Texture2D = preload("res://assets/textures/guis/editor/block_palette/ReboundOrbPreview.svg")
-	const REBOUND_PAD_TEXTURE: Texture2D = preload("res://assets/textures/guis/editor/block_palette/ReboundPadPreview.svg")
+	const REBOUND_ORB_TEXTURE: Texture2D = preload(
+		"res://assets/textures/guis/editor/block_palette/ReboundOrbPreview.svg"
+	)
+	const REBOUND_PAD_TEXTURE: Texture2D = preload(
+		"res://assets/textures/guis/editor/block_palette/ReboundPadPreview.svg"
+	)
 	const TEXT_TEXTURE: Texture2D = preload("res://assets/textures/Text.svg")
 	var images: Array[Image]
 	if object is GDObject:
@@ -109,9 +117,9 @@ static func crop_image_around_center(image: Image, size_factor: float) -> Image:
 
 static func fit_size_to_square(size: Vector2i, side_length: int) -> Vector2i:
 	var new_size: Vector2i = Vector2i.ONE * side_length
-	if size.x < size.y: # Fit height
+	if size.x < size.y:  # Fit height
 		new_size.x = roundi(float(size.x * side_length) / float(size.y))
-	else: # Fit width
+	else:  # Fit width
 		new_size.y = roundi(float(size.y * side_length) / float(size.x))
 	return new_size
 
@@ -136,10 +144,14 @@ static func generate(object: Node2D, side_length: int) -> ImageTexture:
 	for image: Image in images:
 		var image_size: Vector2i = fit_size_to_square(image.get_size(), side_length)
 		image.resize(image_size.x, image_size.y, Image.Interpolation.INTERPOLATE_LANCZOS)
-	var composite_image: Image = Image.create_empty(side_length, side_length, false, images[0].get_format())
+	var composite_image: Image = Image.create_empty(
+		side_length, side_length, false, images[0].get_format()
+	)
 	for image: Image in images:
 		var image_rect: Rect2i = Rect2i(Vector2i.ZERO, image.get_size())
-		composite_image.blend_rect(image, image_rect, (composite_image_size - image.get_size()) / 2.0)
+		composite_image.blend_rect(
+			image, image_rect, (composite_image_size - image.get_size()) / 2.0
+		)
 	var texture: ImageTexture = ImageTexture.create_from_image(composite_image)
 	AssetManager.generated_editor_object_thumbnails[cache_path] = texture
 	return texture
