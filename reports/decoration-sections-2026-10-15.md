@@ -29,7 +29,10 @@ process/wasm/GPU memory**.
 The test executable counts live/peak requested C++ allocation bytes, including map nodes
 and vector capacity. It excludes its accounting prefixes, allocator metadata, fragmentation,
 stack objects and RSS. The production allocator is unchanged. Empty builder destruction
-is included before the retained sample (important for MSVC's map sentinel).
+is included before the retained sample (important for MSVC's map sentinel). The exact
+tracker-versus-capacity equality check is enforced on GCC; on MSVC, vector-capacity bytes
+remain the retained metric and the global-new-hook count is logged diagnostically because
+its allocator routing can differ from the plain `operator new` hook.
 
 | 20,000-record fixture | Old retained | New retained | Reduction | Old construction peak | New construction peak |
 | --- | ---: | ---: | ---: | ---: | ---: |
