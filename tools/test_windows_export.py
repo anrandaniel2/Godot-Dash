@@ -90,10 +90,22 @@ class WindowsExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             windows_project(project, 'invalid"', "42", "arena/example")
 
-    def test_installer_has_stable_identity_and_no_user_data_deletions(self):
+    def test_installer_has_stable_identity_safe_path_and_default_shortcut(self):
         script = (ROOT / "tools/windows/GodotDash.iss").read_text()
-        for setting in ("AppId=GodotDash", "UsePreviousAppDir=yes", "PrivilegesRequired=lowest"):
+        for setting in (
+            "AppId=GodotDash",
+            "DefaultDirName={code:GetDefaultInstallDir}",
+            "UsePreviousAppDir=no",
+            "UsePreviousTasks=no",
+            "PrivilegesRequired=lowest",
+            "SetupMutex=GodotDash-Installer",
+        ):
             self.assertIn(setting, script)
+        self.assertIn('Name: "desktopicon"; Description: "Create a desktop shortcut"', script)
+        self.assertNotIn('Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked', script)
+        self.assertIn("function CanWriteToDirectory", script)
+        self.assertIn("PreviousInstallNotWritable := True", script)
+        self.assertIn("if CurPageID = wpSelectDir then", script)
         self.assertNotIn("[UninstallDelete]", script)
         self.assertNotIn("{userappdata}", script)
         for line in script.splitlines():

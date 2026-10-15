@@ -1,13 +1,25 @@
 GODOT DASH — Windows x86-64 / Forward+
 
 INSTALL / UPDATE (recommended)
-Run GodotDashSetup-x86_64.exe. It creates the Godot Dash Start-menu/desktop
-shortcut and installs to %LOCALAPPDATA%\Programs\Godot Dash without admin rights.
-Run a newer installer to update the SAME installation, not a second app.
-Close the game first (save any edits). The installer reuses its registered path.
+Run GodotDashSetup-x86_64.exe. The desktop shortcut is preselected by default;
+the installer also creates a Start-menu shortcut. It installs per-user under
+%LOCALAPPDATA%\Programs\Godot Dash and does not require administrator rights.
+Run a newer installer to update the SAME writable installation, not a second app.
+If an older machine-wide install is inaccessible, setup falls back to the per-user
+folder and explains that the old copy may need separate removal. Saved levels,
+settings and replays remain in %APPDATA%\godot-dash.
+Close the game first (save any edits). Only one setup instance can run at a time.
 The title screen checks this build's branch-specific GitHub update channel and
 links to the installer when a newer build exists. Downloads/installations remain
 user-confirmed; nothing silently runs a downloaded executable.
+
+SECURITY / ANTIVIRUS
+These GitHub builds are currently unsigned. Windows SmartScreen or antivirus may
+warn about an unknown publisher and scan the installer's temporary extraction files.
+Do not turn off antivirus or add an exclusion. Verify the download came from this
+project's GitHub release. A trusted Authenticode signature is required to improve
+publisher reputation and reduce those warnings; scanning cannot safely be disabled
+by the installer.
 
 YOUR FILES
 All versions keep using %APPDATA%\godot-dash for user://. Changing the app title
