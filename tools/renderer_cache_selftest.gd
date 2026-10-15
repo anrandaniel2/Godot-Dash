@@ -40,11 +40,13 @@ func _ready() -> void:
 	if probe.is_valid():
 		RenderingServer.free_rid(probe)
 		_test_draw_submission()
+		_test_hsv_snapshots()
 		print("RENDERER_CACHE_NOTE retained-command counters checked; no pixel/GPU validation")
 	else:
 		print(
 			"RENDERER_CACHE_NOTE no canvas RIDs: state tests only; ordered selection tested separately in C++"
 		)
+	await _test_coalesced_commands()
 	await _test_batch_processing()
 	# Exit coordinator first: drain worker jobs before releasing the renderer.
 	coordinator.free()
@@ -121,7 +123,7 @@ func _test_draw_submission() -> void:
 	_check(_canvas.call(&"get_item_color", 0) == Color.BLUE, "reconfigure replaces record data")
 
 
-func _configure(color: Color, cull_records: bool = true) -> void:
+func _configure(color: Color, cull_records: bool = true, spin: float = 0.0) -> void:
 	var hsv: PackedFloat32Array = PackedFloat32Array()
 	hsv.resize(10)
 	hsv.fill(-1.0)
@@ -135,7 +137,7 @@ func _configure(color: Color, cull_records: bool = true) -> void:
 		PackedFloat32Array([0, 4]),
 		PackedFloat32Array([1, 1]),
 		hsv,
-		PackedFloat32Array([0, 0]),
+		PackedFloat32Array([spin, spin]),
 		PackedFloat32Array([0, 0, 4, 4]),
 		cull_records,
 		256.0,
@@ -275,3 +277,54 @@ func _test_record_updates() -> void:
 	_check(not _canvas.call(&"has_pending_redraw"), "identical pulse keeps command state clean")
 	_configure(Color.BLUE, false)
 	_check(_canvas.call(&"get_item_color", 0) == Color.BLUE, "same-size reconfigure replaces data")
+
+
+func _test_coalesced_commands() -> void:
+	_configure(Color.WHITE, true, 90.0)
+	await _settle()
+	var previous: int = int(_canvas.call(&"command_rebuild_count"))
+	var started: int = previous
+	var selections: int = int(_canvas.call(&"selection_rebuild_count"))
+	var maximum: int = 0
+	for frame: int in 120:
+		# Both records remain visible, but cell bounds change repeatedly while
+		# real coordinator spin and channel pulses also dirty the same canvas.
+		_owner.position.x = 256.0 if (frame / 4) % 2 == 0 else 0.0
+		_canvas.call(&"set_group_pulse", Color(float(frame) / 120.0, 0.5, 1.0), 0.5)
+		await get_tree().process_frame
+		var current: int = int(_canvas.call(&"command_rebuild_count"))
+		maximum = maxi(maximum, current - previous)
+		_check(current - previous <= 1, "range/spin/pulse coalesce to one command rebuild per frame")
+		previous = current
+	var range_changes: int = int(_canvas.call(&"selection_rebuild_count")) - selections
+	_check(previous > started, "coordinator still submits changing animation")
+	_check(range_changes >= 2, "coalescing fixture actually exercises changed cell ranges")
+	_check(int(_canvas.call(&"last_drawn_count")) == 2, "coalescing retains both visible records")
+	print("RENDERER_COALESCE frames=120 rebuilds=%d max_per_frame=%d range_changes=%d" % [previous - started, maximum, range_changes])
+	_owner.position = Vector2.ZERO
+	_canvas.call(&"set_group_pulse", Color.WHITE, 0.0)
+	_configure(Color.WHITE)
+
+
+func _test_hsv_snapshots() -> void:
+	var poses: Array = [Transform2D.IDENTITY, Transform2D.IDENTITY, Transform2D.IDENTITY, Transform2D.IDENTITY]
+	var regions: Array = [Rect2(0, 0, 8, 8), Rect2(0, 0, 8, 8), Rect2(0, 0, 8, 8), Rect2(0, 0, 8, 8)]
+	var hsv: PackedFloat32Array = PackedFloat32Array([0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0.1, 1, 1, 0, 0])
+	var color: Color = Color(0.25, 0.5, 0.8, 0.6)
+	for pass_index: int in 2:
+		_canvas.call(&"configure", _owner, [_texture, _texture, _texture, _texture], regions, poses,
+			PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]), PackedFloat32Array([0, 0, 0, 0]),
+			PackedFloat32Array([1, 1, 1, 1]), hsv, PackedFloat32Array(), PackedFloat32Array(), false, 256.0, 0.0)
+		_canvas.call(&"apply_channel_color", PackedInt32Array([0, 1, 2, 3]), color)
+		for index: int in 3:
+			_check(_canvas.call(&"get_item_color", index) == color, "neutral HSV snapshots preserve exact channel RGB")
+		if pass_index == 0:
+			var expected: Color = color
+			expected.s *= 1.0
+			expected.v *= 1.0
+			expected.h += 0.1
+			var actual: Color = _canvas.call(&"get_item_color", 3)
+			_check(actual.is_equal_approx(expected), "non-neutral HSV remains live")
+		else:
+			_check(_canvas.call(&"get_item_color", 3) == color, "same-size reconfigure rebuilds HSV classification")
+		hsv.fill(0.0)

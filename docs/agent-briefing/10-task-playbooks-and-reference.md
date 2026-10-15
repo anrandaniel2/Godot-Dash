@@ -52,9 +52,9 @@ same order; `@export_storage` for intermediates.
 ### Performance work
 
 1. Measure first; the game already prints level-open stats, memory and streaming overlays.
-2. Choose the right lever: LDM (`DisabledInLowDetailModeAttribute`), culling
-   (`Config.culling_buffer_cells`), batching (`DecorationBatch` keys), the shared physics chunks
-   (`LevelPhysics.CHUNK_CELLS`), or the native indices.
+2. Choose a measured lever: redundant work, data layout, batching (`DecorationBatch`
+   keys), or native indices. This optimization campaign explicitly forbids LDM/content
+   removal, looser culling or physics/cutscene timing changes as performance shortcuts.
 3. Keep per-frame work bounded in **time** (milliseconds) not work units; slice anything that
    can burst (follow the plan doc's seventh-pass pattern: persistent accumulators, per-pass
    slices, wall-clock budgets).
@@ -164,8 +164,9 @@ and the README table, and remember the local `serve_web.py` relay must stay comp
    pending), M4/M5 not started. Do not delete old component scenes or their SVG art yet.
 3. **Hitbox follow-ups.** Invisible slopes 1344/1345 (homology-resolved, wants a GD
    hitbox-viewer double-check); 2.1 persp blocks 1561–1569 (solids with no atlas art, no scenes).
-4. **Native unit tests are not in CI.** Six `native/tests/*.cpp` exist; none are compiled by a
-   workflow. Wiring the standalone three in would be a cheap win.
+4. **Native test coverage is partial.** Windows CI runs visibility-cache/neutral-HSV and
+   UI-alignment standalone tests plus real native renderer/color/presentation scenes.
+   Other native tests still need explicit local/CI execution; see `06 §6`.
 5. **Amethyst/Beam diagnostics** remain device-driven; `reports/amethyst_glow.md` currently
    records failed downloads rather than analysis.
 6. **`export_presets.cfg`** is tracked despite `.gitignore` listing it — keep that in mind when

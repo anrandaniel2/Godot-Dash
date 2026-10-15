@@ -232,3 +232,10 @@ UI decoration batches align individual object pivots, including Relative+Center,
 without stretching sprite parts, and refresh their layout when the viewport resizes.
 See `reports/presentation-parity-2026-10-14.md` for tests and remaining device/full-level
 verification limits.
+
+
+The next CPU pass coalesces culling/animation/color draw-command updates into one flush,
+resolves common channel HSV once per update, and precomputes immutable native object-HSV
+flags. It does not lower detail or change physics/timing. The script probe now respects
+`.gdignore` boundaries around standalone benchmark projects. See
+`reports/render-recolor-2026-10-14.md` for test coverage, rejected experiments and limits.

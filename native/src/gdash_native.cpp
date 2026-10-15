@@ -75,6 +75,7 @@
 #include "gravity_portal.h"
 #include "decoration_spin.h"
 #include "decoration_visibility_cache.h"
+#include "neutral_hsv.h"
 #include "gd_physics_constants.h"
 
 namespace godot {
@@ -10362,6 +10363,7 @@ class NativeColorChannelIndex : public RefCounted {
 		float alpha = 1.0f;
 		bool sat_multiplies = false;
 		bool val_multiplies = false;
+		bool neutral_shift = true;
 	};
 	std::vector<Record> records;
 	// base_intensity/base_alpha are channel-wide values mirrored onto every
@@ -10405,6 +10407,8 @@ public:
 			record.alpha = static_cast<float>(static_cast<double>(node->get("alpha")));
 			record.sat_multiplies = static_cast<bool>(node->get("saturation_multiplies"));
 			record.val_multiplies = static_cast<bool>(node->get("value_multiplies"));
+			record.neutral_shift = gdash::neutral_hsv(record.hsv[0], record.hsv[1], record.hsv[2],
+				record.sat_multiplies, record.val_multiplies);
 			records.push_back(record);
 		}
 	}
@@ -10416,21 +10420,20 @@ public:
 	// component write round-trips through RGB, so order is observable).
 	void apply(const Color &channel_color, double shift_h, double shift_s, double shift_v,
 			double intensity, double alpha) {
+		if (records.empty()) return;
 		const bool write_base = !base_valid || intensity != last_intensity || alpha != last_alpha;
 		base_valid = true;
 		last_intensity = intensity;
 		last_alpha = alpha;
-		const float fh = static_cast<float>(shift_h);
-		const float fs = static_cast<float>(shift_s);
-		const float fv = static_cast<float>(shift_v);
+		// Channel-wide work, not per-watcher work. Keep s/v/h order and
+		// float conversions identical: reassociating HSV changes HDR colors.
+		Color modulate = channel_color;
+		modulate.set_s(modulate.get_s() + static_cast<float>(shift_s));
+		modulate.set_v(modulate.get_v() + static_cast<float>(shift_v));
+		modulate.set_h(modulate.get_h() + static_cast<float>(shift_h));
 		for (const Record &record : records) {
 			CanvasItem *watcher = Object::cast_to<CanvasItem>(node_for(record.watcher));
 			if (!watcher) continue;
-			// watcher.modulate = channel colour + channel shift (s, v, h).
-			Color modulate = channel_color;
-			modulate.set_s(modulate.get_s() + fs);
-			modulate.set_v(modulate.get_v() + fv);
-			modulate.set_h(modulate.get_h() + fh);
 			// HSVWatcher.update_color: per-object shift on top (s, v, h), then
 			// intensity product and alpha override on the parent's modulate.
 			// An all-zero shift in multiplicative mode is Geometry Dash's
@@ -10438,11 +10441,8 @@ public:
 			// object out (GDRweb's shiftColor guard; the GDScript watcher
 			// and DecorationBatch paths match this).
 			Color shifted = modulate;
-			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
-				(record.hsv[0] == 0.0f &&
-				 record.hsv[1] == (record.sat_multiplies ? 1.0f : 0.0f) &&
-				 record.hsv[2] == (record.val_multiplies ? 1.0f : 0.0f));
-			if (!is_neutral) {
+
+			if (!record.neutral_shift) {
 				if (record.sat_multiplies) {
 					shifted.set_s(shifted.get_s() * record.hsv[1]);
 				} else {
@@ -10876,7 +10876,11 @@ public:
 		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (size_t index = 0; index < records.size(); ++index) {
-			const Record &record = records[index];
+			Record &record = records[index];
+			// Per-object HSV is immutable until reconfigure. Preserve the exact
+			// zero/neutral guard without reevaluating it on every channel pulse.
+			record.has_hsv = record.has_hsv && !gdash::neutral_hsv(record.hsv[0], record.hsv[1], record.hsv[2],
+				!(record.hsv[3] > 0.5f), !(record.hsv[4] > 0.5f));
 			const Rect2 bounds = record.transform.xform(Rect2(-record.region.size * 0.5, record.region.size));
 			// Index the complete conservative rotation circle, not only the origin.
 			// The previous batch-wide maximum radius let one giant background sprite
@@ -10995,7 +10999,8 @@ public:
 		server->canvas_item_set_visible(canvas_item, range_has_records);
 		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
 		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
-		rebuild_commands();
+		// The coordinator merges this with this frame's color/spin changes.
+		commands_dirty = true;
 	}
 
 	void update_camera_range() {
@@ -11048,11 +11053,8 @@ public:
 			// zeros would otherwise multiply saturation and value to 0 and
 			// render the item as a black silhouette. GDRweb's
 			// HSVShift.shiftColor returns the colour unchanged then.
-			const bool is_neutral = (record.hsv[0] == 0.0f && record.hsv[1] == 0.0f && record.hsv[2] == 0.0f) ||
-				(record.hsv[0] == 0.0f &&
-				 record.hsv[1] == (record.hsv[3] > 0.5f ? 0.0f : 1.0f) &&
-				 record.hsv[2] == (record.hsv[4] > 0.5f ? 0.0f : 1.0f));
-			if (record.has_hsv && !is_neutral) {
+
+			if (record.has_hsv) {
 				float hue = std::fmod(tinted.get_h() + record.hsv[0], 1.0f); if (hue < 0) hue += 1.0f;
 				const float saturation = std::clamp(record.hsv[3] > 0.5f ? tinted.get_s() + record.hsv[1] : tinted.get_s() * record.hsv[1], 0.0f, 1.0f);
 				const float value = std::clamp(record.hsv[4] > 0.5f ? tinted.get_v() + record.hsv[2] : tinted.get_v() * record.hsv[2], 0.0f, 1.0f);
@@ -11432,29 +11434,12 @@ static void update_registered_decoration_renderers(double delta) {
 	decoration_last_update_frame = frame;
 	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
 	static Ref<NativeDecorationCullWorker> worker;
-	// Coalesce any number of channel/spin updates into one RID command rebuild
-	// per renderer per frame instead of clearing/re-emitting after every item.
-	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
-		if (!renderer) continue;
-		renderer->advance_animation(delta);
-		renderer->flush_commands();
-	}
-	if (!pool) return;
-	if (worker.is_null()) {
-		worker.instantiate();
-		// This static outlives the engine: C++ static destructors run after
-		// main, and a plain Ref would memdelete the worker into an
-		// already-torn-down ObjectDB during teardown - a shutdown segfault.
-		// The immortal reference trades one leak-counter entry for a clean
-		// exit, the standard pattern for process-wide Godot objects.
-		if (worker.is_valid()) worker->reference();
-	}
 
-	// Never wait on the game thread. Apply a completed previous-frame result;
-	// if workers are still busy, retain the conservative old cells and try next
-	// frame. This makes culling incapable of becoming a new frame-time spike.
-	if (decoration_cull_active_group >= 0) {
-		if (!pool->is_group_task_completed(decoration_cull_active_group)) return;
+	// Consume a completed range FIRST, without emitting commands yet. The
+	// previous order flushed animation with old cells, then cleared/rebuilt
+	// the same canvas again for new cells in the very same render frame.
+	// Never wait for unfinished work; animation/dirty flush still runs.
+	if (pool && decoration_cull_active_group >= 0 && pool->is_group_task_completed(decoration_cull_active_group)) {
 		pool->wait_for_group_task_completion(decoration_cull_active_group);
 		for (const DecorationCullJob &job : decoration_cull_jobs) {
 			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
@@ -11462,6 +11447,18 @@ static void update_registered_decoration_renderers(double delta) {
 			if (renderer) renderer->apply_cull_job(job);
 		}
 		decoration_cull_active_group = -1;
+	}
+	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
+		if (!renderer) continue;
+		renderer->advance_animation(delta);
+		renderer->flush_commands();
+	}
+	if (!pool || decoration_cull_active_group >= 0) return;
+	if (worker.is_null()) {
+		worker.instantiate();
+		// This Ref outlives the engine; retain the existing immortal worker
+		// reference so teardown cannot memdelete it after ObjectDB shuts down.
+		if (worker.is_valid()) worker->reference();
 	}
 
 	decoration_cull_jobs.clear();
@@ -11494,7 +11491,10 @@ static void finalize_decoration_culling() {
 		for (const DecorationCullJob &job : decoration_cull_jobs) {
 			Object *object = ObjectDB::get_instance(ObjectID(job.renderer_id));
 			NativeDecorationRenderer *renderer = Object::cast_to<NativeDecorationRenderer>(object);
-			if (renderer) renderer->apply_cull_job(job);
+			if (renderer) {
+				renderer->apply_cull_job(job);
+				renderer->flush_commands();
+			}
 		}
 	}
 	decoration_cull_active_group = -1;

@@ -37,6 +37,10 @@ func _ready() -> void:
 
 
 func _collect(dir_path: String, into: PackedStringArray) -> void:
+	# Standalone benchmark projects have their own res:// root/autoloads.
+	# Godot excludes these directories; do not compile them as game scripts.
+	if FileAccess.file_exists(dir_path.path_join(".gdignore")):
+		return
 	var dir := DirAccess.open(dir_path)
 	if dir == null:
 		print("PROBE SKIP missing ", dir_path)

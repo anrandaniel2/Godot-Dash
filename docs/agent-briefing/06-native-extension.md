@@ -46,11 +46,11 @@ its packed builder/renderer. Do not mistake the contract below for verified fall
 | Class | Role |
 | --- | --- |
 | `NativeTriggerRuntime` | packed trigger scheduler: parses GD trigger properties once, advances crossings per physics tick, executes colour/camera/player/shader/UI effects; API `register_packed_trigger`, `advance`, `tick`, `reset`, `trigger_count`, `active_fade_count` |
-| `NativeLevelRuntime` | per-level runtime: `bind_context` (level, camera, Config, ShaderLayer, UILayer), `bind_shader_layer` / `bind_ui_layer`, `register_channel`, `register_trigger`, `advance_player`, `apply_ui_triggers`, `restore_ui_objects`, `is_ui_applied`, `compute_ui_anchor`, `trigger_count` |
+| `NativeLevelRuntime` | per-level runtime: `bind_context` (level, camera, Config, ShaderLayer, UILayer), `bind_shader_layer` / `bind_ui_layer`, `register_channel`, `register_trigger`, `prime_spawn`, `apply_ui_triggers`, `restore_ui_objects`, `is_ui_applied`, `compute_ui_anchor`, `trigger_count` |
 | `NativeFrustumIndex` | packed node-visibility index: `configure`, `build_x_buckets`, `set_view`, `set_visible_buckets`, `visible_bucket_keys`, `hidden_count`, `tracked_count` |
 | `NativeColorChannelIndex` | one-call channel propagation: `configure`, `set_group_members`, `apply_channel_color`, `set_channel_blending`, `clear` |
 | `NativeLevelBuildJob` | incremental construction: `initialize(data, drop_decoration)`, `step(ms)`, `is_finished`, `get_level` |
-| `NativeDecorationRenderer` | retained-RID sprite renderer: `initialize`, `set_item_transform`, `set_item_color`, `get_item_*`, `sort_decoration_indices`, `render_stats`, `queue_redraw`, `item_count`, `last_drawn_count` |
+| `NativeDecorationRenderer` | retained-RID sprite renderer: `configure`, `set_item_transform`, `set_item_color`, `get_item_*`, `sort_decoration_indices`, `render_stats`, `queue_redraw`, `item_count`, `last_drawn_count` |
 | `NativeDecorationCullWorker` | worker-thread culling coordinator (enter/exit, frame updates, stats) |
 | `GdashNative` | entry point: `build_string`, `version`, `add` (self-check used by `GameScene._probe_native_core`), plus the parsing/CORS/audio helpers used by `NativeCore` |
 
@@ -142,12 +142,15 @@ loudly rather than building wasm32. Do not commit the patched clone.
 | --- | --- |
 | `native/tests/test_physics.cpp` | standalone; duplicates player physics constants, exercises the velocity/gravity/slope math |
 | `native/tests/test_gravity_portal.cpp` | standalone; uses `../src/gravity_portal.h` |
-| `native/tests/test_ui_trigger.cpp` | standalone (duplicated constants) |
+| `native/tests/test_ui_trigger.cpp` | standalone; production `ui_alignment.h`, run by Windows CI |
 | `native/tests/test_color_channel_math.cpp` | needs `godot_cpp/variant/color.hpp` |
 | `native/tests/test_online_parser.cpp` | needs godot-cpp headers |
 | `native/tests/test_trigger_effect_parse.cpp` | includes the whole `../src/gdash_native.cpp`; needs godot-cpp |
 
-**No workflow currently compiles or runs them.** If you touch those modules, run them locally:
+Windows CI now compiles/runs `test_ui_trigger.cpp` and
+`test_decoration_visibility_cache.cpp` through `tools/benchmarks/renderer_cache/SConstruct`.
+The latter includes the production neutral-HSV classification test. Other standalone
+unit tests are not automatically covered by that gate; run relevant ones locally:
 
 ```bash
 g++ -std=c++17 -O2 -o /tmp/t native/tests/test_physics.cpp && /tmp/t
@@ -155,7 +158,7 @@ g++ -std=c++17 -I native/godot-cpp/include -I native/godot-cpp/gen/include \
     -o /tmp/tc native/tests/test_color_channel_math.cpp && /tmp/tc
 ```
 
-Wiring them into CI is a legitimate, welcome change — keep the standalone ones dependency-free.
+Keep standalone tests dependency-free. Do not confuse their CPU checks with GPU or real-level performance proof.
 
 ## 7. In-engine native gates (CI)
 

@@ -82,3 +82,27 @@ now uses the production wrapper's `prime_spawn`/player-position tracking and act
 level-scoped scene groups at finalize. No production API was added to conceal the
 fixture error. Edge-position checks use an explicit 0.02-pixel tolerance for float32
 transforms at 40k world coordinates, not a widened visibility/culling tolerance.
+
+## Published result — f9f76fb2 / Windows Build 15
+
+- Web 38656536278: **SUCCESS**.
+- Windows 38656536240, check 116167527346: **SUCCESS**.
+- New gameplay/presentation gate: **54 checks, zero failures**.
+- Existing renderer integration: **2035/0**; selector with benchmark: **6026/0**;
+  runtime safety: **1655/0**; production UI math: **PASS**.
+- Exported native load/Forward+ configuration and installer upgrade/uninstall
+  user-data hash preservation: **PASS**.
+- Installer: https://github.com/anrandaniel2/Godot-Dash/releases/download/windows-f9f76fb2/GodotDashSetup-x86_64.exe
+- Portable ZIP: https://github.com/anrandaniel2/Godot-Dash/releases/download/windows-f9f76fb2/godot-dash-windows-x86_64.zip
+
+These results still do not establish physical-display or full Amethyst visual parity.
+No timing gain is claimed: callback sample was 689.993 -> 690.004 ms/100 frames (flat).
+Selector medians/2000 redraws were fixed 13.2701 -> 1.5007 ms, every 60 frames
+13.2281 -> 1.7255 ms, and every redraw 14.8215 -> 17.498 ms (cold-case regression).
+The selector algorithm itself was not changed by this presentation follow-up.
+
+Separate Android run 38656536288 failed its script-load probe because it loaded the
+existing standalone `tools/benchmarks/channel_index/Benchmark.gd` as part of the main
+project, where its `res://MutableIndexCandidate.gd` preload does not exist. That isolated
+benchmark/probe issue is not changed in this task. Windows/Web success is not a claim
+of Android build success.

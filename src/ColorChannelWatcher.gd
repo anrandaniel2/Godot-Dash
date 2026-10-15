@@ -127,13 +127,17 @@ func refresh_objects_color(hsv_watchers: Array[HSVWatcher] = [], _data: ColorCha
 			_finish_fanout(owns_fanout, self_id)
 			return
 		hsv_watchers.assign(get_tree().get_nodes_in_group(_data.associated_group))
+	# Resolve copy chains and channel HSV once, not once per member. Each
+	# Color write still round-trips through RGB in the original s/v/h order.
+	var channel_modulate: Color = _channel_color(_data)
+	channel_modulate.s += _data.hsv_shift[1]
+	channel_modulate.v += _data.hsv_shift[2]
+	channel_modulate.h += _data.hsv_shift[0]
+	var channel_alpha: float = _effective_alpha(_data)
 	for hsv_watcher: HSVWatcher in hsv_watchers:
-		hsv_watcher.modulate = _channel_color(_data)
-		hsv_watcher.modulate.s += _data.hsv_shift[1]
-		hsv_watcher.modulate.v += _data.hsv_shift[2]
-		hsv_watcher.modulate.h += _data.hsv_shift[0]
+		hsv_watcher.modulate = channel_modulate
 		hsv_watcher.base_intensity = _data.intensity
-		hsv_watcher.base_alpha = _effective_alpha(_data)
+		hsv_watcher.base_alpha = channel_alpha
 		hsv_watcher.update_color()
 	_refresh_decoration_batches(_data)
 	_finish_fanout(owns_fanout, self_id)

@@ -1,5 +1,6 @@
 // No Godot SDK required: tests the actual selection cache used by the renderer.
 #include "../src/decoration_visibility_cache.h"
+#include "../src/neutral_hsv.h"
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -107,6 +108,22 @@ static void test_dirty() {
 	require(dirty, "non-finite value must not be mistaken for an unchanged value");
 }
 
+static void test_neutral_hsv() {
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	const float inf = std::numeric_limits<float>::infinity();
+	for (float h : {0.0f, -0.0f, 1e-14f, 0.5f, inf, nan})
+		for (float sat : {0.0f, 1.0f, 1e-14f, inf, nan})
+			for (float val : {0.0f, 1.0f, 1e-14f, inf, nan})
+				for (float sat_flag : {0.0f, 0.5f, 1.0f, nan})
+					for (float val_flag : {0.0f, 0.5f, 1.0f, nan}) {
+						const bool previous = (h == 0.0f && sat == 0.0f && val == 0.0f) ||
+							(h == 0.0f && sat == (sat_flag > 0.5f ? 0.0f : 1.0f) &&
+							 val == (val_flag > 0.5f ? 0.0f : 1.0f));
+						require(gdash::neutral_hsv(h, sat, val, !(sat_flag > 0.5f), !(val_flag > 0.5f)) == previous,
+							"precomputed neutral classification preserves exact old predicate");
+					}
+}
+
 // Previous production algorithm: generation stamps, but rewalk cells each redraw.
 struct Baseline {
 	std::vector<uint32_t> marks;
@@ -183,6 +200,7 @@ static void benchmark() {
 int main(int argc, char **argv) {
 	test_parity();
 	test_dirty();
+	test_neutral_hsv();
 	if (argc > 1 && std::string(argv[1]) == "--benchmark") benchmark();
 	std::cout << "DECORATION_CACHE_SUMMARY checks=" << checks << " failed=0\n";
 }

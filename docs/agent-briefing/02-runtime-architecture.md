@@ -287,3 +287,15 @@ spin, monster timing and in-tree rebuilds, plus a 2,000-node callback microbench
   preserve multi-sprite/spin geometry, bypass only UI's now-invalid world cull index,
   resize without replaying triggers, and clear on restore. Full Amethyst/device parity
   is not established by headless synthetic tests.
+
+
+### Redundant render/recolor work (2026-10-14)
+
+The coordinator consumes completed cell-range jobs before its single animation/command
+flush. Applying a worker result marks commands dirty instead of rebuilding immediately;
+busy workers still never block animation, and teardown drains/flushes before release.
+The map-based visibility cache remains unchanged: adaptive admission and flat-index
+candidates did not demonstrate robust cross-workload wins and were not shipped.
+NativeColorChannelIndex and the portable ColorChannelWatcher resolve common channel HSV
+once per refresh. Immutable native object-HSV neutrality is classified at configure/index
+build, with the exact old zero/multiply rule (no epsilon); reconfiguration replaces it.

@@ -251,3 +251,18 @@ race. Headless Godot retains canvas commands but produces no pixels/GPU output; 
 counters are not pixel parity. The fixture also checks DecorationBatch processing flags
 after READY, native spin, monster timing, and a 2,000-node callback benchmark.
 M1's picking-order gate remains unchanged.
+
+
+## 9. Render/recolor follow-up (2026-10-14)
+
+`tools/renderer_cache_selftest.tscn` also exercises simultaneous completed culling,
+spin and pulse updates, requiring at most one command rebuild per frame and actual
+cell-range changes. Renderer HSV snapshots are tested through same-size reconfiguration.
+`tools/color_refresh_selftest.tscn` compares the production portable recolor path bit-exactly
+against the frozen Build 15 loop, checks native values/base mirrors, copy cycles, opacity,
+neutral/non-neutral HSV and editor highlights, then reports synchronous CPU timings for
+2000 watchers/60 updates. Current native timing is NOT a before/after native benchmark.
+Both tests are strict Windows packaging gates (completion marker plus script-error checks).
+The script probe respects `.gdignore` so isolated benchmark projects are not loaded with
+the main project's res:// root. Ordinary runtime and test scripts remain checked.
+No full-level FPS, GPU/pixel parity, or M1 picking-order acceptance follows from these tests.

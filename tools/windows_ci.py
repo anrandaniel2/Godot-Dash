@@ -131,7 +131,7 @@ def build() -> None:
     if not re.search(r"DECORATION_CACHE_SUMMARY checks=\d+ failed=0", text):
         raise RuntimeError("Decoration cache parity tests did not pass")
     for line in text.splitlines():
-        if line.startswith("DECORATION_CACHE_"):
+        if line.startswith(("DECORATION_CACHE_", "DECORATION_INDEX_")):
             print(f"::notice title=decoration cache::{line}")
     text = run([CACHE / "renderer-cache/ui-alignment-test.exe"], "ui-alignment")
     if "ALL UI TRIGGER TESTS PASSED" not in text:
@@ -195,7 +195,7 @@ def export() -> None:
     if not re.search(r"RENDERER_CACHE_SELFTEST checks=\d+ failed=0", text):
         raise RuntimeError("Native renderer cache integration failed")
     for line in text.splitlines():
-        if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH")):
+        if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH", "RENDERER_COALESCE")):
             print(f"::notice title=renderer integration::{line}")
     text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/gameplay_presentation_selftest.tscn"],
                "gameplay-presentation", timeout=120)
@@ -205,6 +205,14 @@ def export() -> None:
     for line in text.splitlines():
         if line.startswith("PRESENTATION_SELFTEST"):
             print(f"::notice title=gameplay presentation::{line}")
+    text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/color_refresh_selftest.tscn"],
+               "color-refresh", timeout=120)
+    check_log(text, "color-refresh")
+    if not re.search(r"COLOR_REFRESH_SELFTEST checks=\d+ failed=0", text):
+        raise RuntimeError("Channel refresh parity failed")
+    for line in text.splitlines():
+        if line.startswith(("COLOR_REFRESH_SELFTEST", "COLOR_REFRESH_BENCH")):
+            print(f"::notice title=color refresh::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
                 "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
@@ -227,7 +235,7 @@ def export() -> None:
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
-    for name in ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment", "gameplay-presentation"):
+    for name in ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment", "gameplay-presentation", "color-refresh"):
         shutil.copy2(LOGS / f"{name}.log", OUTPUT)
     shutil.make_archive(str(ROOT / "export/godot-dash-windows-x86_64"), "zip", OUTPUT)
     print("Windows ZIP packaged; headless smoke is not a GPU/visual test.")
