@@ -124,3 +124,23 @@ semantics and collision logic are untouched.
   runtime; no browser fix claimed. Engine template and memory64 contract unchanged.
 - Level probe again failed at download, before producing measurements. Android was
   still running at inspection and was superseded by the CPU-scene follow-up.
+
+## Warm-cache follow-up — c47ad09
+
+- Web 38663731494 **SUCCESS**, **227 s (3:47)** vs the original **330 s (5:30)**:
+  observed **31.2% less wall time**. Extension build/link step **6 s**, vs baseline
+  two-target **48 s** and first new-key **49 s**. This is a warm-cache incremental
+  result, not a guaranteed cold-build reduction or a controlled cross-run experiment.
+- Android's completed build steps at inspection: Linux host **4 s**, ARM release
+  **10 s**, templates **3 s**. The pinned NDK needed installation (**41 s**).
+  APK completion was not awaited/claimed.
+- The two-frame startup-delay experiment did not make the script probe terminate
+  promptly either; it was still running well after a minute. Rejected and removed
+  rather than accumulating a speculative workaround. The existing shutdown stall
+  remains unresolved; completion/error gates and original timeout budgets remain.
+- Latest Web report-only Chrome smoke again logs WebGPU device-loss/buffer errors
+  similar to the baseline. Treat Web as a successful export/architecture validation,
+  **not a clean browser runtime**.
+- Native timing above uses the release extension in the headless Godot editor fixture;
+  it is not a release-game frame-time measurement. The improved initial-clip coverage
+  and final platform results must be read from their corresponding CI runs.

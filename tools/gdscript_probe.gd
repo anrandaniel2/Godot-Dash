@@ -33,11 +33,6 @@ func _ready() -> void:
 		else:
 			print("PROBE OK ", path)
 	print("PROBE_SUMMARY total=", paths.size(), " failed=", failed.size())
-	# Let startup's deferred work run through one complete frame before these
-	# short-lived tests request shutdown;
-	# do not skip shutdown or suppress errors to make CI finish sooner.
-	await get_tree().process_frame
-	await get_tree().process_frame
 	get_tree().quit(1 if not failed.is_empty() else 0)
 
 

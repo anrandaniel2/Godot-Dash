@@ -268,9 +268,4 @@ func _fail(description: String) -> void:
 
 func _finish() -> void:
 	print("NATIVE_COLOR_SELFTEST_SUMMARY total=", checks, " failed=", failures.size())
-	# Let startup's deferred work run through one complete frame before these
-	# short-lived tests request shutdown;
-	# do not skip shutdown or suppress errors to make CI finish sooner.
-	await get_tree().process_frame
-	await get_tree().process_frame
 	get_tree().quit(1 if not failures.is_empty() else 0)
