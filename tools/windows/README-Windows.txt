@@ -53,11 +53,14 @@ parity. On launch, the engine log should identify Forward+ and a native-loaded
 message should appear when a level opens. Report startup errors verbatim.
 
 PERFORMANCE CAPTURE (optional)
-Open PowerShell in this extracted directory and run:
-  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1
+Open PowerShell in this extracted directory and run one capture per build:
+  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1 -Executable '.\RenderingServer\Godot Dash.exe'
+  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1 -Executable '.\GDClone\Godot Dash.exe'
+  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1 -Executable '.\OpenDash\Godot Dash.exe'
 
-Read the script before running it if you prefer. It launches the game with
-Forward+ explicitly selected and creates a performance-<timestamp> directory.
+The executable parameter defaults to the root RenderingServer baseline. Read
+the script before running it if you prefer. It launches with Forward+ explicitly
+selected and creates a performance-<timestamp> directory for each capture.
 No LDM, effects, physics, collision or replay settings are changed.
 
 Open ONE slow level and either play it or edit it. After 120 active warm-up
