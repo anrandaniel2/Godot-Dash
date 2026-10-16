@@ -1105,7 +1105,7 @@ jobs:
           echo "expected persistent signing certificate SHA-256: $EXPECTED_CERT"
           echo "APK signer certificate SHA-256: ${ACTUAL_CERT:-not found}"
           if [ -z "$ACTUAL_CERT" ] || [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
-            echo "::error::APK signing certificate does not match the persistent Android signing key"
+            echo "::error title=APK signing certificate mismatch::expected=$EXPECTED_CERT actual=${ACTUAL_CERT:-not-found}"
             exit 1
           fi
           echo "verified persistent APK signing certificate SHA-256: $ACTUAL_CERT"
