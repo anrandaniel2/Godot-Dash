@@ -10683,6 +10683,7 @@ class NativeDecorationRenderer : public RefCounted {
 	RID canvas_item_add;
 	Ref<CanvasItemMaterial> additive_material;
 	Ref<Resource> fade_plain, fade_additive;
+	Ref<Resource> backend_main_material, backend_plain_material, backend_additive_material;
 	std::vector<Record> records;
 	// UI changes object placement, never sprite size / part offsets. World
 	// records stay intact for spin/monster updates and exact restart restore.
@@ -10710,7 +10711,43 @@ class NativeDecorationRenderer : public RefCounted {
 	bool commands_dirty = false;
 	int64_t last_drawn_items = 0;
 	int64_t last_draw_commands = 0;
+	int64_t last_transform_commands = 0;
 	int64_t command_rebuilds = 0;
+	// Dirty only the blend routes touched by a record update. Each route keeps
+	// its ordered command stream intact; this avoids clearing/re-emitting the
+	// other CanvasItem RIDs when a trigger changes just one route.
+	static constexpr uint8_t ROUTE_MAIN = 1u << 0;
+	static constexpr uint8_t ROUTE_PLAIN = 1u << 1;
+	static constexpr uint8_t ROUTE_ADD = 1u << 2;
+	static constexpr uint8_t ROUTE_ALL = ROUTE_MAIN | ROUTE_PLAIN | ROUTE_ADD;
+	uint8_t dirty_route_mask = ROUTE_ALL;
+	std::array<int64_t, 3> route_drawn_items = {};
+	std::array<int64_t, 3> route_draw_commands = {};
+	std::array<int64_t, 3> route_transform_commands = {};
+	std::array<int64_t, 3> route_rebuilds = {};
+	// Windows A/B backends: 0 = retained RenderingServer rect commands,
+	// 1 = gdclone-style dense MultiMesh instance upload, 2 = OpenDash-style
+	// indexed mesh batch with sparse/contiguous dirty-region uploads.
+	int render_backend = 0;
+	struct GpuRun {
+		RID rid;
+		RID mesh;
+		Ref<Texture2D> texture;
+		std::vector<size_t> records;
+	};
+	struct RecordLocation {
+		int64_t run = -1;
+		int64_t local = -1;
+		uint8_t route = 0;
+	};
+	struct RecordDirty {
+		static constexpr uint8_t TRANSFORM = 1u << 0;
+		static constexpr uint8_t COLOR = 1u << 1;
+	};
+	std::array<std::vector<GpuRun>, 3> gpu_runs;
+	std::vector<RecordLocation> record_locations;
+	std::vector<uint8_t> record_dirty_flags;
+	bool gpu_data_dirty = false;
 	// Group pulse (1006, key 52 = 1): a batch holds one group set, so one
 	// pulse per renderer covers it. Weight 0 keeps the draw loop untouched;
 	// a pulsing batch re-emits only its visible records per changed tick.
@@ -10721,51 +10758,461 @@ class NativeDecorationRenderer : public RefCounted {
 		return Object::cast_to<CanvasItem>(ObjectDB::get_instance(ObjectID(owner_id)));
 	}
 
+	uint8_t route_slot_for_record(const Record &record) const {
+		if (record.blend == 1 && canvas_item_add.is_valid()) return 2;
+		if (record.blend == 2 && canvas_item_plain.is_valid()) return 1;
+		return 0;
+	}
+
+	void mark_routes_dirty(uint8_t routes) {
+		if (routes == 0) return;
+		dirty_route_mask |= routes;
+		commands_dirty = true;
+	}
+
+	void mark_all_routes_dirty() { mark_routes_dirty(ROUTE_ALL); }
+
+	void mark_record_route_dirty(size_t index, uint8_t data_flags = DIRTY_COLOR) {
+		if (index >= records.size()) return;
+		if (render_backend == 0) {
+			mark_routes_dirty(static_cast<uint8_t>(1u << route_slot_for_record(records[index])));
+		} else {
+			if (record_dirty_flags.size() < records.size()) record_dirty_flags.resize(records.size(), 0);
+			record_dirty_flags[index] |= data_flags;
+			gpu_data_dirty = true;
+			commands_dirty = true;
+		}
+	}
+
+	void refresh_draw_stats() {
+		last_drawn_items = route_drawn_items[0] + route_drawn_items[1] + route_drawn_items[2];
+		last_draw_commands = route_draw_commands[0] + route_draw_commands[1] + route_draw_commands[2];
+		last_transform_commands = route_transform_commands[0] + route_transform_commands[1] + route_transform_commands[2];
+	}
+
 	bool selected_range_has_records() const {
 		return sections.has_records({first_bucket, last_bucket, first_row, last_row});
 	}
 
+	static constexpr uint8_t DIRTY_TRANSFORM = 1u << 0;
+	static constexpr uint8_t DIRTY_COLOR = 1u << 1;
+	Transform2D get_draw_transform(int64_t index) const {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return Transform2D();
+		Transform2D result = records[index].transform;
+		if (ui_layout_active) result.set_origin(result.get_origin() + ui_offsets[index]);
+		return result;
+	}
+
+	bool set_canvas_shader_backend(const RID &target, const Ref<Resource> &source,
+			Ref<Resource> &owned_material) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		owned_material.unref();
+		if (!server || !target.is_valid() || render_backend == 0 || source.is_null()) return render_backend == 0;
+		if (!source->is_class("ShaderMaterial")) return false;
+		owned_material = source->duplicate(true);
+		if (owned_material.is_null()) return false;
+		Array center_args;
+		center_args.push_back(StringName("gd_instance_center"));
+		center_args.push_back(render_backend == 1);
+		owned_material->callv(StringName("set_shader_parameter"), center_args);
+		Array mesh_args;
+		mesh_args.push_back(StringName("gd_mesh_batch"));
+		mesh_args.push_back(render_backend == 2);
+		owned_material->callv(StringName("set_shader_parameter"), mesh_args);
+		server->canvas_item_set_material(target, owned_material->get_rid());
+		return true;
+	}
+
+	void setup_backend_materials() {
+		CanvasItem *owner_canvas = owner();
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!owner_canvas || !server) return;
+		if (render_backend == 0) {
+			backend_main_material.unref();
+			backend_plain_material.unref();
+			backend_additive_material.unref();
+			server->canvas_item_set_use_parent_material(canvas_item, true);
+			server->canvas_item_set_material(canvas_item, RID());
+			if (canvas_item_plain.is_valid() && fade_plain.is_valid()) server->canvas_item_set_material(canvas_item_plain, fade_plain->get_rid());
+			if (canvas_item_add.is_valid() && fade_additive.is_valid()) server->canvas_item_set_material(canvas_item_add, fade_additive->get_rid());
+			return;
+		}
+		Ref<Material> owner_material = owner_canvas->get_material();
+		Ref<Resource> owner_resource = owner_material;
+		const bool valid = set_canvas_shader_backend(canvas_item, owner_resource, backend_main_material) &&
+				set_canvas_shader_backend(canvas_item_plain, fade_plain, backend_plain_material) &&
+				set_canvas_shader_backend(canvas_item_add, fade_additive, backend_additive_material);
+		if (!valid) {
+			// A custom owner material cannot safely be rewritten for instance
+			// centers. Keep the original RenderingServer path for exact parity.
+			render_backend = 0;
+			setup_backend_materials();
+			return;
+		}
+		server->canvas_item_set_use_parent_material(canvas_item, false);
+	}
+
+	Color render_color(size_t index) const {
+		return pulse_weight > 0.0f ? pulse_record_color(records[index].color, pulse_color, pulse_weight) : records[index].color;
+	}
+
+	void fill_multimesh_buffer(const GpuRun &run, PackedFloat32Array &buffer) const {
+		buffer.resize(static_cast<int64_t>(run.records.size()) * 16);
+		float *data = buffer.ptrw();
+		for (size_t local = 0; local < run.records.size(); ++local) {
+			const size_t index = run.records[local];
+			const Record &record = records[index];
+			const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
+			const Vector2 origin = transform.get_origin();
+			const Vector2 x_axis = transform.basis_xform(Vector2(record.region.size.x, 0.0));
+			const Vector2 y_axis = transform.basis_xform(Vector2(0.0, record.region.size.y));
+			const int64_t base = static_cast<int64_t>(local) * 16;
+			data[base + 0] = static_cast<float>(x_axis.x);
+			data[base + 1] = static_cast<float>(y_axis.x);
+			data[base + 2] = 0.0f;
+			data[base + 3] = static_cast<float>(origin.x);
+			data[base + 4] = static_cast<float>(x_axis.y);
+			data[base + 5] = static_cast<float>(y_axis.y);
+			data[base + 6] = 0.0f;
+			data[base + 7] = static_cast<float>(origin.y);
+			const Color color = render_color(index);
+			data[base + 8] = color.r; data[base + 9] = color.g;
+			data[base + 10] = color.b; data[base + 11] = color.a;
+			// The run mesh contains this atlas region's UVs. Store the instance
+			// center for per-object fade/enter calculations in the shared shader.
+			data[base + 12] = static_cast<float>(origin.x);
+			data[base + 13] = static_cast<float>(origin.y);
+			data[base + 14] = 0.0f;
+			data[base + 15] = 0.0f;
+		}
+	}
+
+	void append_mesh_record(size_t index, PackedVector2Array &vertices, PackedColorArray &colors,
+			PackedVector2Array &uvs, PackedFloat32Array &custom0, PackedInt32Array &indices) const {
+		const Record &record = records[index];
+		const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
+		const Vector2 half = record.region.size * 0.5;
+		const Vector2 corners[4] = { Vector2(-half.x, -half.y), Vector2(half.x, -half.y),
+				Vector2(half.x, half.y), Vector2(-half.x, half.y) };
+		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
+		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
+		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
+		const Vector2 uv_corners[4] = { uv_origin, uv_origin + Vector2(uv_size.x, 0.0),
+				uv_origin + uv_size, uv_origin + Vector2(0.0, uv_size.y) };
+		const Color color = render_color(index);
+		const Vector2 center = transform.get_origin();
+		const int32_t first = vertices.size();
+		for (int corner = 0; corner < 4; ++corner) {
+			vertices.push_back(transform.xform(corners[corner]));
+			colors.push_back(color);
+			uvs.push_back(uv_corners[corner]);
+			custom0.push_back(static_cast<float>(center.x));
+			custom0.push_back(static_cast<float>(center.y));
+		}
+		indices.push_back(first); indices.push_back(first + 1); indices.push_back(first + 2);
+		indices.push_back(first); indices.push_back(first + 2); indices.push_back(first + 3);
+	}
+
+	void fill_mesh_record_bytes(size_t index, PackedByteArray &vertex_bytes, PackedByteArray &attribute_bytes) const {
+		const Record &record = records[index];
+		const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
+		const Vector2 half = record.region.size * 0.5;
+		const Vector2 corners[4] = { Vector2(-half.x, -half.y), Vector2(half.x, -half.y),
+				Vector2(half.x, half.y), Vector2(-half.x, half.y) };
+		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
+		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
+		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
+		const Vector2 uv_corners[4] = { uv_origin, uv_origin + Vector2(uv_size.x, 0.0),
+				uv_origin + uv_size, uv_origin + Vector2(0.0, uv_size.y) };
+		const Color color = render_color(index);
+		const Vector2 center = transform.get_origin();
+		vertex_bytes.resize(4 * 2 * static_cast<int64_t>(sizeof(float)));
+		attribute_bytes.resize(4 * 8 * static_cast<int64_t>(sizeof(float)));
+		float *vertex = reinterpret_cast<float *>(vertex_bytes.ptrw());
+		float *attribute = reinterpret_cast<float *>(attribute_bytes.ptrw());
+		for (int corner = 0; corner < 4; ++corner) {
+			const Vector2 point = transform.xform(corners[corner]);
+			vertex[corner * 2] = static_cast<float>(point.x);
+			vertex[corner * 2 + 1] = static_cast<float>(point.y);
+			const int base = corner * 8;
+			attribute[base + 0] = color.r; attribute[base + 1] = color.g;
+			attribute[base + 2] = color.b; attribute[base + 3] = color.a;
+			attribute[base + 4] = static_cast<float>(uv_corners[corner].x);
+			attribute[base + 5] = static_cast<float>(uv_corners[corner].y);
+			attribute[base + 6] = static_cast<float>(center.x);
+			attribute[base + 7] = static_cast<float>(center.y);
+		}
+	}
+
+	void free_gpu_route(uint8_t slot) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (server) {
+			for (GpuRun &run : gpu_runs[slot]) {
+				if (run.rid.is_valid()) server->free_rid(run.rid);
+				if (run.mesh.is_valid()) server->free_rid(run.mesh);
+			}
+		}
+		gpu_runs[slot].clear();
+	}
+
+	RID create_instance_mesh(size_t record_index) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server || record_index >= records.size()) return RID();
+		const Record &record = records[record_index];
+		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
+		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
+		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
+		PackedVector2Array vertices;
+		vertices.push_back(Vector2(-0.5, -0.5)); vertices.push_back(Vector2(0.5, -0.5));
+		vertices.push_back(Vector2(0.5, 0.5)); vertices.push_back(Vector2(-0.5, 0.5));
+		PackedVector2Array uvs;
+		uvs.push_back(uv_origin); uvs.push_back(uv_origin + Vector2(uv_size.x, 0));
+		uvs.push_back(uv_origin + uv_size); uvs.push_back(uv_origin + Vector2(0, uv_size.y));
+		PackedInt32Array indices;
+		indices.push_back(0); indices.push_back(1); indices.push_back(2);
+		indices.push_back(0); indices.push_back(2); indices.push_back(3);
+		Array arrays;
+		arrays.resize(RenderingServer::ARRAY_MAX);
+		arrays[RenderingServer::ARRAY_VERTEX] = vertices;
+		arrays[RenderingServer::ARRAY_TEX_UV] = uvs;
+		arrays[RenderingServer::ARRAY_INDEX] = indices;
+		RID mesh = server->mesh_create();
+		server->mesh_add_surface_from_arrays(mesh, RenderingServer::PRIMITIVE_TRIANGLES, arrays);
+		return mesh;
+	}
+
+	void create_gpu_run(uint8_t slot, GpuRun &&run) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server || run.records.empty() || !run.texture.is_valid()) return;
+		const RID target = slot == 1 ? canvas_item_plain : (slot == 2 ? canvas_item_add : canvas_item);
+		if (render_backend == 1) {
+			run.mesh = create_instance_mesh(run.records.front());
+			if (!run.mesh.is_valid()) return;
+			run.rid = server->multimesh_create();
+			server->multimesh_allocate_data(run.rid, static_cast<int32_t>(run.records.size()),
+					RenderingServer::MULTIMESH_TRANSFORM_2D, true, true, false);
+			server->multimesh_set_mesh(run.rid, run.mesh);
+			PackedFloat32Array buffer;
+			fill_multimesh_buffer(run, buffer);
+			server->multimesh_set_buffer(run.rid, buffer);
+			server->canvas_item_add_multimesh(target, run.rid, run.texture->get_rid());
+		} else {
+			PackedVector2Array vertices;
+			PackedColorArray colors;
+			PackedVector2Array uvs;
+			PackedFloat32Array custom0;
+			PackedInt32Array indices;
+			vertices.resize(0); colors.resize(0); uvs.resize(0); custom0.resize(0); indices.resize(0);
+			for (size_t index : run.records) append_mesh_record(index, vertices, colors, uvs, custom0, indices);
+			Array arrays;
+			arrays.resize(RenderingServer::ARRAY_MAX);
+			arrays[RenderingServer::ARRAY_VERTEX] = vertices;
+			arrays[RenderingServer::ARRAY_COLOR] = colors;
+			arrays[RenderingServer::ARRAY_TEX_UV] = uvs;
+			arrays[RenderingServer::ARRAY_CUSTOM0] = custom0;
+			arrays[RenderingServer::ARRAY_INDEX] = indices;
+			const uint64_t format = RenderingServer::ARRAY_FORMAT_CUSTOM0 |
+					(static_cast<uint64_t>(RenderingServer::ARRAY_CUSTOM_RG_FLOAT) << RenderingServer::ARRAY_FORMAT_CUSTOM0_SHIFT) |
+					RenderingServer::ARRAY_FLAG_USE_2D_VERTICES | RenderingServer::ARRAY_FLAG_USE_DYNAMIC_UPDATE;
+			run.rid = server->mesh_create();
+			server->mesh_add_surface_from_arrays(run.rid, RenderingServer::PRIMITIVE_TRIANGLES,
+					arrays, Array(), Dictionary(), BitField<RenderingServer::ArrayFormat>(static_cast<int64_t>(format)));
+			server->canvas_item_add_mesh(target, run.rid, Transform2D(), Color(1, 1, 1, 1), run.texture->get_rid());
+		}
+		const int64_t run_index = static_cast<int64_t>(gpu_runs[slot].size());
+		for (size_t local = 0; local < run.records.size(); ++local) {
+			const size_t record_index = run.records[local];
+			if (record_index < record_locations.size()) record_locations[record_index] = { run_index, static_cast<int64_t>(local), slot };
+			if (record_index < record_dirty_flags.size()) record_dirty_flags[record_index] = 0;
+		}
+		gpu_runs[slot].push_back(std::move(run));
+	}
+
+	void rebuild_gpu_routes(uint8_t rebuild_mask) {
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server) return;
+		const std::array<RID, 3> targets = { canvas_item, canvas_item_plain, canvas_item_add };
+		for (uint8_t slot = 0; slot < targets.size(); ++slot) {
+			if ((rebuild_mask & (1u << slot)) == 0) continue;
+			if (targets[slot].is_valid()) server->canvas_item_clear(targets[slot]);
+			free_gpu_route(slot);
+			for (RecordLocation &location : record_locations) if (location.run >= 0 && location.route == slot) location = {};
+			route_drawn_items[slot] = 0;
+			route_draw_commands[slot] = 0;
+			route_transform_commands[slot] = 0;
+			++route_rebuilds[slot];
+		}
+		if (!range_has_records && cull) { refresh_draw_stats(); return; }
+		std::array<std::vector<size_t>, 3> selected;
+		auto collect = [&](size_t index) {
+			const uint8_t slot = route_slot_for_record(records[index]);
+			if ((rebuild_mask & (1u << slot)) != 0) selected[slot].push_back(index);
+		};
+		if (!cull) for (size_t index = 0; index < records.size(); ++index) collect(index);
+		else visible_records.for_each(sections, records.size(), { first_bucket, last_bucket, first_row, last_row }, collect);
+		for (uint8_t slot = 0; slot < selected.size(); ++slot) {
+			if ((rebuild_mask & (1u << slot)) == 0) continue;
+			GpuRun current;
+			for (size_t index : selected[slot]) {
+				const Ref<Texture2D> &texture = records[index].texture;
+				if (!texture.is_valid()) continue;
+				const bool different_region = render_backend == 1 && !current.records.empty() &&
+						(records[current.records.front()].region != records[index].region);
+				if (!current.records.empty() && (current.texture->get_rid() != texture->get_rid() || different_region)) {
+					create_gpu_run(slot, std::move(current));
+					current = GpuRun();
+				}
+				if (current.records.empty()) current.texture = texture;
+				current.records.push_back(index);
+			}
+			if (!current.records.empty()) create_gpu_run(slot, std::move(current));
+			route_drawn_items[slot] = static_cast<int64_t>(selected[slot].size());
+			route_draw_commands[slot] = static_cast<int64_t>(gpu_runs[slot].size());
+		}
+		refresh_draw_stats();
+	}
+
+	void update_gpu_data() {
+		if (!gpu_data_dirty || render_backend == 0) return;
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server) return;
+		if (render_backend == 1) {
+			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) {
+				bool route_changed = false;
+				for (const GpuRun &run : gpu_runs[slot]) for (size_t index : run.records)
+					if (index < record_dirty_flags.size() && record_dirty_flags[index] != 0) { route_changed = true; break; }
+				if (!route_changed) continue;
+				for (GpuRun &run : gpu_runs[slot]) {
+					PackedFloat32Array buffer;
+					fill_multimesh_buffer(run, buffer);
+					server->multimesh_set_buffer(run.rid, buffer);
+					for (size_t index : run.records) if (index < record_dirty_flags.size()) record_dirty_flags[index] = 0;
+				}
+			}
+		} else {
+			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) {
+				for (GpuRun &run : gpu_runs[slot]) {
+					std::vector<int64_t> dirty;
+					for (size_t local = 0; local < run.records.size(); ++local) {
+						const size_t index = run.records[local];
+						if (index < record_dirty_flags.size() && record_dirty_flags[index] != 0) dirty.push_back(static_cast<int64_t>(local));
+					}
+					if (dirty.empty()) continue;
+					auto upload_range = [&](int64_t first, int64_t last) {
+						PackedByteArray vertices;
+						PackedByteArray attributes;
+						vertices.resize((last - first + 1) * 4 * 2 * static_cast<int64_t>(sizeof(float)));
+						attributes.resize((last - first + 1) * 4 * 8 * static_cast<int64_t>(sizeof(float)));
+						for (int64_t local = first; local <= last; ++local) {
+							PackedByteArray one_vertex, one_attribute;
+							fill_mesh_record_bytes(run.records[local], one_vertex, one_attribute);
+							std::memcpy(vertices.ptrw() + (local - first) * one_vertex.size(), one_vertex.ptr(), one_vertex.size());
+							std::memcpy(attributes.ptrw() + (local - first) * one_attribute.size(), one_attribute.ptr(), one_attribute.size());
+						}
+						server->mesh_surface_update_vertex_region(run.rid, 0, static_cast<int32_t>(first * 4 * 2 * sizeof(float)), vertices);
+						server->mesh_surface_update_attribute_region(run.rid, 0, static_cast<int32_t>(first * 4 * 8 * sizeof(float)), attributes);
+					};
+					if (dirty.size() <= 8) {
+						for (int64_t local : dirty) upload_range(local, local);
+					} else {
+					const auto bounds = std::minmax_element(dirty.begin(), dirty.end());
+					upload_range(*bounds.first, *bounds.second);
+				}
+				for (int64_t local : dirty) {
+					const size_t index = run.records[local];
+					if (index < record_dirty_flags.size()) record_dirty_flags[index] = 0;
+				}
+			}
+			}
+		}
+		gpu_data_dirty = false;
+	}
+
 	void rebuild_commands() {
-		commands_dirty = false;
+		if (!commands_dirty || (cull && !view_initialized)) return;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
+		uint8_t rebuild_mask = dirty_route_mask;
+		if (rebuild_mask == 0 && render_backend == 0) {
+			commands_dirty = false;
+			return;
+		}
+		commands_dirty = false;
+		dirty_route_mask = 0;
 		++command_rebuilds;
-		server->canvas_item_clear(canvas_item);
-		if (canvas_item_plain.is_valid()) server->canvas_item_clear(canvas_item_plain);
-		if (canvas_item_add.is_valid()) server->canvas_item_clear(canvas_item_add);
-		last_drawn_items = 0;
-		last_draw_commands = 0;
+		if (render_backend != 0) {
+			if (rebuild_mask != 0) rebuild_gpu_routes(rebuild_mask);
+			update_gpu_data();
+			commands_dirty = gpu_data_dirty;
+			return;
+		}
+
+		const std::array<RID, 3> targets = { canvas_item, canvas_item_plain, canvas_item_add };
+		for (uint8_t slot = 0; slot < targets.size(); ++slot) {
+			if ((rebuild_mask & (1u << slot)) == 0) continue;
+			if (targets[slot].is_valid()) server->canvas_item_clear(targets[slot]);
+			route_drawn_items[slot] = 0;
+			route_draw_commands[slot] = 0;
+			route_transform_commands[slot] = 0;
+			++route_rebuilds[slot];
+		}
+		refresh_draw_stats();
 		if (!range_has_records && cull) return;
+
+		// A CanvasItem's transform command applies to following draw commands on
+		// that RID. Composite artwork often has adjacent base/detail sprites with
+		// exactly the same transform; retain separate state for each blend route.
+		std::array<Transform2D, 3> last_transforms;
+		std::array<bool, 3> have_last_transform = {};
+		auto same_transform_exact = [](const Transform2D &left, const Transform2D &right) {
+			for (int column = 0; column < 3; ++column) {
+				const Vector2 &a = left.columns[column];
+				const Vector2 &b = right.columns[column];
+				if (a.x != b.x || a.y != b.y) return false;
+			}
+			return true;
+		};
 
 		auto draw_record = [&](size_t index) {
 			const Record &record = records[index];
-			// Flipped records draw on their own canvas item; everything else
-			// keeps the batch's import-time material through the parent.
-			RID target = canvas_item;
-			if (record.blend == 1 && canvas_item_add.is_valid()) target = canvas_item_add;
-			else if (record.blend == 2 && canvas_item_plain.is_valid()) target = canvas_item_plain;
-			server->canvas_item_add_set_transform(
-					target, ui_layout_active ? get_draw_transform(index) : record.transform);
+			const uint8_t target_slot = route_slot_for_record(record);
+			if ((rebuild_mask & (1u << target_slot)) == 0) return;
+			const RID target = targets[target_slot];
+			const Transform2D transform = ui_layout_active ? get_draw_transform(index) : record.transform;
+			if (!have_last_transform[target_slot] || !same_transform_exact(last_transforms[target_slot], transform)) {
+				server->canvas_item_add_set_transform(target, transform);
+				last_transforms[target_slot] = transform;
+				have_last_transform[target_slot] = true;
+				++route_transform_commands[target_slot];
+			}
 			server->canvas_item_add_texture_rect_region(
 					target, Rect2(-record.region.size * 0.5, record.region.size),
 					record.texture->get_rid(), record.region,
 					pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color,
 					false, true);
-			++last_drawn_items;
-			++last_draw_commands;
+			++route_drawn_items[target_slot];
+			++route_draw_commands[target_slot];
 		};
 		if (!cull) {
 			for (size_t index = 0; index < records.size(); ++index) draw_record(index);
 		} else {
 			visible_records.for_each(sections, records.size(),
 					{ first_bucket, last_bucket, first_row, last_row },
-					draw_record);
+				draw_record);
 		}
+		refresh_draw_stats();
 	}
 
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
+		ClassDB::bind_method(D_METHOD("set_render_backend", "backend"), &NativeDecorationRenderer::set_render_backend);
 		ClassDB::bind_method(D_METHOD("apply_ui_layout", "layout"), &NativeDecorationRenderer::apply_ui_layout);
 		ClassDB::bind_method(D_METHOD("clear_ui_layout"), &NativeDecorationRenderer::clear_ui_layout);
 		ClassDB::bind_method(D_METHOD("get_draw_transform", "index"), &NativeDecorationRenderer::get_draw_transform);
@@ -10784,7 +11231,9 @@ protected:
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationRenderer::item_count);
 		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
 		ClassDB::bind_method(D_METHOD("command_rebuild_count"), &NativeDecorationRenderer::command_rebuild_count);
+		ClassDB::bind_method(D_METHOD("route_rebuild_count", "route"), &NativeDecorationRenderer::route_rebuild_count);
 		ClassDB::bind_method(D_METHOD("draw_commands_last_rebuild"), &NativeDecorationRenderer::draw_commands_last_rebuild);
+		ClassDB::bind_method(D_METHOD("transform_commands_last_rebuild"), &NativeDecorationRenderer::transform_commands_last_rebuild);
 		ClassDB::bind_method(D_METHOD("selection_rebuild_count"), &NativeDecorationRenderer::selection_rebuild_count);
 		ClassDB::bind_method(D_METHOD("has_pending_redraw"), &NativeDecorationRenderer::has_pending_redraw);
 		ClassDB::bind_method(D_METHOD("flush_commands"), &NativeDecorationRenderer::flush_commands);
@@ -10804,13 +11253,33 @@ public:
 		registered_decoration_renderers.erase(this);
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (server) {
+			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) free_gpu_route(slot);
 			if (canvas_item.is_valid()) server->free_rid(canvas_item);
 			if (canvas_item_plain.is_valid()) server->free_rid(canvas_item_plain);
 			if (canvas_item_add.is_valid()) server->free_rid(canvas_item_add);
 		}
 	}
 
-	void request_redraw() { commands_dirty = true; }
+	void set_render_backend(int64_t backend) {
+		const int selected = backend >= 1 && backend <= 2 ? static_cast<int>(backend) : 0;
+		if (selected == render_backend) return;
+		const int previous = render_backend;
+		render_backend = selected;
+		setup_backend_materials();
+		if (previous != 0 && render_backend == 0) {
+			RenderingServer *server = RenderingServer::get_singleton();
+			const std::array<RID, 3> targets = { canvas_item, canvas_item_plain, canvas_item_add };
+			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) {
+				if (server && targets[slot].is_valid()) server->canvas_item_clear(targets[slot]);
+				free_gpu_route(slot);
+			}
+			record_locations.assign(records.size(), RecordLocation{});
+			std::fill(record_dirty_flags.begin(), record_dirty_flags.end(), 0);
+			gpu_data_dirty = false;
+		}
+		mark_all_routes_dirty();
+	}
+	void request_redraw() { mark_all_routes_dirty(); }
 	void flush_commands() {
 		if (!commands_dirty || (cull && !view_initialized)) return;
 		rebuild_commands();
@@ -10847,6 +11316,7 @@ public:
 				server->canvas_item_set_material(canvas_item_add, fade_additive.is_valid() ? fade_additive->get_rid() : additive_material->get_rid());
 				server->canvas_item_set_visible(canvas_item_add, false);
 			}
+			setup_backend_materials();
 		}
 	}
 
@@ -10883,6 +11353,11 @@ public:
 		ui_layout_active = false;
 		ui_offsets.clear();
 		records = std::move(p_records);
+		record_locations.assign(records.size(), RecordLocation{});
+		record_dirty_flags.assign(records.size(), 0);
+		gpu_data_dirty = false;
+		route_drawn_items = {}; route_draw_commands = {}; route_transform_commands = {};
+		mark_all_routes_dirty();
 		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
 		gdash::DecorationSections section_builder;
 		SpinRunProfile spin_profile;
@@ -10951,7 +11426,7 @@ public:
 			if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, true);
 			if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, true);
 		}
-		commands_dirty = true;
+		mark_all_routes_dirty();
 	}
 
 	void clear_ui_layout() {
@@ -10960,17 +11435,11 @@ public:
 		ui_offsets.clear();
 		cull = ui_saved_cull;
 		view_initialized = false;
-		commands_dirty = true;
+		mark_all_routes_dirty();
 		if (cull) update_camera_range();
 	}
 
 	// Same transform consumed by command emission; useful for headless parity.
-	Transform2D get_draw_transform(int64_t index) const {
-		if (index < 0 || index >= static_cast<int64_t>(records.size())) return Transform2D();
-		Transform2D result = records[index].transform;
-		if (ui_layout_active) result.set_origin(result.get_origin() + ui_offsets[index]);
-		return result;
-	}
 
 	template <bool ReuseRotation>
 	void advance_spinning_records(double delta) {
@@ -11005,7 +11474,13 @@ public:
 		if (spinning_indices.empty() || delta <= 0.0) return;
 		if (reuse_spin_rotation) advance_spinning_records<true>(delta);
 		else advance_spinning_records<false>(delta);
-		commands_dirty = true;
+		uint8_t changed_routes = 0;
+		for (size_t index : spinning_indices) {
+			if (index >= records.size()) continue;
+			if (render_backend == 0) changed_routes |= static_cast<uint8_t>(1u << route_slot_for_record(records[index]));
+			else mark_record_route_dirty(index, DIRTY_TRANSFORM);
+		}
+		if (render_backend == 0) mark_routes_dirty(changed_routes);
 	}
 
 	bool capture_cull_job(DecorationCullJob &job) const {
@@ -11033,8 +11508,8 @@ public:
 		server->canvas_item_set_visible(canvas_item, range_has_records);
 		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
 		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
-		// The coordinator merges this with this frame's color/spin changes.
-		commands_dirty = true;
+		// A changed visible range can add/remove records from every blend route.
+		mark_all_routes_dirty();
 	}
 
 	void update_camera_range() {
@@ -11059,18 +11534,25 @@ public:
 		server->canvas_item_set_visible(canvas_item, range_has_records);
 		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
 		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
+		mark_all_routes_dirty();
 		rebuild_commands();
 	}
 
-	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; range_has_records = selected_range_has_records(); rebuild_commands(); }
+	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; range_has_records = selected_range_has_records(); mark_all_routes_dirty(); rebuild_commands(); }
 	// Flips the given records between normal and additive blending when a
 	// colour trigger toggles their channel (key 17). Idempotent: the batch's
 	// GDScript side caches the last state per channel.
 	void set_channel_blending(const PackedInt32Array &indices, bool additive) {
+		const uint8_t new_blend = static_cast<uint8_t>(additive ? 1 : 2);
 		for (int64_t i = 0; i < indices.size(); ++i) {
 			const int64_t index = indices[i];
 			if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
-			gdash::assign_render_value(records[static_cast<size_t>(index)].blend, static_cast<uint8_t>(additive ? 1 : 2), commands_dirty);
+			Record &record = records[static_cast<size_t>(index)];
+			if (record.blend == new_blend) continue;
+			const uint8_t old_slot = route_slot_for_record(record);
+			record.blend = new_blend;
+			const uint8_t new_slot = route_slot_for_record(record);
+			mark_routes_dirty(static_cast<uint8_t>((1u << old_slot) | (1u << new_slot)));
 		}
 	}
 	// Blend override of one record (0 inherit, 1 additive, 2 normal) for tests.
@@ -11092,7 +11574,9 @@ public:
 			// All records use the same input RGB; decompose it once, lazily.
 			if (record.has_hsv) tinted = channel_tint.shifted(record.hsv);
 			tinted.a = channel_color.a * record.base_alpha;
-			gdash::assign_render_value(record.color, tinted, commands_dirty);
+			bool changed = false;
+			gdash::assign_render_value(record.color, tinted, changed);
+			if (changed) mark_record_route_dirty(static_cast<size_t>(index), DIRTY_COLOR);
 		}
 	}
 	void set_group_pulse(const Color &color, double weight) {
@@ -11100,11 +11584,24 @@ public:
 		if (clamped == pulse_weight && (clamped == 0.0f || color == pulse_color)) return;
 		pulse_color = color;
 		pulse_weight = clamped;
-		commands_dirty = true;
+		if (render_backend == 0) mark_all_routes_dirty();
+		else {
+			for (size_t index = 0; index < records.size(); ++index) mark_record_route_dirty(index, DIRTY_COLOR);
+		}
 	}
 	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }
-	void set_item_color(int64_t index, const Color &color) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { gdash::assign_render_value(records[index].color, color, commands_dirty); } }
-	void set_item_transform(int64_t index, const Transform2D &transform) { if (index >= 0 && index < static_cast<int64_t>(records.size())) { gdash::assign_render_value(records[index].transform, transform, commands_dirty); } }
+	void set_item_color(int64_t index, const Color &color) {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return;
+		bool changed = false;
+		gdash::assign_render_value(records[static_cast<size_t>(index)].color, color, changed);
+		if (changed) mark_record_route_dirty(static_cast<size_t>(index), DIRTY_COLOR);
+	}
+	void set_item_transform(int64_t index, const Transform2D &transform) {
+		if (index < 0 || index >= static_cast<int64_t>(records.size())) return;
+		bool changed = false;
+		gdash::assign_render_value(records[static_cast<size_t>(index)].transform, transform, changed);
+		if (changed) mark_record_route_dirty(static_cast<size_t>(index), DIRTY_TRANSFORM);
+	}
 	Transform2D get_item_transform(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].transform : Transform2D(); }
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
 	int64_t animated_item_count() const { return static_cast<int64_t>(spinning_indices.size()); }
@@ -11112,7 +11609,11 @@ public:
 	uint64_t owner_instance_id() const { return owner_id; }
 	bool has_pending_redraw() const { return commands_dirty; }
 	int64_t command_rebuild_count() const { return command_rebuilds; }
+	int64_t route_rebuild_count(int64_t route) const {
+		return route >= 0 && route < static_cast<int64_t>(route_rebuilds.size()) ? route_rebuilds[route] : -1;
+	}
 	int64_t draw_commands_last_rebuild() const { return last_draw_commands; }
+	int64_t transform_commands_last_rebuild() const { return last_transform_commands; }
 	int64_t selection_rebuild_count() const { return static_cast<int64_t>(visible_records.build_count()); }
 	bool is_spatially_culled() const { return cull; }
 };
@@ -11540,6 +12041,7 @@ static Dictionary registered_decoration_stats() {
 	int64_t animated_records = 0;
 	int64_t submitted = 0;
 	int64_t draw_commands = 0;
+	int64_t transform_commands = 0;
 	int64_t empty_canvases = 0;
 	int64_t culled_canvases = 0;
 	std::unordered_set<uint64_t> batch_owners;
@@ -11549,6 +12051,7 @@ static Dictionary registered_decoration_stats() {
 		animated_records += canvas->animated_item_count();
 		submitted += canvas->last_drawn_count();
 		draw_commands += canvas->draw_commands_last_rebuild();
+		transform_commands += canvas->transform_commands_last_rebuild();
 		if (canvas->owner_instance_id() != 0) batch_owners.insert(canvas->owner_instance_id());
 		if (canvas->last_drawn_count() == 0) ++empty_canvases;
 		if (canvas->is_spatially_culled()) ++culled_canvases;
@@ -11556,6 +12059,8 @@ static Dictionary registered_decoration_stats() {
 	stats["canvases"] = static_cast<int64_t>(registered_decoration_renderers.size());
 	stats["batch_owner_nodes"] = static_cast<int64_t>(batch_owners.size());
 	stats["canvas_draw_commands"] = draw_commands;
+	stats["canvas_transform_commands"] = transform_commands;
+	stats["canvas_transform_commands_saved"] = std::max<int64_t>(0, draw_commands - transform_commands);
 	stats["culled_canvases"] = culled_canvases;
 	stats["empty_canvases"] = empty_canvases;
 	stats["records"] = records;

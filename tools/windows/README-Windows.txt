@@ -29,11 +29,23 @@ uninstall. Keep your normal backups. Old manually extracted ZIP folders are not
 automatically deleted; setup cannot safely guess which folders belong to you.
 
 PORTABLE ZIP (optional)
-Extract the entire ZIP and run Godot Dash.exe. Keep Godot Dash.pck and all DLLs
-in their exported locations. This uses the same user directory as the installer.
-No Godot installation is needed. These builds are unsigned: Windows may show
-an unknown-publisher warning. Verify the download came from this project's
-GitHub release before running it.
+Extract the entire ZIP and run Godot Dash.exe (the RenderingServer baseline).
+Keep Godot Dash.pck and all DLLs in their exported locations. This uses the same
+user directory as the installer. No Godot installation is needed. These builds
+are unsigned: Windows may show an unknown-publisher warning. Verify the download
+came from this project's GitHub release before running it.
+
+RENDERER COMPARISON BUILDS
+The ZIP also contains three separate executables:
+  RenderingServer\Godot Dash.exe — existing retained CanvasItem baseline
+  GDClone\Godot Dash.exe         — GPU MultiMesh instances
+  OpenDash\Godot Dash.exe        — indexed mesh batches with sparse dirty updates
+Run one executable at a time. For a fair comparison, use the same machine,
+level, route, resolution, graphics settings, FPS/VSync settings and warm-up.
+These are experimental renderer builds; CI does not prove full visual/trigger
+parity or real GPU performance. No method is declared faster. Send all three
+capture logs and state any visible differences. User data remains in the same
+%APPDATA% folder.
 
 Forward+ requires a compatible graphics driver/GPU. This is NOT the web build.
 A build-time native smoke check is headless; it cannot verify your GPU or visual

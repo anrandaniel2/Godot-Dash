@@ -50,7 +50,7 @@ warnings/check_invalid_track_paths=false
 [application]
 
 config/name="Godot Dash"
-config/version="1.0.0-alpha.5"
+config/version="1.0.0-alpha.6"
 run/main_scene="res://scenes/TitleScreen.tscn"
 config/use_custom_user_dir=true
 config/custom_user_dir_name="godot-dash"

@@ -94,7 +94,7 @@ jobs:
         run: |
           $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $channel = "windows-$($env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-')"
-          $notes = "Build: $env:GITHUB_RUN_NUMBER`nCommit: $env:GITHUB_SHA`nWindows x86-64, Godot 4.7.2, Forward+. Use GodotDashSetup-x86_64.exe for in-place updates. User data stays in %APPDATA%/godot-dash. The ZIP is portable. This fast push build skips runtime/parity/benchmark and install-upgrade tests; run the Windows Validation (manual) workflow for those checks. GPU/VSync/flicker require device verification. Run: $url"
+          $notes = "Build: $env:GITHUB_RUN_NUMBER`nCommit: $env:GITHUB_SHA`nWindows x86-64, Godot 4.7.2, Forward+. Use GodotDashSetup-x86_64.exe for in-place updates. User data stays in %APPDATA%/godot-dash. The ZIP includes separate RenderingServer baseline, GDClone MultiMesh, and OpenDash dirty-mesh executables. The new renderers are experimental; no GPU/parity winner is claimed. This fast push build skips runtime/parity/benchmark and install-upgrade tests; run the Windows Validation (manual) workflow for those checks. Compare both on the same machine and same level; GPU/VSync/flicker require device verification. Run: $url"
           gh release view $channel *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $channel export/godot-dash-windows-x86_64.zip export/GodotDashSetup-x86_64.exe --clobber

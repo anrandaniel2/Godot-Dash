@@ -270,6 +270,7 @@ static func _native_packed_batch(builder: Object, index: int) -> DecorationBatch
 	if renderer == null:
 		batch.free()
 		return null
+	renderer.call(&"set_render_backend", Config.decoration_renderer_backend)
 	builder.call(&"configure_renderer", index, renderer, batch, true, DecorationBatch.BUCKET_WIDTH, DecorationBatch.CULL_MARGIN)
 	batch.adopt_native_canvas(renderer, info)
 	return batch

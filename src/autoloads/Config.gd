@@ -38,6 +38,10 @@ enum ParticlePreprocessing {
 	MAX = (1 << 4) - 1,
 }
 
+# Build-time Windows A/B renderer selection. The ordinary project and all
+# non-Windows exports retain the existing RenderingServer rectangle path.
+var decoration_renderer_backend: int = 0
+
 # Graphics
 @export_group("Graphics")
 
@@ -219,6 +223,14 @@ var config_file: ConfigFile = ConfigFile.new()
 
 
 func _init():
+	var renderer_variant := str(ProjectSettings.get_setting("application/config/windows_renderer_backend", "server"))
+	match renderer_variant:
+		"gdclone":
+			decoration_renderer_backend = 1
+		"opendash":
+			decoration_renderer_backend = 2
+		_:
+			decoration_renderer_backend = 0
 	config_file.load("user://config.cfg")
 
 	# VSync controls presentation; never create a second limiter from the

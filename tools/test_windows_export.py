@@ -78,7 +78,7 @@ class WindowsExportTests(unittest.TestCase):
         self.assertIn('config/name="Godot Dash"', project)
         self.assertIn('config/use_custom_user_dir=true', project)
         self.assertIn('config/custom_user_dir_name="godot-dash"', project)
-        self.assertIn('config/version="1.0.0-alpha.5"', project)  # replay version unchanged
+        self.assertIn('config/version="1.0.0-alpha.6"', project)  # replay version unchanged
         self.assertIn('common/physics_ticks_per_second=240', project)
 
     def test_windows_build_metadata_does_not_change_game_version(self):
@@ -86,7 +86,18 @@ class WindowsExportTests(unittest.TestCase):
         result = windows_project(project, "a" * 40, "42", "arena/example")
         self.assertIn('config/windows_update_channel="windows-arena-example"', result)
         self.assertIn('config/windows_build_number=42', result)
-        self.assertIn('config/version="1.0.0-alpha.5"', result)
+        self.assertIn('config/windows_renderer_backend="server"', result)
+        self.assertIn('config/version="1.0.0-alpha.6"', result)
+        variant = windows_project(project, "a" * 40, "42", "arena/example", "gdclone")
+        self.assertIn('config/windows_renderer_backend="gdclone"', variant)
+        from windows_ci import select_windows_renderer
+        selected = select_windows_renderer(result, "opendash")
+        self.assertIn('config/windows_renderer_backend="opendash"', selected)
+        self.assertIn('config/windows_renderer_backend="server"', result)
+        with self.assertRaises(ValueError):
+            select_windows_renderer(result, "unknown")
+        with self.assertRaises(ValueError):
+            windows_project(project, "a" * 40, "42", "arena/example", "unknown")
         with self.assertRaises(ValueError):
             windows_project(project, 'invalid"', "42", "arena/example")
 

@@ -765,9 +765,11 @@ func _setup_native_renderer_parity_smoke() -> void:
 	add_child(_renderer_viewport)
 	_renderer_owner = Node2D.new()
 	_renderer_owner.position = Vector2(16, 16)
+	_renderer_owner.material = load("res://resources/FadeEnterEffect.tres")
 	_renderer_viewport.add_child(_renderer_owner)
 	_renderer_reference_owner = Node2D.new()
 	_renderer_reference_owner.position = Vector2(144, 16)
+	_renderer_reference_owner.material = _renderer_owner.material
 	_renderer_viewport.add_child(_renderer_reference_owner)
 
 	var image := Image.create(16, 8, false, Image.FORMAT_RGBA8)
@@ -828,10 +830,34 @@ func _setup_native_renderer_parity_smoke() -> void:
 
 
 func _check_native_renderer_pixel_parity() -> bool:
-	var parity_image := _renderer_viewport.get_texture().get_image()
-	if parity_image == null or parity_image.is_empty():
+	# Keep the current retained CanvasItem path as the reference, then render
+	# each opt-in Windows backend into the same viewport and compare to the
+	# direct texture-rectangle baseline. This is visual parity only, not FPS.
+	var server_image := _renderer_viewport.get_texture().get_image()
+	if server_image == null or server_image.is_empty():
 		push_error("native smoke: native renderer pixel parity viewport capture failed")
 		return false
+	if not _compare_native_renderer_image(server_image, "RenderingServer"):
+		return false
+	for backend: int in [1, 2]:
+		_renderer_parity_canvas.call(&"set_render_backend", backend)
+		_renderer_parity_canvas.call(&"update_camera_range")
+		_renderer_parity_canvas.call(&"flush_commands")
+		await get_tree().process_frame
+		await get_tree().process_frame
+		var backend_image := _renderer_viewport.get_texture().get_image()
+		if backend_image == null or backend_image.is_empty():
+			push_error("native smoke: backend %d viewport capture failed" % backend)
+			return false
+		if not _compare_native_renderer_image(backend_image, "GDClone" if backend == 1 else "OpenDash"):
+			return false
+	_renderer_parity_canvas.call(&"set_render_backend", 0)
+	_renderer_parity_canvas.call(&"update_camera_range")
+	_renderer_parity_canvas.call(&"flush_commands")
+	return true
+
+
+func _compare_native_renderer_image(parity_image: Image, backend_name: String) -> bool:
 	var mismatches := 0
 	var native_drawn_pixels := 0
 	var reference_drawn_pixels := 0
@@ -876,8 +902,9 @@ func _check_native_renderer_pixel_parity() -> bool:
 					first_reference = reference_pixel
 	print(
 		(
-			"NATIVE_RENDERER_PARITY pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
+			"RENDERER_BACKEND_PIXEL_PARITY backend=%s pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
 			% [
+				backend_name,
 				96 * 96,
 				mismatches,
 				native_drawn_pixels,
@@ -906,7 +933,7 @@ func _process(_delta: float) -> void:
 	assert(image != null and not image.is_empty(), "visual smoke: viewport capture failed")
 	if _renderer_parity_canvas != null and not _renderer_pixel_parity_checked:
 		_renderer_pixel_parity_checked = true
-		if not _check_native_renderer_pixel_parity():
+		if not await _check_native_renderer_pixel_parity():
 			_renderer_viewport.get_texture().get_image().save_png(
 				"user://native_renderer_parity_failure.png"
 			)

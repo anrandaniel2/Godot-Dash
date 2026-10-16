@@ -304,6 +304,7 @@ func _build_native_canvas(native: Object) -> void:
 	_native_canvas = ClassDB.instantiate(&"NativeDecorationRenderer")
 	if _native_canvas == null:
 		return
+	_native_canvas.call(&"set_render_backend", Config.decoration_renderer_backend)
 	var textures: Array = []
 	var regions: Array = []
 	var transforms: Array = []

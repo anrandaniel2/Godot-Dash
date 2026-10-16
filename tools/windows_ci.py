@@ -179,14 +179,29 @@ def headless_project(text: str) -> str:
     return text.replace('"res://addons/script-ide/plugin.cfg", ', '', 1)
 
 
-def windows_project(text: str, sha: str, build_number: str, branch: str) -> str:
+def windows_project(text: str, sha: str, build_number: str, branch: str,
+                    renderer_backend: str = "server") -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or not build_number.isdecimal():
         raise ValueError("Invalid Windows build identity")
+    if renderer_backend not in {"server", "gdclone", "opendash"}:
+        raise ValueError(f"Invalid Windows renderer backend: {renderer_backend}")
     channel = "windows-" + re.sub(r"[^A-Za-z0-9._-]", "-", branch)
     metadata = (f'config/windows_build_sha="{sha}"\n'
                 f'config/windows_build_number={int(build_number)}\n'
-                f'config/windows_update_channel="{channel}"\n')
+                f'config/windows_update_channel="{channel}"\n'
+                f'config/windows_renderer_backend="{renderer_backend}"\n')
     return headless_project(text).replace("[application]\n", "[application]\n" + metadata, 1)
+
+
+def select_windows_renderer(text: str, renderer_backend: str) -> str:
+    if renderer_backend not in {"server", "gdclone", "opendash"}:
+        raise ValueError(f"Invalid Windows renderer backend: {renderer_backend}")
+    selected, replacements = re.subn(
+        r'config/windows_renderer_backend="[^"]+"',
+        f'config/windows_renderer_backend="{renderer_backend}"', text, count=1)
+    if replacements != 1:
+        raise ValueError("Windows renderer setting was not found exactly once")
+    return selected
 
 
 def needs_asset_import_retry(text: str) -> bool:
@@ -211,7 +226,8 @@ def export() -> None:
             image.save(icon, format="ICO", sizes=[(n, n) for n in (16, 32, 48, 64, 128, 256)])
     project = ROOT / "project.godot"
     project.write_text(windows_project(project.read_text(encoding="utf-8"),
-        os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_NUMBER"], os.environ["GITHUB_REF_NAME"]), encoding="utf-8")
+        os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_NUMBER"], os.environ["GITHUB_REF_NAME"],
+        "server"), encoding="utf-8")
     pin(ROOT)
     # Prevent Godot from scanning a build-time dependency clone.
     (ROOT / "native/godot-cpp/.gdignore").touch()
@@ -275,30 +291,70 @@ def export() -> None:
             if line.startswith("PACKED_TRIGGER_SELFTEST_SUMMARY"):
                 print(f"::notice title=packed triggers::{line}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
-                "--export-release", "Windows Desktop", OUTPUT / "Godot Dash.exe"], "export", timeout=1200)
-    check_log(text, "export")
-    check_pe(OUTPUT / "Godot Dash.exe")
-    if not (OUTPUT / "Godot Dash.pck").is_file():
-        raise RuntimeError("Exported PCK is missing")
-    libraries = list(OUTPUT.rglob(DLL))
-    if len(libraries) != 1:
-        raise RuntimeError(f"Expected one exported native DLL, found {libraries}")
-    check_pe(libraries[0])
-    if not FAST_BUILD:
-        smoke = run([OUTPUT / "Godot Dash.exe", "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
-                    "exported-native-smoke", timeout=120)
-        check_log(smoke, "exported-native-smoke")
-        if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
-            raise RuntimeError("Exported native smoke did not pass")
-        print("::notice title=Windows smoke::Exported x86-64 EXE loaded the native DLL; configured renderer is Forward+. Headless test only.")
+    base_project = project.read_text(encoding="utf-8")
+    variants = (("RenderingServer", "server"), ("GDClone", "gdclone"), ("OpenDash", "opendash"))
+    exported_dirs: dict[str, pathlib.Path] = {}
+    for label, backend in variants:
+        variant_project = select_windows_renderer(base_project, backend)
+        project.write_text(variant_project, encoding="utf-8")
+        destination = OUTPUT / label
+        destination.mkdir(parents=True, exist_ok=True)
+        text = run([EDITOR, "--headless", "--path", ROOT, "--rendering-method", "forward_plus",
+                    "--export-release", "Windows Desktop", destination / "Godot Dash.exe"],
+                   f"export-{backend}", timeout=1200)
+        check_log(text, f"export-{backend}")
+        executable = destination / "Godot Dash.exe"
+        check_pe(executable)
+        if not (destination / "Godot Dash.pck").is_file():
+            raise RuntimeError(f"{label} exported PCK is missing")
+        libraries = list(destination.rglob(DLL))
+        if len(libraries) != 1:
+            raise RuntimeError(f"Expected one {label} native DLL, found {libraries}")
+        check_pe(libraries[0])
+        exported_dirs[label] = destination
+        if not FAST_BUILD:
+            smoke = run([executable, "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
+                        f"exported-native-smoke-{backend}", timeout=120)
+            check_log(smoke, f"exported-native-smoke-{backend}")
+            if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
+                raise RuntimeError(f"{label} exported native smoke did not pass")
+    # Preserve the existing installer/launcher paths as the RenderingServer
+    # baseline; the separate folders below are independent renderer builds.
+    default_variant = exported_dirs["RenderingServer"]
+    for item in default_variant.iterdir():
+        target = OUTPUT / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+    project.write_text(base_project, encoding="utf-8")
+    print("::notice title=Windows renderer comparison::Built RenderingServer baseline, GDClone MultiMesh, and OpenDash dirty-mesh executables. Headless export checks do not establish GPU parity or a performance winner.")
     for name in ("Profile-Windows.ps1", "README-Windows.txt"):
         shutil.copy2(ROOT / "tools/windows" / name, OUTPUT)
     sha = os.environ.get("GITHUB_SHA", "local")
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
-    (OUTPUT / "BUILD.txt").write_text(f"Commit: {sha}\nGodot: {VERSION}\nRenderer: Forward+ (Windows override)\nNative: {DLL}\nRun: {url}\n", encoding="utf-8")
+    project_version = re.search(r'config/version="([^"]+)"', base_project)
+    if not project_version:
+        raise RuntimeError("Project version setting is missing")
+    (OUTPUT / "BUILD.txt").write_text(
+        f"Commit: {sha}\nGodot: {VERSION}\nProject: {project_version.group(1)}\nRenderer: Forward+\n"
+        "RenderingServer is the root/default executable and baseline.\n"
+        "Comparison builds: RenderingServer/Godot Dash.exe, GDClone/Godot Dash.exe, OpenDash/Godot Dash.exe.\n"
+        "These are experimental; no visual-parity or FPS winner is claimed.\n"
+        f"Native: {DLL}\nRun: {url}\n", encoding="utf-8")
+    (OUTPUT / "RENDERER-AB.txt").write_text(
+        "Windows renderer comparison builds\n\n"
+        "Run RenderingServer\\Godot Dash.exe, GDClone\\Godot Dash.exe, and "
+        "OpenDash\\Godot Dash.exe separately. RenderingServer is the existing baseline. "
+        "They share the same game project, Forward+ renderer, physics, level data and settings; "
+        "only decoration drawing differs. Compare on the same PC, level, route, resolution, "
+        "FPS/VSync settings and warm-up period. Record CPU frame time and GPU frame time.\n\n"
+        "GDClone: GPU MultiMesh instances, grouped by contiguous texture/atlas region.\n"
+        "OpenDash: indexed texture batches with sparse dirty updates (up to 8 records) or a contiguous range.\n\n"
+        "These builds are for testing. Shader/trigger parity and real GPU performance have not been "
+        "validated in this CI environment. Neither method is declared faster.\n", encoding="utf-8")
     if FAST_BUILD:
-        log_names = ("import-fast", "export")
+        log_names = ("import-fast", "export-server", "export-gdclone", "export-opendash")
     else:
         log_names = ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment",
                      "gameplay-presentation", "color-refresh", "monster-timeline", "packed-trigger")

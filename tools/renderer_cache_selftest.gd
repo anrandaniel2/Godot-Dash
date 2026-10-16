@@ -52,6 +52,7 @@ func _ready() -> void:
 	_viewport.disable_3d = true
 	add_child(_viewport)
 	_owner = Node2D.new()
+	_owner.material = load("res://resources/FadeEnterEffect.tres")
 	_viewport.add_child(_owner)
 	var image: Image = Image.create(8, 8, false, Image.FORMAT_RGBA8)
 	image.fill(Color.WHITE)
@@ -64,6 +65,7 @@ func _ready() -> void:
 		RenderingServer.free_rid(probe)
 		_test_compact_spatial_reconfigure()
 		_test_draw_submission()
+		_test_gpu_renderer_backends()
 		_test_ordered_rect_submissions()
 		_test_hsv_snapshots()
 		print("RENDERER_CACHE_NOTE retained-command counters checked; no pixel/GPU validation")
@@ -98,6 +100,9 @@ func _test_draw_submission() -> void:
 	_check(
 		int(_canvas.call(&"command_rebuild_count")) == commands, "identical updates do not rebuild"
 	)
+	var main_route_rebuilds: int = int(_canvas.call(&"route_rebuild_count", 0))
+	var plain_route_rebuilds: int = int(_canvas.call(&"route_rebuild_count", 1))
+	var add_route_rebuilds: int = int(_canvas.call(&"route_rebuild_count", 2))
 	_canvas.call(&"apply_channel_color", PackedInt32Array([0, 1]), Color.GREEN)
 	_canvas.call(&"flush_commands")
 	_check(_canvas.call(&"get_item_color", 0) == Color.GREEN, "live color updated")
@@ -105,12 +110,27 @@ func _test_draw_submission() -> void:
 		int(_canvas.call(&"command_rebuild_count")) == commands + 1, "changed color rebuilds once"
 	)
 	_check(
+		int(_canvas.call(&"route_rebuild_count", 0)) == main_route_rebuilds + 1
+		and int(_canvas.call(&"route_rebuild_count", 1)) == plain_route_rebuilds
+		and int(_canvas.call(&"route_rebuild_count", 2)) == add_route_rebuilds,
+		"color edit rebuilds only its current blend route",
+	)
+	_check(
 		int(_canvas.call(&"selection_rebuild_count")) == selections,
 		"color redraw reuses ordered IDs"
 	)
+	main_route_rebuilds = int(_canvas.call(&"route_rebuild_count", 0))
+	plain_route_rebuilds = int(_canvas.call(&"route_rebuild_count", 1))
+	add_route_rebuilds = int(_canvas.call(&"route_rebuild_count", 2))
 	_canvas.call(&"set_channel_blending", PackedInt32Array([0]), true)
 	_canvas.call(&"flush_commands")
 	_check(int(_canvas.call(&"get_item_blend", 0)) == 1, "blend override still applied")
+	_check(
+		int(_canvas.call(&"route_rebuild_count", 0)) == main_route_rebuilds + 1
+		and int(_canvas.call(&"route_rebuild_count", 1)) == plain_route_rebuilds
+		and int(_canvas.call(&"route_rebuild_count", 2)) == add_route_rebuilds + 1,
+		"blend change rebuilds only the old and new routes",
+	)
 	commands = int(_canvas.call(&"command_rebuild_count"))
 	_canvas.call(&"set_channel_blending", PackedInt32Array([0]), true)
 	_canvas.call(&"flush_commands")
@@ -146,6 +166,35 @@ func _test_draw_submission() -> void:
 		"reconfigure invalidates selection"
 	)
 	_check(_canvas.call(&"get_item_color", 0) == Color.BLUE, "reconfigure replaces record data")
+
+
+func _test_gpu_renderer_backends() -> void:
+	# Construction/state checks exercise real RenderingServer mesh and instance
+	# resources; they are not rendered-pixel, GPU-time, or parity evidence.
+	for backend: int in [1, 2]:
+		_canvas.call(&"set_render_backend", backend)
+		_configure(Color.WHITE, false)
+		_canvas.call(&"flush_commands")
+		_check(int(_canvas.call(&"last_drawn_count")) == 2, "GPU backend submits every record")
+		_check(int(_canvas.call(&"draw_commands_last_rebuild")) == 1, "same-texture records share one GPU batch")
+		var route_before: int = int(_canvas.call(&"route_rebuild_count", 0))
+		var commands_before: int = int(_canvas.call(&"command_rebuild_count"))
+		_canvas.call(&"set_item_color", 0, Color.GREEN)
+		_canvas.call(&"flush_commands")
+		_check(int(_canvas.call(&"command_rebuild_count")) == commands_before + 1, "GPU record update flushes")
+		_check(int(_canvas.call(&"route_rebuild_count", 0)) == route_before, "GPU attribute update retains route batch")
+		_canvas.call(&"set_item_transform", 0, Transform2D(0.1, Vector2(12, 12)))
+		_canvas.call(&"flush_commands")
+		_canvas.call(&"set_group_pulse", Color.RED, 0.5)
+		_canvas.call(&"flush_commands")
+		_canvas.call(&"set_group_pulse", Color.WHITE, 0.0)
+		_canvas.call(&"flush_commands")
+		_canvas.call(&"set_channel_blending", PackedInt32Array([0]), true)
+		_canvas.call(&"flush_commands")
+		_check(int(_canvas.call(&"last_drawn_count")) == 2, "GPU blend re-route preserves item count")
+	_canvas.call(&"set_render_backend", 0)
+	_configure(Color.WHITE, false)
+	_canvas.call(&"flush_commands")
 
 
 func _configure(color: Color, cull_records: bool = true, spin: float = 0.0) -> void:
@@ -642,6 +691,11 @@ func _test_ordered_rect_submissions() -> void:
 		int(_canvas.call(&"draw_commands_last_rebuild")) == 4,
 		"each sprite retains its clipped texture-rect command",
 	)
+	_check(
+		int(_canvas.call(&"transform_commands_last_rebuild")) == 3,
+		"exact adjacent transforms reuse canvas state without changing draw order",
+	)
+	print("RENDERER_TRANSFORM_STATE draws=4 transforms=3 exact_repeat_savings=1")
 	var almost_same: Transform2D = repeated
 	almost_same.origin.x += 0.0001
 	_canvas.call(&"set_item_transform", 1, almost_same)
@@ -649,6 +703,10 @@ func _test_ordered_rect_submissions() -> void:
 	_check(
 		int(_canvas.call(&"draw_commands_last_rebuild")) == 4,
 		"transform edits preserve one ordered rect command per sprite",
+	)
+	_check(
+		int(_canvas.call(&"transform_commands_last_rebuild")) == 4,
+		"near-equal transforms are not coalesced",
 	)
 
 	var textures: Array[Texture2D] = []
@@ -685,6 +743,10 @@ func _test_ordered_rect_submissions() -> void:
 		int(_canvas.call(&"draw_commands_last_rebuild")) == 256,
 		"256 sprites keep their exact texture-rect submissions",
 	)
+	_check(
+		int(_canvas.call(&"transform_commands_last_rebuild")) == 256,
+		"distinct per-sprite transforms retain their state commands",
+	)
 	print("RENDERER_RECT_COMMANDS sprites=256 submissions=256 backend_batching_unmeasured")
 
 	(
@@ -694,7 +756,7 @@ func _test_ordered_rect_submissions() -> void:
 			_owner,
 			[_texture, _texture, _texture],
 			[Rect2(0, 0, 8, 8), Rect2(0, 0, 8, 8), Rect2(0, 0, 8, 8)],
-			[repeated, distinct, distinct],
+			[repeated, repeated, repeated],
 			PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE]),
 			PackedFloat32Array([0, 0, 0]),
 			PackedFloat32Array([1, 1, 1]),
@@ -712,4 +774,8 @@ func _test_ordered_rect_submissions() -> void:
 	_check(
 		int(_canvas.call(&"draw_commands_last_rebuild")) == 3,
 		"blend routing preserves one ordered rect command per sprite",
+	)
+	_check(
+		int(_canvas.call(&"transform_commands_last_rebuild")) == 2,
+		"blend-specific canvas items retain independent transform state",
 	)
