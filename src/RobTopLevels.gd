@@ -272,7 +272,14 @@ func download(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var gd_res := await _download_gdhistory(level_id, summary)
 	if gd_res.ok:
 		return gd_res
-	return direct_res
+	return _fallback_error(direct_res, gd_res)
+
+
+func _fallback_error(direct_res: Dictionary, archive_res: Dictionary) -> Dictionary:
+	var direct_error := str(direct_res.get("error", "unknown RobTop error"))
+	var archive_error := str(archive_res.get("error", "unknown archive error"))
+	push_warning("[RobTop] both level sources failed: RobTop=%s; GDHistory=%s" % [direct_error, archive_error])
+	return _error(archive_error, "RobTop fallback also failed: %s" % direct_error)
 
 
 func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
@@ -370,6 +377,14 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 
 
 
+static func _archive_record_is_newer(candidate: Dictionary, current: Dictionary) -> bool:
+	var candidate_date := str(candidate.get("real_date", ""))
+	var current_date := str(current.get("real_date", ""))
+	if candidate_date != current_date:
+		return candidate_date > current_date
+	return int(candidate.get("id", -1)) > int(current.get("id", -1))
+
+
 func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var info_url := "https://history.geometrydash.eu/api/v1/level/%d/" % level_id
 	print("[RobTop] Level download via GDHistory: %s" % info_url)
@@ -378,22 +393,25 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		return _error("Level %d not found in online archive (%s)" % [level_id, info_res.error])
 	var data: Dictionary = info_res.data if (info_res.data is Dictionary) else {}
 	var records: Array = data.get("records", [])
-	var chosen_record_id := -1
-	var chosen_version := -1
+	var chosen_download: Dictionary = {}
+	var chosen_fallback: Dictionary = {}
 	for record: Variant in records:
 		if not (record is Dictionary):
 			continue
-		if bool(record.get("level_string_available", false)) and not bool(record.get("is_invalid", false)):
-			var rid := int(record.get("id", -1))
-			var ver := int(record.get("level_version", 1))
-			var is_download := str(record.get("record_type", "")) == "download"
-			if is_download:
-				if ver > chosen_version or (ver == chosen_version and rid > chosen_record_id):
-					chosen_record_id = rid
-					chosen_version = ver
-			elif chosen_record_id == -1 or rid > chosen_record_id:
-				if chosen_version <= 0:
-					chosen_record_id = rid
+		if (
+				not bool(record.get("level_string_available", false))
+				or bool(record.get("is_invalid", false))
+				or bool(record.get("cache_is_dupe", false))
+		):
+			continue
+		if str(record.get("record_type", "")) == "download":
+			if chosen_download.is_empty() or _archive_record_is_newer(record, chosen_download):
+				chosen_download = record
+		elif chosen_fallback.is_empty() or _archive_record_is_newer(record, chosen_fallback):
+			chosen_fallback = record
+	var chosen: Dictionary = chosen_download if not chosen_download.is_empty() else chosen_fallback
+	var chosen_record_id := int(chosen.get("id", -1))
+	var chosen_version := int(chosen.get("level_version", 1))
 	if chosen_record_id == -1:
 		return _error("Level %d has no downloadable string in online archive" % level_id)
 
@@ -680,6 +698,7 @@ func _get_text_once(target_url: String) -> Dictionary:
 	var result: int = completed[0]
 	var status: int = completed[1]
 	var bytes: PackedByteArray = completed[3]
+	print("[RobTop] GET result=%d HTTP=%d bytes=%d" % [result, status, bytes.size()])
 	if result != HTTPRequest.RESULT_SUCCESS:
 		var is_cors := NativeCore.is_cors_error(result, status, OS.has_feature("web"))
 		if is_cors:
