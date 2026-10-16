@@ -7,6 +7,9 @@ name: Build Android APK
 # uncompressed copy of libgodot; Android extracts them once at install.
 # Frame pacing and the game loop are unchanged. The rolling tag stays
 # "android-debug" so the existing download URL does not move.
+# A new signing key is generated once and retained in a private draft release;
+# never publish that release or expose its signing assets. Android versionCode
+# is assigned from the workflow run number so each APK can update in place.
 #
 #   - Every push to main / arena branches (and every manual dispatch) exports
 #     an APK and uploads it as a workflow artifact. Grab it from the Actions
