@@ -136,15 +136,71 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools"/*/apksigner --version | head -1 || true
 
-      - name: Generate debug keystore
+      - name: Restore or initialize the persistent Android signing key
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$HOME/.android"
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          set -euo pipefail
+          SIGNING_DIR="$RUNNER_TEMP/godot-dash-signing"
+          KEYSTORE="$SIGNING_DIR/godot-dash-signing.keystore"
+          PROPERTIES="$SIGNING_DIR/godot-dash-signing.properties"
+          mkdir -p "$SIGNING_DIR"
+          if gh release view android-signing-key --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Restoring the persistent signing key from its private draft release."
+            gh release download android-signing-key --repo "$GITHUB_REPOSITORY" \
+              --pattern "godot-dash-signing.keystore" \
+              --pattern "godot-dash-signing.properties" \
+              --dir "$SIGNING_DIR"
+            test -s "$KEYSTORE" && test -s "$PROPERTIES" || {
+              echo "ERROR: the private Android signing release is missing its keystore or properties."
+              exit 1
+            }
+          else
+            echo "Creating the initial persistent Android signing key."
+            SIGNING_PASSWORD="$(openssl rand -hex 24)"
+            keytool -genkeypair -keystore "$KEYSTORE" -storetype JKS \
+              -storepass "$SIGNING_PASSWORD" -alias godot-dash-release \
+              -keypass "$SIGNING_PASSWORD" -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=Godot Dash CI,O=Godot Dash,C=CA"
+            umask 077
+            printf 'store_password=%s\nkey_alias=%s\nkey_password=%s\n' \
+              "$SIGNING_PASSWORD" "godot-dash-release" "$SIGNING_PASSWORD" > "$PROPERTIES"
+            # Keep the private key out of Git and public releases. The draft
+            # release is readable by this repository's Actions token, and is
+            # stable across fresh GitHub-hosted runners.
+            gh release create android-signing-key "$KEYSTORE" "$PROPERTIES" \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
+              --title "Android CI signing key (private)" \
+              --notes "Private signing material used only by the Android build workflow. Do not publish or delete."
           fi
+          python3 - "$KEYSTORE" "$PROPERTIES" "$GITHUB_ENV" <<'PYEOF'
+          import sys
+          keystore, properties, env_file = sys.argv[1:]
+          values = {}
+          with open(properties, encoding="utf-8") as source:
+              for line in source:
+                  key, separator, value = line.rstrip("\n").partition("=")
+                  if separator:
+                      values[key] = value
+          required = ("store_password", "key_alias", "key_password")
+          missing = [key for key in required if not values.get(key)]
+          if missing:
+              raise SystemExit("Signing properties missing: " + ", ".join(missing))
+          if any("\n" in values[key] or "\r" in values[key] for key in required):
+              raise SystemExit("Signing properties contain invalid line breaks")
+          exports = {
+              "ANDROID_KEYSTORE_PATH": keystore,
+              "ANDROID_KEYSTORE_STORE_PASSWORD": values["store_password"],
+              "ANDROID_KEY_ALIAS": values["key_alias"],
+              "ANDROID_KEY_PASSWORD": values["key_password"],
+          }
+          with open(env_file, "a", encoding="utf-8") as target:
+              for key, value in exports.items():
+                  target.write(f"{key}={value}\n")
+          for key in ("ANDROID_KEYSTORE_STORE_PASSWORD", "ANDROID_KEY_PASSWORD"):
+              print("::add-mask::" + exports[key])
+          print("Persistent Android signing key is ready.")
+          PYEOF
 
       # ------------------------------------------------- Native GDExtension
       # Builds native/src/gdash_native.cpp into the .so bundled into the APK by
@@ -933,41 +989,55 @@ jobs:
           fi
           JAVA_HOME_DETECTED="${JAVA_HOME:-$(dirname "$(dirname "$(command -v java)")")}"
           echo "editor settings: $SET"
-          python3 - "$SET" "$ANDROID_HOME" "$JAVA_HOME_DETECTED" "$HOME/.android/debug.keystore" <<'PYEOF'
+          python3 - "$SET" "$ANDROID_HOME" "$JAVA_HOME_DETECTED" "$ANDROID_KEYSTORE_PATH" <<'PYEOF'
+          import os
           import sys
           path, sdk, jdk, keystore = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          alias = os.environ["ANDROID_KEY_ALIAS"]
+          store_password = os.environ["ANDROID_KEYSTORE_STORE_PASSWORD"]
           values = {
               "export/android/android_sdk_path": sdk,
               "export/android/java_sdk_path": jdk,
               "export/android/debug_keystore": keystore,
-              "export/android/debug_keystore_user": "androiddebugkey",
-              "export/android/debug_keystore_pass": "android",
+              "export/android/debug_keystore_user": alias,
+              "export/android/debug_keystore_pass": store_password,
               "export/android/release_keystore": keystore,
-              "export/android/release_keystore_user": "androiddebugkey",
-              "export/android/release_keystore_pass": "android",
+              "export/android/release_keystore_user": alias,
+              "export/android/release_keystore_pass": store_password,
           }
           lines = open(path, encoding="utf-8").read().splitlines()
-          seen = {ln.split("=", 1)[0].strip() for ln in lines if "=" in ln}
+          keys = set(values)
+          lines = [line for line in lines if line.split("=", 1)[0].strip() not in keys]
+          lines.extend('%s = "%s"' % (key, val) for key, val in values.items())
           with open(path, "w", encoding="utf-8") as fh:
-              for key, val in values.items():
-                  if key in seen:
-                      continue
-                  lines.insert(len(lines), '%s = "%s"' % (key, val))
               fh.write("\n".join(lines) + "\n")
-          print("configured Android SDK/JDK/keystore in", path)
+          print("configured Android SDK/JDK and persistent signing keystore")
           PYEOF
-          cat "$SET"
+
+      - name: Set monotonically increasing Android version code
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import re
+          from pathlib import Path
+          path = Path("export_presets.cfg")
+          text = path.read_text(encoding="utf-8")
+          run_number = int(os.environ["GITHUB_RUN_NUMBER"])
+          updated, count = re.subn(r"(?m)^version/code=\d+$", f"version/code={run_number}", text, count=1)
+          if count != 1 or run_number < 1:
+              raise SystemExit("Could not set a positive Android version code")
+          path.write_text(updated, encoding="utf-8")
+          print(f"Android version code: {run_number}")
+          PYEOF
 
       - name: Export Android release APK (Gradle build)
         run: |
-          # Same CI debug keystore for both so a sideload can replace the
-          # previous APK. The engine target is still template_release.
-          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore"
-          export GODOT_ANDROID_KEYSTORE_DEBUG_USER="androiddebugkey"
-          export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="android"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/.android/debug.keystore"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="androiddebugkey"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="android"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$ANDROID_KEYSTORE_PATH"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_USER="$ANDROID_KEY_ALIAS"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="$ANDROID_KEY_PASSWORD"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$ANDROID_KEYSTORE_PATH"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$ANDROID_KEY_ALIAS"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$ANDROID_KEY_PASSWORD"
           mkdir -p "$(dirname "$APK_PATH")"
           "$GODOT_BIN" --headless --path . --export-release "Android" "$APK_PATH" > godot_export.log 2>&1
           status=$?
@@ -1025,6 +1095,17 @@ jobs:
             exit 1
           }
           echo "verified: arm64-v8a only, libgdash_native.android.template_release.arm64.so present"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          EXPECTED_CERT=$(keytool -exportcert -alias "$ANDROID_KEY_ALIAS" \
+            -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_STORE_PASSWORD" \
+            | sha256sum | awk '{print toupper($1)}')
+          ACTUAL_CERT=$("$APKSIGNER" verify --print-certs "$APK_PATH" \
+            | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2); exit}')
+          if [ -z "$ACTUAL_CERT" ] || [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::APK signing certificate does not match the persistent Android signing key"
+            exit 1
+          fi
+          echo "verified persistent APK signing certificate SHA-256: $ACTUAL_CERT"
           APK_BYTES=$(stat -c%s "$APK_PATH")
           echo "APK bytes: $APK_BYTES"
           echo "native lib compression:"
@@ -1082,7 +1163,7 @@ jobs:
           {
             echo "Automatic release build of \`${GITHUB_SHA::8}\` on \`$GITHUB_REF_NAME\`."
             echo ""
-            echo "Sideload this APK for device testing. It is a release export (faster than the old debug build) signed with the CI debug keystore so it can replace the previous install. Native libraries are compressed in the APK and extracted once at install; frame rate is unchanged. largeHeap stays enabled."
+            echo "Sideload this APK for device testing. It is a release export (faster than the old debug build), signed with the persistent CI key. Builds created before the key was initialized may require one uninstall/reinstall; subsequent builds use the same certificate and can update in place. Native libraries are compressed in the APK and extracted once at install; frame rate is unchanged. largeHeap stays enabled."
             echo ""
             echo "APK size: $(stat -c%s "$APK_PATH") bytes."
             echo ""
