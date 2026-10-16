@@ -1098,9 +1098,12 @@ jobs:
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           EXPECTED_CERT=$(keytool -exportcert -alias "$ANDROID_KEY_ALIAS" \
             -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_STORE_PASSWORD" \
-            | sha256sum | awk '{print toupper($1)}')
-          ACTUAL_CERT=$("$APKSIGNER" verify --print-certs "$APK_PATH" \
-            | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2); exit}')
+            | sha256sum | awk '{print toupper($1)}' | tr -d ':[:space:]')
+          "$APKSIGNER" verify --print-certs "$APK_PATH" > apk_cert.txt
+          cat apk_cert.txt
+          ACTUAL_CERT=$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2); exit}' apk_cert.txt | tr -d ':[:space:]')
+          echo "expected persistent signing certificate SHA-256: $EXPECTED_CERT"
+          echo "APK signer certificate SHA-256: ${ACTUAL_CERT:-not found}"
           if [ -z "$ACTUAL_CERT" ] || [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
             echo "::error::APK signing certificate does not match the persistent Android signing key"
             exit 1
