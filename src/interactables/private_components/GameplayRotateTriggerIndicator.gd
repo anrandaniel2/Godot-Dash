@@ -16,9 +16,22 @@ var _color: Color
 
 func _ready() -> void:
 	show_behind_parent = true
+	visibility_changed.connect(_on_visibility_changed)
+	set_process(is_visible_in_tree())
+
+
+func _on_visibility_changed() -> void:
+	var should_process: bool = is_visible_in_tree()
+	set_process(should_process)
+	if should_process:
+		_update_indicator()
 
 
 func _process(_delta: float) -> void:
+	_update_indicator()
+
+
+func _update_indicator() -> void:
 	global_rotation = 0.0
 	scale = Vector2.ONE / parent.scale
 	queue_redraw()
@@ -33,12 +46,12 @@ func _draw() -> void:
 		_color = Color.CYAN if sign(_angle_B - _angle_A) == 1 else Color.MAGENTA
 		_radius = 64 - (THICKNESS / 2)
 		draw_arc(
-			_origin, # origin (local coordinates)
-			_radius, # radius
+			_origin,  # origin (local coordinates)
+			_radius,  # radius
 			_angle_A,
-			_angle_B, # angle B
+			_angle_B,  # angle B
 			POINT_COUNT,
-			_color, # color
-			THICKNESS, # line width
+			_color,  # color
+			THICKNESS,  # line width
 			ANTIALIASED,
-		) # antialiasing
+		)  # antialiasing

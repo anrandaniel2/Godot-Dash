@@ -5,6 +5,15 @@ extends CanvasLayer
 var _last_text: String = ""
 
 
+func _ready() -> void:
+	visibility_changed.connect(_sync_process_state)
+	_sync_process_state()
+
+
+func _sync_process_state() -> void:
+	set_process(visible)
+
+
 func _process(_delta: float) -> void:
 	if not visible or not LevelManager.current_level:
 		return

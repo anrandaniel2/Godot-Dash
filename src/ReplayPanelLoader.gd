@@ -16,7 +16,13 @@ signal replay_started
 func _ready() -> void:
 	sort_by.item_selected.connect(reorder.unbind(1))
 	order.item_selected.connect(reorder.unbind(1))
+	visibility_changed.connect(_on_visibility_changed)
+	_on_visibility_changed()
 	refresh()
+
+
+func _on_visibility_changed() -> void:
+	set_process(visible)
 
 
 func _process(_delta: float) -> void:

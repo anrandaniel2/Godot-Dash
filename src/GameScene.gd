@@ -56,6 +56,7 @@ func _print_process_memory(tag: String) -> void:
 
 
 func _ready() -> void:
+	set_process(false) # No per-frame work until imported ground or middleground art exists.
 	print("[gdash-mem] game scene ready")
 	TimescaleChangerComponent.reset_time_scale()
 	LevelManager.game_scene = self
@@ -335,6 +336,7 @@ func set_gd_art(kind: int, id: int) -> void:
 					_gd_texture("middlegrounds/fg_%02d_001" % mg) if mg > 0 else null,
 					_gd_texture("middlegrounds/fg_%02d_2_001" % mg) if mg > 0 else null,
 			)
+	set_process(not _gd_ground_layers.is_empty() or not _gd_mg_sprites.is_empty())
 
 
 func set_gd_mg_speed(speed: Vector2) -> void:
@@ -468,6 +470,7 @@ func _set_gd_middleground(texture: Texture2D, texture_2: Texture2D) -> void:
 
 func _process(_delta: float) -> void:
 	if _gd_ground_layers.is_empty() and _gd_mg_sprites.is_empty():
+		set_process(false)
 		return
 	var bridge := NativeTriggerBridge.current
 	for layer: Sprite2D in _gd_ground_layers:

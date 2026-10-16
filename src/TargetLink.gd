@@ -4,11 +4,27 @@ extends Line2D
 
 var target: Node2D
 var target_component: TargetObjectComponent
+var _last_visible: bool
 
 
 func _ready() -> void:
 	target_component = NodeUtils.get_child_of_type(get_parent(), TargetObjectComponent)
 	z_index = -50
+	_last_visible = visible
+	visibility_changed.connect(_on_visibility_changed)
+	set_process(_last_visible)
+
+
+func _on_visibility_changed() -> void:
+	# Ignore inherited visibility notifications: the original callback gates
+	# on this node's `visible` property, not its ancestors' visibility.
+	if visible == _last_visible:
+		return
+	_last_visible = visible
+	# The old per-frame hidden branch cleared these points. Clear on both
+	# transitions so a later show cannot reveal stale geometry.
+	clear_points()
+	set_process(_last_visible)
 
 
 func _process(delta: float) -> void:

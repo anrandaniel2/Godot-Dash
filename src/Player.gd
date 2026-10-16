@@ -2,6 +2,7 @@ class_name Player
 extends CharacterBody2D
 
 signal hit_ceiling(player: Player)
+signal gravity_flip_changed(flip: int)
 
 enum Gamemode {
 	CUBE,
@@ -117,7 +118,12 @@ var max_gameplay_y: float = -INF
 var _ticks_above_max_gameplay_y: int = 0
 var jump_hold_disabled: bool
 var speed_multiplier: float = 1.0
-var gravity_flip: int = 1
+var gravity_flip: int = 1:
+	set(value):
+		if gravity_flip == value:
+			return
+		gravity_flip = value
+		gravity_flip_changed.emit(value)
 var gravity_multiplier: float = 1.0
 # Set by the C++ gravity portal for one physics step. The floor contact from
 # the previous step would otherwise cancel the reversed launch.

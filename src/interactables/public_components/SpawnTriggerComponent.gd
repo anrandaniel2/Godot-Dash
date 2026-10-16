@@ -26,6 +26,7 @@ enum LoopState {
 
 func _ready() -> void:
 	parent.interacted.connect(start)
+	set_process(false)
 
 
 func _validate_property(property: Dictionary) -> void:
@@ -37,6 +38,7 @@ func _validate_property(property: Dictionary) -> void:
 
 func _process(delta: float) -> void:
 	if spawned_triggers.is_empty() or _timer.is_stopped():
+		set_process(false)
 		return
 	var elapsed_time: float = _timer.wait_time - _timer.time_left
 	for trigger in spawned_triggers:
@@ -75,6 +77,7 @@ func start(player: Player) -> void:
 			_duration = trigger.time
 	_timer.start(_duration)
 	_interacted_with_player = player
+	set_process(true)
 	if loop != LoopState.DISABLED:
 		if _duration > 0.0:
 			NodeUtils.connect_once(_timer.timeout, restart.bind(player))

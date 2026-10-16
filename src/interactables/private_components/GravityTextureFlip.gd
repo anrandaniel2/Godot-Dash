@@ -4,18 +4,19 @@ extends Node
 @onready var sprite := get_parent() as Sprite2D
 
 var _last_flip: bool
+var _player: Player
 
 
 func _ready() -> void:
-	_last_flip = LevelManager.player.gravity_flip < 0
+	_player = LevelManager.player
+	_last_flip = _player.gravity_flip < 0
 	sprite.flip_v = _last_flip
+	_player.gravity_flip_changed.connect(_on_gravity_flip_changed)
+	set_process(false)
 
 
-func _process(_delta: float) -> void:
-	# flip_v only ever changes when gravity actually flips; the old code set
-	# the property (and read the player through the autoload) every frame for
-	# every textured object carrying this component.
-	var flip: bool = LevelManager.player.gravity_flip < 0
+func _on_gravity_flip_changed(flip_value: int) -> void:
+	var flip: bool = flip_value < 0
 	if flip == _last_flip:
 		return
 	_last_flip = flip

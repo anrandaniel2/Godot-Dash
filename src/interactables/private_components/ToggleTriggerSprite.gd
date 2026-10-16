@@ -5,7 +5,9 @@ extends TriggerSprite
 const TEXTURE_ON: Texture2D = preload("res://assets/textures/triggers/ToggleOn.svg")
 const TEXTURE_OFF: Texture2D = preload("res://assets/textures/triggers/ToggleOff.svg")
 const TEXTURE_FLIP: Texture2D = preload("res://assets/textures/triggers/ToggleFlip.svg")
-const TEXTURE_MULTIPLE: Texture2D = preload("res://assets/textures/triggers/ToggleMultipleGroups.svg")
+const TEXTURE_MULTIPLE: Texture2D = preload(
+	"res://assets/textures/triggers/ToggleMultipleGroups.svg"
+)
 
 ## Cache key of the texture currently assigned (0 = none yet). Assigning the
 ## same texture again every frame, for every placed toggle trigger, was pure
@@ -13,9 +15,23 @@ const TEXTURE_MULTIPLE: Texture2D = preload("res://assets/textures/triggers/Togg
 var _texture_key: int = 0
 
 
+func _ready() -> void:
+	visibility_changed.connect(_on_visibility_changed)
+	set_process(is_visible_in_tree())
+
+
+func _on_visibility_changed() -> void:
+	var should_process: bool = is_visible_in_tree()
+	set_process(should_process)
+	if should_process:
+		_update_texture()
+
+
 func _process(_delta: float) -> void:
-	if not visible:
-		return
+	_update_texture()
+
+
+func _update_texture() -> void:
 	var key: int
 	var target_texture: Texture2D
 	if toggle_component.toggled_groups.size() == 1 and toggle_component.toggled_groups[0] != null:

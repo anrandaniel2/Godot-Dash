@@ -15,12 +15,19 @@ static var active_count: int = 0
 @onready var parent: Node2D = get_parent()
 @onready var initial_scale: Vector2 = parent.scale
 
-var disabled: bool
+var disabled: bool = false:
+	set(value):
+		if disabled == value:
+			return
+		disabled = value
+		if is_inside_tree():
+			set_process.call_deferred(not disabled)
 
 
 func _ready() -> void:
 	process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
 	active_count += 1
+	set_process(not disabled)
 
 
 func _exit_tree() -> void:
@@ -36,7 +43,8 @@ func _process(delta: float):
 	var player: Player = LevelManager.player
 	if player != null and absf(parent.global_position.x - player.global_position.x) > TRACK_RANGE:
 		return
-	parent.set_deferred(
-		&"scale",
-		parent.scale.lerp(initial_scale * level.music_scale, 1 - exp(-delta * 12)),
+	var target_scale: Vector2 = parent.scale.lerp(
+		initial_scale * level.music_scale, 1 - exp(-delta * 12)
 	)
+	if parent.scale != target_scale:
+		parent.set_deferred(&"scale", target_scale)

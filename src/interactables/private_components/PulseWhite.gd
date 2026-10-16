@@ -7,6 +7,9 @@ var _factor: float
 
 
 func _ready() -> void:
+	# Most portals are idle for the entire level. Keep this callback dormant
+	# until an interaction actually starts the visual pulse.
+	set_process(false)
 	parent.interacted.connect(pulse)
 	_factor = 0.0
 	pulse_target.set_instance_shader_parameter(&"factor", _factor)
@@ -21,15 +24,19 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if is_zero_approx(_factor):
+		set_process(false)
 		return
 	_factor = move_toward(_factor, 0.0, delta * 6)
 	pulse_target.set_instance_shader_parameter(&"factor", _factor)
 	if pulse_target.get_child_count() > 0:
 		for child: Node2D in pulse_target.get_children():
 			child.set_instance_shader_parameter(&"factor", _factor)
+	if is_zero_approx(_factor):
+		set_process(false)
 
 
 func pulse(_player: Player) -> void:
 	if parent.has(NoEffectsComponent):
 		return
 	_factor = 1.0
+	set_process(true)

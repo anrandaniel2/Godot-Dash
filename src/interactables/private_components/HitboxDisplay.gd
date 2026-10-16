@@ -7,6 +7,18 @@ extends Node2D
 @export var fill_alpha_config_key: String
 
 
+func _ready() -> void:
+	visibility_changed.connect(_sync_process_state)
+	_sync_process_state()
+
+
+func _sync_process_state() -> void:
+	var should_draw: bool = is_visible_in_tree()
+	set_process(should_draw)
+	if should_draw:
+		queue_redraw()
+
+
 func _process(_delta: float) -> void:
 	queue_redraw()
 
