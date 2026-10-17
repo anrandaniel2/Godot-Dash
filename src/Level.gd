@@ -287,6 +287,26 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 			line_color.r, line_color.g, line_color.b,
 		]
 	)
+	# The native draw path owns records and culls per batch. Capture a small
+	# periodic state summary so reports of blank decoration separate an empty
+	# spatial selection/lifetime problem from records that are still submitted
+	# but visually hidden by shader, material, or inherited modulation state.
+	var bridge := NativeTriggerBridge.current
+	if bridge != null:
+		var render_stats: Dictionary = bridge.render_stats()
+		print(
+			"RENDERDIAG t=%.0f canvases=%d owners=%d records=%d submitted=%d draws=%d empty=%d culled=%d"
+			% [
+				_beamdiag_seconds,
+				int(render_stats.get("canvases", 0)),
+				int(render_stats.get("batch_owner_nodes", 0)),
+				int(render_stats.get("records", 0)),
+				int(render_stats.get("submitted_records", 0)),
+				int(render_stats.get("canvas_draw_commands", 0)),
+				int(render_stats.get("empty_canvases", 0)),
+				int(render_stats.get("culled_canvases", 0)),
+			]
+		)
 
 
 ## The shared physics world mirrors the object tree; any object added to or

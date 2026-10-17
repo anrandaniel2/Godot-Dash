@@ -83,6 +83,13 @@ func setup(level: Level, level_data: Dictionary = {}) -> bool:
 	return true
 
 
+func render_stats() -> Dictionary:
+	if _runtime == null or not _runtime.has_method(&"render_stats"):
+		return { }
+	var stats: Variant = _runtime.call(&"render_stats")
+	return stats if stats is Dictionary else { }
+
+
 func _exit_tree() -> void:
 	if current == self:
 		current = null
