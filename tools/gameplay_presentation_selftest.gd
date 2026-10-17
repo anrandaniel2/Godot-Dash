@@ -18,11 +18,46 @@ func _check(value: bool, message: String) -> void:
 
 func _ready() -> void:
 	_test_version()
+	_test_easing_rate()
+	_test_pulse_processing()
+	_test_target_link_processing()
+	_test_gravity_texture_flip()
+	_test_variable_fill_color()
+	_test_texture_rotate_processing()
+	_test_texture_pin_visibility()
+	_test_hidden_hud_processing()
 	_test_visibility()
 	_test_death_and_end()
 	_test_ui()
 	print("PRESENTATION_SELFTEST checks=%d failed=%d" % [_checks, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
+
+
+func _test_easing_rate() -> void:
+	var converted: Dictionary = GMDConverter._components_from_properties(
+		901, {"10": "1", "30": "2", "85": "3"}, GMDObjects.MAP[901]
+	)
+	var easing: Dictionary = converted.get("EasingComponent", {})
+	_check(int(easing.get("gd_easing_id", -1)) == 2, "Move import retains GD easing id")
+	_check(is_equal_approx(float(easing.get("gd_easing_rate", 0.0)), 3.0), "Move import retains key-85 easing rate")
+	_check(
+		is_equal_approx(EasingComponent.gd_easing_weight(2, 3.0, 0.5), 0.125),
+		"custom ease-in rate changes curve exponent",
+	)
+	_check(
+		is_equal_approx(EasingComponent.gd_easing_weight(3, 4.0, 0.0625), 0.5),
+		"custom ease-out rate is honored",
+	)
+	_check(
+		is_equal_approx(EasingComponent.gd_easing_weight(2, 2.0, 0.005), 0.00005),
+		"GD ease-in linearizes the first percent",
+	)
+	for easing_id: int in range(19):
+		_check(
+			is_equal_approx(EasingComponent.gd_easing_weight(easing_id, 2.0, 0.0), 0.0)
+			and is_equal_approx(EasingComponent.gd_easing_weight(easing_id, 2.0, 1.0), 1.0),
+			"GD easing %d preserves exact endpoints" % easing_id,
+		)
 
 
 func _test_version() -> void:
@@ -46,6 +81,118 @@ func _test_version() -> void:
 		_check(button.text.begins_with(UpdateManager.display_version()), "every update state retains version")
 	UpdateManager.status = old_status
 	button.free()
+
+
+func _test_pulse_processing() -> void:
+	var trigger := Interactable.new()
+	var target := Node2D.new()
+	target.material = load("res://resources/PulseWhiteMaterial.tres")
+	var pulse := PulseWhite.new()
+	pulse.pulse_target = target
+	trigger.add_child(target)
+	trigger.add_child(pulse)
+	add_child(trigger)
+	_check(not pulse.is_processing(), "idle PulseWhite does not receive per-frame callbacks")
+	pulse.pulse(null)
+	_check(pulse.is_processing(), "an interaction starts PulseWhite processing")
+	pulse._process(0.2)
+	_check(not pulse.is_processing(), "completed PulseWhite pulse returns to idle")
+	pulse.pulse(null)
+	_check(pulse.is_processing(), "a later interaction re-enables PulseWhite")
+	trigger.free()
+
+
+func _test_target_link_processing() -> void:
+	var link := TargetLink.new()
+	add_child(link)
+	_check(link.is_processing(), "visible target link processes")
+	link.hide()
+	_check(not link.is_processing(), "hidden target link stops per-frame callbacks")
+	_check(link.get_point_count() == 0, "hiding clears cached target-link geometry")
+	link.show()
+	_check(link.is_processing(), "showing target link resumes updates")
+	link.free()
+
+
+func _test_gravity_texture_flip() -> void:
+	var previous_player: Player = LevelManager.player
+	var player := Player.new()
+	LevelManager.player = player
+	var sprite := Sprite2D.new()
+	var component := GravityTextureFlip.new()
+	sprite.add_child(component)
+	add_child(sprite)
+	_check(not component.is_processing(), "gravity texture flip has no per-frame callback")
+	_check(not sprite.flip_v, "gravity texture flip starts upright")
+	player.gravity_flip = -1
+	_check(sprite.flip_v, "gravity change updates texture flip immediately")
+	player.gravity_flip = 1
+	_check(not sprite.flip_v, "restored gravity updates texture flip")
+	sprite.free()
+	player.free()
+	LevelManager.player = previous_player
+
+
+func _test_variable_fill_color() -> void:
+	var owner := Node2D.new()
+	var particle_emitter := Node2D.new()
+	particle_emitter.name = "ParticleEmitter"
+	var fill := Node2D.new()
+	fill.name = "Fill"
+	var detail := VariableFillColor.new()
+	detail.name = "Detail"
+	owner.add_child(particle_emitter)
+	owner.add_child(fill)
+	owner.add_child(detail)
+	add_child(owner)
+	detail.modulate = Color(0.25, 0.5, 0.75, 0.8)
+	detail._process(0.0)
+	_check(particle_emitter.modulate == detail.modulate, "variable fill syncs particle color")
+	_check(fill.modulate == detail.modulate, "variable fill syncs fill color")
+	owner.free()
+
+
+func _test_texture_rotate_processing() -> void:
+	var trigger := Interactable.new()
+	var sprite := Node2D.new()
+	var component := TextureRotateComponent.new()
+	component._sprite = sprite
+	trigger.add_child(sprite)
+	trigger.add_child(component)
+	add_child(trigger)
+	_check(not component.is_processing(), "zero-rate texture rotation is idle")
+	component.rotation_rate = 180.0
+	_check(component.is_processing(), "nonzero texture rotation starts processing")
+	component.rotation_rate = 0.0
+	_check(not component.is_processing(), "zero-rate texture rotation stops processing")
+	trigger.free()
+
+
+func _test_texture_pin_visibility() -> void:
+	var trigger := Interactable.new()
+	var sprite := Sprite2D.new()
+	var component := TextureRotationPinComponent.new()
+	component.pinned = sprite
+	trigger.add_child(sprite)
+	trigger.add_child(component)
+	add_child(trigger)
+	_check(component.is_processing(), "visible texture pin tracks transforms")
+	sprite.hide()
+	_check(not component.is_processing(), "hidden texture pin stops polling")
+	sprite.show()
+	_check(component.is_processing(), "visible texture pin resumes and refreshes")
+	trigger.free()
+
+
+func _test_hidden_hud_processing() -> void:
+	var percentage: CanvasLayer = load("res://src/PercentageLayer.gd").new()
+	add_child(percentage)
+	_check(percentage.is_processing(), "visible percentage HUD updates")
+	percentage.hide()
+	_check(not percentage.is_processing(), "hidden percentage HUD stops polling")
+	percentage.show()
+	_check(percentage.is_processing(), "shown percentage HUD resumes updates")
+	percentage.free()
 
 
 func _test_visibility() -> void:

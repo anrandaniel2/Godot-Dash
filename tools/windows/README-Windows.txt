@@ -35,31 +35,21 @@ user directory as the installer. No Godot installation is needed. These builds
 are unsigned: Windows may show an unknown-publisher warning. Verify the download
 came from this project's GitHub release before running it.
 
-RENDERER COMPARISON BUILDS
-The ZIP also contains three separate executables:
-  RenderingServer\Godot Dash.exe — existing retained CanvasItem baseline
-  GDClone\Godot Dash.exe         — GPU MultiMesh instances
-  OpenDash\Godot Dash.exe        — indexed mesh batches with sparse dirty updates
-Run one executable at a time. For a fair comparison, use the same machine,
-level, route, resolution, graphics settings, FPS/VSync settings and warm-up.
-These are experimental renderer builds; CI does not prove full visual/trigger
-parity or real GPU performance. No method is declared faster. Send all three
-capture logs and state any visible differences. User data remains in the same
-%APPDATA% folder.
+DECORATION RENDERING
+The Windows build uses Godot's retained RenderingServer CanvasItem path for
+level decorations. This is the sole supported decoration renderer in this ZIP.
 
 Forward+ requires a compatible graphics driver/GPU. This is NOT the web build.
 A build-time native smoke check is headless; it cannot verify your GPU or visual
 parity. On launch, the engine log should identify Forward+ and a native-loaded
-message should appear when a level opens. Report startup errors verbatim.
+message should appear when a level opens. Check the engine log if startup fails.
 
 PERFORMANCE CAPTURE (optional)
-Open PowerShell in this extracted directory and run one capture per build:
-  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1 -Executable '.\RenderingServer\Godot Dash.exe'
-  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1 -Executable '.\GDClone\Godot Dash.exe'
-  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1 -Executable '.\OpenDash\Godot Dash.exe'
+Open PowerShell in this extracted directory and run:
+  powershell -ExecutionPolicy Bypass -File .\Profile-Windows.ps1
 
-The executable parameter defaults to the root RenderingServer baseline. Read
-the script before running it if you prefer. It launches with Forward+ explicitly
+The executable parameter defaults to the root game executable. Read the script
+before running it if you prefer. It launches with Forward+ explicitly
 selected and creates a performance-<timestamp> directory for each capture.
 No LDM, effects, physics, collision or replay settings are changed.
 
@@ -69,9 +59,8 @@ exit), and the game remains open. A one-time file-write pause can occur at the
 end; its finalize_ms is logged separately, outside the sampled frame times.
 Close the game to finish the process-memory log.
 
-Send game.log, frames.csv, memory.csv, your CPU/GPU, display resolution, frame
-cap/vsync settings, level name/ID and whether you were playing or editing.
-For before/after tests, use identical settings and the same camera/player route.
+Keep the files local for inspection. For before/after tests, use identical
+settings and the same camera/player route.
 Recording uses GPU timestamps and has overhead: sampler_mean_us reports only
 CPU sampling work, not all GPU instrumentation overhead. Normal launches do not
 record or enable GPU timing. Do not compare an instrumented run to a normal run.

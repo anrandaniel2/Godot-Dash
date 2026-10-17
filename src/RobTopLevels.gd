@@ -393,8 +393,8 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		return _error("Level %d not found in online archive (%s)" % [level_id, info_res.error])
 	var data: Dictionary = info_res.data if (info_res.data is Dictionary) else {}
 	var records: Array = data.get("records", [])
-	var chosen_download: Dictionary = {}
-	var chosen_fallback: Dictionary = {}
+	var download_records: Array[Dictionary] = []
+	var fallback_records: Array[Dictionary] = []
 	for record: Variant in records:
 		if not (record is Dictionary):
 			continue
@@ -405,43 +405,70 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		):
 			continue
 		if str(record.get("record_type", "")) == "download":
-			if chosen_download.is_empty() or _archive_record_is_newer(record, chosen_download):
-				chosen_download = record
-		elif chosen_fallback.is_empty() or _archive_record_is_newer(record, chosen_fallback):
-			chosen_fallback = record
-	var chosen: Dictionary = chosen_download if not chosen_download.is_empty() else chosen_fallback
-	var chosen_record_id := int(chosen.get("id", -1))
-	var chosen_version := int(chosen.get("level_version", 1))
-	if chosen_record_id == -1:
+			download_records.append(record)
+		else:
+			fallback_records.append(record)
+	download_records.sort_custom(_archive_record_is_newer)
+	fallback_records.sort_custom(_archive_record_is_newer)
+	var candidates: Array[Dictionary] = []
+	for candidate: Dictionary in download_records:
+		if candidates.size() >= NETWORK_ATTEMPTS - 1:
+			break
+		candidates.append(candidate)
+	for candidate: Dictionary in fallback_records:
+		if candidates.size() >= NETWORK_ATTEMPTS:
+			break
+		candidates.append(candidate)
+	if candidates.is_empty():
 		return _error("Level %d has no downloadable string in online archive" % level_id)
 
-	var download_url := "https://history.geometrydash.eu/level/%d/%d/download/" % [level_id, chosen_record_id]
-	print("[RobTop] Fetching level archive: %s (record %d, ver %d)" % [download_url, chosen_record_id, chosen_version])
-	var text_res := await _get_text(download_url)
-	if not text_res.ok:
-		return _error("Could not download level file from archive (%s)" % text_res.error)
-	var gmd_text: String = text_res.text
-	if NativeCore.is_html_error_response(gmd_text):
-		return _error("Online archive returned an HTML error response instead of level data")
-	if gmd_text.begins_with("{") and gmd_text.contains("\"contents\""):
-		var parsed_wrap = JSON.parse_string(gmd_text)
-		if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
-			gmd_text = str(parsed_wrap["contents"])
-	var trimmed_text := gmd_text.strip_edges()
-	var doc: GMD.Document = null
-	if trimmed_text.begins_with("<?xml") or trimmed_text.begins_with("<plist"):
-		doc = GMD.parse(gmd_text)
+	# Archives occasionally retain a record whose download URL is stale or whose
+	# contents are truncated. Try newer eligible records first, then historical
+	# cache records; only accept one that actually decodes into a level string.
+	var chosen: Dictionary = {}
 	var level_string := ""
-	if doc != null and not doc.level_string.is_empty():
-		level_string = doc.level_string
-	else:
-		var encoded := _extract_k4(gmd_text)
-		if not encoded.is_empty():
-			level_string = GMD.decode_level_string(encoded)
+	var doc: GMD.Document = null
+	var last_record_error := "no archive record decoded"
+	for candidate: Dictionary in candidates:
+		var candidate_id := int(candidate.get("id", -1))
+		if candidate_id < 0:
+			continue
+		var candidate_version := int(candidate.get("level_version", 1))
+		var download_url := "https://history.geometrydash.eu/level/%d/%d/download/" % [level_id, candidate_id]
+		print("[RobTop] Fetching level archive: %s (record %d, ver %d)" % [download_url, candidate_id, candidate_version])
+		var text_res := await _get_text(download_url)
+		if not bool(text_res.get("ok", false)):
+			last_record_error = str(text_res.get("error", "archive request failed"))
+			continue
+		var candidate_text: String = str(text_res.get("text", ""))
+		if NativeCore.is_html_error_response(candidate_text):
+			last_record_error = "archive returned an HTML error response"
+			continue
+		if candidate_text.begins_with("{") and candidate_text.contains("\"contents\""):
+			var parsed_wrap: Variant = JSON.parse_string(candidate_text)
+			if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
+				candidate_text = str(parsed_wrap["contents"])
+		var candidate_doc: GMD.Document = null
+		var trimmed_text := candidate_text.strip_edges()
+		if trimmed_text.begins_with("<?xml") or trimmed_text.begins_with("<plist"):
+			candidate_doc = GMD.parse(candidate_text)
+		var candidate_level_string := ""
+		if candidate_doc != null and not candidate_doc.level_string.is_empty():
+			candidate_level_string = candidate_doc.level_string
+		else:
+			var encoded := _extract_k4(candidate_text)
+			if not encoded.is_empty():
+				candidate_level_string = GMD.decode_level_string(encoded)
+		if candidate_level_string.is_empty():
+			last_record_error = "archive record could not be decompressed"
+			continue
+		chosen = candidate
+		level_string = candidate_level_string
+		doc = candidate_doc
+		break
 
-	if level_string.is_empty():
-		return _error("Archived level string could not be decompressed")
-
+	if chosen.is_empty():
+		return _error("Could not download a usable archive record (%s)" % last_record_error)
 	var level_name: String = summary.get("name", "")
 	if level_name.is_empty() and doc != null:
 		level_name = doc.get_string(GMD.Key.NAME)
@@ -661,11 +688,23 @@ func _get_text(url: String) -> Dictionary:
 				if parsed_wrap is Dictionary and parsed_wrap.has("contents"):
 					res["text"] = str(parsed_wrap["contents"]).strip_edges()
 		return res
-	var direct: Dictionary = await _get_text_once(url)
+	var direct: Dictionary = {}
+	for attempt: int in NETWORK_ATTEMPTS:
+		direct = await _get_text_once(url)
+		if bool(direct.get("ok", false)) or not bool(direct.get("retryable", false)) or attempt + 1 >= NETWORK_ATTEMPTS:
+			break
+		print("[RobTop] transient GET failure; retry %d/%d" % [attempt + 1, NETWORK_ATTEMPTS - 1])
+		await _wait_before_network_retry(attempt)
 	var relay: String = web_relay()
 	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct):
 		return await _get_text_once(_resolve_url(url, relay))
 	return direct
+
+
+func _wait_before_network_retry(attempt: int) -> void:
+	# Short exponential backoff avoids hammering the public endpoints while still
+	# recovering quickly from mobile radio handoffs and transient CDN failures.
+	await get_tree().create_timer(0.35 * pow(2.0, attempt)).timeout
 
 
 func _get_text_once(target_url: String) -> Dictionary:
@@ -686,7 +725,7 @@ func _get_text_once(target_url: String) -> Dictionary:
 	var error := request.request(target_url, headers, HTTPClient.METHOD_GET)
 	if error != OK:
 		request.queue_free()
-		return _error("Could not start GET request (error %d)" % error)
+		return {"ok": false, "error": "Could not start GET request (error %d)" % error, "retryable": true}
 	var deadline := Time.get_ticks_msec() + 15_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
@@ -788,7 +827,13 @@ func _post(url: String, fields: Dictionary) -> Dictionary:
 		if relay.is_empty():
 			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
 		return await _post_once(url, fields, relay)
-	var direct: Dictionary = await _post_once(url, fields, "")
+	var direct: Dictionary = {}
+	for attempt: int in NETWORK_ATTEMPTS:
+		direct = await _post_once(url, fields, "")
+		if bool(direct.get("ok", false)) or not bool(direct.get("retryable", false)) or attempt + 1 >= NETWORK_ATTEMPTS:
+			break
+		print("[RobTop] transient POST failure; retry %d/%d" % [attempt + 1, NETWORK_ATTEMPTS - 1])
+		await _wait_before_network_retry(attempt)
 	var relay: String = web_relay()
 	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct, fields):
 		return await _post_once(url, fields, relay)
@@ -823,7 +868,7 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 	if error != OK:
 		request.queue_free()
 		push_warning("[RobTop] request could not start: error %d" % error)
-		return _error("Could not start the RobTop request (error %d)" % error)
+		return {"ok": false, "error": "Could not start the RobTop request (error %d)" % error, "retryable": true}
 
 	var deadline := Time.get_ticks_msec() + 15_000
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:

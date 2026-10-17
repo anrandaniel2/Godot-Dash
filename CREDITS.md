@@ -12,3 +12,7 @@
 
 - Object geometry, default colour channels and z-order data: [GDRWeb](https://github.com/iliasHDZ/GDRWeb) (MIT) — 2.2 `object.json` by Opstic & Maxnut
 - Colour, copy-channel and trigger-track semantics ported from GDRWeb's TypeScript implementation (vendored under `third_party/gdrweb/` as the reference)
+
+# Third-party software
+
+- [Godot Rapier Physics](https://github.com/appsinacup/godot-rapier-physics) v0.36.0 (MIT): Rapier2D PhysicsServer backend for desktop and Android exports; its upstream license is included with the build-time addon.

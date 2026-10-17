@@ -7,18 +7,14 @@ extends Object
 ## shapes into a small fixed set of bodies that live for the whole level:
 ##
 ##   LevelPhysics (Node2D, child of the Level)
-##   ├── Solids            StaticBody2D, layer 2 (blocks)
-##   ├── Slopes            StaticBody2D, layers 2+7 (slopes keep the
-##   │                     slope_enabler bit the player queries)
-##   ├── RectHazards       Area2D, layer 3 (spikes, ground spikes)
-##   └── CircleHazards     Area2D, layer 12 (saws)
+##   └── lightweight RID owners (Node2D, object-ID mapping only)
+##       ├── static PhysicsServer2D bodies for solids and slopes
+##       └── PhysicsServer2D areas for rectangular and circular hazards
 ##
-## A body's collision layer is a per-body property, and bodies are chunked by
-## horizontal region (CHUNK_CELLS wide), so a level is a grid of (layer, chunk)
-## bodies; the four layers above are the only ones the old level-component
-## scenes used. Chunking keeps each body's shape list local to its region -
-## otherwise a big level's one body per layer would be tested shape-by-shape on
-## every player query.
+## Bodies are chunked by horizontal region (CHUNK_CELLS wide), so a level is a
+## grid of (layer, chunk) RIDs; collision shapes are attached directly to the
+## server rather than represented by CollisionShape2D nodes. Chunking keeps each
+## RID's shape list local to its region, limiting shape tests on player queries.
 ##
 ## Objects that gameplay manipulates as bodies are NOT merged and keep their own
 ## physics, exactly as before:
@@ -44,7 +40,9 @@ extends Object
 ## for the spider dash).
 
 const CONTAINER_NAME := "LevelPhysics"
-## Metadata key set on every shared body node.
+const BODY_RID_OWNER_SCRIPT = preload("res://src/LevelPhysicsBodyRidOwner.gd")
+const AREA_RID_OWNER_SCRIPT = preload("res://src/LevelPhysicsAreaRidOwner.gd")
+## Metadata key set on each lightweight server-RID owner node.
 const BODY_META: StringName = &"_gd_level_physics_body"
 ## Metadata keys stored on merged source objects.
 const MERGED_META: StringName = &"_gd_level_physics_merged"
@@ -55,10 +53,16 @@ const SNAPSHOT_META: StringName = &"_gd_level_physics_snapshot"
 const DESCRIPTORS_META: StringName = &"_gd_level_physics_descriptors"
 ## Metadata key on the Level: whether a rebuild is needed before next play.
 const DIRTY_META: StringName = &"_gd_level_physics_dirty"
-## Metadata key on merged objects: the CollisionShape2D children this object
-## contributed to the shared bodies. Lets the object be restored by freeing
-## exactly its shapes, without touching the rest.
+## Metadata key on merged objects: indices of shapes contributed to the
+## shared server body. The full per-index descriptors live on its RID owner.
 const SHAPES_META: StringName = &"_gd_level_physics_shapes"
+## Metadata on each lightweight RID owner node. The node exists only to map
+## server collision object IDs back to a scene object; collision bodies and
+## shapes themselves are allocated directly through PhysicsServer2D.
+const SERVER_RID_META: StringName = &"_gd_level_physics_rid"
+const SERVER_SHAPES_META: StringName = &"_gd_level_physics_shape_data"
+const SERVER_AREA_META: StringName = &"_gd_level_physics_area"
+const SERVER_LAYER_META: StringName = &"_gd_level_physics_layer"
 ## Metadata key on the Level: the trigger-group set the last merge decision was
 ## made against. Kept so a rebuild restores merged members whose group turned
 ## dynamic before it re-merges.
@@ -103,7 +107,31 @@ static func _reenable_shapes(level: Level) -> void:
 	var container := level.get_node_or_null(CONTAINER_NAME)
 	if container == null:
 		return
-	NativeCore.backend().call(&"reenable_collision_shapes", container)
+	for owner: Node in container.get_children():
+		var rid: RID = owner.get_meta(SERVER_RID_META, RID())
+		if not rid.is_valid():
+			continue
+		var shape_data: Array = owner.get_meta(SERVER_SHAPES_META, [])
+		var is_area := bool(owner.get_meta(SERVER_AREA_META, false))
+		for index in shape_data.size():
+			if is_area:
+				PhysicsServer2D.area_set_shape_disabled(rid, index, false)
+			else:
+				PhysicsServer2D.body_set_shape_disabled(rid, index, false)
+
+
+## Frees every direct PhysicsServer2D object and its lightweight ID-mapping node.
+## RIDs are not owned by the scene tree and must be released explicitly.
+static func _free_server_bodies(container: Node) -> void:
+	if container == null:
+		return
+	for owner: Node in container.get_children():
+		var rid: RID = owner.get_meta(SERVER_RID_META, RID())
+		if owner.has_method("unbind_physics_rid"):
+			owner.call("unbind_physics_rid")
+		if rid.is_valid():
+			PhysicsServer2D.free_rid(rid)
+		owner.free()
 
 
 ## Undoes merging and frees the shared bodies. Called when a level stops being
@@ -113,11 +141,12 @@ static func _reenable_shapes(level: Level) -> void:
 static func teardown(level: Level) -> void:
 	if level == null:
 		return
+	var container := level.get_node_or_null(CONTAINER_NAME)
+	_free_server_bodies(container)
 	for layer in level.layers:
 		for object: Node2D in layer.get_children():
 			if object.has_meta(MERGED_META):
 				_restore_object(object)
-	var container := level.get_node_or_null(CONTAINER_NAME)
 	if container != null:
 		container.free()
 	level.remove_meta(DYNAMIC_META)
@@ -129,15 +158,14 @@ static func teardown(level: Level) -> void:
 ## at open, so this is a whole-level rebuild over every placement).
 static func rebuild(level: Level) -> void:
 	var container := _container(level)
-	for child in container.get_children():
-		child.free()
+	_free_server_bodies(container)
 
 	var dynamic_groups := _dynamic_transform_groups(level)
 	# Shared bodies are chunked by horizontal region, so the physics broadphase
 	# only ever sees the chunks near the player instead of one body whose shape
 	# list spans the whole level (a huge single body would be tested in full on
 	# every player query and grind large levels to a halt).
-	var bodies: Dictionary[String, CollisionObject2D] = {}
+	var bodies: Dictionary[String, Node2D] = {}
 
 	# First pass: restore objects that were merged but are no longer mergeable
 	# (e.g. a move trigger now targets their group), so they never end up with
@@ -171,9 +199,9 @@ static func _container(level: Level) -> Node2D:
 	return container
 
 
-## Harvests one mergeable object into the shared bodies: its geometry is read
-## (and cached), shape nodes are added under the region's body, and the
-## object's own body is merged away. One loop iteration of a full rebuild.
+## Harvests one mergeable object into the shared server bodies: its geometry
+## is read (and cached), shapes are added to the region RID, and the object's
+## own body is merged away. One loop iteration of a full rebuild.
 ## Safe for already-merged objects (a rebuild over the whole tree): their
 ## stale shape registration is dropped and recreated from the cached geometry.
 static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D) -> void:
@@ -183,11 +211,13 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 		return
 	if not MERGEABLE_LAYERS.has(int(geometry.collision_layer)):
 		return
-	var body := _body_for(
-			bodies, container, int(geometry.collision_layer),
-			_chunk_of(object.global_position.x),
+	var body_owner := _body_for(
+		bodies,
+		container,
+		int(geometry.collision_layer),
+		_chunk_of(object.global_position.x),
 	)
-	var added: Array = NativeCore.backend().call(&"commit_collision_shapes", body, object, geometry.descriptors)
+	var added := _commit_server_shapes(body_owner, object, geometry.descriptors)
 	object.set_meta(SHAPES_META, added)
 	_merge_object(object)
 	# Native online/static artwork lives in RenderingServer RIDs and this
@@ -199,14 +229,46 @@ static func _commit_object(container: Node2D, bodies: Dictionary, object: Node2D
 		object.free()
 
 
-## Frees the shape nodes an object contributed to the shared bodies.
+## Drops the object's bookkeeping for the previous shared server body. A full
+## rebuild/teardown frees those bodies before restoring or re-committing objects.
 static func _drop_shared_shapes(object: Node2D) -> void:
-	var shapes: Array = object.get_meta(SHAPES_META, [])
-	if not shapes.is_empty():
-		for shape_node in shapes:
-			if is_instance_valid(shape_node):
-				shape_node.free()
 	object.remove_meta(SHAPES_META)
+
+
+## Adds the object's shapes directly to a shared PhysicsServer2D body/area. The
+## owner node is only an object-ID bridge so collision reports can be mapped
+## back to this RID and its shape indices; there are no physics nodes per shape.
+static func _commit_server_shapes(owner: Node2D, source: Node2D, descriptors: Array) -> Array:
+	var rid: RID = owner.get_meta(SERVER_RID_META, RID())
+	var is_area := bool(owner.get_meta(SERVER_AREA_META, false))
+	var shape_data: Array = owner.get_meta(SERVER_SHAPES_META, [])
+	var added: Array = []
+	if not rid.is_valid():
+		return added
+	var owner_inverse := owner.global_transform.affine_inverse()
+	for descriptor in descriptors:
+		var shape: Shape2D = descriptor.get("resource")
+		if shape == null or not shape.get_rid().is_valid():
+			continue
+		var local_transform: Transform2D = (
+			owner_inverse
+			* source.global_transform
+			* descriptor.get("local_xform", Transform2D.IDENTITY)
+		)
+		if is_area:
+			PhysicsServer2D.area_add_shape(rid, shape.get_rid(), local_transform)
+		else:
+			PhysicsServer2D.body_add_shape(rid, shape.get_rid(), local_transform)
+		var index := shape_data.size()
+		var entry := {
+			"resource": shape,
+			"transform": local_transform,
+			"debug_color": descriptor.get("debug_color", Color.WHITE),
+		}
+		shape_data.append(entry)
+		added.append(index)
+	owner.set_meta(SERVER_SHAPES_META, shape_data)
+	return added
 
 
 static func _is_mergeable(object: Node2D, dynamic_groups: Dictionary) -> bool:
@@ -318,42 +380,62 @@ static func _shape_nodes_of(body: Node) -> Array:
 
 
 static func _body_for(
-		bodies: Dictionary,
-		container: Node2D,
-		collision_layer: int,
-		chunk_x: int,
-) -> CollisionObject2D:
-	var body: CollisionObject2D = StaticBody2D.new()
+	bodies: Dictionary,
+	container: Node2D,
+	collision_layer: int,
+	chunk_x: int,
+) -> Node2D:
 	var base_name: String
+	var is_area := false
 	match collision_layer:
 		RECT_HAZARD_LAYER:
-			body = Area2D.new()
-			body.collision_layer = RECT_HAZARD_LAYER
+			is_area = true
 			base_name = "RectHazards"
 		CIRCLE_HAZARD_LAYER:
-			body = Area2D.new()
-			body.collision_layer = CIRCLE_HAZARD_LAYER
+			is_area = true
 			base_name = "CircleHazards"
 		SLOPE_LAYER:
-			# Slopes are solid, like blocks. The player's CharacterBody2D only
-			# collides with static bodies, so an Area2D here let the cube pass
-			# straight through merged slopes. The layer keeps the slope-enabler bit.
-			body.collision_layer = SLOPE_LAYER
+			# Slopes stay static bodies: the player's kinematic solver collides
+			# with them and the extra layer bit remains available to slope queries.
 			base_name = "Slopes"
 		_:
-			body.collision_layer = SOLID_LAYER
 			base_name = "Solids"
-	# Keys and names are the body name, so the bodies map stays stable across
-	# rebuilds and per-object restores can find a body without re-walking it.
+	# The lightweight Node2D is only the server object-ID bridge. Physics bodies,
+	# areas and all shapes are allocated through PhysicsServer2D RIDs.
 	var key := "%s@%d" % [base_name, chunk_x]
 	if bodies.has(key):
 		return bodies[key]
-	body.name = key
-	body.collision_mask = 0
-	body.set_meta(BODY_META, true)
-	container.add_child(body)
-	bodies[key] = body
-	return body
+	var owner: Node2D = AREA_RID_OWNER_SCRIPT.new() if is_area else BODY_RID_OWNER_SCRIPT.new()
+	owner.name = key
+	if owner is Area2D:
+		# Keep an Area2D identity adapter for existing area_entered callbacks, but
+		# disable its empty node-owned RID. The active hazard area is the direct
+		# server RID created below.
+		(owner as Area2D).monitoring = false
+		(owner as Area2D).monitorable = false
+		(owner as Area2D).collision_layer = 0
+		(owner as Area2D).collision_mask = 0
+	owner.set_meta(BODY_META, true)
+	owner.set_meta(SERVER_AREA_META, is_area)
+	owner.set_meta(SERVER_LAYER_META, collision_layer)
+	owner.set_meta(SERVER_SHAPES_META, [])
+	container.add_child(owner)
+	var rid := PhysicsServer2D.area_create() if is_area else PhysicsServer2D.body_create()
+	if is_area:
+		PhysicsServer2D.area_set_collision_layer(rid, collision_layer)
+		PhysicsServer2D.area_set_collision_mask(rid, 0)
+		PhysicsServer2D.area_set_monitorable(rid, true)
+		PhysicsServer2D.area_attach_object_instance_id(rid, owner.get_instance_id())
+	else:
+		PhysicsServer2D.body_set_mode(rid, PhysicsServer2D.BODY_MODE_STATIC)
+		PhysicsServer2D.body_set_collision_layer(rid, collision_layer)
+		PhysicsServer2D.body_set_collision_mask(rid, 0)
+		PhysicsServer2D.body_attach_object_instance_id(rid, owner.get_instance_id())
+	owner.set_meta(SERVER_RID_META, rid)
+	owner.call("bind_physics_rid", rid)
+	bodies[key] = owner
+	return owner
+
 
 static func _chunk_of(world_x: float) -> int:
 	return floori(world_x / (CHUNK_CELLS * Constants.CELL_SIZE))
@@ -476,6 +558,32 @@ static func _rebuild_child_body(object: Node2D, snapshot: Dictionary) -> void:
 	object.add_child(body)
 
 
-## Whether [param collider] is one of the level's shared bodies.
+## Whether [param collider] is one of the level's shared server objects.
 static func is_shared_body(collider: Node) -> bool:
-	return collider is CollisionObject2D and collider.has_meta(BODY_META)
+	return collider != null and collider.has_meta(BODY_META) and collider.has_meta(SERVER_RID_META)
+
+
+## Per-shape metadata for a collision reported by a shared server RID.
+static func shared_shape_data(collider: Node, shape_index: int) -> Dictionary:
+	if not is_shared_body(collider):
+		return {}
+	var shape_data: Array = collider.get_meta(SERVER_SHAPES_META, [])
+	if shape_index < 0 or shape_index >= shape_data.size():
+		return {}
+	return shape_data[shape_index]
+
+
+## Disables the precise shape hit by the player, preserving the spider-dash
+## pass-through behavior without requiring a CollisionShape2D node.
+static func disable_shared_shape(collider: Node, shape_index: int) -> bool:
+	if not is_shared_body(collider):
+		return false
+	var shape_data := shared_shape_data(collider, shape_index)
+	if shape_data.is_empty():
+		return false
+	# Collision handling runs inside the physics callback. Defer the server
+	# mutation just like the former CollisionShape2D.set_deferred call.
+	if collider.has_method("set_server_shape_disabled"):
+		collider.call_deferred("set_server_shape_disabled", shape_index, true)
+		return true
+	return false

@@ -33,7 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 SetupMutex=GodotDash-Installer
 CloseApplications=yes
-CloseApplicationsFilter=Godot Dash.exe,Godot Dash.pck,RenderingServer\Godot Dash.exe,RenderingServer\Godot Dash.pck,GDClone\Godot Dash.exe,GDClone\Godot Dash.pck,OpenDash\Godot Dash.exe,OpenDash\Godot Dash.pck,libgdash_native.windows.template_release.x86_64.dll
+CloseApplicationsFilter=Godot Dash.exe,Godot Dash.pck,libgdash_native.windows.template_release.x86_64.dll
 RestartApplications=no
 SetupLogging=yes
 

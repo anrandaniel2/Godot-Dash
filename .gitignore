@@ -26,6 +26,9 @@ __pycache__/
 # templates on every CI export; never commit it.
 /android/
 
+# Pinned Rapier2D GDExtension fetched and checksum-verified by the build helper.
+/addons/godot-rapier2d/
+
 # godot-cpp checkout + built extension binaries (compiled fresh in CI)
 native/godot-cpp/
 native/bin/

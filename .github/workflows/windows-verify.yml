@@ -37,7 +37,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/godot-windows
-          key: godot-windows-${{ env.GODOT_VERSION }}-v1
+          key: godot-windows-${{ env.GODOT_VERSION }}-rapier-v0.36.0-v1
 
       - name: Install matching Windows editor and templates
         run: python tools/windows_ci.py install

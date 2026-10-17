@@ -86,18 +86,8 @@ class WindowsExportTests(unittest.TestCase):
         result = windows_project(project, "a" * 40, "42", "arena/example")
         self.assertIn('config/windows_update_channel="windows-arena-example"', result)
         self.assertIn('config/windows_build_number=42', result)
-        self.assertIn('config/windows_renderer_backend="server"', result)
+        self.assertNotIn("windows_renderer_backend", result)
         self.assertIn('config/version="1.0.0-alpha.6"', result)
-        variant = windows_project(project, "a" * 40, "42", "arena/example", "gdclone")
-        self.assertIn('config/windows_renderer_backend="gdclone"', variant)
-        from windows_ci import select_windows_renderer
-        selected = select_windows_renderer(result, "opendash")
-        self.assertIn('config/windows_renderer_backend="opendash"', selected)
-        self.assertIn('config/windows_renderer_backend="server"', result)
-        with self.assertRaises(ValueError):
-            select_windows_renderer(result, "unknown")
-        with self.assertRaises(ValueError):
-            windows_project(project, "a" * 40, "42", "arena/example", "unknown")
         with self.assertRaises(ValueError):
             windows_project(project, 'invalid"', "42", "arena/example")
 

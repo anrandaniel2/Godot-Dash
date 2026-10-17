@@ -295,9 +295,10 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 	if bridge != null:
 		var render_stats: Dictionary = bridge.render_stats()
 		print(
-			"RENDERDIAG t=%.0f canvases=%d owners=%d records=%d submitted=%d draws=%d empty=%d culled=%d"
+			"RENDERDIAG t=%.0f x=%.0f canvases=%d owners=%d records=%d submitted=%d draws=%d empty=%d culled=%d"
 			% [
 				_beamdiag_seconds,
+				camera_x,
 				int(render_stats.get("canvases", 0)),
 				int(render_stats.get("batch_owner_nodes", 0)),
 				int(render_stats.get("records", 0)),

@@ -51,6 +51,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <tuple>
 #include <unordered_map>
@@ -1233,10 +1234,11 @@ static void parse_area_params(const Dictionary &properties, AreaParams &p, bool 
 	p.use_effect_id = prop_bool(properties, "355");
 	p.use_hsv = prop_bool(properties, "278");
 	const PackedStringArray hsv = String(properties.get("49", String())).split("a");
+	const String *hsv_data = hsv.ptr();
 	if (hsv.size() >= 3) {
-		p.hsv[0] = hsv[0].to_float(); p.hsv[1] = hsv[1].to_float(); p.hsv[2] = hsv[2].to_float();
-		p.hsv_add_s = hsv.size() > 3 && hsv[3] == "1";
-		p.hsv_add_v = hsv.size() > 4 && hsv[4] == "1";
+		p.hsv[0] = hsv_data[0].to_float(); p.hsv[1] = hsv_data[1].to_float(); p.hsv[2] = hsv_data[2].to_float();
+		p.hsv_add_s = hsv.size() > 3 && hsv_data[3] == "1";
+		p.hsv_add_v = hsv.size() > 4 && hsv_data[4] == "1";
 	}
 }
 // Area Tint HSV (key 49 "h a s a v a sAdd a vAdd"): hue degrees added,
@@ -2141,8 +2143,9 @@ static std::vector<String> parse_group_list(const Dictionary &properties, const 
 	const String raw = String(properties.get(key, String())).strip_edges().replace(",", ".");
 	if (raw.is_empty()) return groups;
 	const PackedStringArray parts = raw.split(".", false);
+	const String *part_data = parts.ptr();
 	for (int64_t i = 0; i < parts.size(); ++i) {
-		const String part = String(parts[i]).strip_edges();
+		const String part = part_data[i].strip_edges();
 		if (!part.is_valid_int() || part.to_int() <= 0) continue;
 		const String name = String("g_") + part;
 		bool duplicate = false;
@@ -2164,11 +2167,12 @@ static bool parse_copy_hsv(const Dictionary &properties, TriggerEffect &effect) 
 	if (raw.is_empty()) return false;
 	const PackedStringArray parts = raw.split("a", false);
 	if (parts.size() < 3) return false;
-	effect.copy_hue = String(parts[0]).to_float() / 360.0;
-	effect.copy_saturation = String(parts[1]).to_float();
-	effect.copy_value = String(parts[2]).to_float();
-	effect.copy_saturation_additive = parts.size() > 3 && String(parts[3]) == "1";
-	effect.copy_value_additive = parts.size() > 4 && String(parts[4]) == "1";
+	const String *part_data = parts.ptr();
+	effect.copy_hue = part_data[0].to_float() / 360.0;
+	effect.copy_saturation = part_data[1].to_float();
+	effect.copy_value = part_data[2].to_float();
+	effect.copy_saturation_additive = parts.size() > 3 && part_data[3] == "1";
+	effect.copy_value_additive = parts.size() > 4 && part_data[4] == "1";
 	return true;
 }
 
@@ -2542,8 +2546,10 @@ static TriggerEffect parse_trigger_effect(int64_t gd_id, const Dictionary &prope
 		case 3604: {
 			effect.kind = TriggerEffectKind::EVENT;
 			const PackedStringArray ids = String(properties.get("430", String())).replace(",", ".").split(".", false);
+			const String *id_data = ids.ptr();
+			effect.event_ids.reserve(effect.event_ids.size() + static_cast<size_t>(ids.size()));
 			for (int64_t i = 0; i < ids.size(); ++i) {
-				if (String(ids[i]).is_valid_int()) effect.event_ids.push_back(static_cast<int32_t>(String(ids[i]).to_int()));
+				if (id_data[i].is_valid_int()) effect.event_ids.push_back(static_cast<int32_t>(id_data[i].to_int()));
 			}
 			effect.event_material = static_cast<int32_t>(String(properties.get("447", String("0"))).to_int());
 			effect.event_player = static_cast<int32_t>(String(properties.get("525", String("0"))).to_int());
@@ -4302,8 +4308,10 @@ class NativeTriggerRuntime : public RefCounted {
 public:
 	void register_particle_group(const String &group, const PackedStringArray &datas) {
 		std::vector<std::vector<double>> &specs = particle_groups[group];
+		specs.reserve(specs.size() + static_cast<size_t>(datas.size()));
+		const String *data = datas.ptr();
 		for (int64_t i = 0; i < datas.size(); ++i) {
-			const CharString raw = String(datas[i]).utf8();
+			const CharString raw = data[i].utf8();
 			specs.push_back(parse_particle_data(std::string(raw.get_data())));
 		}
 	}
@@ -7036,8 +7044,9 @@ public:
 			record.flags |= TOUCH_ONLY | MULTI_ACTIVATE;
 		if (record.effect.kind == TriggerEffectKind::CHECKPOINT) record.flags |= TOUCH_ONLY;
 		const size_t index = records.size();
+		const String *group_data = groups.ptr();
 		for (int64_t i = 0; i < groups.size(); ++i)
-			group_index[String(groups[i])].push_back(index);
+			group_index[group_data[i]].push_back(index);
 		records.push_back(std::move(record)); index_dirty = true;
 		return static_cast<int64_t>(index);
 	}
@@ -7079,31 +7088,42 @@ public:
 			ERR_PRINT("NativeTriggerRuntime: packed trigger table columns are inconsistent");
 			return 0;
 		}
+		const int32_t *id_data = gd_id.ptr();
+		const int32_t *order_data = source_order.ptr();
+		const uint8_t *flag_data = flags.ptr();
+		const float *transform_data = xform.ptr();
+		const int32_t *group_offset_data = group_offsets.ptr();
+		const int32_t *group_data = group_ids.ptr();
+		const int32_t *property_offset_data = prop_offsets.ptr();
+		const int32_t *property_key_data = prop_keys.ptr();
+		const int32_t *value_offset_data = value_offsets.ptr();
 		const char *text = reinterpret_cast<const char *>(value_bytes.ptr());
 		const int64_t text_size = value_bytes.size();
 		records.reserve(records.size() + static_cast<size_t>(rows));
 		for (int64_t row = 0; row < rows; ++row) {
 			PackedStringArray groups;
-			const int32_t g0 = std::clamp<int32_t>(group_offsets[row], 0, static_cast<int32_t>(group_ids.size()));
-			const int32_t g1 = std::clamp<int32_t>(group_offsets[row + 1], g0, static_cast<int32_t>(group_ids.size()));
-			for (int32_t g = g0; g < g1; ++g) groups.push_back(String("g_") + String::num_int64(group_ids[g]));
+			const int32_t g0 = std::clamp<int32_t>(group_offset_data[row], 0, static_cast<int32_t>(group_ids.size()));
+			const int32_t g1 = std::clamp<int32_t>(group_offset_data[row + 1], g0, static_cast<int32_t>(group_ids.size()));
+			groups.resize(g1 - g0);
+			String *row_group_data = groups.ptrw();
+			for (int32_t g = g0; g < g1; ++g) row_group_data[g - g0] = String("g_") + String::num_int64(group_data[g]);
 			Dictionary properties;
-			const int32_t p0 = std::clamp<int32_t>(prop_offsets[row], 0, static_cast<int32_t>(prop_keys.size()));
-			const int32_t p1 = std::clamp<int32_t>(prop_offsets[row + 1], p0, static_cast<int32_t>(prop_keys.size()));
+			const int32_t p0 = std::clamp<int32_t>(property_offset_data[row], 0, static_cast<int32_t>(prop_keys.size()));
+			const int32_t p1 = std::clamp<int32_t>(property_offset_data[row + 1], p0, static_cast<int32_t>(prop_keys.size()));
 			for (int32_t k = p0; k < p1; ++k) {
-				const int64_t begin = std::clamp<int64_t>(value_offsets[k], 0, text_size);
-				const int64_t end = std::clamp<int64_t>(value_offsets[k + 1], begin, text_size);
-				properties[String::num_int64(prop_keys[k])] = String::utf8(text + begin, end - begin);
+				const int64_t begin = std::clamp<int64_t>(value_offset_data[k], 0, text_size);
+				const int64_t end = std::clamp<int64_t>(value_offset_data[k + 1], begin, text_size);
+				properties[String::num_int64(property_key_data[k])] = String::utf8(text + begin, end - begin);
 			}
-			const Vector2 place = packed_transform.xform(Vector2(static_cast<real_t>(xform[row * 6 + 4]),
-					static_cast<real_t>(xform[row * 6 + 5])));
-			register_trigger(nullptr, place.x, place.y, flags[row], source_order[row], groups,
-					gd_id[row], properties);
-			if (gd_id[row] == 3032) {
+			const Vector2 place = packed_transform.xform(Vector2(static_cast<real_t>(transform_data[row * 6 + 4]),
+					static_cast<real_t>(transform_data[row * 6 + 5])));
+			register_trigger(nullptr, place.x, place.y, flag_data[row], order_data[row], groups,
+					id_data[row], properties);
+			if (id_data[row] == 3032) {
 				// The converted transform is authoritative for a keyframe's
 				// rotation and scale (flips included).
 				KfKey &k = records.back().effect.keyframe;
-				const double ax = xform[row * 6], ay = xform[row * 6 + 1], bx = xform[row * 6 + 2], by = xform[row * 6 + 3];
+				const double ax = transform_data[row * 6], ay = transform_data[row * 6 + 1], bx = transform_data[row * 6 + 2], by = transform_data[row * 6 + 3];
 				k.rot = std::atan2(ay, ax) * 180.0 / 3.14159265358979323846;
 				k.sx = std::hypot(ax, ay);
 				k.sy = std::hypot(bx, by);
@@ -8200,8 +8220,9 @@ class GdashNative : public RefCounted {
 
 	static uint32_t crc32(const PackedByteArray &bytes) {
 		uint32_t crc = 0xffffffffU;
+		const uint8_t *byte_data = bytes.ptr();
 		for (int64_t i = 0; i < bytes.size(); ++i) {
-			crc ^= static_cast<uint8_t>(bytes[i]);
+			crc ^= byte_data[i];
 			for (int bit = 0; bit < 8; ++bit) {
 				crc = (crc >> 1U) ^ (0xedb88320U & static_cast<uint32_t>(-(static_cast<int32_t>(crc & 1U))));
 			}
@@ -8211,16 +8232,17 @@ class GdashNative : public RefCounted {
 
 	static PackedByteArray wrap_gzip(const PackedByteArray &raw, const PackedByteArray &deflated) {
 		PackedByteArray out;
-		out.resize(10 + deflated.size() + 8);
+		const int64_t trailer = 10 + deflated.size();
+		out.resize(trailer + 8);
 		const uint8_t header[10] = {0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3};
-		for (int i = 0; i < 10; ++i) out.set(i, header[i]);
-		for (int64_t i = 0; i < deflated.size(); ++i) out.set(10 + i, deflated[i]);
+		uint8_t *out_data = out.ptrw();
+		std::memcpy(out_data, header, sizeof(header));
+		if (deflated.size() > 0) std::memcpy(out_data + 10, deflated.ptr(), static_cast<size_t>(deflated.size()));
 		const uint32_t checksum = crc32(raw);
 		const uint32_t size = static_cast<uint32_t>(raw.size());
-		const int64_t trailer = 10 + deflated.size();
 		for (int i = 0; i < 4; ++i) {
-			out.set(trailer + i, (checksum >> (8 * i)) & 0xff);
-			out.set(trailer + 4 + i, (size >> (8 * i)) & 0xff);
+			out_data[trailer + i] = static_cast<uint8_t>((checksum >> (8 * i)) & 0xff);
+			out_data[trailer + 4 + i] = static_cast<uint8_t>((size >> (8 * i)) & 0xff);
 		}
 		return out;
 	}
@@ -8472,8 +8494,9 @@ public:
 
 		if (!color_string.strip_edges().is_empty()) {
 			const PackedStringArray raw_entries = color_string.split("|", false);
+			const String *raw_entry_data = raw_entries.ptr();
 			for (int64_t i = 0; i < raw_entries.size(); ++i) {
-				const String entry = raw_entries[i].strip_edges();
+				const String entry = raw_entry_data[i].strip_edges();
 				if (entry.is_empty()) continue;
 				const char delim = entry.contains("_") ? '_' : ',';
 				Dictionary pairs;
@@ -8590,12 +8613,13 @@ public:
 				Color shifted = source_color;
 				if (!hsv_str.is_empty()) {
 					PackedStringArray parts = hsv_str.split("a", false);
+					const String *part_data = parts.ptr();
 					if (parts.size() >= 3) {
-						double dh = String(parts[0]).to_float() / 360.0;
-						double ds = String(parts[1]).to_float();
-						double dv = String(parts[2]).to_float();
-						bool s_add = parts.size() > 3 && String(parts[3]) == "1";
-						bool v_add = parts.size() > 4 && String(parts[4]) == "1";
+						double dh = part_data[0].to_float() / 360.0;
+						double ds = part_data[1].to_float();
+						double dv = part_data[2].to_float();
+						bool s_add = parts.size() > 3 && part_data[3] == "1";
+						bool v_add = parts.size() > 4 && part_data[4] == "1";
 						double h = static_cast<double>(source_color.get_h()) + dh;
 						h -= Math::floor(h);
 						double s = Math::clamp(
@@ -8804,11 +8828,12 @@ public:
 		if (!p.equals(enabled_key, "1")) return color;
 		const PackedStringArray parts = p.value_or(hsv_key, "").split("a", false);
 		if (parts.size() < 3) return color;
-		const double hue = parts[0].to_float() / 360.0;
-		const double saturation = parts[1].to_float();
-		const double value = parts[2].to_float();
-		const bool saturation_additive = parts.size() > 3 && parts[3] == "1";
-		const bool value_additive = parts.size() > 4 && parts[4] == "1";
+		const String *part_data = parts.ptr();
+		const double hue = part_data[0].to_float() / 360.0;
+		const double saturation = part_data[1].to_float();
+		const double value = part_data[2].to_float();
+		const bool saturation_additive = parts.size() > 3 && part_data[3] == "1";
+		const bool value_additive = parts.size() > 4 && part_data[4] == "1";
 		if (Math::is_zero_approx(hue) && Math::is_zero_approx(saturation) && Math::is_zero_approx(value)) return color;
 		if (Math::is_zero_approx(Math::fposmod(hue, 1.0)) &&
 				Math::is_equal_approx(saturation, saturation_additive ? 0.0 : 1.0) &&
@@ -8824,11 +8849,12 @@ public:
 		if (!p.equals(enabled_key, "1")) return false;
 		const PackedStringArray parts = p.value_or(hsv_key, "").split("a", false);
 		if (parts.size() < 3) return false;
-		out[0] = static_cast<float>(parts[0].to_float() / 360.0);
-		out[1] = static_cast<float>(parts[1].to_float());
-		out[2] = static_cast<float>(parts[2].to_float());
-		out[3] = parts.size() > 3 && parts[3] == "1" ? 1.0f : 0.0f;
-		out[4] = parts.size() > 4 && parts[4] == "1" ? 1.0f : 0.0f;
+		const String *part_data = parts.ptr();
+		out[0] = static_cast<float>(part_data[0].to_float() / 360.0);
+		out[1] = static_cast<float>(part_data[1].to_float());
+		out[2] = static_cast<float>(part_data[2].to_float());
+		out[3] = parts.size() > 3 && part_data[3] == "1" ? 1.0f : 0.0f;
+		out[4] = parts.size() > 4 && part_data[4] == "1" ? 1.0f : 0.0f;
 		return true;
 	}
 
@@ -8836,7 +8862,8 @@ public:
 	static A to_packed(const std::vector<T> &values) {
 		A result;
 		result.resize(static_cast<int64_t>(values.size()));
-		for (size_t i = 0; i < values.size(); ++i) result.set(static_cast<int64_t>(i), values[i]);
+		auto *destination = result.ptrw();
+		for (size_t i = 0; i < values.size(); ++i) destination[i] = values[i];
 		return result;
 	}
 
@@ -8863,11 +8890,22 @@ public:
 		const double ground_y = tables.get("ground_y", 0.0);
 		const int64_t id_count = std::min({id_flags.size(), default_base.size(), default_detail.size(),
 				default_z_order.size(), default_z_layer.size()});
+		const uint8_t *id_flag_data = id_flags.ptr();
+		const int32_t *default_base_data = default_base.ptr();
+		const int32_t *default_detail_data = default_detail.ptr();
+		const int32_t *default_z_order_data = default_z_order.ptr();
+		const int32_t *default_z_layer_data = default_z_layer.ptr();
+		const int32_t *channel_id_data = channel_ids.ptr();
+		const Color *channel_color_data = channel_colors.ptr();
+		const float *channel_alpha_data = channel_alphas.ptr();
+		const uint8_t *channel_blending_data = channel_blending.ptr();
 
 		struct Style { Color color = Color(1, 1, 1, 1); float alpha = 1.0f; bool blending = false; };
 		std::unordered_map<int32_t, Style> explicit_styles;
-		for (int64_t i = 0; i < channel_ids.size() && i < channel_colors.size() && i < channel_alphas.size() && i < channel_blending.size(); ++i) {
-			explicit_styles[channel_ids[i]] = Style{channel_colors[i], channel_alphas[i], channel_blending[i] != 0};
+		const int64_t style_count = std::min({channel_ids.size(), channel_colors.size(), channel_alphas.size(), channel_blending.size()});
+		explicit_styles.reserve(static_cast<size_t>(style_count));
+		for (int64_t i = 0; i < style_count; ++i) {
+			explicit_styles[channel_id_data[i]] = Style{channel_color_data[i], channel_alpha_data[i], channel_blending_data[i] != 0};
 		}
 		std::set<int32_t> touched_channels;
 		std::set<int32_t> used_channels;
@@ -8940,7 +8978,7 @@ public:
 
 			// GDScript reads the id with int(properties["1"]) (unstripped).
 			const int32_t gd_id = static_cast<int32_t>(id_value->to_int());
-			const uint8_t flags = gd_id >= 0 && gd_id < id_count ? id_flags[gd_id] : 0;
+			const uint8_t flags = gd_id >= 0 && gd_id < id_count ? id_flag_data[gd_id] : 0;
 			if (!(flags & ID_DECORATION)) {
 				objects.append(p.to_dictionary());
 				object_chunks.push_back(chunk_index);
@@ -8970,7 +9008,7 @@ public:
 				base_id = CHANNEL_BLACK;
 			} else {
 				const String raw = p.value_or(21, "").strip_edges();
-				base_id = raw.is_valid_int() && raw.to_int() > 0 ? static_cast<int32_t>(raw.to_int()) : default_base[gd_id];
+				base_id = raw.is_valid_int() && raw.to_int() > 0 ? static_cast<int32_t>(raw.to_int()) : default_base_data[gd_id];
 			}
 			int32_t detail_id;
 			if (flags & ID_DETAIL_BLACK) {
@@ -8978,7 +9016,7 @@ public:
 			} else {
 				const String raw = p.value_or(22, "").strip_edges();
 				if (raw.is_valid_int() && raw.to_int() > 0) detail_id = static_cast<int32_t>(raw.to_int());
-				else detail_id = default_detail[gd_id] == 0 || base_id == 0 ? base_id : default_detail[gd_id];
+				else detail_id = default_detail_data[gd_id] == 0 || base_id == 0 ? base_id : default_detail_data[gd_id];
 			}
 			const Style style = style_for(base_id);
 			Color tint = style.color;
@@ -9008,7 +9046,8 @@ public:
 				if (std::find(groups.begin(), groups.end(), group) == groups.end()) groups.push_back(group);
 			};
 			const PackedStringArray listed = p.value_or(57, "").split(".", false);
-			for (int64_t i = 0; i < listed.size(); ++i) add_group(listed[i].strip_edges());
+			const String *listed_data = listed.ptr();
+			for (int64_t i = 0; i < listed.size(); ++i) add_group(listed_data[i].strip_edges());
 			const String single = p.value_or(33, "").strip_edges();
 			if (!single.is_empty()) add_group(single);
 
@@ -9020,16 +9059,17 @@ public:
 			float object_hsv[3] = {0, 0, 0};
 			if (p.equals(41, "1")) {
 				const PackedStringArray parts = p.value_or(43, "").split("a", false);
+				const String *part_data = parts.ptr();
 				if (parts.size() >= 3) {
-					object_hsv[0] = static_cast<float>(parts[0].to_float() / 360.0);
-					object_hsv[1] = static_cast<float>(parts[1].to_float());
-					object_hsv[2] = static_cast<float>(parts[2].to_float());
+					object_hsv[0] = static_cast<float>(part_data[0].to_float() / 360.0);
+					object_hsv[1] = static_cast<float>(part_data[1].to_float());
+					object_hsv[2] = static_cast<float>(part_data[2].to_float());
 				}
 			}
 			const String *z_order_value = p.get(25);
-			const int32_t z_order = z_order_value ? static_cast<int32_t>(CLAMP(z_order_value->to_int(), (int64_t)-9999, (int64_t)9999)) : default_z_order[gd_id];
+			const int32_t z_order = z_order_value ? static_cast<int32_t>(CLAMP(z_order_value->to_int(), (int64_t)-9999, (int64_t)9999)) : default_z_order_data[gd_id];
 			const String *z_layer_value = p.get(24);
-			const int32_t z_layer = z_layer_value ? static_cast<int32_t>(z_layer_value->to_int()) : default_z_layer[gd_id];
+			const int32_t z_layer = z_layer_value ? static_cast<int32_t>(z_layer_value->to_int()) : default_z_layer_data[gd_id];
 			const float spin = p.equals(98, "1") ? 0.0f : static_cast<float>(p.value_or(97, "0").to_float());
 
 			// Hidden decorations (key 135) are skipped after conversion, as in GDScript.
@@ -9237,8 +9277,9 @@ public:
 					} else {
 						bool found = false;
 						const PackedStringArray grps = cur57.split(".");
+						const String *group_data = grps.ptr();
 						for (int64_t i = 0; i < grps.size(); ++i) {
-							if (String(grps[i]).strip_edges() == grp) {
+							if (group_data[i].strip_edges() == grp) {
 								found = true;
 								break;
 							}
@@ -9681,17 +9722,21 @@ public:
 	PackedInt32Array sort_decoration_indices(const PackedInt32Array &z_orders,
 			const PackedInt32Array &draw_orders, const PackedInt64Array &texture_ids) const {
 		const int64_t count = std::min(z_orders.size(), std::min(draw_orders.size(), texture_ids.size()));
+		const int32_t *z_data = z_orders.ptr();
+		const int32_t *draw_data = draw_orders.ptr();
+		const int64_t *texture_data = texture_ids.ptr();
 		std::vector<int32_t> indices(static_cast<size_t>(count));
 		std::iota(indices.begin(), indices.end(), 0);
 		std::stable_sort(indices.begin(), indices.end(), [&](int32_t a, int32_t b) {
-			if (z_orders[a] != z_orders[b]) return z_orders[a] < z_orders[b];
-			if (draw_orders[a] != draw_orders[b]) return draw_orders[a] < draw_orders[b];
-			if (texture_ids[a] != texture_ids[b]) return texture_ids[a] < texture_ids[b];
+			if (z_data[a] != z_data[b]) return z_data[a] < z_data[b];
+			if (draw_data[a] != draw_data[b]) return draw_data[a] < draw_data[b];
+			if (texture_data[a] != texture_data[b]) return texture_data[a] < texture_data[b];
 			return a < b;
 		});
 		PackedInt32Array result;
 		result.resize(count);
-		for (int64_t i = 0; i < count; ++i) result.set(i, indices[static_cast<size_t>(i)]);
+		int32_t *result_data = result.ptrw();
+		for (int64_t i = 0; i < count; ++i) result_data[i] = indices[static_cast<size_t>(i)];
 		return result;
 	}
 
@@ -9699,13 +9744,15 @@ public:
 		Dictionary result;
 		if (bucket_width <= 0.0) return result;
 		std::map<int32_t, std::vector<int32_t>> buckets;
+		const float *origin_data = origins.ptr();
 		for (int64_t i = 0; i < origins.size(); ++i) {
-			buckets[static_cast<int32_t>(std::floor(origins[i] / bucket_width))].push_back(static_cast<int32_t>(i));
+			buckets[static_cast<int32_t>(std::floor(origin_data[i] / bucket_width))].push_back(static_cast<int32_t>(i));
 		}
 		for (const auto &[key, values] : buckets) {
 			PackedInt32Array packed;
 			packed.resize(static_cast<int64_t>(values.size()));
-			for (size_t i = 0; i < values.size(); ++i) packed.set(static_cast<int64_t>(i), values[i]);
+			int32_t *packed_data = packed.ptrw();
+			for (size_t i = 0; i < values.size(); ++i) packed_data[i] = values[i];
 			result[key] = packed;
 		}
 		return result;
@@ -9713,10 +9760,15 @@ public:
 
 	PackedInt32Array visible_bucket_keys(const PackedInt32Array &keys, int64_t first, int64_t last) const {
 		PackedInt32Array result;
+		result.resize(keys.size());
+		const int32_t *key_data = keys.ptr();
+		int32_t *output_data = result.ptrw();
+		int64_t output_count = 0;
 		for (int64_t i = 0; i < keys.size(); ++i) {
-			const int32_t key = keys[i];
-			if (key >= first && key <= last) result.append(key);
+			const int32_t key = key_data[i];
+			if (key >= first && key <= last) output_data[output_count++] = key;
 		}
+		result.resize(output_count);
 		return result;
 	}
 
@@ -10008,36 +10060,37 @@ public:
 		if (params.size() < 30) {
 			return PackedFloat64Array();
 		}
-		const double delta = params[0];
-		const Vector2 previous_velocity(static_cast<real_t>(params[1]), static_cast<real_t>(params[2]));
-		const int64_t direction = static_cast<int64_t>(params[3]);
-		const int64_t jump_state = static_cast<int64_t>(params[4]);
-		const bool was_sliding_on_slope = params[5] != 0.0;
-		const bool has_last_slide_collision = params[6] != 0.0;
-		const double floor_angle = params[7];
-		const double floor_max_angle = params[8];
-		const Vector2 slope_velocity(static_cast<real_t>(params[9]), static_cast<real_t>(params[10]));
-		const int64_t internal_gamemode = static_cast<int64_t>(params[11]);
-		const int64_t player_scale = static_cast<int64_t>(params[12]);
-		const Vector2 speed(static_cast<real_t>(params[13]), static_cast<real_t>(params[14]));
-		const double speed_multiplier = params[15];
-		const double gravity_flip = params[16];
-		const double gravity_multiplier = params[17];
-		const double gameplay_rotation = params[18];
-		const bool is_on_floor = params[19] != 0.0;
-		const bool is_on_ceiling = params[20] != 0.0;
-		const bool is_platformer = params[21] != 0.0;
-		const bool colliding_pad = params[22] != 0.0;
-		const bool has_dash_control = params[23] != 0.0;
-		const bool orb_queue_empty = params[24] != 0.0;
-		const double robot_timer_time_left = params[25];
-		const bool deferred_velocity_redirect = params[26] != 0.0;
-		const double coyote_time = params[27];
-		const int64_t spider_dash_frames = static_cast<int64_t>(params[28]);
-		const int64_t slope_exit_velocity_frames = static_cast<int64_t>(params[29]);
+		const double *param_data = params.ptr();
+		const double delta = param_data[0];
+		const Vector2 previous_velocity(static_cast<real_t>(param_data[1]), static_cast<real_t>(param_data[2]));
+		const int64_t direction = static_cast<int64_t>(param_data[3]);
+		const int64_t jump_state = static_cast<int64_t>(param_data[4]);
+		const bool was_sliding_on_slope = param_data[5] != 0.0;
+		const bool has_last_slide_collision = param_data[6] != 0.0;
+		const double floor_angle = param_data[7];
+		const double floor_max_angle = param_data[8];
+		const Vector2 slope_velocity(static_cast<real_t>(param_data[9]), static_cast<real_t>(param_data[10]));
+		const int64_t internal_gamemode = static_cast<int64_t>(param_data[11]);
+		const int64_t player_scale = static_cast<int64_t>(param_data[12]);
+		const Vector2 speed(static_cast<real_t>(param_data[13]), static_cast<real_t>(param_data[14]));
+		const double speed_multiplier = param_data[15];
+		const double gravity_flip = param_data[16];
+		const double gravity_multiplier = param_data[17];
+		const double gameplay_rotation = param_data[18];
+		const bool is_on_floor = param_data[19] != 0.0;
+		const bool is_on_ceiling = param_data[20] != 0.0;
+		const bool is_platformer = param_data[21] != 0.0;
+		const bool colliding_pad = param_data[22] != 0.0;
+		const bool has_dash_control = param_data[23] != 0.0;
+		const bool orb_queue_empty = param_data[24] != 0.0;
+		const double robot_timer_time_left = param_data[25];
+		const bool deferred_velocity_redirect = param_data[26] != 0.0;
+		const double coyote_time = param_data[27];
+		const int64_t spider_dash_frames = static_cast<int64_t>(param_data[28]);
+		const int64_t slope_exit_velocity_frames = static_cast<int64_t>(param_data[29]);
 		// Optional so existing 30-float callers keep working. Param 30 is set
 		// only for the step that leaves the floor after a gravity portal.
-		const bool gravity_portal_pending = params.size() > 30 && params[30] != 0.0;
+		const bool gravity_portal_pending = params.size() > 30 && param_data[30] != 0.0;
 
 		PlayerPhysicsOutput out = run_player_physics_kernel(
 			delta, previous_velocity, direction, jump_state, was_sliding_on_slope,
@@ -10232,6 +10285,8 @@ public:
 		sections.clear();
 		const int64_t count = std::min(objects.size(), std::min(lefts.size(), rights.size()));
 		if (bucket_width <= 0.0) return;
+		const float *left_data = lefts.ptr();
+		const float *right_data = rights.ptr();
 		section_width = bucket_width;
 		entries.reserve(static_cast<size_t>(count));
 		for (int64_t i = 0; i < count; ++i) {
@@ -10240,8 +10295,8 @@ public:
 			if (!canvas) continue;
 			Entry entry;
 			entry.id = canvas->get_instance_id();
-			entry.left = std::min(static_cast<double>(lefts[i]), static_cast<double>(rights[i]));
-			entry.right = std::max(static_cast<double>(lefts[i]), static_cast<double>(rights[i]));
+			entry.left = std::min(static_cast<double>(left_data[i]), static_cast<double>(right_data[i]));
+			entry.right = std::max(static_cast<double>(left_data[i]), static_cast<double>(right_data[i]));
 			entry.first = static_cast<int64_t>(std::floor(entry.left / bucket_width));
 			entry.last = static_cast<int64_t>(std::floor(entry.right / bucket_width));
 			const size_t index = entries.size();
@@ -10302,6 +10357,9 @@ public:
 			const PackedInt32Array &links, int64_t link_count) {
 		dynamic_entries.clear();
 		const int64_t count = std::min({objects.size(), lefts.size(), rights.size(), links.size()});
+		const float *left_data = lefts.ptr();
+		const float *right_data = rights.ptr();
+		const int32_t *link_data = links.ptr();
 		dynamic_entries.reserve(static_cast<size_t>(std::max<int64_t>(count, 0)));
 		for (int64_t i = 0; i < count; ++i) {
 			Node2D *node = Object::cast_to<Node2D>(static_cast<Object *>(objects[i]));
@@ -10309,9 +10367,9 @@ public:
 			const double x = node->get_global_position().x;
 			DynamicEntry entry;
 			entry.id = node->get_instance_id();
-			entry.local_left = std::min<double>(lefts[i], rights[i]) - x;
-			entry.local_right = std::max<double>(lefts[i], rights[i]) - x;
-			entry.link = links[i];
+			entry.local_left = std::min<double>(left_data[i], right_data[i]) - x;
+			entry.local_right = std::max<double>(left_data[i], right_data[i]) - x;
+			entry.link = link_data[i];
 			dynamic_entries.push_back(entry);
 		}
 		dynamic_desired.assign(dynamic_entries.size(), 0);
@@ -10649,6 +10707,11 @@ public:
 
 class NativeDecorationRenderer;
 static std::set<NativeDecorationRenderer *> registered_decoration_renderers;
+// Avoid visiting static renderers for animation/command work every frame.
+// Dirty entries are inserted by route invalidation; only spinning batches join
+// the active-animation set.
+static std::set<NativeDecorationRenderer *> animated_decoration_renderers;
+static std::set<NativeDecorationRenderer *> dirty_decoration_renderers;
 static int decoration_coordinator_count = 0;
 static uint64_t decoration_last_update_frame = UINT64_MAX;
 
@@ -10661,6 +10724,7 @@ class NativeDecorationRenderer : public RefCounted {
 
 	struct Record {
 		Ref<Texture2D> texture;
+		RID texture_rid;
 		Rect2 region;
 		Transform2D transform;
 		Color color;
@@ -10672,6 +10736,7 @@ class NativeDecorationRenderer : public RefCounted {
 		// Blend override after a colour trigger flips the channel (key 17):
 		// 0 inherits the batch's import-time material, 1 additive, 2 normal.
 		uint8_t blend = 0;
+		uint8_t route_slot = 0;
 	};
 
 	uint64_t owner_id = 0;
@@ -10683,7 +10748,6 @@ class NativeDecorationRenderer : public RefCounted {
 	RID canvas_item_add;
 	Ref<CanvasItemMaterial> additive_material;
 	Ref<Resource> fade_plain, fade_additive;
-	Ref<Resource> backend_main_material, backend_plain_material, backend_additive_material;
 	std::vector<Record> records;
 	// UI changes object placement, never sprite size / part offsets. World
 	// records stay intact for spin/monster updates and exact restart restore.
@@ -10707,6 +10771,9 @@ class NativeDecorationRenderer : public RefCounted {
 	int64_t last_row = INT64_MAX;
 	Vector2 last_viewport_size;
 	bool view_initialized = false;
+	bool has_last_cull_snapshot = false;
+	Transform2D last_cull_from_screen;
+	Vector2 last_cull_screen_size;
 	bool range_has_records = false;
 	bool commands_dirty = false;
 	int64_t last_drawn_items = 0;
@@ -10725,29 +10792,6 @@ class NativeDecorationRenderer : public RefCounted {
 	std::array<int64_t, 3> route_draw_commands = {};
 	std::array<int64_t, 3> route_transform_commands = {};
 	std::array<int64_t, 3> route_rebuilds = {};
-	// Windows A/B backends: 0 = retained RenderingServer rect commands,
-	// 1 = gdclone-style dense MultiMesh instance upload, 2 = OpenDash-style
-	// indexed mesh batch with sparse/contiguous dirty-region uploads.
-	int render_backend = 0;
-	struct GpuRun {
-		RID rid;
-		RID mesh;
-		Ref<Texture2D> texture;
-		std::vector<size_t> records;
-	};
-	struct RecordLocation {
-		int64_t run = -1;
-		int64_t local = -1;
-		uint8_t route = 0;
-	};
-	struct RecordDirty {
-		static constexpr uint8_t TRANSFORM = 1u << 0;
-		static constexpr uint8_t COLOR = 1u << 1;
-	};
-	std::array<std::vector<GpuRun>, 3> gpu_runs;
-	std::vector<RecordLocation> record_locations;
-	std::vector<uint8_t> record_dirty_flags;
-	bool gpu_data_dirty = false;
 	// Group pulse (1006, key 52 = 1): a batch holds one group set, so one
 	// pulse per renderer covers it. Weight 0 keeps the draw loop untouched;
 	// a pulsing batch re-emits only its visible records per changed tick.
@@ -10758,30 +10802,29 @@ class NativeDecorationRenderer : public RefCounted {
 		return Object::cast_to<CanvasItem>(ObjectDB::get_instance(ObjectID(owner_id)));
 	}
 
-	uint8_t route_slot_for_record(const Record &record) const {
-		if (record.blend == 1 && canvas_item_add.is_valid()) return 2;
-		if (record.blend == 2 && canvas_item_plain.is_valid()) return 1;
+	uint8_t route_slot_for_blend(uint8_t blend) const {
+		if (blend == 1 && canvas_item_add.is_valid()) return 2;
+		if (blend == 2 && canvas_item_plain.is_valid()) return 1;
 		return 0;
 	}
 
+	uint8_t route_slot_for_record(const Record &record) const { return record.route_slot; }
+
 	void mark_routes_dirty(uint8_t routes) {
 		if (routes == 0) return;
+		const bool was_clean = !commands_dirty;
 		dirty_route_mask |= routes;
 		commands_dirty = true;
+		// A dirty renderer is already in this set. Avoid a redundant ordered-set
+		// lookup when many records change in one trigger update.
+		if (was_clean) dirty_decoration_renderers.insert(this);
 	}
 
 	void mark_all_routes_dirty() { mark_routes_dirty(ROUTE_ALL); }
 
-	void mark_record_route_dirty(size_t index, uint8_t data_flags = DIRTY_COLOR) {
+	void mark_record_route_dirty(size_t index) {
 		if (index >= records.size()) return;
-		if (render_backend == 0) {
-			mark_routes_dirty(static_cast<uint8_t>(1u << route_slot_for_record(records[index])));
-		} else {
-			if (record_dirty_flags.size() < records.size()) record_dirty_flags.resize(records.size(), 0);
-			record_dirty_flags[index] |= data_flags;
-			gpu_data_dirty = true;
-			commands_dirty = true;
-		}
+		mark_routes_dirty(static_cast<uint8_t>(1u << route_slot_for_record(records[index])));
 	}
 
 	void refresh_draw_stats() {
@@ -10794,8 +10837,6 @@ class NativeDecorationRenderer : public RefCounted {
 		return sections.has_records({first_bucket, last_bucket, first_row, last_row});
 	}
 
-	static constexpr uint8_t DIRTY_TRANSFORM = 1u << 0;
-	static constexpr uint8_t DIRTY_COLOR = 1u << 1;
 	Transform2D get_draw_transform(int64_t index) const {
 		if (index < 0 || index >= static_cast<int64_t>(records.size())) return Transform2D();
 		Transform2D result = records[index].transform;
@@ -10803,385 +10844,18 @@ class NativeDecorationRenderer : public RefCounted {
 		return result;
 	}
 
-	bool set_canvas_shader_backend(const RID &target, const Ref<Resource> &source,
-			Ref<Resource> &owned_material) {
-		RenderingServer *server = RenderingServer::get_singleton();
-		owned_material.unref();
-		if (!server || !target.is_valid() || render_backend == 0 || source.is_null()) return render_backend == 0;
-		if (!source->is_class("ShaderMaterial")) return false;
-		owned_material = source->duplicate(true);
-		if (owned_material.is_null()) return false;
-		Array instance_args;
-		instance_args.push_back(StringName("gd_multimesh_batch"));
-		instance_args.push_back(render_backend == 1);
-		owned_material->callv(StringName("set_shader_parameter"), instance_args);
-		Array mesh_args;
-		mesh_args.push_back(StringName("gd_mesh_batch"));
-		mesh_args.push_back(render_backend == 2);
-		owned_material->callv(StringName("set_shader_parameter"), mesh_args);
-		server->canvas_item_set_material(target, owned_material->get_rid());
-		return true;
-	}
-
-	void setup_backend_materials() {
-		CanvasItem *owner_canvas = owner();
-		RenderingServer *server = RenderingServer::get_singleton();
-		if (!owner_canvas || !server) return;
-		if (render_backend == 0) {
-			backend_main_material.unref();
-			backend_plain_material.unref();
-			backend_additive_material.unref();
-			server->canvas_item_set_use_parent_material(canvas_item, true);
-			server->canvas_item_set_material(canvas_item, RID());
-			if (canvas_item_plain.is_valid() && fade_plain.is_valid()) server->canvas_item_set_material(canvas_item_plain, fade_plain->get_rid());
-			if (canvas_item_add.is_valid() && fade_additive.is_valid()) server->canvas_item_set_material(canvas_item_add, fade_additive->get_rid());
-			return;
-		}
-		Ref<Material> owner_material = owner_canvas->get_material();
-		Ref<Resource> owner_resource = owner_material;
-		const bool valid = set_canvas_shader_backend(canvas_item, owner_resource, backend_main_material) &&
-				set_canvas_shader_backend(canvas_item_plain, fade_plain, backend_plain_material) &&
-				set_canvas_shader_backend(canvas_item_add, fade_additive, backend_additive_material);
-		if (!valid) {
-			// A custom owner material cannot safely be rewritten for per-instance
-			// UVs/effects. Keep the original RenderingServer path for exact parity.
-			render_backend = 0;
-			setup_backend_materials();
-			return;
-		}
-		server->canvas_item_set_use_parent_material(canvas_item, false);
-	}
-
-	Color render_color(size_t index) const {
-		return pulse_weight > 0.0f ? pulse_record_color(records[index].color, pulse_color, pulse_weight) : records[index].color;
-	}
-
-	static constexpr int32_t MESH_QUAD_VERTEX_COUNT = 4;
-	static constexpr int32_t MESH_VERTEX_STRIDE_BYTES = 2 * sizeof(float);
-	// RenderingServer packs ARRAY_COLOR as normalized RGBA8, then stores UV
-	// and CUSTOM0 as float2 each: 4 + 8 + 8 bytes per vertex.
-	static constexpr int32_t MESH_ATTRIBUTE_STRIDE_BYTES = sizeof(uint32_t) + 4 * sizeof(float);
-
-	void fill_multimesh_buffer(const GpuRun &run, PackedFloat32Array &buffer) const {
-		buffer.resize(static_cast<int64_t>(run.records.size()) * 16);
-		float *data = buffer.ptrw();
-		for (size_t local = 0; local < run.records.size(); ++local) {
-			const size_t index = run.records[local];
-			const Record &record = records[index];
-			const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
-			const Vector2 origin = transform.get_origin();
-			const Vector2 x_axis = transform.basis_xform(Vector2(record.region.size.x, 0.0));
-			const Vector2 y_axis = transform.basis_xform(Vector2(0.0, record.region.size.y));
-			const int64_t base = static_cast<int64_t>(local) * 16;
-			data[base + 0] = static_cast<float>(x_axis.x);
-			data[base + 1] = static_cast<float>(y_axis.x);
-			data[base + 2] = 0.0f;
-			data[base + 3] = static_cast<float>(origin.x);
-			data[base + 4] = static_cast<float>(x_axis.y);
-			data[base + 5] = static_cast<float>(y_axis.y);
-			data[base + 6] = 0.0f;
-			data[base + 7] = static_cast<float>(origin.y);
-			const Color color = render_color(index);
-			data[base + 8] = color.r; data[base + 9] = color.g;
-			data[base + 10] = color.b; data[base + 11] = color.a;
-			// Pack each record's atlas UV rectangle into MultiMesh custom data;
-			// this lets one texture run contain multiple atlas regions.
-			const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
-			data[base + 12] = texture_size.x != 0.0 ? static_cast<float>(record.region.position.x / texture_size.x) : 0.0f;
-			data[base + 13] = texture_size.y != 0.0 ? static_cast<float>(record.region.position.y / texture_size.y) : 0.0f;
-			data[base + 14] = texture_size.x != 0.0 ? static_cast<float>(record.region.size.x / texture_size.x) : 0.0f;
-			data[base + 15] = texture_size.y != 0.0 ? static_cast<float>(record.region.size.y / texture_size.y) : 0.0f;
-		}
-	}
-
-	void append_mesh_record(size_t index, PackedVector2Array &vertices, PackedColorArray &colors,
-			PackedVector2Array &uvs, PackedFloat32Array &custom0, PackedInt32Array &indices) const {
-		const Record &record = records[index];
-		const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
-		const Vector2 half = record.region.size * 0.5;
-		const Vector2 corners[4] = { Vector2(-half.x, -half.y), Vector2(half.x, -half.y),
-				Vector2(half.x, half.y), Vector2(-half.x, half.y) };
-		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
-		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
-				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
-		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
-				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
-		const Vector2 uv_corners[4] = { uv_origin, uv_origin + Vector2(uv_size.x, 0.0),
-				uv_origin + uv_size, uv_origin + Vector2(0.0, uv_size.y) };
-		const Color color = render_color(index);
-		const Vector2 center = transform.get_origin();
-		const int32_t first = vertices.size();
-		for (int corner = 0; corner < 4; ++corner) {
-			vertices.push_back(transform.xform(corners[corner]));
-			colors.push_back(color);
-			uvs.push_back(uv_corners[corner]);
-			custom0.push_back(static_cast<float>(center.x));
-			custom0.push_back(static_cast<float>(center.y));
-		}
-		indices.push_back(first); indices.push_back(first + 1); indices.push_back(first + 2);
-		indices.push_back(first); indices.push_back(first + 2); indices.push_back(first + 3);
-	}
-
-	void write_mesh_record_bytes(size_t index, uint8_t *vertex_bytes, uint8_t *attribute_bytes) const {
-		const Record &record = records[index];
-		const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
-		const Vector2 half = record.region.size * 0.5;
-		const Vector2 corners[4] = { Vector2(-half.x, -half.y), Vector2(half.x, -half.y),
-				Vector2(half.x, half.y), Vector2(-half.x, half.y) };
-		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
-		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
-				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
-		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
-				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
-		const Vector2 uv_corners[4] = { uv_origin, uv_origin + Vector2(uv_size.x, 0.0),
-				uv_origin + uv_size, uv_origin + Vector2(0.0, uv_size.y) };
-		const Color color = render_color(index);
-		const Vector2 center = transform.get_origin();
-		float *vertex = reinterpret_cast<float *>(vertex_bytes);
-		const uint8_t color8[4] = {
-				static_cast<uint8_t>(std::clamp(color.r * 255.0, 0.0, 255.0)),
-				static_cast<uint8_t>(std::clamp(color.g * 255.0, 0.0, 255.0)),
-				static_cast<uint8_t>(std::clamp(color.b * 255.0, 0.0, 255.0)),
-				static_cast<uint8_t>(std::clamp(color.a * 255.0, 0.0, 255.0))
-		};
-		for (int corner = 0; corner < MESH_QUAD_VERTEX_COUNT; ++corner) {
-			const Vector2 point = transform.xform(corners[corner]);
-			vertex[corner * 2] = static_cast<float>(point.x);
-			vertex[corner * 2 + 1] = static_cast<float>(point.y);
-			const int32_t base = corner * MESH_ATTRIBUTE_STRIDE_BYTES;
-			std::memcpy(attribute_bytes + base, color8, sizeof(color8));
-			const float uv[2] = { static_cast<float>(uv_corners[corner].x), static_cast<float>(uv_corners[corner].y) };
-			const float object_center[2] = { static_cast<float>(center.x), static_cast<float>(center.y) };
-			std::memcpy(attribute_bytes + base + sizeof(color8), uv, sizeof(uv));
-			std::memcpy(attribute_bytes + base + sizeof(color8) + sizeof(uv), object_center, sizeof(object_center));
-		}
-	}
-
-	void free_gpu_route(uint8_t slot) {
-		RenderingServer *server = RenderingServer::get_singleton();
-		if (server) {
-			for (GpuRun &run : gpu_runs[slot]) {
-				if (run.rid.is_valid()) server->free_rid(run.rid);
-				if (run.mesh.is_valid()) server->free_rid(run.mesh);
-			}
-		}
-		gpu_runs[slot].clear();
-	}
-
-	RID create_instance_mesh(size_t record_index) {
-		RenderingServer *server = RenderingServer::get_singleton();
-		if (!server || record_index >= records.size()) return RID();
-		PackedVector2Array vertices;
-		vertices.push_back(Vector2(-0.5, -0.5)); vertices.push_back(Vector2(0.5, -0.5));
-		vertices.push_back(Vector2(0.5, 0.5)); vertices.push_back(Vector2(-0.5, 0.5));
-		PackedVector2Array uvs;
-		uvs.push_back(Vector2(0, 0)); uvs.push_back(Vector2(1, 0));
-		uvs.push_back(Vector2(1, 1)); uvs.push_back(Vector2(0, 1));
-		PackedInt32Array indices;
-		indices.push_back(0); indices.push_back(1); indices.push_back(2);
-		indices.push_back(0); indices.push_back(2); indices.push_back(3);
-		Array arrays;
-		arrays.resize(RenderingServer::ARRAY_MAX);
-		arrays[RenderingServer::ARRAY_VERTEX] = vertices;
-		arrays[RenderingServer::ARRAY_TEX_UV] = uvs;
-		arrays[RenderingServer::ARRAY_INDEX] = indices;
-		RID mesh = server->mesh_create();
-		server->mesh_add_surface_from_arrays(mesh, RenderingServer::PRIMITIVE_TRIANGLES, arrays);
-		return mesh;
-	}
-
-	void create_gpu_run(uint8_t slot, GpuRun &&run) {
-		RenderingServer *server = RenderingServer::get_singleton();
-		if (!server || run.records.empty() || !run.texture.is_valid()) return;
-		const RID target = slot == 1 ? canvas_item_plain : (slot == 2 ? canvas_item_add : canvas_item);
-		if (render_backend == 1) {
-			run.mesh = create_instance_mesh(run.records.front());
-			if (!run.mesh.is_valid()) return;
-			run.rid = server->multimesh_create();
-			server->multimesh_allocate_data(run.rid, static_cast<int32_t>(run.records.size()),
-					RenderingServer::MULTIMESH_TRANSFORM_2D, true, true, false);
-			server->multimesh_set_mesh(run.rid, run.mesh);
-			PackedFloat32Array buffer;
-			fill_multimesh_buffer(run, buffer);
-			server->multimesh_set_buffer(run.rid, buffer);
-			server->canvas_item_add_multimesh(target, run.rid, run.texture->get_rid());
-		} else {
-			PackedVector2Array vertices;
-			PackedColorArray colors;
-			PackedVector2Array uvs;
-			PackedFloat32Array custom0;
-			PackedInt32Array indices;
-			vertices.resize(0); colors.resize(0); uvs.resize(0); custom0.resize(0); indices.resize(0);
-			for (size_t index : run.records) append_mesh_record(index, vertices, colors, uvs, custom0, indices);
-			Array arrays;
-			arrays.resize(RenderingServer::ARRAY_MAX);
-			arrays[RenderingServer::ARRAY_VERTEX] = vertices;
-			arrays[RenderingServer::ARRAY_COLOR] = colors;
-			arrays[RenderingServer::ARRAY_TEX_UV] = uvs;
-			arrays[RenderingServer::ARRAY_CUSTOM0] = custom0;
-			arrays[RenderingServer::ARRAY_INDEX] = indices;
-			const uint64_t format = RenderingServer::ARRAY_FORMAT_CUSTOM0 |
-					(static_cast<uint64_t>(RenderingServer::ARRAY_CUSTOM_RG_FLOAT) << RenderingServer::ARRAY_FORMAT_CUSTOM0_SHIFT) |
-					RenderingServer::ARRAY_FLAG_USE_2D_VERTICES | RenderingServer::ARRAY_FLAG_USE_DYNAMIC_UPDATE;
-			run.rid = server->mesh_create();
-			server->mesh_add_surface_from_arrays(run.rid, RenderingServer::PRIMITIVE_TRIANGLES,
-					arrays, Array(), Dictionary(), BitField<RenderingServer::ArrayFormat>(static_cast<int64_t>(format)));
-			server->canvas_item_add_mesh(target, run.rid, Transform2D(), Color(1, 1, 1, 1), run.texture->get_rid());
-		}
-		const int64_t run_index = static_cast<int64_t>(gpu_runs[slot].size());
-		for (size_t local = 0; local < run.records.size(); ++local) {
-			const size_t record_index = run.records[local];
-			if (record_index < record_locations.size()) record_locations[record_index] = { run_index, static_cast<int64_t>(local), slot };
-			if (record_index < record_dirty_flags.size()) record_dirty_flags[record_index] = 0;
-		}
-		gpu_runs[slot].push_back(std::move(run));
-	}
-
-	void rebuild_gpu_routes(uint8_t rebuild_mask) {
-		RenderingServer *server = RenderingServer::get_singleton();
-		if (!server) return;
-		const std::array<RID, 3> targets = { canvas_item, canvas_item_plain, canvas_item_add };
-		for (uint8_t slot = 0; slot < targets.size(); ++slot) {
-			if ((rebuild_mask & (1u << slot)) == 0) continue;
-			if (targets[slot].is_valid()) server->canvas_item_clear(targets[slot]);
-			free_gpu_route(slot);
-			for (RecordLocation &location : record_locations) if (location.run >= 0 && location.route == slot) location = {};
-			route_drawn_items[slot] = 0;
-			route_draw_commands[slot] = 0;
-			route_transform_commands[slot] = 0;
-			++route_rebuilds[slot];
-		}
-		if (!range_has_records && cull) { refresh_draw_stats(); return; }
-		std::array<std::vector<size_t>, 3> selected;
-		auto collect = [&](size_t index) {
-			const uint8_t slot = route_slot_for_record(records[index]);
-			if ((rebuild_mask & (1u << slot)) != 0) selected[slot].push_back(index);
-		};
-		if (!cull) for (size_t index = 0; index < records.size(); ++index) collect(index);
-		else visible_records.for_each(sections, records.size(), { first_bucket, last_bucket, first_row, last_row }, collect);
-		for (uint8_t slot = 0; slot < selected.size(); ++slot) {
-			if ((rebuild_mask & (1u << slot)) == 0) continue;
-			GpuRun current;
-			for (size_t index : selected[slot]) {
-				const Ref<Texture2D> &texture = records[index].texture;
-				if (!texture.is_valid()) continue;
-				// Preserve authored order and blend routes, but combine atlas regions
-				// when their underlying texture is shared.
-				if (!current.records.empty() && current.texture->get_rid() != texture->get_rid()) {
-					create_gpu_run(slot, std::move(current));
-					current = GpuRun();
-				}
-				if (current.records.empty()) current.texture = texture;
-				current.records.push_back(index);
-			}
-			if (!current.records.empty()) create_gpu_run(slot, std::move(current));
-			route_drawn_items[slot] = static_cast<int64_t>(selected[slot].size());
-			route_draw_commands[slot] = static_cast<int64_t>(gpu_runs[slot].size());
-		}
-		refresh_draw_stats();
-	}
-
-	void update_gpu_data() {
-		if (!gpu_data_dirty || render_backend == 0) return;
-		RenderingServer *server = RenderingServer::get_singleton();
-		if (!server) return;
-		if (render_backend == 1) {
-			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) {
-				for (GpuRun &run : gpu_runs[slot]) {
-					std::vector<size_t> dirty;
-					dirty.reserve(8);
-					for (size_t local = 0; local < run.records.size(); ++local) {
-						const size_t index = run.records[local];
-						if (index < record_dirty_flags.size() && record_dirty_flags[index] != 0) dirty.push_back(local);
-					}
-					if (dirty.empty()) continue;
-					if (dirty.size() <= 8) {
-						for (size_t local : dirty) {
-							const size_t index = run.records[local];
-							const uint8_t flags = record_dirty_flags[index];
-							if ((flags & DIRTY_TRANSFORM) != 0) {
-								const Record &record = records[index];
-								const Transform2D transform = get_draw_transform(static_cast<int64_t>(index));
-								const Vector2 x_axis = transform.basis_xform(Vector2(record.region.size.x, 0.0));
-								const Vector2 y_axis = transform.basis_xform(Vector2(0.0, record.region.size.y));
-								server->multimesh_instance_set_transform_2d(run.rid, static_cast<int32_t>(local),
-										Transform2D(x_axis, y_axis, transform.get_origin()));
-							}
-							if ((flags & DIRTY_COLOR) != 0) server->multimesh_instance_set_color(run.rid,
-									static_cast<int32_t>(local), render_color(index));
-							record_dirty_flags[index] = 0;
-						}
-					} else {
-						PackedFloat32Array buffer;
-						fill_multimesh_buffer(run, buffer);
-						server->multimesh_set_buffer(run.rid, buffer);
-						for (size_t index : run.records) if (index < record_dirty_flags.size()) record_dirty_flags[index] = 0;
-					}
-				}
-			}
-		} else {
-			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) {
-				for (GpuRun &run : gpu_runs[slot]) {
-					std::vector<int64_t> dirty;
-					for (size_t local = 0; local < run.records.size(); ++local) {
-						const size_t index = run.records[local];
-						if (index < record_dirty_flags.size() && record_dirty_flags[index] != 0) dirty.push_back(static_cast<int64_t>(local));
-					}
-					if (dirty.empty()) continue;
-					auto upload_range = [&](int64_t first, int64_t last) {
-						PackedByteArray vertices;
-						PackedByteArray attributes;
-						const int64_t record_count = last - first + 1;
-						vertices.resize(record_count * MESH_QUAD_VERTEX_COUNT * MESH_VERTEX_STRIDE_BYTES);
-						attributes.resize(record_count * MESH_QUAD_VERTEX_COUNT * MESH_ATTRIBUTE_STRIDE_BYTES);
-						uint8_t *vertex_data = vertices.ptrw();
-						uint8_t *attribute_data = attributes.ptrw();
-						const int64_t vertex_record_bytes = MESH_QUAD_VERTEX_COUNT * MESH_VERTEX_STRIDE_BYTES;
-						const int64_t attribute_record_bytes = MESH_QUAD_VERTEX_COUNT * MESH_ATTRIBUTE_STRIDE_BYTES;
-						for (int64_t local = first; local <= last; ++local) {
-							write_mesh_record_bytes(run.records[local],
-									vertex_data + (local - first) * vertex_record_bytes,
-									attribute_data + (local - first) * attribute_record_bytes);
-						}
-						server->mesh_surface_update_vertex_region(run.rid, 0,
-								static_cast<int32_t>(first * MESH_QUAD_VERTEX_COUNT * MESH_VERTEX_STRIDE_BYTES), vertices);
-						server->mesh_surface_update_attribute_region(run.rid, 0,
-								static_cast<int32_t>(first * MESH_QUAD_VERTEX_COUNT * MESH_ATTRIBUTE_STRIDE_BYTES), attributes);
-					};
-					if (dirty.size() <= 8) {
-						for (int64_t local : dirty) upload_range(local, local);
-					} else {
-					const auto bounds = std::minmax_element(dirty.begin(), dirty.end());
-					upload_range(*bounds.first, *bounds.second);
-				}
-				for (int64_t local : dirty) {
-					const size_t index = run.records[local];
-					if (index < record_dirty_flags.size()) record_dirty_flags[index] = 0;
-				}
-			}
-			}
-		}
-		gpu_data_dirty = false;
-	}
-
 	void rebuild_commands() {
 		if (!commands_dirty || (cull && !view_initialized)) return;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
 		uint8_t rebuild_mask = dirty_route_mask;
-		if (rebuild_mask == 0 && render_backend == 0) {
+		if (rebuild_mask == 0) {
 			commands_dirty = false;
 			return;
 		}
 		commands_dirty = false;
 		dirty_route_mask = 0;
 		++command_rebuilds;
-		if (render_backend != 0) {
-			if (rebuild_mask != 0) rebuild_gpu_routes(rebuild_mask);
-			update_gpu_data();
-			commands_dirty = gpu_data_dirty;
-			return;
-		}
 
 		const std::array<RID, 3> targets = { canvas_item, canvas_item_plain, canvas_item_add };
 		for (uint8_t slot = 0; slot < targets.size(); ++slot) {
@@ -11213,17 +10887,24 @@ class NativeDecorationRenderer : public RefCounted {
 			const Record &record = records[index];
 			const uint8_t target_slot = route_slot_for_record(record);
 			if ((rebuild_mask & (1u << target_slot)) == 0) return;
-			const RID target = targets[target_slot];
-			const Transform2D transform = ui_layout_active ? get_draw_transform(index) : record.transform;
-			if (!have_last_transform[target_slot] || !same_transform_exact(last_transforms[target_slot], transform)) {
-				server->canvas_item_add_set_transform(target, transform);
-				last_transforms[target_slot] = transform;
-				have_last_transform[target_slot] = true;
-				++route_transform_commands[target_slot];
+			const RID &target = targets[target_slot];
+			auto submit_transform = [&](const Transform2D &transform) {
+				if (!have_last_transform[target_slot] || !same_transform_exact(last_transforms[target_slot], transform)) {
+					server->canvas_item_add_set_transform(target, transform);
+					last_transforms[target_slot] = transform;
+					have_last_transform[target_slot] = true;
+					++route_transform_commands[target_slot];
+				}
+			};
+			if (ui_layout_active) {
+				const Transform2D transform = get_draw_transform(index);
+				submit_transform(transform);
+			} else {
+				submit_transform(record.transform);
 			}
 			server->canvas_item_add_texture_rect_region(
 					target, Rect2(-record.region.size * 0.5, record.region.size),
-					record.texture->get_rid(), record.region,
+					record.texture_rid, record.region,
 					pulse_weight > 0.0f ? pulse_record_color(record.color, pulse_color, pulse_weight) : record.color,
 					false, true);
 			++route_drawn_items[target_slot];
@@ -11242,7 +10923,6 @@ class NativeDecorationRenderer : public RefCounted {
 protected:
 	static void _bind_methods() {
 		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
-		ClassDB::bind_method(D_METHOD("set_render_backend", "backend"), &NativeDecorationRenderer::set_render_backend);
 		ClassDB::bind_method(D_METHOD("apply_ui_layout", "layout"), &NativeDecorationRenderer::apply_ui_layout);
 		ClassDB::bind_method(D_METHOD("clear_ui_layout"), &NativeDecorationRenderer::clear_ui_layout);
 		ClassDB::bind_method(D_METHOD("get_draw_transform", "index"), &NativeDecorationRenderer::get_draw_transform);
@@ -11281,39 +10961,26 @@ public:
 	}
 	~NativeDecorationRenderer() override {
 		registered_decoration_renderers.erase(this);
+		animated_decoration_renderers.erase(this);
+		dirty_decoration_renderers.erase(this);
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (server) {
-			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) free_gpu_route(slot);
 			if (canvas_item.is_valid()) server->free_rid(canvas_item);
 			if (canvas_item_plain.is_valid()) server->free_rid(canvas_item_plain);
 			if (canvas_item_add.is_valid()) server->free_rid(canvas_item_add);
 		}
 	}
 
-	void set_render_backend(int64_t backend) {
-		const int selected = backend >= 1 && backend <= 2 ? static_cast<int>(backend) : 0;
-		if (selected == render_backend) return;
-		const int previous = render_backend;
-		render_backend = selected;
-		setup_backend_materials();
-		if (previous != 0 && render_backend == 0) {
-			RenderingServer *server = RenderingServer::get_singleton();
-			const std::array<RID, 3> targets = { canvas_item, canvas_item_plain, canvas_item_add };
-			for (uint8_t slot = 0; slot < gpu_runs.size(); ++slot) {
-				if (server && targets[slot].is_valid()) server->canvas_item_clear(targets[slot]);
-				free_gpu_route(slot);
-			}
-			record_locations.assign(records.size(), RecordLocation{});
-			std::fill(record_dirty_flags.begin(), record_dirty_flags.end(), 0);
-			gpu_data_dirty = false;
-		}
-		mark_all_routes_dirty();
-	}
 	void request_redraw() { mark_all_routes_dirty(); }
 	void flush_commands() {
-		if (!commands_dirty || (cull && !view_initialized)) return;
+		if (!commands_dirty) {
+			dirty_decoration_renderers.erase(this);
+			return;
+		}
+		if (cull && !view_initialized) return;
 		rebuild_commands();
 		commands_dirty = false;
+		dirty_decoration_renderers.erase(this);
 	}
 
 	void attach_owner(Object *p_owner) {
@@ -11346,7 +11013,6 @@ public:
 				server->canvas_item_set_material(canvas_item_add, fade_additive.is_valid() ? fade_additive->get_rid() : additive_material->get_rid());
 				server->canvas_item_set_visible(canvas_item_add, false);
 			}
-			setup_backend_materials();
 		}
 	}
 
@@ -11357,19 +11023,26 @@ public:
 			bool enable_culling, double width, double margin) {
 		attach_owner(p_owner);
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
+		const Color *color_data = colors.ptr();
+		const float *alpha_data = base_alphas.ptr();
+		const float *hsv_values = hsv_data.ptr();
+		const float *spin_data = spins.ptr();
+		const float *pivot_data = spin_pivots.ptr();
+		const int64_t hsv_record_count = hsv_data.size() / 5;
+		const int64_t spin_pivot_count = spin_pivots.size() / 2;
 		std::vector<Record> built;
 		built.reserve(static_cast<size_t>(count));
 		for (int64_t i = 0; i < count; ++i) {
 			Record record;
 			record.texture = textures[i]; record.region = regions[i];
-			record.transform = transforms[i]; record.color = colors[i];
-			record.base_alpha = base_alphas[i];
-			if (hsv_data.size() >= (i + 1) * 5) {
-				record.has_hsv = hsv_data[i * 5 + 4] >= 0.0f;
-				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_data[i * 5 + component];
+			record.transform = transforms[i]; record.color = color_data[i];
+			record.base_alpha = alpha_data[i];
+			if (i < hsv_record_count) {
+				record.has_hsv = hsv_values[i * 5 + 4] >= 0.0f;
+				for (int component = 0; component < 5; ++component) record.hsv[component] = hsv_values[i * 5 + component];
 			}
-			if (spins.size() > i) record.spin_radians = spins[i] * 0.01745329251994329577f;
-			if (spin_pivots.size() >= (i + 1) * 2) record.spin_pivot = Vector2(spin_pivots[i * 2], spin_pivots[i * 2 + 1]);
+			if (spins.size() > i) record.spin_radians = spin_data[i] * 0.01745329251994329577f;
+			if (i < spin_pivot_count) record.spin_pivot = Vector2(pivot_data[i * 2], pivot_data[i * 2 + 1]);
 			else record.spin_pivot = record.transform.get_origin();
 			built.push_back(std::move(record));
 		}
@@ -11383,9 +11056,6 @@ public:
 		ui_layout_active = false;
 		ui_offsets.clear();
 		records = std::move(p_records);
-		record_locations.assign(records.size(), RecordLocation{});
-		record_dirty_flags.assign(records.size(), 0);
-		gpu_data_dirty = false;
 		route_drawn_items = {}; route_draw_commands = {}; route_transform_commands = {};
 		mark_all_routes_dirty();
 		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
@@ -11394,6 +11064,8 @@ public:
 		bucket_width = width > 0.0 ? width : 256.0;
 		for (size_t index = 0; index < records.size(); ++index) {
 			Record &record = records[index];
+			record.texture_rid = record.texture->get_rid();
+			record.route_slot = route_slot_for_blend(record.blend);
 			// Per-object HSV is immutable until reconfigure. Preserve the exact
 			// zero/neutral guard without reevaluating it on every channel pulse.
 			record.has_hsv = record.has_hsv && !gdash::neutral_hsv(record.hsv[0], record.hsv[1], record.hsv[2],
@@ -11419,12 +11091,14 @@ public:
 				for (int64_t row = top_row; row <= bottom_row; ++row) section_builder[column][row].push_back(index);
 			}
 		}
+		if (spinning_indices.empty()) animated_decoration_renderers.erase(this);
+		else animated_decoration_renderers.insert(this);
 		// Retain packed columns, not thousands of map nodes/small row vectors.
 		// Consume each builder column as it is copied to limit open-time peaks.
 		sections.build(std::move(section_builder));
 		reuse_spin_rotation = spin_profile.use_cache();
 		cull = enable_culling; cull_margin = std::max(0.0, margin);
-		view_initialized = false; range_has_records = !cull;
+		view_initialized = false; has_last_cull_snapshot = false; range_has_records = !cull;
 		if (!cull) rebuild_commands();
 	}
 
@@ -11446,6 +11120,7 @@ public:
 		}
 		if (!ui_layout_active) ui_saved_cull = cull;
 		ui_layout_active = true;
+		has_last_cull_snapshot = false;
 		// UI records no longer live in the world-space spatial index. Only
 		// explicitly UI-marked batches bypass it; world batches are unchanged.
 		cull = false;
@@ -11465,6 +11140,7 @@ public:
 		ui_offsets.clear();
 		cull = ui_saved_cull;
 		view_initialized = false;
+		has_last_cull_snapshot = false;
 		mark_all_routes_dirty();
 		if (cull) update_camera_range();
 	}
@@ -11472,10 +11148,11 @@ public:
 	// Same transform consumed by command emission; useful for headless parity.
 
 	template <bool ReuseRotation>
-	void advance_spinning_records(double delta) {
+	uint8_t advance_spinning_records(double delta) {
 		// Reuse trig only for consecutive equal speeds within this call. Never
 		// cache poses or reorder records: triggers can change transforms/pivots.
 		SpinRotationRunCache rotation_cache(delta);
+		uint8_t changed_routes = 0;
 		for (size_t index : spinning_indices) {
 			Record &record = records[index];
 			// Rigid rotation about the pivot in parent space. Rotating the
@@ -11497,28 +11174,41 @@ public:
 			record.transform.columns[0] = Vector2(static_cast<real_t>(spun.xx), static_cast<real_t>(spun.xy));
 			record.transform.columns[1] = Vector2(static_cast<real_t>(spun.yx), static_cast<real_t>(spun.yy));
 			record.transform.columns[2] = Vector2(static_cast<real_t>(spun.ox), static_cast<real_t>(spun.oy));
+			changed_routes |= static_cast<uint8_t>(1u << route_slot_for_record(record));
 		}
+		return changed_routes;
 	}
 
 	void advance_animation(double delta) {
 		if (spinning_indices.empty() || delta <= 0.0) return;
-		if (reuse_spin_rotation) advance_spinning_records<true>(delta);
-		else advance_spinning_records<false>(delta);
-		uint8_t changed_routes = 0;
-		for (size_t index : spinning_indices) {
-			if (index >= records.size()) continue;
-			if (render_backend == 0) changed_routes |= static_cast<uint8_t>(1u << route_slot_for_record(records[index]));
-			else mark_record_route_dirty(index, DIRTY_TRANSFORM);
-		}
-		if (render_backend == 0) mark_routes_dirty(changed_routes);
+		const uint8_t changed_routes = reuse_spin_rotation
+				? advance_spinning_records<true>(delta)
+				: advance_spinning_records<false>(delta);
+		mark_routes_dirty(changed_routes);
 	}
 
-	bool capture_cull_job(DecorationCullJob &job) const {
+	static bool same_transform_exact(const Transform2D &left, const Transform2D &right) {
+		for (int column = 0; column < 3; ++column) {
+			const Vector2 &a = left.columns[column];
+			const Vector2 &b = right.columns[column];
+			if (a.x != b.x || a.y != b.y) return false;
+		}
+		return true;
+	}
+
+	bool capture_cull_job(DecorationCullJob &job) {
 		CanvasItem *owner_canvas = owner();
 		if (!cull || !owner_canvas || !owner_canvas->is_inside_tree()) return false;
+		const Transform2D from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
+		const Vector2 screen_size = owner_canvas->get_viewport_rect().size;
+		if (view_initialized && has_last_cull_snapshot && screen_size == last_cull_screen_size &&
+				same_transform_exact(from_screen, last_cull_from_screen)) return false;
+		last_cull_from_screen = from_screen;
+		last_cull_screen_size = screen_size;
+		has_last_cull_snapshot = true;
 		job.renderer_id = get_instance_id();
-		job.from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
-		job.screen_size = owner_canvas->get_viewport_rect().size;
+		job.from_screen = from_screen;
+		job.screen_size = screen_size;
 		job.radius = cull_margin;
 		job.cell_size = bucket_width;
 		return true;
@@ -11548,6 +11238,9 @@ public:
 		if (!cull || !owner_canvas || !owner_canvas->is_inside_tree() || !server) return;
 		const Transform2D from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
 		const Vector2 screen_size = owner_canvas->get_viewport_rect().size;
+		last_cull_from_screen = from_screen;
+		last_cull_screen_size = screen_size;
+		has_last_cull_snapshot = true;
 		Rect2 local_view(from_screen.xform(Vector2()), Vector2());
 		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0)));
 		local_view = local_view.expand(from_screen.xform(screen_size));
@@ -11568,22 +11261,26 @@ public:
 		rebuild_commands();
 	}
 
-	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; range_has_records = selected_range_has_records(); mark_all_routes_dirty(); rebuild_commands(); }
+	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; has_last_cull_snapshot = false; range_has_records = selected_range_has_records(); mark_all_routes_dirty(); rebuild_commands(); }
 	// Flips the given records between normal and additive blending when a
 	// colour trigger toggles their channel (key 17). Idempotent: the batch's
 	// GDScript side caches the last state per channel.
 	void set_channel_blending(const PackedInt32Array &indices, bool additive) {
 		const uint8_t new_blend = static_cast<uint8_t>(additive ? 1 : 2);
+		const int32_t *index_data = indices.ptr();
+		uint8_t changed_routes = 0;
 		for (int64_t i = 0; i < indices.size(); ++i) {
-			const int64_t index = indices[i];
+			const int64_t index = index_data[i];
 			if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
 			Record &record = records[static_cast<size_t>(index)];
 			if (record.blend == new_blend) continue;
 			const uint8_t old_slot = route_slot_for_record(record);
 			record.blend = new_blend;
+			record.route_slot = route_slot_for_blend(new_blend);
 			const uint8_t new_slot = route_slot_for_record(record);
-			mark_routes_dirty(static_cast<uint8_t>((1u << old_slot) | (1u << new_slot)));
+			changed_routes |= static_cast<uint8_t>((1u << old_slot) | (1u << new_slot));
 		}
+		mark_routes_dirty(changed_routes);
 	}
 	// Blend override of one record (0 inherit, 1 additive, 2 normal) for tests.
 	int64_t get_item_blend(int64_t index) const {
@@ -11592,8 +11289,10 @@ public:
 	}
 	void apply_channel_color(const PackedInt32Array &indices, const Color &channel_color) {
 		gdash::DecorationChannelTint<Color> channel_tint(channel_color);
+		const int32_t *index_data = indices.ptr();
+		uint8_t changed_routes = 0;
 		for (int64_t i = 0; i < indices.size(); ++i) {
-			const int64_t index = indices[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
+			const int64_t index = index_data[i]; if (index < 0 || index >= static_cast<int64_t>(records.size())) continue;
 			Record &record = records[static_cast<size_t>(index)]; Color tinted = channel_color;
 			// An all-zero shift with the sliders in multiplicative mode is
 			// Geometry Dash's "HSV enabled but untouched" encoding; the
@@ -11606,31 +11305,29 @@ public:
 			tinted.a = channel_color.a * record.base_alpha;
 			bool changed = false;
 			gdash::assign_render_value(record.color, tinted, changed);
-			if (changed) mark_record_route_dirty(static_cast<size_t>(index), DIRTY_COLOR);
+			if (changed) changed_routes |= static_cast<uint8_t>(1u << route_slot_for_record(record));
 		}
+		mark_routes_dirty(changed_routes);
 	}
 	void set_group_pulse(const Color &color, double weight) {
 		const float clamped = static_cast<float>(Math::clamp(weight, 0.0, 1.0));
 		if (clamped == pulse_weight && (clamped == 0.0f || color == pulse_color)) return;
 		pulse_color = color;
 		pulse_weight = clamped;
-		if (render_backend == 0) mark_all_routes_dirty();
-		else {
-			for (size_t index = 0; index < records.size(); ++index) mark_record_route_dirty(index, DIRTY_COLOR);
-		}
+		mark_all_routes_dirty();
 	}
 	Color get_item_color(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].color : Color(1,1,1,1); }
 	void set_item_color(int64_t index, const Color &color) {
 		if (index < 0 || index >= static_cast<int64_t>(records.size())) return;
 		bool changed = false;
 		gdash::assign_render_value(records[static_cast<size_t>(index)].color, color, changed);
-		if (changed) mark_record_route_dirty(static_cast<size_t>(index), DIRTY_COLOR);
+		if (changed) mark_record_route_dirty(static_cast<size_t>(index));
 	}
 	void set_item_transform(int64_t index, const Transform2D &transform) {
 		if (index < 0 || index >= static_cast<int64_t>(records.size())) return;
 		bool changed = false;
 		gdash::assign_render_value(records[static_cast<size_t>(index)].transform, transform, changed);
-		if (changed) mark_record_route_dirty(static_cast<size_t>(index), DIRTY_TRANSFORM);
+		if (changed) mark_record_route_dirty(static_cast<size_t>(index));
 	}
 	Transform2D get_item_transform(int64_t index) const { return index >= 0 && index < static_cast<int64_t>(records.size()) ? records[index].transform : Transform2D(); }
 	int64_t item_count() const { return static_cast<int64_t>(records.size()); }
@@ -11700,6 +11397,22 @@ private:
 		std::map<int32_t, std::vector<int32_t>> blend_channels;
 	};
 	using BatchKey = std::tuple<std::vector<int32_t>, int32_t, bool, bool, int32_t>;
+	struct BatchKeyHash {
+		static void combine(size_t &seed, size_t value) {
+			seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+		}
+		size_t operator()(const BatchKey &key) const {
+			size_t hash = 0;
+			const std::vector<int32_t> &groups = std::get<0>(key);
+			combine(hash, groups.size());
+			for (int32_t group : groups) combine(hash, std::hash<int32_t>{}(group));
+			combine(hash, std::hash<int32_t>{}(std::get<1>(key)));
+			combine(hash, std::get<2>(key));
+			combine(hash, std::get<3>(key));
+			combine(hash, std::hash<int32_t>{}(std::get<4>(key)));
+			return hash;
+		}
+	};
 
 	std::vector<Ref<Texture2D>> textures;
 	std::vector<uint64_t> texture_ids;
@@ -11744,6 +11457,10 @@ public:
 			const PackedInt32Array &draw_orders, const PackedInt32Array &kinds, const PackedFloat32Array &opacities,
 			const PackedInt32Array &p_fallback_ids) {
 		textures.clear(); texture_ids.clear(); recipe_ranges.clear(); fallback_ids.clear(); recipes.clear();
+		textures.reserve(static_cast<size_t>(p_textures.size()));
+		texture_ids.reserve(static_cast<size_t>(p_textures.size()));
+		recipe_ranges.reserve(static_cast<size_t>(ids.size()));
+		fallback_ids.reserve(static_cast<size_t>(p_fallback_ids.size()));
 		for (int64_t i = 0; i < p_textures.size(); ++i) {
 			Ref<Texture2D> texture = p_textures[i];
 			textures.push_back(texture);
@@ -11751,23 +11468,32 @@ public:
 		}
 		const int64_t count = std::min({texture_index.size(), regions.size() / 4, locals.size() / 6,
 				draw_orders.size(), kinds.size(), opacities.size()});
+		const int32_t *texture_data = texture_index.ptr();
+		const float *region_data = regions.ptr();
+		const float *local_data = locals.ptr();
+		const int32_t *draw_order_data = draw_orders.ptr();
+		const int32_t *kind_data = kinds.ptr();
+		const float *opacity_data = opacities.ptr();
+		const int32_t *id_data = ids.ptr();
+		const int32_t *offset_data = offsets.ptr();
+		const int32_t *fallback_data = p_fallback_ids.ptr();
 		recipes.resize(static_cast<size_t>(std::max<int64_t>(count, 0)));
 		for (int64_t i = 0; i < count; ++i) {
 			Recipe &recipe = recipes[static_cast<size_t>(i)];
-			recipe.texture = texture_index[i];
-			recipe.region = Rect2(regions[i * 4], regions[i * 4 + 1], regions[i * 4 + 2], regions[i * 4 + 3]);
-			recipe.local = Transform2D(Vector2(locals[i * 6], locals[i * 6 + 1]), Vector2(locals[i * 6 + 2], locals[i * 6 + 3]),
-					Vector2(locals[i * 6 + 4], locals[i * 6 + 5]));
-			recipe.draw_order = draw_orders[i];
-			recipe.kind = static_cast<uint32_t>(kinds[i]);
-			recipe.opacity = opacities[i];
+			recipe.texture = texture_data[i];
+			recipe.region = Rect2(region_data[i * 4], region_data[i * 4 + 1], region_data[i * 4 + 2], region_data[i * 4 + 3]);
+			recipe.local = Transform2D(Vector2(local_data[i * 6], local_data[i * 6 + 1]), Vector2(local_data[i * 6 + 2], local_data[i * 6 + 3]),
+					Vector2(local_data[i * 6 + 4], local_data[i * 6 + 5]));
+			recipe.draw_order = draw_order_data[i];
+			recipe.kind = static_cast<uint32_t>(kind_data[i]);
+			recipe.opacity = opacity_data[i];
 		}
 		for (int64_t k = 0; k + 1 < offsets.size() && k < ids.size(); ++k) {
-			const int32_t first = std::clamp<int32_t>(offsets[k], 0, static_cast<int32_t>(count));
-			const int32_t last = std::clamp<int32_t>(offsets[k + 1], first, static_cast<int32_t>(count));
-			recipe_ranges[ids[k]] = {first, last};
+			const int32_t first = std::clamp<int32_t>(offset_data[k], 0, static_cast<int32_t>(count));
+			const int32_t last = std::clamp<int32_t>(offset_data[k + 1], first, static_cast<int32_t>(count));
+			recipe_ranges[id_data[k]] = {first, last};
 		}
-		for (int64_t i = 0; i < p_fallback_ids.size(); ++i) fallback_ids.insert(p_fallback_ids[i]);
+		for (int64_t i = 0; i < p_fallback_ids.size(); ++i) fallback_ids.insert(fallback_data[i]);
 	}
 
 	// Expands every row. Rows of fallback ids (animated monsters) are left for
@@ -11799,15 +11525,27 @@ public:
 			ERR_PRINT("NativePackedDecorationBuilder: packed decoration table columns are inconsistent");
 			return 0;
 		}
+		const int32_t *id_data = gd_id.ptr();
 		const float *xf = xform.ptr();
+		const int32_t *z_order_data = z_order.ptr();
+		const int32_t *z_layer_data = z_layer.ptr();
+		const Color *tint_data = tint.ptr();
+		const Color *detail_tint_data = detail_tint.ptr();
+		const float *base_alpha_data = base_alpha.ptr();
+		const float *spin_data = spin.ptr();
+		const uint8_t *flags_data = flags.ptr();
+		const int32_t *base_channel_data = base_channel.ptr();
+		const int32_t *detail_channel_data = detail_channel.ptr();
 		const float *bh = base_hsv.ptr();
 		const float *dh = detail_hsv.ptr();
 		const int32_t *go = group_offsets.ptr();
 		const int32_t *gi = group_ids.ptr();
 		const int64_t group_count = group_ids.size();
-		std::map<BatchKey, size_t> index_by_key;
+		std::unordered_map<BatchKey, size_t, BatchKeyHash> index_by_key;
+		index_by_key.reserve(static_cast<size_t>(std::min<int64_t>(rows, 1024)));
 		std::vector<int32_t> fallback;
 		const PackedInt32Array enter_channels = field(table, "enter_channels");
+		const int32_t *enter_channel_data = enter_channels.ptr();
 		const bool has_enter_channels = enter_channels.size() >= rows;
 		int32_t row_enter_key = 0;
 		auto batch_for = [&](const std::vector<int32_t> &groups, int32_t layer, bool additive, bool dynamic) -> size_t {
@@ -11824,18 +11562,18 @@ public:
 		};
 		std::vector<int32_t> groups;
 		for (int64_t row = 0; row < rows; ++row) {
-			const int32_t id = gd_id[row];
-			const uint8_t row_flags = flags[row];
+			const int32_t id = id_data[row];
+			const uint8_t row_flags = flags_data[row];
 			if (fallback_ids.count(id)) { fallback.push_back(static_cast<int32_t>(row)); continue; }
 			if (drop_high_detail && (row_flags & FLAG_HIGH_DETAIL)) continue;
 			row_enter_key = decoration_enter_key((row_flags & FLAG_DONT_FADE) != 0, (row_flags & FLAG_DONT_ENTER) != 0,
-					has_enter_channels ? enter_channels[row] : 0);
+					has_enter_channels ? enter_channel_data[row] : 0);
 			auto range = recipe_ranges.find(id);
 			if (range == recipe_ranges.end() || range->second.first == range->second.second) continue;
 
 			const Transform2D transform(Vector2(xf[row * 6], xf[row * 6 + 1]), Vector2(xf[row * 6 + 2], xf[row * 6 + 3]),
 					Vector2(xf[row * 6 + 4], xf[row * 6 + 5]));
-			const float row_spin = spin[row];
+			const float row_spin = spin_data[row];
 			const bool wants_glow = (row_flags & FLAG_GLOW) != 0;
 			const bool dynamic = row_spin != 0.0f;
 			// Sorted so the same groups in another order share a batch.
@@ -11852,31 +11590,31 @@ public:
 				if ((recipe.kind & NEEDS_GLOW) && !wants_glow) continue;
 				size_t target;
 				if (recipe.kind & GLOW_BATCH) {
-					if (glow_batch == NONE) glow_batch = batch_for(groups, z_layer[row], true, dynamic);
+					if (glow_batch == NONE) glow_batch = batch_for(groups, z_layer_data[row], true, dynamic);
 					target = glow_batch;
 				} else {
-					if (main_batch == NONE) main_batch = batch_for(groups, z_layer[row], (row_flags & FLAG_BLENDING) != 0, dynamic);
+					if (main_batch == NONE) main_batch = batch_for(groups, z_layer_data[row], (row_flags & FLAG_BLENDING) != 0, dynamic);
 					target = main_batch;
 				}
 				Sprite sprite;
 				NativeDecorationRenderer::Record &record = sprite.record;
 				const uint32_t color = recipe.kind & COLOR_MASK;
-				Color colour = tint[row];
+				Color colour = tint_data[row];
 				const float *hsv = nullptr;
-				int32_t channel = base_channel[row];
+				int32_t channel = base_channel_data[row];
 				if (color == COLOR_DETAIL) {
-					colour = detail_tint[row];
-					channel = detail_channel[row];
+					colour = detail_tint_data[row];
+					channel = detail_channel_data[row];
 					if (row_flags & FLAG_DETAIL_HSV) hsv = dh + row * 5;
 				} else if (color == COLOR_BLACK) {
-					colour = Color(0.0f, 0.0f, 0.0f, tint[row].a);
+					colour = Color(0.0f, 0.0f, 0.0f, tint_data[row].a);
 					channel = -1;
 				} else if (row_flags & FLAG_BASE_HSV) {
 					hsv = bh + row * 5;
 				}
 				colour.a *= recipe.opacity;
 				record.color = colour;
-				record.base_alpha = base_alpha[row] * recipe.opacity;
+				record.base_alpha = base_alpha_data[row] * recipe.opacity;
 				if (hsv) {
 					for (int c = 0; c < 5; ++c) record.hsv[c] = hsv[c];
 					record.has_hsv = hsv[4] >= 0.0f;
@@ -11888,7 +11626,7 @@ public:
 				record.spin_radians = row_spin * 0.01745329251994329577f;
 				record.spin_pivot = transform.get_origin();
 				sprite.texture = recipe.texture;
-				sprite.z_order = z_order[row];
+				sprite.z_order = z_order_data[row];
 				sprite.draw_order = recipe.draw_order;
 				sprite.channel = channel;
 				sprite.glow_layer = (recipe.kind & GLOW_LAYER) != 0;
@@ -12025,9 +11763,19 @@ static void update_registered_decoration_renderers(double delta) {
 		}
 		decoration_cull_active_group = -1;
 	}
-	for (NativeDecorationRenderer *renderer : registered_decoration_renderers) {
-		if (!renderer) continue;
-		renderer->advance_animation(delta);
+	for (NativeDecorationRenderer *renderer : animated_decoration_renderers) {
+		if (renderer) renderer->advance_animation(delta);
+	}
+	for (auto dirty = dirty_decoration_renderers.begin(); dirty != dirty_decoration_renderers.end();) {
+		NativeDecorationRenderer *renderer = *dirty;
+		if (!renderer || registered_decoration_renderers.count(renderer) == 0) {
+			dirty = dirty_decoration_renderers.erase(dirty);
+			continue;
+		}
+		// flush_commands() may erase this renderer from the dirty set. Advance
+		// first so we can consume the set in place without allocating/copying a
+		// temporary vector on redraw frames.
+		++dirty;
 		renderer->flush_commands();
 	}
 	if (!pool || decoration_cull_active_group >= 0) return;

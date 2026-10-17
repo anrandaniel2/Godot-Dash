@@ -95,6 +95,19 @@ jobs:
           rm -f godot.zip
           chmod +x "$GODOT_BIN"
 
+      - name: Cache pinned Rapier2D package
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/godot-dash-rapier
+          key: rapier2d-v0.36.0-godot-4.7
+
+      - name: Install Rapier2D and select the desktop/Android backend
+        run: |
+          python3 tools/rapier_physics.py \
+            --project-root . \
+            --cache-dir "${{ runner.temp }}/godot-dash-rapier" \
+            --engine Rapier2D
+
       - name: Cache export templates
         uses: actions/cache@v4
         id: cache-templates
@@ -442,48 +455,6 @@ jobs:
           touch android/build/.gdignore android/plugins/.gdignore
           chmod +x android/build/gradlew
           test -f android/build/build.gradle && echo "template installed: $(ls android/build | head -5)"
-
-      # Android 15+ starts games at 60 Hz, and Godot 4.7's Swappy pacing takes
-      # its swap interval from the refresh period it measures at swapchain
-      # creation (rendering_device_driver_vulkan.cpp), so FPS stayed at 60 on
-      # 90/120 Hz phones. Requesting the fastest display mode before the
-      # surface exists lets Swappy measure that instead. Upstream fix pending:
-      # godotengine/godot#122904 (4.8). Engine.max_fps still applies the cap.
-      - name: Patch app activity (highest display refresh rate)
-        run: |
-          python3 - <<'PYEOF'
-          import glob, sys
-          files = glob.glob("android/build/**/GodotApp.java", recursive=True)
-          if not files:
-              sys.exit("GodotApp.java not found in the Android build template")
-          call = "super.onCreate(savedInstanceState);"
-          method = (
-              "\n\tprivate void requestHighestRefreshRate() {\n"
-              "\t\tif (android.os.Build.VERSION.SDK_INT < 23) return;\n"
-              "\t\tandroid.view.Display display = getWindowManager().getDefaultDisplay();\n"
-              "\t\tandroid.view.Display.Mode current = display.getMode();\n"
-              "\t\tandroid.view.Display.Mode best = current;\n"
-              "\t\tfor (android.view.Display.Mode mode : display.getSupportedModes()) {\n"
-              "\t\t\tif (mode.getPhysicalWidth() == current.getPhysicalWidth()\n"
-              "\t\t\t\t\t&& mode.getPhysicalHeight() == current.getPhysicalHeight()\n"
-              "\t\t\t\t\t&& mode.getRefreshRate() > best.getRefreshRate()) best = mode;\n"
-              "\t\t}\n"
-              "\t\tandroid.view.WindowManager.LayoutParams params = getWindow().getAttributes();\n"
-              "\t\tparams.preferredDisplayModeId = best.getModeId();\n"
-              "\t\tgetWindow().setAttributes(params);\n"
-              "\t}\n"
-          )
-          for path in files:
-              text = open(path).read()
-              if call not in text:
-                  sys.exit("onCreate super call not found in " + path)
-              text = text.replace(call, "requestHighestRefreshRate();\n\t\t" + call, 1)
-              end = text.rstrip().rfind("}")
-              text = text[:end] + method + text[end:]
-              open(path, "w").write(text)
-              print("patched", path)
-          PYEOF
-          grep -n "requestHighestRefreshRate\|onCreate" -A2 $(find android/build -name GodotApp.java) | head -30
 
       - name: Patch app manifest (largeHeap, game category)
         run: |
@@ -1072,11 +1043,15 @@ jobs:
           echo "--- export log GDExtension/gdash lines ---"
           grep -in "gdextension\|gdash\|no .* library\|Copying .so" godot_export.log || echo "(no matches)"
 
-      - name: Verify APK is arm64-v8a only and contains gdash_native
+      - name: Verify APK is arm64-v8a only and contains both physics/native extensions
         run: |
           set -euo pipefail
           echo "native libs inside APK:"
           unzip -l "$APK_PATH" | grep -E "lib/" || true
+          unzip -Z1 "$APK_PATH" | grep -Fq "libgodot_rapier.android.aarch64-linux-android.so" || {
+            echo "ERROR: Rapier2D Android arm64 extension is missing from the APK"
+            exit 1
+          }
 
           # Keep the APK single-ABI. export_presets.cfg enables only
           # architectures/arm64-v8a, but assert the final archive as well so a

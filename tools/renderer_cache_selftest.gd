@@ -65,7 +65,6 @@ func _ready() -> void:
 		RenderingServer.free_rid(probe)
 		_test_compact_spatial_reconfigure()
 		_test_draw_submission()
-		_test_gpu_renderer_backends()
 		_test_ordered_rect_submissions()
 		_test_hsv_snapshots()
 		print("RENDERER_CACHE_NOTE retained-command counters checked; no pixel/GPU validation")
@@ -166,39 +165,6 @@ func _test_draw_submission() -> void:
 		"reconfigure invalidates selection"
 	)
 	_check(_canvas.call(&"get_item_color", 0) == Color.BLUE, "reconfigure replaces record data")
-
-
-func _test_gpu_renderer_backends() -> void:
-	# Construction/state checks exercise real RenderingServer mesh and instance
-	# resources; they are not rendered-pixel, GPU-time, or parity evidence.
-	for backend: int in [1, 2]:
-		_canvas.call(&"set_render_backend", backend)
-		_configure(Color.WHITE, false)
-		_canvas.call(&"flush_commands")
-		_check(int(_canvas.call(&"last_drawn_count")) == 2, "GPU backend submits every record")
-		var expected_batches: int = 1
-		_check(
-			int(_canvas.call(&"draw_commands_last_rebuild")) == expected_batches,
-			"both GPU backends batch same-texture atlas regions",
-		)
-		var route_before: int = int(_canvas.call(&"route_rebuild_count", 0))
-		var commands_before: int = int(_canvas.call(&"command_rebuild_count"))
-		_canvas.call(&"set_item_color", 0, Color.GREEN)
-		_canvas.call(&"flush_commands")
-		_check(int(_canvas.call(&"command_rebuild_count")) == commands_before + 1, "GPU record update flushes")
-		_check(int(_canvas.call(&"route_rebuild_count", 0)) == route_before, "GPU attribute update retains route batch")
-		_canvas.call(&"set_item_transform", 0, Transform2D(0.1, Vector2(12, 12)))
-		_canvas.call(&"flush_commands")
-		_canvas.call(&"set_group_pulse", Color.RED, 0.5)
-		_canvas.call(&"flush_commands")
-		_canvas.call(&"set_group_pulse", Color.WHITE, 0.0)
-		_canvas.call(&"flush_commands")
-		_canvas.call(&"set_channel_blending", PackedInt32Array([0]), true)
-		_canvas.call(&"flush_commands")
-		_check(int(_canvas.call(&"last_drawn_count")) == 2, "GPU blend re-route preserves item count")
-	_canvas.call(&"set_render_backend", 0)
-	_configure(Color.WHITE, false)
-	_canvas.call(&"flush_commands")
 
 
 func _configure(color: Color, cull_records: bool = true, spin: float = 0.0) -> void:

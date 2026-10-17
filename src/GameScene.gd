@@ -85,6 +85,26 @@ func _ready() -> void:
 		_open_level_paced()
 
 
+## Reads and decodes the packed level on a worker. File access and Variant
+## decoding are CPU work; all scene, resource, and server mutations remain on
+## the main thread. Yielding while it runs keeps the loading scene responsive.
+func _load_level_data_off_thread(file_path: String) -> Dictionary:
+	var thread := Thread.new()
+	var start_error: Error = thread.start(
+		Callable(LevelOperationsHandler, "load_level_data_from_path").bind(file_path)
+	)
+	if start_error != OK:
+		push_warning(
+			"Could not start level decode worker (%s); decoding on the main thread."
+			% error_string(start_error)
+		)
+		return LevelOperationsHandler.load_level_data_from_path(file_path)
+	while thread.is_alive():
+		await get_tree().process_frame
+	var result: Variant = thread.wait_to_finish()
+	return result if result is Dictionary else { }
+
+
 ## Opens the level on device without freezing the app: the level is built a
 ## few milliseconds at a time across frames (see LevelBuildJob), so a large
 ## level shows a loading pause instead of an Android ANR dialog, then plays.
@@ -99,12 +119,17 @@ func _open_level_paced() -> void:
 	if not should_use_practice_snapshot:
 		for checkpoint in checkpoint_parent.get_children():
 			checkpoint.queue_free()
+	var level_decode_ms: float = 0.0
 	if LevelManager.current_level_path != cached_level_path:
 		cached_level_path = LevelManager.current_level_path
-		cached_level_data = LevelOperationsHandler.load_level_data_from_path(LevelManager.current_level_path)
+		var decode_started_usec: int = Time.get_ticks_usec()
+		cached_level_data = await _load_level_data_off_thread(LevelManager.current_level_path)
+		level_decode_ms = (Time.get_ticks_usec() - decode_started_usec) / 1000.0
+		print("[gdash-perf] packed level decode: %.1f ms" % level_decode_ms)
 		# This decode is unavoidable (the level is about to be built), so write
 		# the metadata sidecar here: the community list reads only sidecars and
-		# must never decode a level itself.
+		# must never decode a level itself. Keep this write on the main thread;
+		# the worker is limited to reading/decompressing/decoding the data.
 		LevelOperationsHandler.write_level_meta(LevelManager.current_level_path, cached_level_data)
 	# A practice snapshot is usable as full level data: practice checkpoints
 	# duplicate the whole level (see CheckpointPlacementBuilder), so a scene

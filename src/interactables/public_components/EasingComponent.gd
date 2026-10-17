@@ -18,6 +18,9 @@ enum Action {
 @export_range(0.0, 5.0, 0.01, "or_greater", "suffix:s") var duration: float = 1.0
 @export var easing_type: Tween.EaseType = Tween.EASE_IN_OUT
 @export var easing_transition: Tween.TransitionType
+## Imported Geometry Dash easing curve/rate. -1 keeps user-authored Godot Tween settings.
+@export_storage var gd_easing_id: int = -1
+@export_storage var gd_easing_rate: float = 2.0
 
 @export_group("Fade In:open", "fade_in_")
 @export_range(0.0, 5.0, 0.01, "or_greater", "suffix:s") var fade_in_duration: float = 0.5
@@ -127,6 +130,8 @@ func _get_property_default_value(property: String) -> Variant:
 		"duration": 1.0,
 		"easing_type": Tween.EASE_IN_OUT,
 		"easing_transition": Tween.TRANS_LINEAR,
+		"gd_easing_id": -1,
+		"gd_easing_rate": 2.0,
 		# Pulse
 		"fade_in_duration": 0.5,
 		"fade_in_easing_type": Tween.EASE_IN_OUT,
@@ -177,13 +182,20 @@ func start(player: Player) -> void:
 	tweens[player] = create_tween()
 	_set_processing_active(true)
 	var tween_weight := func(value: float): weights[player] = value
+	var gd_tween_weight := func(value: float):
+		weights[player] = gd_easing_weight(gd_easing_id, gd_easing_rate, value)
 	tweens[player].set_process_mode(Tween.TWEEN_PROCESS_PHYSICS if _use_physics_process else Tween.TWEEN_PROCESS_IDLE)
 	tweens[player].set_ignore_time_scale(ignore_time_scale)
 	if action == Action.CHANGE:
+		var callback: Callable = gd_tween_weight if gd_easing_id >= 0 else tween_weight
+		var transition: Tween.TransitionType = (
+			Tween.TRANS_LINEAR if gd_easing_id >= 0 else easing_transition
+		)
+		var ease: Tween.EaseType = Tween.EASE_IN_OUT if gd_easing_id >= 0 else easing_type
 		tweens[player] \
-				.tween_method(tween_weight, 0.0, 1.0, duration) \
-				.set_trans(easing_transition) \
-				.set_ease(easing_type)
+				.tween_method(callback, 0.0, 1.0, duration) \
+				.set_trans(transition) \
+				.set_ease(ease)
 	elif action == Action.PULSE:
 		tweens[player] \
 				.tween_method(tween_weight, 0.0, 1.0, fade_in_duration) \
@@ -206,6 +218,65 @@ func start(player: Player) -> void:
 			if tweens.is_empty():
 				_set_processing_active(false)
 	)
+
+
+## Geometry Dash's easing curve evaluator, mirrored from the native runtime so
+## editor/fallback triggers can honor both the easing id and key-85 rate.
+static func gd_easing_weight(easing_id: int, rate: float, t: float) -> float:
+	var x: float = clampf(t, 0.0, 1.0)
+	if easing_id <= 0 or easing_id > 18:
+		return x
+	if x == 0.0 or x == 1.0:
+		return x
+	if not (rate > 0.0):
+		rate = 2.0
+	var family: int = floori(float(easing_id - 1) / 3.0)
+	var mode: int = (easing_id - 1) % 3
+	if mode == 1:
+		return _gd_ease_in(family, rate, x)
+	if mode == 2:
+		if family == 0:
+			return pow(x, 1.0 / rate)
+		return 1.0 - _gd_ease_in(family, rate, 1.0 - x)
+	if x < 0.5:
+		return _gd_ease_in(family, rate, 2.0 * x) * 0.5
+	return 1.0 - _gd_ease_in(family, rate, 2.0 - 2.0 * x) * 0.5
+
+
+static func _gd_ease_in(family: int, rate: float, x: float) -> float:
+	if x <= 0.0:
+		return 0.0
+	if x >= 1.0:
+		return 1.0
+	match family:
+		0:
+			# The GD easing curve stays linear through the first percent.
+			return x * pow(0.01, rate - 1.0) if x <= 0.01 else pow(x, rate)
+		1:
+			return pow(2.0, 10.0 * (x - 1.0)) * sin(PI * (0.5 + (2.0 - 2.0 * x) / rate))
+		2:
+			return 1.0 - _gd_bounce_out(1.0 - x)
+		3:
+			return pow(2.0, 10.0 * (x - 1.0))
+		4:
+			return 1.0 - cos(0.5 * PI * x)
+		_:
+			return 3.5949095 * x * x * x - 2.5949095 * x * x
+
+
+static func _gd_bounce_out(t: float) -> float:
+	const C1: float = 7.5625
+	const C2: float = 2.75
+	if t < 1.0 / C2:
+		return C1 * t * t
+	if t < 2.0 / C2:
+		var x1: float = t - 1.5 / C2
+		return C1 * x1 * x1 + 0.75
+	if t < 2.5 / C2:
+		var x2: float = t - 2.25 / C2
+		return C1 * x2 * x2 + 0.9375
+	var x3: float = t - 2.625 / C2
+	return C1 * x3 * x3 + 0.984375
 
 
 func get_weight_delta(player: Player) -> float:

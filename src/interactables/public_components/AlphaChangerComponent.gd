@@ -126,6 +126,8 @@ func start(_player: Player) -> void:
 
 
 func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
+	# Back/elastic easing can overshoot; Geometry Dash group opacity is clamped
+	# on each update, so keep both node and batched-decoration paths in [0, 1].
 	for hsv_watcher: HSVWatcher in group_hsv_watchers:
 		# Defensive: an entry can still be missing if the object was freed after
 		# start() ran, and reading .alpha off nothing would take down the frame.
@@ -134,12 +136,24 @@ func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
 		var initial_alpha: float = initial_alphas.get(hsv_watcher, hsv_watcher.alpha)
 		match mode:
 			Mode.SET:
-				hsv_watcher.alpha += (alpha - initial_alpha) * weight_delta
+				hsv_watcher.alpha = clampf(
+					hsv_watcher.alpha + (alpha - initial_alpha) * weight_delta, 0.0, 1.0
+				)
 			Mode.MULTIPLY:
-				hsv_watcher.alpha += (alpha * initial_alpha - initial_alpha) * weight_delta
+				hsv_watcher.alpha = clampf(
+					hsv_watcher.alpha + (alpha * initial_alpha - initial_alpha) * weight_delta,
+					0.0,
+					1.0,
+				)
 			Mode.COPY:
 				if copy_target_hsv_watcher:
-					hsv_watcher.alpha += (copy_target_hsv_watcher.alpha * copy_multiplier - initial_alpha) * weight_delta
+					hsv_watcher.alpha = clampf(
+						hsv_watcher.alpha
+						+ (copy_target_hsv_watcher.alpha * copy_multiplier - initial_alpha)
+						* weight_delta,
+						0.0,
+					1.0,
+					)
 		hsv_watcher.update_color()
 
 	for batch: DecorationBatch in _group_batches:
@@ -153,4 +167,6 @@ func _on_easing_progressed(_player: Player, weight_delta: float) -> void:
 			Mode.COPY:
 				if copy_target_hsv_watcher:
 					target_alpha = copy_target_hsv_watcher.alpha * copy_multiplier
-		batch.modulate.a += (target_alpha - initial_batch_alpha) * weight_delta
+		batch.modulate.a = clampf(
+			batch.modulate.a + (target_alpha - initial_batch_alpha) * weight_delta, 0.0, 1.0
+		)

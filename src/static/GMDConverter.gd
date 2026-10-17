@@ -63,6 +63,7 @@ const Prop := {
 	DEGREES = "68",
 	SINGLE_GROUP = "33", # legacy single group ID, still used by many objects
 	EASING = "30",
+	EASING_RATE = "85",
 	FADE_IN = "45",
 	HOLD = "46",
 	FADE_OUT = "47",
@@ -1646,6 +1647,8 @@ static func _components_from_properties(
 			"duration": maxf(0.0, float(properties.get(Prop.DURATION, "0"))),
 			"easing_type": easing[0],
 			"easing_transition": easing[1],
+			"gd_easing_id": int(properties.get(Prop.EASING, "0")),
+			"gd_easing_rate": float(properties.get(Prop.EASING_RATE, "2")),
 		}
 		# Pulse style triggers carry a fade in / hold / fade out envelope.
 		if properties.has(Prop.FADE_IN) or properties.has(Prop.HOLD) or properties.has(Prop.FADE_OUT):

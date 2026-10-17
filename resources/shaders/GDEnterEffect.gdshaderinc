@@ -34,10 +34,6 @@ global uniform mat4 gd_exit_custom_fade;
 global uniform mat4 gd_exit_custom_tint;
 
 uniform bool enabled = true;
-// Native A/B renderer variants use per-material uniforms; defaults retain the
-// existing CanvasItem shader behavior on every renderer, including WebGL2.
-uniform bool gd_multimesh_batch = false;
-uniform bool gd_mesh_batch = false;
 // Per-object enter settings, set on keyed copies of the shared material
 // (EnterMaterials): 1 Don't Fade (key 64), 2 Don't Enter (key 67).
 // NamuWiki trigger list (Enter triggers): Don't Fade drops the enter fade,
@@ -120,16 +116,12 @@ float gd_hash(vec2 p) {
 }
 
 void vertex() {
-	// MultiMesh's instance transform already places the object origin in MODEL_MATRIX;
-	// custom data is therefore available for this instance's atlas UV rectangle.
-	vec2 object_center = gd_mesh_batch ? CUSTOM0.xy : vec2(0.0);
-	if (gd_multimesh_batch) UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;
-	screen_position = (SCREEN_MATRIX * CANVAS_MATRIX * MODEL_MATRIX * vec4(object_center, 0.0, 1.0)).xy;
+	screen_position = (SCREEN_MATRIX * CANVAS_MATRIX * MODEL_MATRIX * vec4(vec2(0.0), 0.0, 1.0)).xy;
 	screen_uv = (SCREEN_MATRIX * CANVAS_MATRIX * MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy * 0.5 + 0.5;
 	gd_fade = 1.0;
 	gd_tint = vec4(0.0);
 	if (enabled && gd_enter_effect >= 0) {
-		vec2 world_center = (MODEL_MATRIX * vec4(object_center, 0.0, 1.0)).xy;
+		vec2 world_center = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xy;
 		vec2 view_center = (CANVAS_MATRIX * vec4(world_center, 0.0, 1.0)).xy;
 		float px_per_unit = max(length(CANVAS_MATRIX[0].xy) * GD_UNIT_PX, 0.0001);
 		float view_width = 2.0 / abs(SCREEN_MATRIX[0][0]) / px_per_unit;
@@ -198,7 +190,7 @@ void vertex() {
 	} else if (enabled) {
 		float power = (1.0 - abs(screen_position.x)) * (1.0 / (transition_width * 0.02));
 		power = 1.0 - pow(1.0 - clamp(power, 0.0, 1.0), 2.0);
-		vec2 world_center = (MODEL_MATRIX * vec4(object_center, 0.0, 1.0)).xy;
+		vec2 world_center = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xy;
 		VERTEX = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy - world_center;
 		if (scale_power != 0.0) {
 			VERTEX = mix(1, power, scale_power) > .0 ? mix(VERTEX, VERTEX * power, scale_power) : vec2(0, 0);

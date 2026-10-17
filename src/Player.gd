@@ -1,6 +1,30 @@
 class_name Player
 extends CharacterBody2D
 
+## Collision adapter for a PhysicsServer2D body_test_motion result. The player's
+## CharacterBody2D still owns its RID and slide state, while the high-frequency
+## speculative probes use the same direct server API as the merged level world.
+class _PhysicsServerCollision extends RefCounted:
+	var result: PhysicsTestMotionResult2D
+
+	func get_angle(up_direction: Vector2) -> float:
+		var normal := result.get_collision_normal().normalized()
+		if normal.is_zero_approx() or up_direction.is_zero_approx():
+			return 0.0
+		return acos(clampf(up_direction.normalized().dot(normal), -1.0, 1.0))
+
+	func get_collider() -> Object:
+		return result.get_collider()
+
+	func get_position() -> Vector2:
+		return result.get_collision_point()
+
+	func get_normal() -> Vector2:
+		return result.get_collision_normal()
+
+	func get_collider_shape_index() -> int:
+		return result.get_collider_shape()
+
 signal hit_ceiling(player: Player)
 signal gravity_flip_changed(flip: int)
 
@@ -148,7 +172,7 @@ var speed: Vector2:
 var dash_control: FireDashComponent = null
 var speed_0_portal_control: Interactable = null
 var slope_velocity: Vector2
-var last_collision: KinematicCollision2D
+var last_collision: _PhysicsServerCollision
 var floor_angle_history: Array[float]
 var floor_angle_average: float
 var sprite_floor_angle: float
@@ -261,6 +285,9 @@ var _just_spawned: bool = false
 @onready var _debug_trail: Line2D = $DebugTrail
 
 var _physics_params: PackedFloat64Array = PackedFloat64Array()
+var _server_motion_parameters: PhysicsTestMotionParameters2D
+var _server_motion_result: PhysicsTestMotionResult2D
+var _server_collision: _PhysicsServerCollision
 ## A press taken by a Claim Touch toggle block (3643) until its release.
 var _jump_claimed: bool = false
 ## Enable / Disable Trail triggers (32 / 33): an afterimage of the primary
@@ -280,6 +307,10 @@ var _ghost_timer: float = 0.0
 
 func _ready() -> void:
 	_physics_params.resize(31)
+	_server_motion_parameters = PhysicsTestMotionParameters2D.new()
+	_server_motion_result = PhysicsTestMotionResult2D.new()
+	_server_collision = _PhysicsServerCollision.new()
+	_server_collision.result = _server_motion_result
 	refresh_textures()
 	set_meta(Constants.HSV_WATCHER_META, $"HSVWatcher")
 	platform_on_leave = PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_UPWARD_VELOCITY if not LevelManager.platformer else PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_VELOCITY
@@ -336,18 +367,18 @@ func _physics_process(delta: float) -> void:
 	var gravity_down := -up_direction
 	if gravity_down.is_zero_approx():
 		gravity_down = Vector2.DOWN
-	last_collision = move_and_collide(speed.y * gravity_down * delta, true)
+	last_collision = _server_test_motion(speed.y * gravity_down * delta)
 	_handle_collision(last_collision, true)
 
 	for i in range(2):
-		last_collision = move_and_collide(velocity * delta, true)
+		last_collision = _server_test_motion(velocity * delta)
 		if last_collision == null:
 			break
 		var prev_shape: Shape2D = _ground_collider.shape
 		_handle_collision(last_collision, i != 0)
 		# Collide along gravity so the wave can crash into the surface it falls toward
 		if internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0:
-			last_collision = move_and_collide(speed.y * gravity_down * delta, true)
+			last_collision = _server_test_motion(speed.y * gravity_down * delta)
 			_handle_collision(last_collision, true)
 		if _ground_collider.shape == prev_shape:
 			break
@@ -659,7 +690,21 @@ func _should_process() -> bool:
 	return LevelManager.level_playing and not dead and not in_end_level_animation
 
 
-func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: bool) -> void:
+## Tests one speculative player motion directly against the physics server.
+## The same CharacterBody2D RID is retained for move_and_slide() so Godot's
+## floor/slide state and all gameplay-facing player behavior stay unchanged.
+func _server_test_motion(motion: Vector2) -> _PhysicsServerCollision:
+	if _server_motion_parameters == null or _server_motion_result == null or not get_rid().is_valid():
+		return null
+	_server_motion_parameters.set_from(global_transform)
+	_server_motion_parameters.set_motion(motion)
+	_server_motion_parameters.set_margin(safe_margin)
+	if not PhysicsServer2D.body_test_motion(get_rid(), _server_motion_parameters, _server_motion_result):
+		return null
+	return _server_collision
+
+
+func _handle_collision(collision: _PhysicsServerCollision, is_refine_iteration: bool) -> void:
 	if not collision:
 		return
 	var flags: int = NativeCore.backend().call(&"classify_collision_flags", collision.get_angle(up_direction), floor_max_angle)
@@ -679,27 +724,31 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 					or (internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0)
 			)
 	):
-		var collider := collision.get_collider() as CollisionObject2D
-		if collider != null and collider.collision_layer & 1 << 1:
+		var collider := collision.get_collider() as Node
+		var collider_layer := 0
+		if collider != null:
 			if LevelPhysics.is_shared_body(collider):
-				# The level's shared static body: collision layers are per-body,
-				# so a single block can't be re-layered. Disable the exact shape
-				# the player hit instead - a dashing spider passes through, and
-				# any other mode dies through the same path the kill collider
-				# uses. LevelPhysics.prepare() re-enables the shape on the next
-				# attempt.
-				var shape := _collided_shared_shape(collision)
+				collider_layer = int(collider.get_meta(LevelPhysics.SERVER_LAYER_META, 0))
+			elif collider is CollisionObject2D:
+				collider_layer = collider.collision_layer
+		if collider != null and collider_layer & 1 << 1:
+			if LevelPhysics.is_shared_body(collider):
+				# Shared static geometry is now a PhysicsServer2D RID. Resolve the
+				# reported shape index through its owner-node map, and disable that
+				# exact server shape so spider-dash pass-through remains unchanged.
+				var shape_data := _collided_shared_shape_data(collision)
+				var shape: Shape2D = shape_data.get("resource")
+				var shape_transform: Transform2D = collider.global_transform * shape_data.get("transform", Transform2D.IDENTITY)
 				print("[gdash-kill] shared hit collider=%s at=%s normal=%s shape=%s wall=%s ceiling=%s" % [
 						str(collider.name), str(collision.get_position()), str(collision.get_normal()),
-						str(shape.shape.get_rect()) if shape != null and shape.shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
+						str(shape.get_rect()) if shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
 				# GD units with the same conversion as the solid line below (y is -probe y).
 				var hit_level := LevelManager.current_level
 				if shape != null and hit_level != null:
-					var shape_gd := hit_level.to_local(shape.global_position) * 30.0 / 128.0
+					var shape_gd := hit_level.to_local(shape_transform.origin) * 30.0 / 128.0
 					var cube_at_hit := hit_level.to_local(global_position) * 30.0 / 128.0
 					print("[gdash-kill] shared shape_gd=(%.2f,%.2f) cube_gd=(%.2f,%.2f) mode=%d" % [shape_gd.x, shape_gd.y, cube_at_hit.x, cube_at_hit.y, internal_gamemode])
-				if shape != null:
-					shape.set_deferred(&"disabled", true)
+				LevelPhysics.disable_shared_shape(collider, collision.get_collider_shape_index())
 				if _spider_dash_frames == 0 and not Config.noclip:
 					_death_animator.play("DeathAnimation")
 			else:
@@ -707,10 +756,11 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 				# objects): move it to the solid_overlap_check layer (1 << 9)
 				# so it stops blocking, the kill collider finishes the job, and
 				# SolidOverlapCheck's body_exited restores it - as before.
-				collider.collision_layer = 1 << 9
-				var hitbox := collider.get_node_or_null(^"Hitbox")
-				if hitbox is CollisionShape2D:
-					hitbox.debug_color.s = 0.0 # DEBUG: Hardcoded name for hitbox color
+				if collider is CollisionObject2D:
+					collider.collision_layer = 1 << 9
+					var hitbox := collider.get_node_or_null(^"Hitbox")
+					if hitbox is CollisionShape2D:
+						hitbox.debug_color.s = 0.0 # DEBUG: Hardcoded name for hitbox color
 	if is_ceiling and allow_ceiling_hit_count > 0:
 		hit_ceiling.emit(self)
 	if is_slope:
@@ -731,19 +781,13 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 			_ground_particles.add_child(ground_hit_particles)
 
 
-## The CollisionShape2D on the level's shared physics body that a collision
-## report hit, resolved by the collider's shape index. Null when the collider
-## has no shape (or isn't a shared body).
-func _collided_shared_shape(collision: KinematicCollision2D) -> CollisionShape2D:
-	var body := collision.get_collider() as CollisionObject2D
-	if body == null:
-		return null
-	var shape_index := collision.get_collider_shape_index()
-	var owner_id := body.shape_find_owner(shape_index)
-	if owner_id == -1:
-		return null
-	var shape := body.shape_owner_get_owner(owner_id)
-	return shape as CollisionShape2D
+## Shape metadata for a collision against a shared PhysicsServer2D RID,
+## resolved by the server collider's reported shape index.
+func _collided_shared_shape_data(collision: _PhysicsServerCollision) -> Dictionary:
+	var owner := collision.get_collider() as Node
+	if not LevelPhysics.is_shared_body(owner):
+		return {}
+	return LevelPhysics.shared_shape_data(owner, collision.get_collider_shape_index())
 
 
 ## Jump input for this tick: the replay's while playing one back, the live action otherwise.
@@ -991,7 +1035,7 @@ func _compute_velocity(
 		gravity_flip *= -1
 		allow_ceiling_hit_count += 1
 		up_direction = Vector2.UP.rotated(gameplay_rotation) * sign(gravity_flip)
-		last_collision = move_and_collide(displacement.normalized() * Constants.CELL_SIZE, true)
+		last_collision = _server_test_motion(displacement.normalized() * Constants.CELL_SIZE)
 		_ground_collider.rotation = gameplay_rotation
 		_handle_collision(last_collision, false)
 		allow_ceiling_hit_count -= 1
@@ -1091,7 +1135,7 @@ func _handle_velocity_interactable(local_velocity: Vector2, interactable: Intera
 			allow_ceiling_hit_count += 1
 			# Force up direction update in order for _handle_collision to work properly
 			up_direction = Vector2.UP.rotated(gameplay_rotation) * sign(gravity_flip)
-			last_collision = move_and_collide(displacement.normalized() * Constants.CELL_SIZE, true)
+			last_collision = _server_test_motion(displacement.normalized() * Constants.CELL_SIZE)
 			_ground_collider.rotation = gameplay_rotation
 			_handle_collision(last_collision, false)
 			allow_ceiling_hit_count -= 1
@@ -1605,17 +1649,16 @@ func _kill_collider_overlaps(hitboxes: Array, source: Node2D) -> bool:
 
 
 func _on_solid_overlap_check_body_exited(body: Node2D) -> void:
-	if body == null:
+	if body == null or LevelPhysics.is_shared_body(body):
 		return
-	body = body as CollisionObject2D
-	# Shared level bodies never get re-layered by lethal hits; only per-object
-	# bodies (trigger-animated / pushable solids) do, and those keep a Hitbox
-	# child to restore the debug colour on.
-	if LevelPhysics.is_shared_body(body):
+	# Shared PhysicsServer RID owners are plain Node2Ds and are handled above.
+	# Dynamic, per-object bodies remain CollisionObject2D nodes as before.
+	var collision_body := body as CollisionObject2D
+	if collision_body == null:
 		return
-	body.collision_layer = 1 << 1
-	if body.has_node(^"Hitbox"):
-		body.get_node(^"Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
+	collision_body.collision_layer = 1 << 1
+	if collision_body.has_node(^"Hitbox"):
+		collision_body.get_node(^"Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
 
 
 ## Called by the native trigger runtime when a GD checkpoint (2063) is

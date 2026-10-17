@@ -276,17 +276,44 @@ func _test_invisible_blocks() -> void:
 ## empty frame. They must not import as the generated solid 60-unit box: at the
 ## Amethyst start, stacked copies at x~300 walled off the UFO portal from the red pad.
 func _test_slope_bodies_are_solid() -> void:
-	# Merged slopes share one body. It must be a StaticBody2D: the cube's
-	# CharacterBody2D passes straight through an Area2D.
+	# Merged slopes are direct static PhysicsServer2D RIDs, not physics nodes.
 	var container := Node2D.new()
-	var body := LevelPhysics._body_for({}, container, LevelPhysics.SLOPE_LAYER, 0)
+	get_tree().root.add_child(container)
+	var owner := LevelPhysics._body_for({}, container, LevelPhysics.SLOPE_LAYER, 0)
+	var rid: RID = owner.get_meta(LevelPhysics.SERVER_RID_META)
+	assert(rid.is_valid(), "slope smoke: direct server body RID was not created")
+	assert(owner is not CollisionObject2D, "slope smoke: physics object node was retained")
 	assert(
-		body is StaticBody2D,
-		"slope smoke: merged slope body is %s, not a StaticBody2D" % body.get_class()
+		PhysicsServer2D.body_get_collision_layer(rid) == LevelPhysics.SLOPE_LAYER,
+		"slope smoke: slope RID lost its collision layer"
 	)
 	assert(
-		body.collision_layer == LevelPhysics.SLOPE_LAYER, "slope smoke: slope body lost its layer"
+		PhysicsServer2D.body_get_mode(rid) == PhysicsServer2D.BODY_MODE_STATIC,
+		"slope smoke: slope RID is not static"
 	)
+	var source := Node2D.new()
+	container.add_child(source)
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(32.0, 32.0)
+	var contributed := LevelPhysics._commit_server_shapes(
+		owner,
+		source,
+		[{"resource": shape, "local_xform": Transform2D.IDENTITY}],
+	)
+	assert(contributed == [0], "slope smoke: direct server shape index map is wrong")
+	assert(PhysicsServer2D.body_get_shape_count(rid) == 1, "slope smoke: shape was not added to server RID")
+	assert(
+		LevelPhysics.shared_shape_data(owner, 0).get("resource") == shape,
+		"slope smoke: server shape metadata cannot be resolved"
+	)
+	var hazard_owner := LevelPhysics._body_for(
+		{}, container, LevelPhysics.RECT_HAZARD_LAYER, 0
+	)
+	assert(hazard_owner is Area2D, "hazard smoke: direct area lacks an Area2D signal adapter")
+	var hazard_rid: RID = hazard_owner.get_meta(LevelPhysics.SERVER_RID_META)
+	assert(PhysicsServer2D.area_get_collision_layer(hazard_rid) == LevelPhysics.RECT_HAZARD_LAYER,
+		"hazard smoke: direct area lost its collision layer")
+	LevelPhysics._free_server_bodies(container)
 	container.free()
 
 
@@ -830,30 +857,13 @@ func _setup_native_renderer_parity_smoke() -> void:
 
 
 func _check_native_renderer_pixel_parity() -> bool:
-	# Keep the current retained CanvasItem path as the reference, then render
-	# each opt-in Windows backend into the same viewport and compare to the
-	# direct texture-rectangle baseline. This is visual parity only, not FPS.
+	# Compare the retained native CanvasItem path with direct texture rectangles.
 	var server_image := _renderer_viewport.get_texture().get_image()
 	if server_image == null or server_image.is_empty():
 		push_error("native smoke: native renderer pixel parity viewport capture failed")
 		return false
 	if not _compare_native_renderer_image(server_image, "RenderingServer"):
 		return false
-	for backend: int in [1, 2]:
-		_renderer_parity_canvas.call(&"set_render_backend", backend)
-		_renderer_parity_canvas.call(&"update_camera_range")
-		_renderer_parity_canvas.call(&"flush_commands")
-		await get_tree().process_frame
-		await get_tree().process_frame
-		var backend_image := _renderer_viewport.get_texture().get_image()
-		if backend_image == null or backend_image.is_empty():
-			push_error("native smoke: backend %d viewport capture failed" % backend)
-			return false
-		if not _compare_native_renderer_image(backend_image, "GDClone" if backend == 1 else "OpenDash"):
-			return false
-	_renderer_parity_canvas.call(&"set_render_backend", 0)
-	_renderer_parity_canvas.call(&"update_camera_range")
-	_renderer_parity_canvas.call(&"flush_commands")
 	return true
 
 
@@ -902,7 +912,7 @@ func _compare_native_renderer_image(parity_image: Image, backend_name: String) -
 					first_reference = reference_pixel
 	print(
 		(
-			"RENDERER_BACKEND_PIXEL_PARITY backend=%s pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
+			"RENDERER_CANVAS_PIXEL_PARITY path=%s pixels=%d mismatches=%d covered=%d/%d first=%s first_colors=%s/%s max_delta=%.6f max_delta_pixel=%s"
 			% [
 				backend_name,
 				96 * 96,
@@ -959,6 +969,18 @@ func _process(_delta: float) -> void:
 			int(render_stats.get("canvases", 0)) <= 0
 			or int(render_stats.get("batch_owner_nodes", 0)) <= 0
 			or int(render_stats.get("canvas_draw_commands", 0)) <= 0
+			or int(render_stats.get("canvas_transform_commands", -1)) < 0
+			or (
+				int(render_stats.get("canvas_transform_commands", 0))
+				> int(render_stats.get("canvas_draw_commands", 0))
+			)
+			or (
+				int(render_stats.get("canvas_transform_commands_saved", -1))
+				!= (
+					int(render_stats.get("canvas_draw_commands", 0))
+					- int(render_stats.get("canvas_transform_commands", 0))
+				)
+			)
 			or render_stats.get("culled_canvases") != render_stats.get("canvases")
 			or int(render_stats.get("submitted_records", 0)) >= int(render_stats.get("records", 0))
 		):

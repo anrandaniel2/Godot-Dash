@@ -1,8 +1,6 @@
 # Opt-in capture. No settings, visibility, physics or frame caps are changed.
 # Run from PowerShell:
 #   .\Profile-Windows.ps1
-#   .\Profile-Windows.ps1 -Executable '.\GDClone\Godot Dash.exe'
-#   .\Profile-Windows.ps1 -Executable '.\OpenDash\Godot Dash.exe'
 param(
     [string]$Executable = '.\Godot Dash.exe'
 )
@@ -14,7 +12,7 @@ $frames = Join-Path $folder 'frames.csv'
 $log = Join-Path $folder 'game.log'
 $memory = Join-Path $folder 'memory.csv'
 $exeCandidate = if ([IO.Path]::IsPathRooted($Executable)) { $Executable } else { Join-Path $PSScriptRoot $Executable }
-if (!(Test-Path -LiteralPath $exeCandidate -PathType Leaf)) { throw "Executable not found: $exeCandidate. Extract the complete Windows ZIP and pass a renderer path such as '.\GDClone\Godot Dash.exe'." }
+if (!(Test-Path -LiteralPath $exeCandidate -PathType Leaf)) { throw "Executable not found: $exeCandidate. Extract the complete Windows ZIP first." }
 $exe = (Resolve-Path -LiteralPath $exeCandidate).Path
 $workingDirectory = Split-Path -Parent $exe
 $arguments = @('--rendering-method', 'forward_plus', '--log-file', "`"$log`"", '--', '--perf-capture', "`"--perf-output=$frames`"")
