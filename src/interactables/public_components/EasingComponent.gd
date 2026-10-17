@@ -182,16 +182,23 @@ func start(player: Player) -> void:
 	tweens[player] = create_tween()
 	_set_processing_active(true)
 	var tween_weight := func(value: float): weights[player] = value
+	var use_custom_gd_easing: bool = uses_custom_gd_easing(
+		gd_easing_id, gd_easing_rate
+	)
 	var gd_tween_weight := func(value: float):
 		weights[player] = gd_easing_weight(gd_easing_id, gd_easing_rate, value)
 	tweens[player].set_process_mode(Tween.TWEEN_PROCESS_PHYSICS if _use_physics_process else Tween.TWEEN_PROCESS_IDLE)
 	tweens[player].set_ignore_time_scale(ignore_time_scale)
 	if action == Action.CHANGE:
-		var callback: Callable = gd_tween_weight if gd_easing_id >= 0 else tween_weight
+		# Keep the common/default curve on Godot's native Tween easing path.
+		# A script callback on every tween step is only needed for a non-default
+		# Geometry Dash easing rate; id 0 and rate 2 map to the existing native
+		# transition/ease pair produced by GMDConverter.
+		var callback: Callable = gd_tween_weight if use_custom_gd_easing else tween_weight
 		var transition: Tween.TransitionType = (
-			Tween.TRANS_LINEAR if gd_easing_id >= 0 else easing_transition
+			Tween.TRANS_LINEAR if use_custom_gd_easing else easing_transition
 		)
-		var ease: Tween.EaseType = Tween.EASE_IN_OUT if gd_easing_id >= 0 else easing_type
+		var ease: Tween.EaseType = Tween.EASE_IN_OUT if use_custom_gd_easing else easing_type
 		tweens[player] \
 				.tween_method(callback, 0.0, 1.0, duration) \
 				.set_trans(transition) \
@@ -218,6 +225,17 @@ func start(player: Player) -> void:
 			if tweens.is_empty():
 				_set_processing_active(false)
 	)
+
+
+## Use the GDScript curve only when Geometry Dash's non-default key-85 rate
+## cannot be represented by the imported Tween transition. The default rate is
+## already encoded in easing_type/easing_transition and uses Godot's native
+## easing implementation, avoiding one script callback per active tween step.
+static func uses_custom_gd_easing(easing_id: int, rate: float) -> bool:
+	if easing_id <= 0 or easing_id > 18:
+		return false
+	var effective_rate: float = rate if rate > 0.0 else 2.0
+	return not is_equal_approx(effective_rate, 2.0)
 
 
 ## Geometry Dash's easing curve evaluator, mirrored from the native runtime so

@@ -41,6 +41,22 @@ func _test_easing_rate() -> void:
 	_check(int(easing.get("gd_easing_id", -1)) == 2, "Move import retains GD easing id")
 	_check(is_equal_approx(float(easing.get("gd_easing_rate", 0.0)), 3.0), "Move import retains key-85 easing rate")
 	_check(
+		not EasingComponent.uses_custom_gd_easing(0, 2.0),
+		"default GD easing stays on native Tween path",
+	)
+	_check(
+		not EasingComponent.uses_custom_gd_easing(2, 2.0),
+		"default-rate GD easing avoids per-step script callbacks",
+	)
+	_check(
+		EasingComponent.uses_custom_gd_easing(2, 3.0),
+		"non-default key-85 rate uses custom easing",
+	)
+	_check(
+		not EasingComponent.uses_custom_gd_easing(2, 0.0),
+		"invalid rate falls back to native default easing",
+	)
+	_check(
 		is_equal_approx(EasingComponent.gd_easing_weight(2, 3.0, 0.5), 0.125),
 		"custom ease-in rate changes curve exponent",
 	)
