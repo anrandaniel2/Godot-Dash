@@ -37,12 +37,6 @@ static std::vector<size_t> oracle(const DecorationSections &sections, const Deco
 }
 
 static void test_parity() {
-	require(DecorationRange{-2, 8, -1, 6}.contains({0, 7, 0, 5}),
-			"worker overscan must contain the current camera range");
-	require(!DecorationRange{-2, 8, -1, 6}.contains({0, 9, 0, 5}),
-			"a teleported camera outside worker overscan must be rejected");
-	require(!DecorationRange{-2, 8, -1, 6}.contains({0, 7, -2, 5}),
-			"a vertically stale worker range must be rejected");
 	std::mt19937 rng(20261014);
 	DecorationSections sections;
 	for (size_t i = 0; i < 1000; ++i) {

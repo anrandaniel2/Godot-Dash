@@ -176,7 +176,11 @@ func _test_gpu_renderer_backends() -> void:
 		_configure(Color.WHITE, false)
 		_canvas.call(&"flush_commands")
 		_check(int(_canvas.call(&"last_drawn_count")) == 2, "GPU backend submits every record")
-		_check(int(_canvas.call(&"draw_commands_last_rebuild")) == 1, "same-texture records share one GPU batch")
+		var expected_batches: int = 2 if backend == 1 else 1
+		_check(
+			int(_canvas.call(&"draw_commands_last_rebuild")) == expected_batches,
+			"MultiMesh preserves atlas-region runs; OpenDash batches same-texture regions",
+		)
 		var route_before: int = int(_canvas.call(&"route_rebuild_count", 0))
 		var commands_before: int = int(_canvas.call(&"command_rebuild_count"))
 		_canvas.call(&"set_item_color", 0, Color.GREEN)

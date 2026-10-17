@@ -240,7 +240,15 @@ def export() -> None:
             print("::notice title=asset import::Retrying one editor pass after a missing generated asset cache; final parse gate remains strict.")
             imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-rechecked")
         check_log(imported, "import-fast", include_runtime=False)
-        print("::notice title=Fast Windows build::Runtime, renderer, and texture-payload tests are deferred to manual validation.")
+        print("::notice title=Fast Windows build::Visual parity and GPU benchmark tests are deferred to manual validation.")
+        text = run([EDITOR, "--headless", "--path", ROOT, "res://tools/renderer_cache_selftest.tscn"],
+                   "renderer-integration", timeout=120)
+        check_log(text, "renderer-integration")
+        if not re.search(r"RENDERER_CACHE_SELFTEST checks=\d+ failed=0", text):
+            raise RuntimeError("Native renderer cache integration failed")
+        for line in text.splitlines():
+            if line.startswith(("RENDERER_CACHE_SELFTEST", "RENDERER_CACHE_NOTE", "BATCH_CALLBACK_BENCH", "RENDERER_COALESCE", "RENDERER_RECT_COMMANDS")):
+                print(f"::notice title=renderer integration::{line}")
     else:
         run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-warm", allow_failure=True)
         imported = run([EDITOR, "--headless", "--path", ROOT, "--editor", "--import"], "import-checked")
@@ -358,7 +366,7 @@ def export() -> None:
         "These builds are for testing. Shader/trigger parity and real GPU performance have not been "
         "validated in this CI environment. Neither method is declared faster.\n", encoding="utf-8")
     if FAST_BUILD:
-        log_names = ("import-fast", "export-server", "export-gdclone", "export-opendash",
+        log_names = ("import-fast", "renderer-integration", "export-server", "export-gdclone", "export-opendash",
                      "exported-native-smoke-server", "exported-native-smoke-gdclone",
                      "exported-native-smoke-opendash")
     else:

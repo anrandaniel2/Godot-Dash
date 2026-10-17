@@ -10811,10 +10811,10 @@ class NativeDecorationRenderer : public RefCounted {
 		if (!source->is_class("ShaderMaterial")) return false;
 		owned_material = source->duplicate(true);
 		if (owned_material.is_null()) return false;
-		Array instance_args;
-		instance_args.push_back(StringName("gd_multimesh_batch"));
-		instance_args.push_back(render_backend == 1);
-		owned_material->callv(StringName("set_shader_parameter"), instance_args);
+		Array center_args;
+		center_args.push_back(StringName("gd_instance_center"));
+		center_args.push_back(render_backend == 1);
+		owned_material->callv(StringName("set_shader_parameter"), center_args);
 		Array mesh_args;
 		mesh_args.push_back(StringName("gd_mesh_batch"));
 		mesh_args.push_back(render_backend == 2);
@@ -10884,13 +10884,12 @@ class NativeDecorationRenderer : public RefCounted {
 			const Color color = render_color(index);
 			data[base + 8] = color.r; data[base + 9] = color.g;
 			data[base + 10] = color.b; data[base + 11] = color.a;
-			// Per-instance UV rectangle lets one texture/blend-order run carry
-			// atlas sprites with different source regions in the same MultiMesh.
-			const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
-			data[base + 12] = texture_size.x != 0.0 ? static_cast<float>(record.region.position.x / texture_size.x) : 0.0f;
-			data[base + 13] = texture_size.y != 0.0 ? static_cast<float>(record.region.position.y / texture_size.y) : 0.0f;
-			data[base + 14] = texture_size.x != 0.0 ? static_cast<float>(record.region.size.x / texture_size.x) : 0.0f;
-			data[base + 15] = texture_size.y != 0.0 ? static_cast<float>(record.region.size.y / texture_size.y) : 0.0f;
+			// The run mesh contains this atlas region's UVs. Store the instance
+			// center for per-object fade/enter calculations in the shared shader.
+			data[base + 12] = static_cast<float>(origin.x);
+			data[base + 13] = static_cast<float>(origin.y);
+			data[base + 14] = 0.0f;
+			data[base + 15] = 0.0f;
 		}
 	}
 
@@ -10975,13 +10974,17 @@ class NativeDecorationRenderer : public RefCounted {
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || record_index >= records.size()) return RID();
 		const Record &record = records[record_index];
+		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
+		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
+		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
+				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
 		PackedVector2Array vertices;
 		vertices.push_back(Vector2(-0.5, -0.5)); vertices.push_back(Vector2(0.5, -0.5));
 		vertices.push_back(Vector2(0.5, 0.5)); vertices.push_back(Vector2(-0.5, 0.5));
-		// UVs are transformed per instance from this shared unit rectangle.
 		PackedVector2Array uvs;
-		uvs.push_back(Vector2(0, 0)); uvs.push_back(Vector2(1, 0));
-		uvs.push_back(Vector2(1, 1)); uvs.push_back(Vector2(0, 1));
+		uvs.push_back(uv_origin); uvs.push_back(uv_origin + Vector2(uv_size.x, 0));
+		uvs.push_back(uv_origin + uv_size); uvs.push_back(uv_origin + Vector2(0, uv_size.y));
 		PackedInt32Array indices;
 		indices.push_back(0); indices.push_back(1); indices.push_back(2);
 		indices.push_back(0); indices.push_back(2); indices.push_back(3);
@@ -11073,7 +11076,9 @@ class NativeDecorationRenderer : public RefCounted {
 				// Keep contiguous ordering and blend routes exactly as authored. A
 				// MultiMesh can carry per-instance UV rectangles, so atlas regions
 				// do not need to split one texture run into extra draw submissions.
-				if (!current.records.empty() && current.texture->get_rid() != texture->get_rid()) {
+				const bool different_region = render_backend == 1 && !current.records.empty() &&
+						(records[current.records.front()].region != records[index].region);
+				if (!current.records.empty() && (current.texture->get_rid() != texture->get_rid() || different_region)) {
 					create_gpu_run(slot, std::move(current));
 					current = GpuRun();
 				}
@@ -11506,38 +11511,11 @@ public:
 		return true;
 	}
 
-	bool current_view_is_inside(const DecorationCullJob &job) const {
-		CanvasItem *owner_canvas = owner();
-		if (!owner_canvas || !owner_canvas->is_inside_tree()) return false;
-		const Transform2D from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
-		const Vector2 screen_size = owner_canvas->get_viewport_rect().size;
-		if (screen_size != job.screen_size || job.cell_size != bucket_width || job.cell_size <= 0.0) return false;
-		Rect2 local_view(from_screen.xform(Vector2()), Vector2());
-		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0.0)));
-		local_view = local_view.expand(from_screen.xform(screen_size));
-		local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen_size.y)));
-		local_view = local_view.grow(cull_margin);
-		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
-		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
-		const int64_t top = static_cast<int64_t>(std::floor(local_view.position.y / bucket_width));
-		const int64_t bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / bucket_width));
-		return gdash::DecorationRange{job.first, job.last, job.top, job.bottom}.contains(
-				gdash::DecorationRange{first, last, top, bottom});
-	}
-
 	void apply_cull_job(const DecorationCullJob &job) {
 		// A world-space worker job captured before reparenting cannot hide UI.
 		if (!cull) return;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
-		// Worker results normally lag by one frame; their extra-cell margin
-		// makes that safe. A teleport or viewport resize can outrun the margin.
-		// Never apply such a stale range: recull this rare discontinuity now
-		// rather than hiding every batch at the destination for another frame.
-		if (!current_view_is_inside(job)) {
-			update_camera_range();
-			return;
-		}
 		if (view_initialized && job.first == first_bucket && job.last == last_bucket &&
 				job.top == first_row && job.bottom == last_row && job.screen_size == last_viewport_size) return;
 		first_bucket = job.first; last_bucket = job.last;
@@ -11654,7 +11632,7 @@ public:
 	int64_t draw_commands_last_rebuild() const { return last_draw_commands; }
 	int64_t transform_commands_last_rebuild() const { return last_transform_commands; }
 	int64_t selection_rebuild_count() const { return static_cast<int64_t>(visible_records.build_count()); }
-	bool is_spatially_culled() const { return cull; }
+	bool is_spatially_culled() const { return cull && !range_has_records; }
 };
 
 // Expands a PackedDecorations table into finished renderer records entirely

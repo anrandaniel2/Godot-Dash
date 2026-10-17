@@ -36,7 +36,7 @@ global uniform mat4 gd_exit_custom_tint;
 uniform bool enabled = true;
 // Native A/B renderer variants use per-material uniforms; defaults retain the
 // existing CanvasItem shader behavior on every renderer, including WebGL2.
-uniform bool gd_multimesh_batch = false;
+uniform bool gd_instance_center = false;
 uniform bool gd_mesh_batch = false;
 // Per-object enter settings, set on keyed copies of the shared material
 // (EnterMaterials): 1 Don't Fade (key 64), 2 Don't Enter (key 67).
@@ -120,11 +120,7 @@ float gd_hash(vec2 p) {
 }
 
 void vertex() {
-	// MultiMesh instances already carry their center in MODEL_MATRIX. Their
-	// custom data is reserved for the atlas UV rectangle so one ordered texture
-	// run can draw several regions without splitting into extra submissions.
-	vec2 object_center = gd_mesh_batch ? CUSTOM0.xy : vec2(0.0);
-	if (gd_multimesh_batch) UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;
+	vec2 object_center = gd_mesh_batch ? CUSTOM0.xy : (gd_instance_center ? INSTANCE_CUSTOM.xy : vec2(0.0));
 	screen_position = (SCREEN_MATRIX * CANVAS_MATRIX * MODEL_MATRIX * vec4(object_center, 0.0, 1.0)).xy;
 	screen_uv = (SCREEN_MATRIX * CANVAS_MATRIX * MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy * 0.5 + 0.5;
 	gd_fade = 1.0;
