@@ -274,7 +274,10 @@ func adopt_native_canvas(canvas: Object, info: Dictionary) -> void:
 	_items_released = true
 	_diagnostic_item_count = int(info.get("count", 0))
 	_diagnostic_glow_count = int(info.get("glow_count", 0))
-	_diagnostic_glow_by_bucket = info.get("glow_by_bucket", { })
+	_diagnostic_glow_by_bucket.clear()
+	var glow_buckets: Dictionary = info.get("glow_by_bucket", { })
+	for bucket: Variant in glow_buckets:
+		_diagnostic_glow_by_bucket[int(bucket)] = int(glow_buckets[bucket])
 	_bounds = info.get("bounds", Rect2())
 	_sort_key = int(info.get("sort_key", 0))
 	_native_by_channel = _channel_index_lists(info.get("channels", { }))
