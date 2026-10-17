@@ -95,19 +95,6 @@ jobs:
           rm -f godot.zip
           chmod +x "$GODOT_BIN"
 
-      - name: Cache pinned Rapier2D package
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/godot-dash-rapier
-          key: rapier2d-v0.36.0-godot-4.7
-
-      - name: Install Rapier2D and select the desktop/Android backend
-        run: |
-          python3 tools/rapier_physics.py \
-            --project-root . \
-            --cache-dir "${{ runner.temp }}/godot-dash-rapier" \
-            --engine Rapier2D
-
       - name: Cache export templates
         uses: actions/cache@v4
         id: cache-templates
@@ -1043,16 +1030,11 @@ jobs:
           echo "--- export log GDExtension/gdash lines ---"
           grep -in "gdextension\|gdash\|no .* library\|Copying .so" godot_export.log || echo "(no matches)"
 
-      - name: Verify APK is arm64-v8a only and contains both physics/native extensions
+      - name: Verify APK is arm64-v8a only and contains gdash_native
         run: |
           set -euo pipefail
           echo "native libs inside APK:"
           unzip -l "$APK_PATH" | grep -E "lib/" || true
-          unzip -Z1 "$APK_PATH" | grep -Fq "libgodot_rapier.android.aarch64-linux-android.so" || {
-            echo "ERROR: Rapier2D Android arm64 extension is missing from the APK"
-            exit 1
-          }
-
           # Keep the APK single-ABI. export_presets.cfg enables only
           # architectures/arm64-v8a, but assert the final archive as well so a
           # future Godot/Gradle template cannot silently add 32-bit or x86

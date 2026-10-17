@@ -276,44 +276,17 @@ func _test_invisible_blocks() -> void:
 ## empty frame. They must not import as the generated solid 60-unit box: at the
 ## Amethyst start, stacked copies at x~300 walled off the UFO portal from the red pad.
 func _test_slope_bodies_are_solid() -> void:
-	# Merged slopes are direct static PhysicsServer2D RIDs, not physics nodes.
+	# Merged slopes share one body. It must be a StaticBody2D: the cube's
+	# CharacterBody2D passes straight through an Area2D.
 	var container := Node2D.new()
-	get_tree().root.add_child(container)
-	var owner := LevelPhysics._body_for({}, container, LevelPhysics.SLOPE_LAYER, 0)
-	var rid: RID = owner.get_meta(LevelPhysics.SERVER_RID_META)
-	assert(rid.is_valid(), "slope smoke: direct server body RID was not created")
-	assert(owner is not CollisionObject2D, "slope smoke: physics object node was retained")
+	var body := LevelPhysics._body_for({}, container, LevelPhysics.SLOPE_LAYER, 0)
 	assert(
-		PhysicsServer2D.body_get_collision_layer(rid) == LevelPhysics.SLOPE_LAYER,
-		"slope smoke: slope RID lost its collision layer"
+		body is StaticBody2D,
+		"slope smoke: merged slope body is %s, not a StaticBody2D" % body.get_class()
 	)
 	assert(
-		PhysicsServer2D.body_get_mode(rid) == PhysicsServer2D.BODY_MODE_STATIC,
-		"slope smoke: slope RID is not static"
+		body.collision_layer == LevelPhysics.SLOPE_LAYER, "slope smoke: slope body lost its layer"
 	)
-	var source := Node2D.new()
-	container.add_child(source)
-	var shape := RectangleShape2D.new()
-	shape.size = Vector2(32.0, 32.0)
-	var contributed := LevelPhysics._commit_server_shapes(
-		owner,
-		source,
-		[{"resource": shape, "local_xform": Transform2D.IDENTITY}],
-	)
-	assert(contributed == [0], "slope smoke: direct server shape index map is wrong")
-	assert(PhysicsServer2D.body_get_shape_count(rid) == 1, "slope smoke: shape was not added to server RID")
-	assert(
-		LevelPhysics.shared_shape_data(owner, 0).get("resource") == shape,
-		"slope smoke: server shape metadata cannot be resolved"
-	)
-	var hazard_owner := LevelPhysics._body_for(
-		{}, container, LevelPhysics.RECT_HAZARD_LAYER, 0
-	)
-	assert(hazard_owner is Area2D, "hazard smoke: direct area lacks an Area2D signal adapter")
-	var hazard_rid: RID = hazard_owner.get_meta(LevelPhysics.SERVER_RID_META)
-	assert(PhysicsServer2D.area_get_collision_layer(hazard_rid) == LevelPhysics.RECT_HAZARD_LAYER,
-		"hazard smoke: direct area lost its collision layer")
-	LevelPhysics._free_server_bodies(container)
 	container.free()
 
 

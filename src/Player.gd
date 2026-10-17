@@ -679,31 +679,27 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 					or (internal_gamemode == Gamemode.WAVE and allow_wave_slide_count == 0)
 			)
 	):
-		var collider := collision.get_collider() as Node
-		var collider_layer := 0
-		if collider != null:
+		var collider := collision.get_collider() as CollisionObject2D
+		if collider != null and collider.collision_layer & 1 << 1:
 			if LevelPhysics.is_shared_body(collider):
-				collider_layer = int(collider.get_meta(LevelPhysics.SERVER_LAYER_META, 0))
-			elif collider is CollisionObject2D:
-				collider_layer = collider.collision_layer
-		if collider != null and collider_layer & 1 << 1:
-			if LevelPhysics.is_shared_body(collider):
-				# Shared static geometry is now a PhysicsServer2D RID. Resolve the
-				# reported shape index through its owner-node map, and disable that
-				# exact server shape so spider-dash pass-through remains unchanged.
-				var shape_data := _collided_shared_shape_data(collision)
-				var shape: Shape2D = shape_data.get("resource")
-				var shape_transform: Transform2D = collider.global_transform * shape_data.get("transform", Transform2D.IDENTITY)
+				# The level's shared static body: collision layers are per-body,
+				# so a single block can't be re-layered. Disable the exact shape
+				# the player hit instead - a dashing spider passes through, and
+				# any other mode dies through the same path the kill collider
+				# uses. LevelPhysics.prepare() re-enables the shape on the next
+				# attempt.
+				var shape := _collided_shared_shape(collision)
 				print("[gdash-kill] shared hit collider=%s at=%s normal=%s shape=%s wall=%s ceiling=%s" % [
 						str(collider.name), str(collision.get_position()), str(collision.get_normal()),
-						str(shape.get_rect()) if shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
+						str(shape.shape.get_rect()) if shape != null and shape.shape != null else "null", str(is_wall), str(is_lethal_ceiling_hit)])
 				# GD units with the same conversion as the solid line below (y is -probe y).
 				var hit_level := LevelManager.current_level
 				if shape != null and hit_level != null:
-					var shape_gd := hit_level.to_local(shape_transform.origin) * 30.0 / 128.0
+					var shape_gd := hit_level.to_local(shape.global_position) * 30.0 / 128.0
 					var cube_at_hit := hit_level.to_local(global_position) * 30.0 / 128.0
 					print("[gdash-kill] shared shape_gd=(%.2f,%.2f) cube_gd=(%.2f,%.2f) mode=%d" % [shape_gd.x, shape_gd.y, cube_at_hit.x, cube_at_hit.y, internal_gamemode])
-				LevelPhysics.disable_shared_shape(collider, collision.get_collider_shape_index())
+				if shape != null:
+					shape.set_deferred(&"disabled", true)
 				if _spider_dash_frames == 0 and not Config.noclip:
 					_death_animator.play("DeathAnimation")
 			else:
@@ -711,11 +707,10 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 				# objects): move it to the solid_overlap_check layer (1 << 9)
 				# so it stops blocking, the kill collider finishes the job, and
 				# SolidOverlapCheck's body_exited restores it - as before.
-				if collider is CollisionObject2D:
-					collider.collision_layer = 1 << 9
-					var hitbox := collider.get_node_or_null(^"Hitbox")
-					if hitbox is CollisionShape2D:
-						hitbox.debug_color.s = 0.0 # DEBUG: Hardcoded name for hitbox color
+				collider.collision_layer = 1 << 9
+				var hitbox := collider.get_node_or_null(^"Hitbox")
+				if hitbox is CollisionShape2D:
+					hitbox.debug_color.s = 0.0 # DEBUG: Hardcoded name for hitbox color
 	if is_ceiling and allow_ceiling_hit_count > 0:
 		hit_ceiling.emit(self)
 	if is_slope:
@@ -736,13 +731,19 @@ func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: boo
 			_ground_particles.add_child(ground_hit_particles)
 
 
-## Shape metadata for a collision against a shared PhysicsServer2D RID,
-## resolved by the server collider's reported shape index.
-func _collided_shared_shape_data(collision: KinematicCollision2D) -> Dictionary:
-	var owner := collision.get_collider() as Node
-	if not LevelPhysics.is_shared_body(owner):
-		return {}
-	return LevelPhysics.shared_shape_data(owner, collision.get_collider_shape_index())
+## The CollisionShape2D on the level's shared physics body that a collision
+## report hit, resolved by the collider's shape index. Null when the collider
+## has no shape (or isn't a shared body).
+func _collided_shared_shape(collision: KinematicCollision2D) -> CollisionShape2D:
+	var body := collision.get_collider() as CollisionObject2D
+	if body == null:
+		return null
+	var shape_index := collision.get_collider_shape_index()
+	var owner_id := body.shape_find_owner(shape_index)
+	if owner_id == -1:
+		return null
+	var shape := body.shape_owner_get_owner(owner_id)
+	return shape as CollisionShape2D
 
 
 ## Jump input for this tick: the replay's while playing one back, the live action otherwise.
@@ -1604,16 +1605,17 @@ func _kill_collider_overlaps(hitboxes: Array, source: Node2D) -> bool:
 
 
 func _on_solid_overlap_check_body_exited(body: Node2D) -> void:
-	if body == null or LevelPhysics.is_shared_body(body):
+	if body == null:
 		return
-	# Shared PhysicsServer RID owners are plain Node2Ds and are handled above.
-	# Dynamic, per-object bodies remain CollisionObject2D nodes as before.
-	var collision_body := body as CollisionObject2D
-	if collision_body == null:
+	body = body as CollisionObject2D
+	# Shared level bodies never get re-layered by lethal hits; only per-object
+	# bodies (trigger-animated / pushable solids) do, and those keep a Hitbox
+	# child to restore the debug colour on.
+	if LevelPhysics.is_shared_body(body):
 		return
-	collision_body.collision_layer = 1 << 1
-	if collision_body.has_node(^"Hitbox"):
-		collision_body.get_node(^"Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
+	body.collision_layer = 1 << 1
+	if body.has_node(^"Hitbox"):
+		body.get_node(^"Hitbox").debug_color = Color("#0012b340") # DEBUG: Hardcoded name for hitbox color
 
 
 ## Called by the native trigger runtime when a GD checkpoint (2063) is
