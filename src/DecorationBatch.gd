@@ -130,6 +130,11 @@ var items: Array[Item] = []
 var release_items_after_native: bool = false
 ## Whether [member items] was emptied after the native renderer took over.
 var _items_released: bool = false
+## Counts retained after native adoption so load diagnostics do not mistake
+## released GDScript records for a level with no rendered decorations.
+var _diagnostic_item_count: int = -1
+var _diagnostic_glow_count: int = -1
+var _diagnostic_glow_by_bucket: Dictionary[int, int] = { }
 ## Lowest item z order, cached for [method sort_key] once items are released.
 var _sort_key: int = 0
 ## Animated monsters in this batch; empty for nearly every batch.
@@ -237,9 +242,16 @@ func build() -> void:
 
 	_channel_blend.clear()
 	_bounds = Rect2()
+	_diagnostic_item_count = items.size()
+	_diagnostic_glow_count = 0
+	_diagnostic_glow_by_bucket.clear()
 
 	for index in items.size():
 		var item: Item = items[index]
+		if item.layer == "glow":
+			_diagnostic_glow_count += 1
+			var bucket := int(item.origin_x / 1000.0)
+			_diagnostic_glow_by_bucket[bucket] = _diagnostic_glow_by_bucket.get(bucket, 0) + 1
 		var extent: Vector2 = (item.region.size * 0.5).abs() * item.transform.get_scale().abs()
 		var item_rect := Rect2(item.transform.origin - extent, extent * 2.0)
 		_bounds = item_rect if index == 0 else _bounds.merge(item_rect)
@@ -260,6 +272,9 @@ func build() -> void:
 func adopt_native_canvas(canvas: Object, info: Dictionary) -> void:
 	_native_canvas = canvas
 	_items_released = true
+	_diagnostic_item_count = int(info.get("count", 0))
+	_diagnostic_glow_count = int(info.get("glow_count", 0))
+	_diagnostic_glow_by_bucket = info.get("glow_by_bucket", { })
 	_bounds = info.get("bounds", Rect2())
 	_sort_key = int(info.get("sort_key", 0))
 	_native_by_channel = _channel_index_lists(info.get("channels", { }))
@@ -277,6 +292,33 @@ static func _channel_index_lists(lists: Dictionary) -> Dictionary[StringName, Pa
 	for channel_id: int in lists:
 		result[StringName(Constants.COLOR_CHANNEL_GROUP_PREFIX + str(channel_id))] = lists[channel_id]
 	return result
+
+
+## Counts remain available to load diagnostics even after the native renderer
+## releases per-item GDScript objects.
+func diagnostic_item_count() -> int:
+	return _diagnostic_item_count if _diagnostic_item_count >= 0 else items.size()
+
+
+func diagnostic_glow_count() -> int:
+	if _diagnostic_glow_count >= 0:
+		return _diagnostic_glow_count
+	var count := 0
+	for item: Item in items:
+		if item.layer == "glow":
+			count += 1
+	return count
+
+
+func diagnostic_glow_buckets() -> Dictionary[int, int]:
+	if _diagnostic_glow_count >= 0:
+		return _diagnostic_glow_by_bucket
+	var buckets: Dictionary[int, int] = { }
+	for item: Item in items:
+		if item.layer == "glow":
+			var bucket := int(item.origin_x / 1000.0)
+			buckets[bucket] = buckets.get(bucket, 0) + 1
+	return buckets
 
 
 ## Drops every [DecorationBatch.Item] once the native renderer holds the same

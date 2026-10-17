@@ -10811,10 +10811,10 @@ class NativeDecorationRenderer : public RefCounted {
 		if (!source->is_class("ShaderMaterial")) return false;
 		owned_material = source->duplicate(true);
 		if (owned_material.is_null()) return false;
-		Array center_args;
-		center_args.push_back(StringName("gd_instance_center"));
-		center_args.push_back(render_backend == 1);
-		owned_material->callv(StringName("set_shader_parameter"), center_args);
+		Array instance_args;
+		instance_args.push_back(StringName("gd_multimesh_batch"));
+		instance_args.push_back(render_backend == 1);
+		owned_material->callv(StringName("set_shader_parameter"), instance_args);
 		Array mesh_args;
 		mesh_args.push_back(StringName("gd_mesh_batch"));
 		mesh_args.push_back(render_backend == 2);
@@ -10843,8 +10843,8 @@ class NativeDecorationRenderer : public RefCounted {
 				set_canvas_shader_backend(canvas_item_plain, fade_plain, backend_plain_material) &&
 				set_canvas_shader_backend(canvas_item_add, fade_additive, backend_additive_material);
 		if (!valid) {
-			// A custom owner material cannot safely be rewritten for instance
-			// centers. Keep the original RenderingServer path for exact parity.
+			// A custom owner material cannot safely be rewritten for per-instance
+			// UVs/effects. Keep the original RenderingServer path for exact parity.
 			render_backend = 0;
 			setup_backend_materials();
 			return;
@@ -10855,6 +10855,12 @@ class NativeDecorationRenderer : public RefCounted {
 	Color render_color(size_t index) const {
 		return pulse_weight > 0.0f ? pulse_record_color(records[index].color, pulse_color, pulse_weight) : records[index].color;
 	}
+
+	static constexpr int32_t MESH_QUAD_VERTEX_COUNT = 4;
+	static constexpr int32_t MESH_VERTEX_STRIDE_BYTES = 2 * sizeof(float);
+	// RenderingServer packs ARRAY_COLOR as normalized RGBA8, then stores UV
+	// and CUSTOM0 as float2 each: 4 + 8 + 8 bytes per vertex.
+	static constexpr int32_t MESH_ATTRIBUTE_STRIDE_BYTES = sizeof(uint32_t) + 4 * sizeof(float);
 
 	void fill_multimesh_buffer(const GpuRun &run, PackedFloat32Array &buffer) const {
 		buffer.resize(static_cast<int64_t>(run.records.size()) * 16);
@@ -10878,12 +10884,13 @@ class NativeDecorationRenderer : public RefCounted {
 			const Color color = render_color(index);
 			data[base + 8] = color.r; data[base + 9] = color.g;
 			data[base + 10] = color.b; data[base + 11] = color.a;
-			// The run mesh contains this atlas region's UVs. Store the instance
-			// center for per-object fade/enter calculations in the shared shader.
-			data[base + 12] = static_cast<float>(origin.x);
-			data[base + 13] = static_cast<float>(origin.y);
-			data[base + 14] = 0.0f;
-			data[base + 15] = 0.0f;
+			// Per-instance UV rectangle lets one texture/blend-order run carry
+			// atlas sprites with different source regions in the same MultiMesh.
+			const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
+			data[base + 12] = texture_size.x != 0.0 ? static_cast<float>(record.region.position.x / texture_size.x) : 0.0f;
+			data[base + 13] = texture_size.y != 0.0 ? static_cast<float>(record.region.position.y / texture_size.y) : 0.0f;
+			data[base + 14] = texture_size.x != 0.0 ? static_cast<float>(record.region.size.x / texture_size.x) : 0.0f;
+			data[base + 15] = texture_size.y != 0.0 ? static_cast<float>(record.region.size.y / texture_size.y) : 0.0f;
 		}
 	}
 
@@ -10930,21 +10937,26 @@ class NativeDecorationRenderer : public RefCounted {
 				uv_origin + uv_size, uv_origin + Vector2(0.0, uv_size.y) };
 		const Color color = render_color(index);
 		const Vector2 center = transform.get_origin();
-		vertex_bytes.resize(4 * 2 * static_cast<int64_t>(sizeof(float)));
-		attribute_bytes.resize(4 * 8 * static_cast<int64_t>(sizeof(float)));
+		vertex_bytes.resize(MESH_QUAD_VERTEX_COUNT * MESH_VERTEX_STRIDE_BYTES);
+		attribute_bytes.resize(MESH_QUAD_VERTEX_COUNT * MESH_ATTRIBUTE_STRIDE_BYTES);
 		float *vertex = reinterpret_cast<float *>(vertex_bytes.ptrw());
-		float *attribute = reinterpret_cast<float *>(attribute_bytes.ptrw());
-		for (int corner = 0; corner < 4; ++corner) {
+		uint8_t *attribute = attribute_bytes.ptrw();
+		const uint8_t color8[4] = {
+				static_cast<uint8_t>(std::clamp(color.r * 255.0, 0.0, 255.0)),
+				static_cast<uint8_t>(std::clamp(color.g * 255.0, 0.0, 255.0)),
+				static_cast<uint8_t>(std::clamp(color.b * 255.0, 0.0, 255.0)),
+				static_cast<uint8_t>(std::clamp(color.a * 255.0, 0.0, 255.0))
+		};
+		for (int corner = 0; corner < MESH_QUAD_VERTEX_COUNT; ++corner) {
 			const Vector2 point = transform.xform(corners[corner]);
 			vertex[corner * 2] = static_cast<float>(point.x);
 			vertex[corner * 2 + 1] = static_cast<float>(point.y);
-			const int base = corner * 8;
-			attribute[base + 0] = color.r; attribute[base + 1] = color.g;
-			attribute[base + 2] = color.b; attribute[base + 3] = color.a;
-			attribute[base + 4] = static_cast<float>(uv_corners[corner].x);
-			attribute[base + 5] = static_cast<float>(uv_corners[corner].y);
-			attribute[base + 6] = static_cast<float>(center.x);
-			attribute[base + 7] = static_cast<float>(center.y);
+			const int32_t base = corner * MESH_ATTRIBUTE_STRIDE_BYTES;
+			std::memcpy(attribute + base, color8, sizeof(color8));
+			const float uv[2] = { static_cast<float>(uv_corners[corner].x), static_cast<float>(uv_corners[corner].y) };
+			const float object_center[2] = { static_cast<float>(center.x), static_cast<float>(center.y) };
+			std::memcpy(attribute + base + sizeof(color8), uv, sizeof(uv));
+			std::memcpy(attribute + base + sizeof(color8) + sizeof(uv), object_center, sizeof(object_center));
 		}
 	}
 
@@ -10963,17 +10975,13 @@ class NativeDecorationRenderer : public RefCounted {
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || record_index >= records.size()) return RID();
 		const Record &record = records[record_index];
-		const Vector2 texture_size(record.texture->get_width(), record.texture->get_height());
-		const Vector2 uv_origin(texture_size.x != 0.0 ? record.region.position.x / texture_size.x : 0.0,
-				texture_size.y != 0.0 ? record.region.position.y / texture_size.y : 0.0);
-		const Vector2 uv_size(texture_size.x != 0.0 ? record.region.size.x / texture_size.x : 0.0,
-				texture_size.y != 0.0 ? record.region.size.y / texture_size.y : 0.0);
 		PackedVector2Array vertices;
 		vertices.push_back(Vector2(-0.5, -0.5)); vertices.push_back(Vector2(0.5, -0.5));
 		vertices.push_back(Vector2(0.5, 0.5)); vertices.push_back(Vector2(-0.5, 0.5));
+		// UVs are transformed per instance from this shared unit rectangle.
 		PackedVector2Array uvs;
-		uvs.push_back(uv_origin); uvs.push_back(uv_origin + Vector2(uv_size.x, 0));
-		uvs.push_back(uv_origin + uv_size); uvs.push_back(uv_origin + Vector2(0, uv_size.y));
+		uvs.push_back(Vector2(0, 0)); uvs.push_back(Vector2(1, 0));
+		uvs.push_back(Vector2(1, 1)); uvs.push_back(Vector2(0, 1));
 		PackedInt32Array indices;
 		indices.push_back(0); indices.push_back(1); indices.push_back(2);
 		indices.push_back(0); indices.push_back(2); indices.push_back(3);
@@ -11062,9 +11070,10 @@ class NativeDecorationRenderer : public RefCounted {
 			for (size_t index : selected[slot]) {
 				const Ref<Texture2D> &texture = records[index].texture;
 				if (!texture.is_valid()) continue;
-				const bool different_region = render_backend == 1 && !current.records.empty() &&
-						(records[current.records.front()].region != records[index].region);
-				if (!current.records.empty() && (current.texture->get_rid() != texture->get_rid() || different_region)) {
+				// Keep contiguous ordering and blend routes exactly as authored. A
+				// MultiMesh can carry per-instance UV rectangles, so atlas regions
+				// do not need to split one texture run into extra draw submissions.
+				if (!current.records.empty() && current.texture->get_rid() != texture->get_rid()) {
 					create_gpu_run(slot, std::move(current));
 					current = GpuRun();
 				}
@@ -11107,16 +11116,19 @@ class NativeDecorationRenderer : public RefCounted {
 					auto upload_range = [&](int64_t first, int64_t last) {
 						PackedByteArray vertices;
 						PackedByteArray attributes;
-						vertices.resize((last - first + 1) * 4 * 2 * static_cast<int64_t>(sizeof(float)));
-						attributes.resize((last - first + 1) * 4 * 8 * static_cast<int64_t>(sizeof(float)));
+						const int64_t record_count = last - first + 1;
+						vertices.resize(record_count * MESH_QUAD_VERTEX_COUNT * MESH_VERTEX_STRIDE_BYTES);
+						attributes.resize(record_count * MESH_QUAD_VERTEX_COUNT * MESH_ATTRIBUTE_STRIDE_BYTES);
 						for (int64_t local = first; local <= last; ++local) {
 							PackedByteArray one_vertex, one_attribute;
 							fill_mesh_record_bytes(run.records[local], one_vertex, one_attribute);
 							std::memcpy(vertices.ptrw() + (local - first) * one_vertex.size(), one_vertex.ptr(), one_vertex.size());
 							std::memcpy(attributes.ptrw() + (local - first) * one_attribute.size(), one_attribute.ptr(), one_attribute.size());
 						}
-						server->mesh_surface_update_vertex_region(run.rid, 0, static_cast<int32_t>(first * 4 * 2 * sizeof(float)), vertices);
-						server->mesh_surface_update_attribute_region(run.rid, 0, static_cast<int32_t>(first * 4 * 8 * sizeof(float)), attributes);
+						server->mesh_surface_update_vertex_region(run.rid, 0,
+								static_cast<int32_t>(first * MESH_QUAD_VERTEX_COUNT * MESH_VERTEX_STRIDE_BYTES), vertices);
+						server->mesh_surface_update_attribute_region(run.rid, 0,
+								static_cast<int32_t>(first * MESH_QUAD_VERTEX_COUNT * MESH_ATTRIBUTE_STRIDE_BYTES), attributes);
 					};
 					if (dirty.size() <= 8) {
 						for (int64_t local : dirty) upload_range(local, local);
@@ -11664,6 +11676,8 @@ private:
 		int32_t enter_key = 0; // decoration_enter_key; 0 = the shared material
 		std::vector<Sprite> sprites;
 		Rect2 bounds;
+		int64_t glow_count = 0;
+		std::map<int32_t, int64_t> glow_by_bucket;
 		std::map<int32_t, std::vector<int32_t>> channels;
 		std::map<int32_t, std::vector<int32_t>> blend_channels;
 	};
@@ -11877,8 +11891,15 @@ public:
 			if (a.draw_order != b.draw_order) return a.draw_order < b.draw_order;
 			return texture_id(a.texture) < texture_id(b.texture);
 		});
+		batch.glow_count = 0;
+		batch.glow_by_bucket.clear();
 		for (size_t i = 0; i < batch.sprites.size(); ++i) {
 			const Sprite &sprite = batch.sprites[i];
+			if (sprite.glow_layer) {
+				++batch.glow_count;
+				const int32_t bucket = static_cast<int32_t>(sprite.record.spin_pivot.x / 1000.0);
+				++batch.glow_by_bucket[bucket];
+			}
 			const Transform2D &t = sprite.record.transform;
 			const Vector2 extent = (sprite.record.region.size * 0.5).abs() * t.get_scale().abs();
 			const Rect2 rect(t.get_origin() - extent, extent * 2.0);
@@ -11928,6 +11949,10 @@ public:
 		info["sort_key"] = batch.sprites.empty() ? 0 : batch.sprites.front().z_order;
 		info["bounds"] = batch.bounds;
 		info["count"] = static_cast<int64_t>(batch.sprites.size());
+		info["glow_count"] = batch.glow_count;
+		Dictionary glow_by_bucket;
+		for (const auto &[bucket, count] : batch.glow_by_bucket) glow_by_bucket[bucket] = count;
+		info["glow_by_bucket"] = glow_by_bucket;
 		info["channels"] = channel_lists(batch.channels);
 		info["blend_channels"] = channel_lists(batch.blend_channels);
 		return info;

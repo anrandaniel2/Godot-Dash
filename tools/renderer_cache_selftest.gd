@@ -205,7 +205,7 @@ func _configure(color: Color, cull_records: bool = true, spin: float = 0.0) -> v
 		&"configure",
 		_owner,
 		[_texture, _texture],
-		[Rect2(0, 0, 8, 8), Rect2(0, 0, 8, 8)],
+		[Rect2(0, 0, 4, 8), Rect2(4, 0, 4, 8)],
 		[Transform2D.IDENTITY, Transform2D(0.0, Vector2(4, 4))],
 		PackedColorArray([color, color]),
 		PackedFloat32Array([0, 4]),

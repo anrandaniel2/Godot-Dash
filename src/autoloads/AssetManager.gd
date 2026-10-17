@@ -369,5 +369,5 @@ func preload_default_font() -> void:
 
 
 func _exit_tree() -> void:
-	if thread:
+	if thread != null and thread.is_started():
 		thread.wait_to_finish()

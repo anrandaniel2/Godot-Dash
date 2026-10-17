@@ -674,12 +674,11 @@ func _print_glow_diagnostics() -> void:
 			batch_count += 1
 			if child.gd_blending:
 				blending_batches += 1
-			for item: DecorationBatch.Item in child.items:
-				total_items += 1
-				if item.layer == "glow":
-					glow_items += 1
-					var bucket := int(item.origin_x / 1000.0)
-					glow_by_bucket[bucket] = glow_by_bucket.get(bucket, 0) + 1
+			total_items += child.diagnostic_item_count()
+			glow_items += child.diagnostic_glow_count()
+			var batch_glow_buckets: Dictionary[int, int] = child.diagnostic_glow_buckets()
+			for bucket: int in batch_glow_buckets:
+				glow_by_bucket[bucket] = glow_by_bucket.get(bucket, 0) + batch_glow_buckets[bucket]
 	var bucket_line := ""
 	var sorted_buckets := glow_by_bucket.keys()
 	sorted_buckets.sort()

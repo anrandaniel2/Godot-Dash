@@ -93,7 +93,7 @@ func _on_window_mode_value_changed(window_mode: Config.WindowMode) -> void:
 			DisplayServer.window_set_current_screen(screen)
 	# Fullscreen changes can recreate the presentation surface. Apply the
 	# requested mode afterward, not just to the previous window's swapchain.
-	Config.apply_frame_pacing.call_deferred(true)
+	Config.apply_frame_pacing.call_deferred()
 
 
 func _on_anti_aliasing_value_changed(anti_aliasing_mode: Viewport.MSAA) -> void:
