@@ -361,7 +361,7 @@ def export() -> None:
         "They share the same game project, Forward+ renderer, physics, level data and settings; "
         "only decoration drawing differs. Compare on the same PC, level, route, resolution, "
         "FPS/VSync settings and warm-up period. Record CPU frame time and GPU frame time.\n\n"
-        "GDClone: GPU MultiMesh instances, grouped by contiguous texture/atlas region.\n"
+        "GDClone: GPU MultiMesh instances, grouped by contiguous texture run.\n"
         "OpenDash: indexed texture batches with sparse dirty updates (up to 8 records) or a contiguous range.\n\n"
         "These builds are for testing. Shader/trigger parity and real GPU performance have not been "
         "validated in this CI environment. Neither method is declared faster.\n", encoding="utf-8")
