@@ -312,12 +312,16 @@ def export() -> None:
             raise RuntimeError(f"Expected one {label} native DLL, found {libraries}")
         check_pe(libraries[0])
         exported_dirs[label] = destination
-        if not FAST_BUILD:
-            smoke = run([executable, "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
-                        f"exported-native-smoke-{backend}", timeout=120)
-            check_log(smoke, f"exported-native-smoke-{backend}")
-            if "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus" not in smoke:
-                raise RuntimeError(f"{label} exported native smoke did not pass")
+        smoke = run([executable, "--headless", "--audio-driver", "Dummy", "--", "--native-smoke"],
+                    f"exported-native-smoke-{backend}", timeout=120)
+        check_log(smoke, f"exported-native-smoke-{backend}")
+        expected_backend = {"server": 0, "gdclone": 1, "opendash": 2}[backend]
+        expected_smoke = (
+            "WINDOWS_NATIVE_SMOKE result=PASS configured_renderer=forward_plus "
+            f"decoration_backend={backend}({expected_backend}) expected={expected_backend}"
+        )
+        if expected_smoke not in smoke:
+            raise RuntimeError(f"{label} exported native smoke did not confirm its renderer backend")
     # Preserve the existing installer/launcher paths as the RenderingServer
     # baseline; the separate folders below are independent renderer builds.
     default_variant = exported_dirs["RenderingServer"]
@@ -354,10 +358,14 @@ def export() -> None:
         "These builds are for testing. Shader/trigger parity and real GPU performance have not been "
         "validated in this CI environment. Neither method is declared faster.\n", encoding="utf-8")
     if FAST_BUILD:
-        log_names = ("import-fast", "export-server", "export-gdclone", "export-opendash")
+        log_names = ("import-fast", "export-server", "export-gdclone", "export-opendash",
+                     "exported-native-smoke-server", "exported-native-smoke-gdclone",
+                     "exported-native-smoke-opendash")
     else:
         log_names = ("runtime-safety", "renderer-cache", "renderer-integration", "ui-alignment",
-                     "gameplay-presentation", "color-refresh", "monster-timeline", "packed-trigger")
+                     "gameplay-presentation", "color-refresh", "monster-timeline", "packed-trigger",
+                     "exported-native-smoke-server", "exported-native-smoke-gdclone",
+                     "exported-native-smoke-opendash")
     for name in log_names:
         log = LOGS / f"{name}.log"
         if log.is_file():

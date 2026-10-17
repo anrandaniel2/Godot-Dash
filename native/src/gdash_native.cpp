@@ -11506,11 +11506,38 @@ public:
 		return true;
 	}
 
+	bool current_view_is_inside(const DecorationCullJob &job) const {
+		CanvasItem *owner_canvas = owner();
+		if (!owner_canvas || !owner_canvas->is_inside_tree()) return false;
+		const Transform2D from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
+		const Vector2 screen_size = owner_canvas->get_viewport_rect().size;
+		if (screen_size != job.screen_size || job.cell_size != bucket_width || job.cell_size <= 0.0) return false;
+		Rect2 local_view(from_screen.xform(Vector2()), Vector2());
+		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0.0)));
+		local_view = local_view.expand(from_screen.xform(screen_size));
+		local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen_size.y)));
+		local_view = local_view.grow(cull_margin);
+		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
+		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
+		const int64_t top = static_cast<int64_t>(std::floor(local_view.position.y / bucket_width));
+		const int64_t bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / bucket_width));
+		return gdash::DecorationRange{job.first, job.last, job.top, job.bottom}.contains(
+				gdash::DecorationRange{first, last, top, bottom});
+	}
+
 	void apply_cull_job(const DecorationCullJob &job) {
 		// A world-space worker job captured before reparenting cannot hide UI.
 		if (!cull) return;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
+		// Worker results normally lag by one frame; their extra-cell margin
+		// makes that safe. A teleport or viewport resize can outrun the margin.
+		// Never apply such a stale range: recull this rare discontinuity now
+		// rather than hiding every batch at the destination for another frame.
+		if (!current_view_is_inside(job)) {
+			update_camera_range();
+			return;
+		}
 		if (view_initialized && job.first == first_bucket && job.last == last_bucket &&
 				job.top == first_row && job.bottom == last_row && job.screen_size == last_viewport_size) return;
 		first_bucket = job.first; last_bucket = job.last;

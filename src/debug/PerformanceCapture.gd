@@ -33,11 +33,16 @@ func _ready() -> void:
 	_viewport = get_viewport().get_viewport_rid()
 	RenderTimingRequests.set_requested(_viewport, self, true)
 	_enabled = true
+	var decoration_backend: String = str(
+		ProjectSettings.get_setting("application/config/windows_renderer_backend", "server")
+	)
 	print(
 		(
-			"PERF_CAPTURE armed renderer=%s native=%s output=%s"
+			"PERF_CAPTURE armed renderer=%s decoration_backend=%s(%d) native=%s output=%s"
 			% [
 				RenderingServer.get_current_rendering_method(),
+				decoration_backend,
+				Config.decoration_renderer_backend,
 				NativeCore.available(),
 				_output,
 			]
@@ -158,7 +163,12 @@ func _native_smoke() -> void:
 		"rendering/renderer/rendering_method"
 	)
 	var native: Object = NativeCore.backend()
+	var backend_name: String = str(
+		ProjectSettings.get_setting("application/config/windows_renderer_backend", "server")
+	)
+	var expected_backend: int = {"server": 0, "gdclone": 1, "opendash": 2}.get(backend_name, -1)
 	var ok: bool = native != null and method == "forward_plus" and OS.has_feature("windows")
+	ok = ok and Config.decoration_renderer_backend == expected_backend
 	ok = ok and not OS.is_debug_build()
 	print("WINDOWS_PRODUCTION release=%s" % (not OS.is_debug_build()))
 	for required: StringName in [
@@ -178,6 +188,7 @@ func _native_smoke() -> void:
 	ok = ok and not DebugMenu.is_processing()
 	ok = ok and not RenderTimingRequests.is_requested(get_viewport().get_viewport_rid())
 	print(
-		"WINDOWS_NATIVE_SMOKE result=%s configured_renderer=%s" % ["PASS" if ok else "FAIL", method]
+		"WINDOWS_NATIVE_SMOKE result=%s configured_renderer=%s decoration_backend=%s(%d) expected=%d"
+		% ["PASS" if ok else "FAIL", method, backend_name, Config.decoration_renderer_backend, expected_backend]
 	)
 	get_tree().quit(0 if ok else 1)

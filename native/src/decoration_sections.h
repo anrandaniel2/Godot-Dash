@@ -14,6 +14,9 @@ struct DecorationRange {
 	bool operator==(const DecorationRange &other) const {
 		return first == other.first && last == other.last && top == other.top && bottom == other.bottom;
 	}
+	bool contains(const DecorationRange &other) const {
+		return first <= other.first && last >= other.last && top <= other.top && bottom >= other.bottom;
+	}
 };
 
 // Mutable construction representation, also retained as the test reference path.
