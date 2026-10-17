@@ -1,0 +1,112 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+Vulkan 1.4.356 - Forward+ - Using Device #0: Intel - Intel(R) Arc(TM) B580 Graphics
+
+PERF_CAPTURE armed renderer=forward_plus native=true output=C:\Users\Lab\Downloads\godot-dash-windows-x86_64\performance-20261016-200114\frames.csv
+PERF_CAPTURE static memory may be zero in release; use the Windows memory sidecar for process memory.
+ERROR: Error calling deferred method: 'Node(Config.gd)::apply_frame_pacing': Method expected 0 argument(s), but called with 1.
+   at: _call_function (core/object/message_queue.cpp:220)
+ERROR: Error calling deferred method: 'Node(Config.gd)::apply_frame_pacing': Method expected 0 argument(s), but called with 1.
+   at: _call_function (core/object/message_queue.cpp:220)
+[RobTop] POST https://www.boomlings.com/database/getGJLevels21.php
+[RobTop] result=0 HTTP=200 bytes=3680
+[RobTop] POST https://www.boomlings.com/database/getGJLevels21.php
+[RobTop] result=0 HTTP=200 bytes=3613
+[RobTop] POST https://www.boomlings.com/database/downloadGJLevel22.php
+[RobTop] result=0 HTTP=200 bytes=2
+[RobTop] POST https://gddash.anrandaniel2.workers.dev/?url=https%3A%2F%2Fwww.boomlings.com%2Fdatabase%2FdownloadGJLevel22.php
+[RobTop] result=0 HTTP=200 bytes=2
+[RobTop] Level download via GDHistory: https://history.geometrydash.eu/api/v1/level/119550490/
+[RobTop] GET https://history.geometrydash.eu/api/v1/level/119550490/
+[RobTop] GET result=0 HTTP=200 bytes=43260
+[RobTop] Fetching level archive: https://history.geometrydash.eu/level/119550490/195416731/download/ (record 195416731, ver 1)
+[RobTop] GET https://history.geometrydash.eu/level/119550490/195416731/download/
+[RobTop] GET result=0 HTTP=403 bytes=5465
+[RobTop] GET https://gddash.anrandaniel2.workers.dev/?url=https%3A%2F%2Fhistory.geometrydash.eu%2Flevel%2F119550490%2F195416731%2Fdownload%2F
+[RobTop] GET result=0 HTTP=200 bytes=3297637
+GDDecorationLoader: 5455 frames from 1 packed page(s) in 20 ms, 3936 objects mapped
+[RobTop] C++ packed import: chars=19899614 chunks=147423 valid=147423 malformed=0 decorations=134865 dictionaries=12558
+[RobTop] GDHistory conversion: 147423 objects imported, 134865 decorations, 38 trigger target groups left empty, 332 triggers use an unsupported mode
+[RobTop] inert triggers:
+  • trigger 1006  ×332
+[gdash-mem] game scene ready
+[gdash] native core loaded: gdash_native 1.12.0 / native animation / spatial retained RIDs / worker culling / native color channels / packed player physics / gravity portals / quiet diagnostics / api 4.7 (self-check add(2, 3) == 5, types 4/2)
+WARNING: GDArtSwap: object 146 keeps its placeholder art, GDInvisibleSquare.tscn has no texture node to swap
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+GLOWDIAG channels=372 blending=[7, 11, 30, 35, 36, 39, 40, 1002, 1005, 1006] copies=[17<-c16, 30<-c27, 37<-c21, 1002<-2, 1005<-3, 1006<-4]
+GLOWDIAG batches=2296 additive=217 items=0 glow=0
+GLOWDIAG glow per 1000x: 
+GLOWDIAG glow wanted, no artwork: 1729:2140 94:243 1705:66 1707:2 5:1 1706:1
+BEAMDIAG items=0 white=0
+TRIGDIAG flags(spawn=1,touch=2,multi=4) 1006/0=2439 899/0=578 1006/5=14 1006/4=28 1006/2=5 899/2=1 899/1=16
+TRIGDIAG gd_id=1006 n=2486 keys=1:2486,2:2486,3:2486,4:78,6:18,7:2023,8:2023,9:2023,11:5,20:822,21:107,24:475,25:1737,36:2486,41:105,43:105,45:1424,46:155,47:2439,48:463,49:463,50:131,51:2486,52:378,57:177,61:2486,62:14,64:2473,67:1504,87:42,103:55,108:717,128:181,129:181,155:2486
+TRIGDIAG gd_id=1006 sample0={ "1": "1006", "2": "12825", "3": "615", "108": "1438", "61": "81", "57": "116", "64": "1", "67": "1", "155": "1", "25": "2", "128": "0.75", "129": "0.75", "62": "1", "87": "1", "36": "1", "51": "104", "45": "0.05", "47": "0.5", "7": "2", "8": "0", "9": "105" }
+TRIGDIAG gd_id=1006 sample1={ "1": "1006", "2": "12825", "3": "600", "108": "1438", "61": "81", "57": "116", "64": "1", "67": "1", "155": "1", "25": "2", "128": "0.75", "129": "0.75", "62": "1", "87": "1", "36": "1", "51": "103", "45": "0.05", "47": "0.5", "7": "198", "8": "228", "9": "255" }
+TRIGDIAG gd_id=1006 sample2={ "1": "1006", "2": "12825", "3": "645", "108": "1438", "61": "81", "57": "116", "64": "1", "67": "1", "155": "1", "25": "2", "128": "0.75", "129": "0.75", "62": "1", "87": "1", "36": "1", "51": "106", "45": "0.05", "47": "0.5", "7": "29", "8": "0", "9": "38" }
+TRIGDIAG gd_id=899 n=595 keys=1:595,2:595,3:595,6:82,7:595,8:595,9:595,10:595,11:1,17:253,20:94,21:50,23:595,24:2,25:300,35:595,36:595,49:53,50:73,57:16,60:54,61:595,62:16,64:478,67:398,103:22,108:154,128:108,129:108,155:595
+TRIGDIAG gd_id=899 sample0={ "1": "899", "2": "6824.98", "3": "858.75", "61": "79", "57": "423", "64": "1", "67": "1", "155": "1", "25": "2", "128": "0.5", "129": "0.5", "62": "1", "36": "1", "7": "0", "8": "0", "9": "0", "10": "0.5", "35": "0", "17": "1", "23": "355", "50": "1000", "49": "0a0.7a5a0a0" }
+TRIGDIAG gd_id=899 sample1={ "1": "899", "2": "6824.98", "3": "888.75", "61": "79", "57": "423", "64": "1", "67": "1", "155": "1", "25": "2", "128": "0.5", "129": "0.5", "62": "1", "36": "1", "7": "0", "8": "0", "9": "0", "10": "0.5", "35": "0", "17": "1", "23": "357", "50": "1000", "49": "-30a0.6a0.5a0a0" }
+TRIGDIAG gd_id=899 sample2={ "1": "899", "2": "6824.98", "3": "828.75", "61": "79", "57": "423", "64": "1", "67": "1", "155": "1", "25": "2", "128": "0.5", "129": "0.5", "62": "1", "36": "1", "7": "0", "8": "0", "9": "0", "10": "0.5", "35": "0", "17": "1", "23": "353", "50": "1000", "49": "0a1a2a0a0" }
+[gdash] native trigger runtime packed 5213 records
+[gdash_native] FADIAG fire #1 groups=g_26 members=1 watchers=0 batches=1 naked=0 alpha=1.0 dur=0.041
+[gdash_native] colorcap #1 color level ch=1000 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.0,0.0,0.0) alpha_to=1.0 dur=0.0
+[gdash_native] colorcap #2 color level ch=1001 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.0,0.0,0.0) alpha_to=1.0 dur=0.0
+[gdash_native] colorcap #3 color channel ch=1009 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.0,0.0,0.0) alpha_to=1.0 dur=0.0
+[gdash_native] FADIAG fire #2 groups=g_1 members=1642 watchers=472 batches=149 naked=0 alpha=0.0 dur=0.0
+[gdash_native] colorcap #4 color channel ch=1004 rgb=y copy=0 player=0 from=(1.0,0.98,0.98) to=(0.0,0.0,0.0) alpha_to=1.0 dur=0.0
+[gdash_native] FADIAG fire #3 groups=g_858 members=9 watchers=0 batches=9 naked=0 alpha=0.0 dur=0.0
+BEAMDIAG live t=0 x=640 colored=46/372 recolors=3 last=1007 recent=[1009:(0.00,0.00,0.00), 1004:(0.00,0.00,0.00), 1007:(0.50,0.00,1.00)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+[gdash_native] colorcap #5 color channel ch=1004 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(1.0,0.98,0.98) alpha_to=1.0 dur=0.0
+[gdash_native] FADIAG fire #4 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.0 dur=0.5
+[gdash_native] colorcap #6 pulse channel ch=11 rgb=y copy=0 player=0 from=(0.086,0.027,0.071) to=(0.184,0.043,0.294) alpha_to=1.0 dur=0.0 envelope
+[gdash_native] colorcap #7 color channel ch=38 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.0,0.0,0.0) alpha_to=0.5 dur=0.4
+[gdash_native] colorcap #8 pulse channel ch=35 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.231,0.051,0.208) alpha_to=1.0 dur=0.0 envelope
+[gdash_native] colorcap #9 pulse channel ch=35 rgb=y copy=0 player=0 from=(0.111,0.024,0.1) to=(0.231,0.051,0.169) alpha_to=1.0 dur=0.0 envelope
+[gdash_native] FADIAG fire #5 groups=g_23 members=2 watchers=0 batches=2 naked=0 alpha=0.26 dur=0.104
+[gdash_native] FADIAG fire #6 groups=g_24 members=1 watchers=0 batches=1 naked=0 alpha=0.26 dur=0.104
+[gdash_native] colorcap #10 color channel ch=22 rgb=y copy=0 player=0 from=(0.427,0.431,0.435) to=(1.0,1.0,1.0) alpha_to=0.968 dur=0.0
+[gdash_native] colorcap #11 color channel ch=38 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.0,0.0,0.0) alpha_to=1.0 dur=0.4
+[gdash_native] colorcap #12 color channel ch=23 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(1.0,1.0,1.0) alpha_to=0.785 dur=0.1
+[gdash_native] colorcap #13 color channel ch=22 rgb=y copy=0 player=0 from=(1.0,1.0,1.0) to=(1.0,1.0,1.0) alpha_to=0.0 dur=0.4
+[gdash_native] colorcap #14 pulse channel ch=35 rgb=y copy=0 player=0 from=(0.053,0.012,0.039) to=(0.208,0.051,0.231) alpha_to=1.0 dur=0.0 envelope
+[gdash_native] FADIAG fire #7 groups=g_23 members=2 watchers=0 batches=2 naked=0 alpha=0.12 dur=0.281
+[gdash_native] FADIAG fire #8 groups=g_24 members=1 watchers=0 batches=1 naked=0 alpha=0.12 dur=0.281
+[gdash_native] colorcap #15 color channel ch=24 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(1.0,1.0,1.0) alpha_to=0.663 dur=0.2
+[gdash_native] colorcap #16 color channel ch=23 rgb=y copy=0 player=0 from=(1.0,1.0,1.0) to=(1.0,1.0,1.0) alpha_to=0.0 dur=0.4
+[gdash_native] colorcap #17 color channel ch=25 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(1.0,1.0,1.0) alpha_to=0.494 dur=0.3
+[gdash_native] colorcap #18 color channel ch=24 rgb=y copy=0 player=0 from=(1.0,1.0,1.0) to=(1.0,1.0,1.0) alpha_to=0.0 dur=0.4
+[gdash_native] colorcap #19 pulse channel ch=11 rgb=y copy=0 player=0 from=(0.086,0.027,0.071) to=(0.243,0.035,0.263) alpha_to=1.0 dur=0.0 envelope
+[gdash_native] colorcap #20 color channel ch=38 rgb=y copy=0 player=0 from=(0.0,0.0,0.0) to=(0.0,0.0,0.0) alpha_to=0.5 dur=0.4
+[gdash_native] FADIAG fire #9 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.4 dur=0.1
+[gdash_native] FADIAG fire #10 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.0 dur=0.204
+BEAMDIAG live t=5 x=6614 colored=45/372 recolors=2638 last=35 recent=[38:(0.00,0.00,0.00), 35:(0.13,0.03,0.15), 11:(0.16,0.04,0.23), 38:(0.00,0.00,0.00), 35:(0.13,0.03,0.14), 11:(0.15,0.04,0.23), 38:(0.00,0.00,0.00), 35:(0.13,0.03,0.14)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+[gdash_native] FADIAG fire #11 groups=g_28 members=4 watchers=0 batches=3 naked=0 alpha=0.0 dur=0.174
+[gdash_native] FADIAG fire #12 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.4 dur=0.248
+[gdash_native] FADIAG fire #13 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.0 dur=0.204
+[gdash_native] FADIAG fire #14 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.4 dur=0.248
+BEAMDIAG live t=10 x=12869 colored=70/372 recolors=5302 last=40 recent=[40:(0.15,0.04,0.17), 40:(0.15,0.04,0.16), 40:(0.14,0.03,0.16), 40:(0.14,0.03,0.15), 40:(0.13,0.03,0.15), 40:(0.12,0.03,0.14), 40:(0.12,0.03,0.13), 40:(0.11,0.03,0.13)] bg=(0.12,0.00,0.15) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+[gdash_native] FADIAG fire #15 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.0 dur=0.204
+[gdash_native] FADIAG fire #16 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.4 dur=0.248
+[gdash_native] FADIAG fire #17 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.0 dur=0.204
+[gdash_native] FADIAG fire #18 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=0.4 dur=0.248
+[gdash_native] FADIAG fire #19 groups=g_35 members=1 watchers=0 batches=1 naked=0 alpha=1.0 dur=0.426
+[gdash_native] FADIAG fire #20 groups=g_554 members=1 watchers=0 batches=1 naked=0 alpha=0.0 dur=0.255
+PERF_CAPTURE frames=1800 median_ms=6.955 p95_ms=8.045 max_ms=33.725 sampler_mean_us=4.686
+PERF_CAPTURE saved C:\Users\Lab\Downloads\godot-dash-windows-x86_64\performance-20261016-200114\frames.csv; CSV writing is outside the sampled frames.
+PERF_CAPTURE finalize_ms=8.854 (diagnostic file-write pause)
+BEAMDIAG live t=15 x=19124 colored=70/372 recolors=10522 last=508 recent=[510:(0.17,0.10,0.19), 512:(0.13,0.32,0.38), 509:(0.13,0.00,0.22), 511:(0.15,0.15,0.15), 1004:(0.05,0.03,0.23), 504:(0.16,0.02,0.20), 506:(0.08,0.04,0.10), 508:(0.01,0.00,0.01)] bg=(0.12,0.00,0.15) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=20 x=25380 colored=70/372 recolors=19148 last=506 recent=[522:(0.00,0.28,0.35), 1004:(0.71,0.00,0.78), 504:(0.16,0.02,0.20), 506:(0.08,0.04,0.10), 522:(0.00,0.27,0.33), 1004:(0.70,0.00,0.77), 504:(0.16,0.02,0.20), 506:(0.08,0.04,0.10)] bg=(0.12,0.00,0.15) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=25 x=31631 colored=112/372 recolors=25337 last=763 recent=[762:(0.36,0.19,0.42), 763:(0.06,0.42,0.15), 762:(0.58,0.30,0.67), 763:(0.10,0.67,0.24), 771:(0.63,0.02,0.47), 764:(0.36,0.01,0.38), 762:(0.33,0.17,0.38), 763:(0.05,0.38,0.13)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=30 x=37885 colored=111/372 recolors=26562 last=1007 recent=[1007:(0.47,0.00,0.93), 1007:(0.47,0.00,0.93), 1007:(0.47,0.00,0.93), 1007:(0.47,0.00,0.93), 1007:(0.47,0.00,0.93), 1007:(0.47,0.00,0.93), 1007:(0.47,0.00,0.94), 1007:(0.47,0.00,0.94)] bg=(0.05,0.00,0.07) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=35 x=44134 colored=127/372 recolors=28239 last=440 recent=[429:(0.45,0.17,0.50), 435:(0.11,0.04,0.13), 432:(0.11,0.04,0.13), 428:(0.37,0.11,0.42), 436:(0.34,0.13,0.39), 437:(0.57,0.22,0.65), 439:(0.04,0.05,0.06), 440:(0.10,0.13,0.17)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=40 x=50387 colored=127/372 recolors=35946 last=435 recent=[438:(0.12,0.15,0.19), 435:(0.85,0.32,0.96), 434:(0.36,0.14,0.41), 432:(0.84,0.32,0.95), 428:(0.85,0.26,0.97), 429:(0.86,0.33,0.97), 438:(0.12,0.15,0.19), 435:(0.84,0.32,0.95)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=45 x=56636 colored=151/372 recolors=44875 last=104 recent=[121:(1.00,1.00,1.00), 101:(0.28,0.13,0.51), 108:(0.10,0.15,0.35), 109:(0.66,0.29,0.72), 105:(0.72,0.47,0.71), 103:(0.25,0.51,0.74), 106:(0.29,0.00,0.24), 104:(0.00,0.01,0.15)] bg=(0.04,0.00,0.06) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=50 x=62895 colored=151/372 recolors=58953 last=103 recent=[103:(0.09,0.13,0.17), 109:(0.09,0.05,0.16), 105:(0.13,0.07,0.14), 108:(0.09,0.05,0.16), 106:(0.00,0.00,0.00), 104:(0.00,0.00,0.00), 101:(0.05,0.03,0.10), 103:(0.08,0.13,0.16)] bg=(0.04,0.00,0.06) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=55 x=69146 colored=151/372 recolors=72164 last=104 recent=[121:(1.00,1.00,1.00), 101:(0.30,0.14,0.54), 108:(0.10,0.16,0.37), 109:(0.71,0.31,0.77), 105:(0.77,0.51,0.76), 103:(0.27,0.54,0.78), 106:(0.31,0.00,0.26), 104:(0.00,0.01,0.16)] bg=(0.04,0.00,0.06) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+[gdash_native] colorcap #1000 pulse channel ch=101 rgb=y copy=0 player=0 from=(0.051,0.031,0.098) to=(0.275,0.188,0.698) alpha_to=1.0 dur=0.0 envelope
+BEAMDIAG live t=60 x=75404 colored=234/372 recolors=99019 last=104 recent=[295:(1.00,1.00,1.00), 101:(0.13,0.07,0.25), 108:(0.09,0.09,0.23), 109:(0.30,0.14,0.36), 105:(0.34,0.22,0.35), 103:(0.14,0.26,0.37), 106:(0.10,0.00,0.09), 104:(0.00,0.00,0.05)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=65 x=81668 colored=234/372 recolors=154114 last=288 recent=[249:(1.00,0.17,0.55), 285:(0.64,0.18,1.00), 293:(0.64,0.18,1.00), 292:(0.64,0.18,1.00), 291:(0.64,0.18,1.00), 283:(0.69,0.34,0.94), 284:(0.69,0.34,0.94), 288:(0.15,0.00,0.21)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=70 x=87931 colored=273/372 recolors=220221 last=241 recent=[243:(1.00,1.00,1.00), 237:(0.32,0.17,1.00), 254:(0.00,0.00,0.00), 286:(0.67,0.52,1.00), 287:(1.00,1.00,1.00), 240:(0.52,0.22,0.91), 290:(1.00,1.00,1.00), 241:(1.00,1.00,1.00)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=75 x=94195 colored=273/372 recolors=284854 last=660 recent=[660:(0.02,0.52,0.59), 652:(0.46,0.16,0.55), 655:(0.95,0.30,0.58), 673:(0.28,0.00,0.76), 655:(0.97,0.23,0.55), 673:(0.91,0.00,0.58), 657:(0.13,0.26,0.46), 660:(0.02,0.52,0.59)] bg=(0.08,0.06,0.11) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+BEAMDIAG live t=80 x=100130 colored=308/372 recolors=300459 last=655 recent=[673:(0.35,0.00,0.95), 652:(0.68,0.11,0.84), 655:(0.74,0.06,0.35), 655:(0.88,0.13,0.45), 652:(0.54,0.07,0.68), 673:(0.35,0.00,0.96), 652:(0.68,0.12,0.84), 655:(0.74,0.06,0.35)] bg=(0.00,0.00,0.00) ground=(0.00,0.00,0.00) line=(0.00,0.00,0.00)
+ERROR: Thread must have been started to wait for its completion.
+   at: wait_to_finish (core/core_bind.cpp:1529)
