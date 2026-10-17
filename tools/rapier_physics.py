@@ -55,6 +55,21 @@ def _download_asset(cache_dir: pathlib.Path) -> pathlib.Path:
     return archive
 
 
+def _manifest_has_expected_compatibility(manifest: str) -> bool:
+    """Accept Godot's valid quoted and unquoted numeric INI values."""
+    for line in manifest.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key.strip() != "compatibility_minimum":
+            continue
+        value = value.split("#", 1)[0].strip()
+        if value.startswith(('"', "'")):
+            if len(value) < 2 or value[-1] != value[0]:
+                return False
+            value = value[1:-1].strip()
+        return value == "4.7"
+    return False
+
+
 def install_addon(project_root: pathlib.Path, cache_dir: pathlib.Path) -> pathlib.Path:
     """Extract only the 2D addon from the pinned upstream release package."""
     project_root = project_root.resolve()
@@ -96,7 +111,7 @@ def install_addon(project_root: pathlib.Path, cache_dir: pathlib.Path) -> pathli
         shutil.rmtree(destination, ignore_errors=True)
         raise RuntimeError("Pinned Rapier release has no 2D GDExtension manifest")
     manifest = extension.read_text(encoding="utf-8")
-    if 'compatibility_minimum = "4.7"' not in manifest:
+    if not _manifest_has_expected_compatibility(manifest):
         shutil.rmtree(destination, ignore_errors=True)
         raise RuntimeError("Rapier GDExtension is not pinned to the expected Godot 4.7 API")
     if extracted == 0:

@@ -7,6 +7,23 @@ from tools import rapier_physics
 
 
 class RapierPhysicsBuildTests(unittest.TestCase):
+    def test_manifest_accepts_quoted_and_unquoted_minor_version(self):
+        self.assertTrue(
+            rapier_physics._manifest_has_expected_compatibility(
+                "[configuration]\ncompatibility_minimum = 4.7\n"
+            )
+        )
+        self.assertTrue(
+            rapier_physics._manifest_has_expected_compatibility(
+                '[configuration]\ncompatibility_minimum = "4.7"\n'
+            )
+        )
+        self.assertFalse(
+            rapier_physics._manifest_has_expected_compatibility(
+                "[configuration]\ncompatibility_minimum = 4.6\n"
+            )
+        )
+
     def test_set_engine_rewrites_physics_section_once(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = pathlib.Path(temporary) / "project.godot"
@@ -45,7 +62,7 @@ class RapierPhysicsBuildTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as package:
                 package.writestr(
                     prefix + "godot-rapier2d.gdextension",
-                    '[configuration]\ncompatibility_minimum = "4.7"\n',
+                    '[configuration]\ncompatibility_minimum = 4.7\n',
                 )
                 package.writestr(prefix + "bin/test.so", b"binary")
                 package.writestr("godot-rapier-2d-single/project.godot", "not extracted")
