@@ -5,6 +5,10 @@ playing smoothly on desktop. Everything below is read out of the checkout at `4f
 changes in §7. Line numbers are from the working tree after those changes; every claim names a
 file, function and line.
 
+**Read `reports/bottleneck-attribution-2026-10-19.md` alongside this.** It corrects one number
+this report inherited from earlier analysis (`process_ms` is a per-second *maximum*, not a mean)
+and states which of the three items below the repository can and cannot prove.
+
 **Evidence status.** Source-level findings only. There is no Godot binary and no Android device in
 this environment, so no frame time, GPU time or temperature in this report comes from a run. Where
 a number is arithmetic on shipped settings it is labelled as such. §8 is the device protocol that
@@ -338,8 +342,10 @@ Before this is called a win:
 4. On device, same build/level/camera, `adb logcat | grep -E "RENDERDIAG|BEAMDIAG"`:
    `anim_skip` and `cull_skip` must be non-zero and climbing; `draws` must be **unchanged** at the
    same camera position — if it drops, the gates are hiding something that should be drawn.
-5. `--perf-capture` before/after on the same phone for `frame_wall_ms`, `process_ms`,
-   `render_gpu_ms`, plus surface temperature over 10 minutes.
+5. `--perf-capture` before/after on the same phone for `frame_wall_ms` and `render_gpu_ms`, plus
+   surface temperature over 10 minutes. Do **not** use `process_ms`: it is the worst single frame
+   of the preceding ~1 s, not a mean (see
+   `reports/bottleneck-attribution-2026-10-19.md` §1). Use the `RENDERDIAG phases` line instead.
 
 ---
 

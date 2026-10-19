@@ -238,13 +238,33 @@ func _process(_delta: float) -> void:
 ## batch recolour path. Grep "BEAMDIAG live".
 var _beamdiag_seconds: float = 0.0
 var _beamdiag_last_print: float = -5.0
+# Measured frame pacing for the same 5-second window. `_delta` is the real
+# interval between two rendered frames, so this is the one pacing number in the
+# log that is not a lie: `Performance.TIME_PROCESS` is a running maximum the
+# engine only refreshes once every million frames (main/main.cpp
+# `if (frame > 1000000)`), which is why captures show a constant 168 ms while
+# frames plainly take 7 ms.
+var _diag_frames: int = 0
+var _diag_delta_sum: float = 0.0
+var _diag_delta_min: float = 0.0
+var _diag_delta_max: float = 0.0
 
 
 func _print_beam_diagnostics_live(delta: float) -> void:
 	if Editor.in_editor or not LevelManager.level_playing:
 		_beamdiag_seconds = 0.0
 		_beamdiag_last_print = -5.0
+		_diag_frames = 0
+		_diag_delta_sum = 0.0
 		return
+	if delta > 0.0:
+		if _diag_frames == 0:
+			_diag_delta_min = delta
+			_diag_delta_max = delta
+		_diag_delta_min = minf(_diag_delta_min, delta)
+		_diag_delta_max = maxf(_diag_delta_max, delta)
+		_diag_delta_sum += delta
+		_diag_frames += 1
 	_beamdiag_seconds += delta
 	if _beamdiag_seconds - _beamdiag_last_print < 5.0:
 		return
@@ -315,6 +335,40 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 				int(render_stats.get("cull_jobs_skipped", 0)),
 			]
 		)
+		# Where the frame actually went. The coordinator phases are measured in
+		# native code with one clock read at each boundary (see
+		# DecorationCoordinatorTimers); frame_ms/fps are measured here from the
+		# real inter-frame interval. If frame_ms approaches the display period
+		# while total_us is small, the CPU is not the limit - the device is
+		# waiting on presentation or GPU fill. If flush_us dominates total_us,
+		# command re-emission is. Nothing here is inferred.
+		if int(render_stats.get("coordinator_frames", 0)) > 0:
+			var frame_ms: float = 0.0
+			if _diag_frames > 0:
+				frame_ms = (_diag_delta_sum / float(_diag_frames)) * 1000.0
+			var jitter_min_ms: float = _diag_delta_min * 1000.0 if _diag_frames > 0 else 0.0
+			var jitter_max_ms: float = _diag_delta_max * 1000.0 if _diag_frames > 0 else 0.0
+			print(
+				(
+					"RENDERDIAG phases fps=%.1f frame_ms=%.2f jitter_ms=%.2f/%.2f apply_us=%.1f anim_us=%.1f flush_us=%.1f capture_us=%.1f post_us=%.1f total_us=%.1f jobs=%d groups=%d"
+					% [
+						(1000.0 / frame_ms if frame_ms > 0.0 else 0.0),
+						frame_ms,
+						jitter_min_ms,
+						jitter_max_ms,
+						float(render_stats.get("coordinator_apply_avg_us", 0.0)),
+						float(render_stats.get("coordinator_animation_avg_us", 0.0)),
+						float(render_stats.get("coordinator_flush_avg_us", 0.0)),
+						float(render_stats.get("coordinator_capture_avg_us", 0.0)),
+						float(render_stats.get("coordinator_post_avg_us", 0.0)),
+						float(render_stats.get("coordinator_total_avg_us", 0.0)),
+						int(render_stats.get("coordinator_jobs_posted", 0)),
+						int(render_stats.get("cull_groups_posted", 0)),
+					]
+				)
+			)
+	_diag_frames = 0
+	_diag_delta_sum = 0.0
 
 
 ## The shared physics world mirrors the object tree; any object added to or

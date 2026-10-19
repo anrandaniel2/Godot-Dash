@@ -177,6 +177,13 @@ Runtime constraints on Android that show up in code:
   not a fill-rate control on Android.
 - Memory diagnostics (`GameScene._print_process_memory`, `[gdash-mem]`) exist because the app was
   killed by lmkd on large levels.
+- **Attribution before optimisation**: `RENDERDIAG phases` (printed every 5 s next to the existing
+  `RENDERDIAG` line, both in `src/Level.gd`) reports real `fps`/`frame_ms` from the inter-frame
+  interval plus the decoration coordinator's five main-thread phases in microseconds
+  (`DecorationCoordinatorTimers`, `native/src/gdash_native.cpp`). Read
+  `reports/bottleneck-attribution-2026-10-19.md` for the decision table and for why
+  `Performance.TIME_PROCESS` (`process_ms` in captures) must not be used: it is the worst single
+  frame of the preceding ~1 s, not a per-frame mean.
 
 ## 4. Desktop
 

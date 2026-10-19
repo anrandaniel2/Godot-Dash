@@ -7991,6 +7991,48 @@ static void update_registered_decoration_renderers(double delta);
 static void finalize_decoration_culling();
 static Dictionary registered_decoration_stats();
 
+// Per-frame attribution for the decoration coordinator.
+//
+// Frame-time captures can say a frame took 20 ms; they cannot say which of the
+// three main-thread phases spent it. These counters can, and they are the only
+// measurement that separates "the phone is fill-rate bound" from "the phone
+// cannot afford to re-emit commands". Eight clock reads per frame (each a
+// vDSO/clock_gettime call, tens of nanoseconds) against thousands of
+// RenderingServer calls, so the probe costs less than 0.1% of a frame.
+//
+// Sums are cumulative since the last stats read: registered_decoration_stats()
+// is called by Level's 5-second RENDERDIAG print, so each print reports the
+// average over that interval. Nothing else reads it, and the reset only zeroes
+// counters, never state the renderer depends on.
+struct DecorationCoordinatorTimers {
+	uint64_t sum_apply_us = 0;
+	uint64_t sum_animation_us = 0;
+	uint64_t sum_flush_us = 0;
+	uint64_t sum_capture_us = 0;
+	uint64_t sum_post_us = 0;
+	uint64_t sum_runtime_us = 0;
+	int64_t frames = 0;
+	int64_t jobs_posted = 0;
+	int64_t groups_posted = 0;
+
+	uint64_t last_apply_us = 0;
+	uint64_t last_animation_us = 0;
+	uint64_t last_flush_us = 0;
+	uint64_t last_capture_us = 0;
+	uint64_t last_post_us = 0;
+	uint64_t last_runtime_us = 0;
+	int64_t last_jobs = 0;
+	int64_t last_groups = 0;
+
+	void reset() { *this = DecorationCoordinatorTimers(); }
+};
+static DecorationCoordinatorTimers decoration_timers;
+
+static uint64_t decoration_now_usec() {
+	Time *clock = Time::get_singleton();
+	return clock ? static_cast<uint64_t>(clock->get_ticks_usec()) : 0;
+}
+
 // Native owner for the packed runtime. Besides being the migration point for
 // rendering/collision stores, this removes the last per-physics-frame
 // GDScript->GDExtension calls: player discovery, crossing queries and event
@@ -11858,6 +11900,7 @@ static void update_registered_decoration_renderers(double delta) {
 	decoration_last_update_frame = frame;
 	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
 	static Ref<NativeDecorationCullWorker> worker;
+	const uint64_t frame_start_us = decoration_now_usec();
 
 	// Consume a completed range FIRST, without emitting commands yet. The
 	// previous order flushed animation with old cells, then cleared/rebuilt
@@ -11872,9 +11915,11 @@ static void update_registered_decoration_renderers(double delta) {
 		}
 		decoration_cull_active_group = -1;
 	}
+	const uint64_t after_apply_us = decoration_now_usec();
 	for (NativeDecorationRenderer *renderer : animated_decoration_renderers) {
 		if (renderer) renderer->advance_animation(delta);
 	}
+	const uint64_t after_animation_us = decoration_now_usec();
 	for (auto dirty = dirty_decoration_renderers.begin(); dirty != dirty_decoration_renderers.end();) {
 		NativeDecorationRenderer *renderer = *dirty;
 		if (!renderer || registered_decoration_renderers.count(renderer) == 0) {
@@ -11887,7 +11932,26 @@ static void update_registered_decoration_renderers(double delta) {
 		++dirty;
 		renderer->flush_commands();
 	}
-	if (!pool || decoration_cull_active_group >= 0) return;
+	const uint64_t after_flush_us = decoration_now_usec();
+	// Frames with a group still in flight skip capture/posting, but they are
+	// still real frames: record them with zero capture/post so the averages
+	// cover every frame instead of only the ones that posted work.
+	if (!pool || decoration_cull_active_group >= 0) {
+		if (after_flush_us > frame_start_us) {
+			++decoration_timers.frames;
+			decoration_timers.sum_apply_us += after_apply_us - frame_start_us;
+			decoration_timers.sum_animation_us += after_animation_us - after_apply_us;
+			decoration_timers.sum_flush_us += after_flush_us - after_animation_us;
+			decoration_timers.sum_runtime_us += after_flush_us - frame_start_us;
+			decoration_timers.last_apply_us = after_apply_us - frame_start_us;
+			decoration_timers.last_animation_us = after_animation_us - after_apply_us;
+			decoration_timers.last_flush_us = after_flush_us - after_animation_us;
+			decoration_timers.last_capture_us = 0;
+			decoration_timers.last_post_us = 0;
+			decoration_timers.last_runtime_us = after_flush_us - frame_start_us;
+		}
+		return;
+	}
 	if (worker.is_null()) {
 		worker.instantiate();
 		// This Ref outlives the engine; retain the existing immortal worker
@@ -11902,10 +11966,32 @@ static void update_registered_decoration_renderers(double delta) {
 		DecorationCullJob job;
 		if (renderer->capture_cull_job(job)) decoration_cull_jobs.push_back(job);
 	}
+	const uint64_t after_capture_us = decoration_now_usec();
 	if (!decoration_cull_jobs.empty()) {
 		decoration_cull_active_group = pool->add_group_task(
 				Callable(worker.ptr(), "compute"), static_cast<int32_t>(decoration_cull_jobs.size()),
 				-1, true, "GD visible-cell culling");
+	}
+	const uint64_t after_post_us = decoration_now_usec();
+
+	if (after_post_us > frame_start_us) {
+		++decoration_timers.frames;
+		decoration_timers.sum_apply_us += after_apply_us - frame_start_us;
+		decoration_timers.sum_animation_us += after_animation_us - after_apply_us;
+		decoration_timers.sum_flush_us += after_flush_us - after_animation_us;
+		decoration_timers.sum_capture_us += after_capture_us - after_flush_us;
+		decoration_timers.sum_post_us += after_post_us - after_capture_us;
+		decoration_timers.sum_runtime_us += after_post_us - frame_start_us;
+		decoration_timers.last_apply_us = after_apply_us - frame_start_us;
+		decoration_timers.last_animation_us = after_animation_us - after_apply_us;
+		decoration_timers.last_flush_us = after_flush_us - after_animation_us;
+		decoration_timers.last_capture_us = after_capture_us - after_flush_us;
+		decoration_timers.last_post_us = after_post_us - after_capture_us;
+		decoration_timers.last_runtime_us = after_post_us - frame_start_us;
+		decoration_timers.last_jobs = static_cast<int64_t>(decoration_cull_jobs.size());
+		decoration_timers.jobs_posted += decoration_timers.last_jobs;
+		if (!decoration_cull_jobs.empty()) ++decoration_timers.groups_posted;
+		decoration_timers.last_groups = decoration_cull_active_group >= 0 ? 1 : 0;
 	}
 }
 
@@ -11937,6 +12023,12 @@ static void finalize_decoration_culling() {
 
 static Dictionary registered_decoration_stats() {
 	Dictionary stats;
+	// Read and reset the coordinator timers first, so the averages describe the
+	// interval that just ended and every print is self-contained (Level calls
+	// this every 5 s). Counters only; no renderer state is touched.
+	const DecorationCoordinatorTimers timers = decoration_timers;
+	const double frames = timers.frames > 0 ? static_cast<double>(timers.frames) : 0.0;
+	decoration_timers.reset();
 	int64_t records = 0;
 	int64_t animated_records = 0;
 	int64_t submitted = 0;
@@ -11976,6 +12068,33 @@ static Dictionary registered_decoration_stats() {
 	// batch, and `cull_jobs_skipped` means a frame posted no worker group.
 	stats["animation_rebuilds_skipped"] = skipped_animation;
 	stats["cull_jobs_skipped"] = skipped_culls;
+	// Microseconds. `*_avg_us` is the per-frame mean over the interval since the
+	// previous read; `*_last_us` is the most recent frame. `jobs_posted` is the
+	// number of cull jobs handed to the worker pool, `cull_groups_posted` the
+	// number of groups (a group is only posted when at least one job survives
+	// the range gate), and `coordinator_frames` the interval's frame count.
+	stats["coordinator_frames"] = timers.frames;
+	stats["coordinator_jobs_posted"] = timers.jobs_posted;
+	stats["cull_groups_posted"] = timers.groups_posted;
+	stats["coordinator_apply_avg_us"] =
+			timers.frames > 0 ? static_cast<double>(timers.sum_apply_us) / frames : 0.0;
+	stats["coordinator_animation_avg_us"] =
+			timers.frames > 0 ? static_cast<double>(timers.sum_animation_us) / frames : 0.0;
+	stats["coordinator_flush_avg_us"] =
+			timers.frames > 0 ? static_cast<double>(timers.sum_flush_us) / frames : 0.0;
+	stats["coordinator_capture_avg_us"] =
+			timers.frames > 0 ? static_cast<double>(timers.sum_capture_us) / frames : 0.0;
+	stats["coordinator_post_avg_us"] =
+			timers.frames > 0 ? static_cast<double>(timers.sum_post_us) / frames : 0.0;
+	stats["coordinator_total_avg_us"] =
+			timers.frames > 0 ? static_cast<double>(timers.sum_runtime_us) / frames : 0.0;
+	stats["coordinator_total_last_us"] = static_cast<int64_t>(timers.last_runtime_us);
+	stats["coordinator_flush_last_us"] = static_cast<int64_t>(timers.last_flush_us);
+	stats["coordinator_apply_last_us"] = static_cast<int64_t>(timers.last_apply_us);
+	stats["coordinator_capture_last_us"] = static_cast<int64_t>(timers.last_capture_us);
+	stats["coordinator_animation_last_us"] = static_cast<int64_t>(timers.last_animation_us);
+	stats["coordinator_post_last_us"] = static_cast<int64_t>(timers.last_post_us);
+	stats["cull_jobs_last"] = timers.last_jobs;
 	return stats;
 }
 
