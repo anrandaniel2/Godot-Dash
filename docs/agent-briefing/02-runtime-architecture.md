@@ -82,6 +82,9 @@ Notable behaviours:
   a deliberately selected default-valued cap from the automatic default.
 - `Config.apply_frame_pacing` applies the software cap/VSync at startup and after settings or
   window-mode changes. Physics stays 240 Hz; Windows VSync presentation remains driver-owned.
+  `MobileRenderBudget` (once-only, mobile only, after the pacing migrations) turns the shipped
+  "unlimited" into 60 FPS; `Config.apply_render_scale` re-applies the saved `render_scale` as
+  `Window.content_scale_factor` at startup — a canvas transform, not a render-resolution change.
 - `show_performance_stats` emits a change signal so the hidden overlay stops processing.
   `RenderTimingRequests` shares GPU timing ownership between F3 and diagnostic captures;
   the hidden debug HUD no longer unconditionally enables GPU timestamps.

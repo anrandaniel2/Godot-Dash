@@ -104,11 +104,11 @@ func _on_anti_aliasing_value_changed(anti_aliasing_mode: Viewport.MSAA) -> void:
 
 
 func _on_render_scale_value_changed(value: int) -> void:
-	var window: Window = get_tree().root
-	if not window:
-		return
-	window.content_scale_factor = value / 100.0
+	# One owner for the saved value and the live Window property, so the
+	# startup path (Config._ready -> apply_render_scale) and this slider can
+	# never disagree.
 	Config.render_scale = value / 100.0
+	Config.apply_render_scale()
 
 
 func _on_texture_filtering_value_changed(texture_filtering_mode: Config.TextureFilteringMode) -> void:

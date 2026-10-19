@@ -283,6 +283,13 @@ func _init():
 	max_fps = FramePacingPolicy.load_cap(config_file, refresh_rate)
 	if migrate_frame_pacing:
 		config_file.save("user://config.cfg")
+	# Mobile sustained budget, after the desktop pacing migrations above so a
+	# legacy 60 that they cleared is re-applied as this policy's 60, and only
+	# then recorded as an intentional cap.
+	var mobile_cap: int = MobileRenderBudget.apply(config_file, OS.has_feature("mobile"))
+	if mobile_cap >= 0:
+		max_fps = mobile_cap
+		config_file.save("user://config.cfg")
 	show_particles_in_editor = config_file.get_value("Performance", "show_particles_in_editor", show_particles_in_editor)
 	particles_visibility = config_file.get_value("Performance", "particles_visibility", particles_visibility)
 	preprocess_particles_in_editor = config_file.get_value("Performance", "preprocess_particles_in_editor", preprocess_particles_in_editor)
@@ -372,6 +379,7 @@ static func web_texture_filtering(mode: TextureFilteringMode, is_web: bool) -> T
 
 func _ready() -> void:
 	apply_frame_pacing()
+	apply_render_scale()
 	TimescaleChangerComponent.apply_game_speed()
 	if window_mode == WindowMode.WINDOWED and not OS.has_feature("web"):
 		if saved_window_size.x > 0 and saved_window_size.y > 0:
@@ -393,6 +401,24 @@ func apply_frame_pacing() -> void:
 	Engine.max_fps = maxi(0, max_fps)
 	if DisplayServer.window_get_vsync_mode() != vsync:
 		DisplayServer.window_set_vsync_mode(vsync)
+
+
+## Restores the saved Render Scale.
+##
+## The slider used to write [member Window.content_scale_factor] directly and
+## nothing reapplied it at startup, so the saved value was inert until the
+## player opened Settings again. Note what this setting is: with
+## [code]window/stretch/mode = "canvas_items"[/code] it scales the canvas
+## transform, it does not allocate a smaller framebuffer. It is a layout/zoom
+## control, not a fill-rate control - a phone still rasterizes the full window.
+## Use the FPS cap ([method apply_frame_pacing]) for sustained load.
+func apply_render_scale() -> void:
+	if not is_inside_tree():
+		return
+	var root: Window = get_tree().root
+	if root == null:
+		return
+	root.content_scale_factor = clampf(render_scale, 0.25, 4.0)
 
 
 func _notification(what):

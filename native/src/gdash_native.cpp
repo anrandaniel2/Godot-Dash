@@ -10802,6 +10802,13 @@ class NativeDecorationRenderer : public RefCounted {
 	int64_t last_draw_commands = 0;
 	int64_t last_transform_commands = 0;
 	int64_t command_rebuilds = 0;
+	// Mobile instrumentation. `skipped_animation_rebuilds` counts animation
+	// ticks whose spinning records were all outside the selected cell range, so
+	// no command stream had to be cleared/re-emitted. `skipped_cull_jobs`
+	// counts frames where the prospective cell range equalled the applied one,
+	// so no WorkerThreadPool group was posted for this renderer.
+	int64_t skipped_animation_rebuilds = 0;
+	int64_t skipped_cull_jobs = 0;
 	// Dirty only the blend routes touched by a record update. Each route keeps
 	// its ordered command stream intact; this avoids clearing/re-emitting the
 	// other CanvasItem RIDs when a trigger changes just one route.
@@ -10963,6 +10970,8 @@ protected:
 		ClassDB::bind_method(D_METHOD("item_count"), &NativeDecorationRenderer::item_count);
 		ClassDB::bind_method(D_METHOD("last_drawn_count"), &NativeDecorationRenderer::last_drawn_count);
 		ClassDB::bind_method(D_METHOD("command_rebuild_count"), &NativeDecorationRenderer::command_rebuild_count);
+		ClassDB::bind_method(D_METHOD("skipped_animation_rebuild_count"), &NativeDecorationRenderer::skipped_animation_rebuild_count);
+		ClassDB::bind_method(D_METHOD("skipped_cull_job_count"), &NativeDecorationRenderer::skipped_cull_job_count);
 		ClassDB::bind_method(D_METHOD("route_rebuild_count", "route"), &NativeDecorationRenderer::route_rebuild_count);
 		ClassDB::bind_method(D_METHOD("draw_commands_last_rebuild"), &NativeDecorationRenderer::draw_commands_last_rebuild);
 		ClassDB::bind_method(D_METHOD("transform_commands_last_rebuild"), &NativeDecorationRenderer::transform_commands_last_rebuild);
@@ -11171,6 +11180,13 @@ public:
 
 	// Same transform consumed by command emission; useful for headless parity.
 
+	bool record_in_selection(size_t index) const {
+		// Culling disabled (UI layout, editor authoring, or `enable_culling`
+		// false) means every record is submitted, so every record is visible.
+		if (!cull) return true;
+		return visible_records && visible_records->contains(index);
+	}
+
 	template <bool ReuseRotation>
 	uint8_t advance_spinning_records(double delta) {
 		// Reuse trig only for consecutive equal speeds within this call. Never
@@ -11198,7 +11214,15 @@ public:
 			record.transform.columns[0] = Vector2(static_cast<real_t>(spun.xx), static_cast<real_t>(spun.xy));
 			record.transform.columns[1] = Vector2(static_cast<real_t>(spun.yx), static_cast<real_t>(spun.yy));
 			record.transform.columns[2] = Vector2(static_cast<real_t>(spun.ox), static_cast<real_t>(spun.oy));
-			changed_routes |= static_cast<uint8_t>(1u << route_slot_for_record(record));
+			// Every spinning record accumulates its rotation above (rotation is
+			// incremental, so skipping it would desynchronise the pose), but
+			// only a selected record can change what is on screen. One
+			// off-screen sawblade used to force its whole batch - often
+			// thousands of static sprites - through clear + full re-emission
+			// every frame on the world's slowest CPUs.
+			if (record_in_selection(index)) {
+				changed_routes |= static_cast<uint8_t>(1u << route_slot_for_record(record));
+			}
 		}
 		return changed_routes;
 	}
@@ -11208,6 +11232,7 @@ public:
 		const uint8_t changed_routes = reuse_spin_rotation
 				? advance_spinning_records<true>(delta)
 				: advance_spinning_records<false>(delta);
+		if (changed_routes == 0) ++skipped_animation_rebuilds;
 		mark_routes_dirty(changed_routes);
 	}
 
@@ -11220,13 +11245,45 @@ public:
 		return true;
 	}
 
+	// Mirrors NativeDecorationCullWorker::compute's cell range for one screen
+	// transform. Camera motion inside one cell used to post a WorkerThreadPool
+	// group every frame (one task per batch) and join it next frame, even though
+	// the selected record set - and therefore every emitted command - was
+	// identical. Comparing the prospective range here costs four vector
+	// transforms on the main thread and lets the coordinator skip the group
+	// entirely; the worker still owns the selection whenever the range moves.
+	bool cull_range_matches(const Transform2D &from_screen, const Vector2 &screen_size) const {
+		Rect2 local_view(from_screen.xform(Vector2()), Vector2());
+		local_view = local_view.expand(from_screen.xform(Vector2(screen_size.x, 0.0)));
+		local_view = local_view.expand(from_screen.xform(screen_size));
+		local_view = local_view.expand(from_screen.xform(Vector2(0.0, screen_size.y)));
+		// Same conservative one-cell growth the worker applies for the time a
+		// result is in flight (job.radius + job.cell_size).
+		local_view = local_view.grow(cull_margin + bucket_width);
+		const int64_t first = static_cast<int64_t>(std::floor(local_view.position.x / bucket_width));
+		const int64_t last = static_cast<int64_t>(std::floor(local_view.get_end().x / bucket_width));
+		const int64_t top = static_cast<int64_t>(std::floor(local_view.position.y / bucket_width));
+		const int64_t bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / bucket_width));
+		return first == first_bucket && last == last_bucket && top == first_row && bottom == last_row;
+	}
+
 	bool capture_cull_job(DecorationCullJob &job) {
 		CanvasItem *owner_canvas = owner();
 		if (!cull || !owner_canvas || !owner_canvas->is_inside_tree()) return false;
 		const Transform2D from_screen = owner_canvas->get_global_transform_with_canvas().affine_inverse();
 		const Vector2 screen_size = owner_canvas->get_viewport_rect().size;
 		if (view_initialized && has_last_cull_snapshot && screen_size == last_cull_screen_size &&
-				same_transform_exact(from_screen, last_cull_from_screen)) return false;
+				same_transform_exact(from_screen, last_cull_from_screen)) {
+			++skipped_cull_jobs;
+			return false;
+		}
+		if (view_initialized && screen_size == last_viewport_size && cull_range_matches(from_screen, screen_size)) {
+			last_cull_from_screen = from_screen;
+			last_cull_screen_size = screen_size;
+			has_last_cull_snapshot = true;
+			++skipped_cull_jobs;
+			return false;
+		}
 		last_cull_from_screen = from_screen;
 		last_cull_screen_size = screen_size;
 		has_last_cull_snapshot = true;
@@ -11384,6 +11441,8 @@ public:
 	uint64_t owner_instance_id() const { return owner_id; }
 	bool has_pending_redraw() const { return commands_dirty; }
 	int64_t command_rebuild_count() const { return command_rebuilds; }
+	int64_t skipped_animation_rebuild_count() const { return skipped_animation_rebuilds; }
+	int64_t skipped_cull_job_count() const { return skipped_cull_jobs; }
 	int64_t route_rebuild_count(int64_t route) const {
 		return route >= 0 && route < static_cast<int64_t>(route_rebuilds.size()) ? route_rebuilds[route] : -1;
 	}
@@ -11885,6 +11944,8 @@ static Dictionary registered_decoration_stats() {
 	int64_t transform_commands = 0;
 	int64_t empty_canvases = 0;
 	int64_t culled_canvases = 0;
+	int64_t skipped_animation = 0;
+	int64_t skipped_culls = 0;
 	std::unordered_set<uint64_t> batch_owners;
 	for (NativeDecorationRenderer *canvas : registered_decoration_renderers) {
 		if (!canvas) continue;
@@ -11893,6 +11954,8 @@ static Dictionary registered_decoration_stats() {
 		submitted += canvas->last_drawn_count();
 		draw_commands += canvas->draw_commands_last_rebuild();
 		transform_commands += canvas->transform_commands_last_rebuild();
+		skipped_animation += canvas->skipped_animation_rebuild_count();
+		skipped_culls += canvas->skipped_cull_job_count();
 		if (canvas->owner_instance_id() != 0) batch_owners.insert(canvas->owner_instance_id());
 		if (canvas->last_drawn_count() == 0) ++empty_canvases;
 		if (canvas->is_spatially_culled()) ++culled_canvases;
@@ -11907,6 +11970,12 @@ static Dictionary registered_decoration_stats() {
 	stats["records"] = records;
 	stats["animated_records"] = animated_records;
 	stats["submitted_records"] = submitted;
+	// Cumulative since level build. On a phone these two counters are the
+	// cheapest way to prove the mobile gates are firing: a nonzero
+	// `animation_rebuilds_skipped` means off-screen spin no longer re-emitted a
+	// batch, and `cull_jobs_skipped` means a frame posted no worker group.
+	stats["animation_rebuilds_skipped"] = skipped_animation;
+	stats["cull_jobs_skipped"] = skipped_culls;
 	return stats;
 }
 

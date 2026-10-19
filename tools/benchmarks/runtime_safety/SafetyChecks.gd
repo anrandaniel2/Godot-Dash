@@ -8,6 +8,7 @@ var _failed: int = 0
 
 func _ready() -> void:
 	_test_frame_pacing()
+	_test_mobile_budget()
 	_test_window_transitions()
 	_test_display_pacing()
 	_test_timing_requests()
@@ -50,6 +51,39 @@ func _test_frame_pacing() -> void:
 	old_default.set_value("Graphics", "max_fps", 60)
 	_check(FramePacingPolicy.load_cap(old_default, 240.0) == 0, "migrate legacy 60 default")
 	_check(Engine.physics_ticks_per_second == physics_rate, "frame policy cannot change physics")
+
+
+## Mobile sustained budget: apply once, only to "unlimited", never to a player
+## choice, and never on a platform that is not mobile.
+func _test_mobile_budget() -> void:
+	var desktop: ConfigFile = ConfigFile.new()
+	_check(MobileRenderBudget.apply(desktop, false) == -1, "desktop budget is a no-op")
+	_check(int(desktop.get_value("Graphics", "max_fps", 0)) == 0, "desktop keeps unlimited")
+	_check(
+		int(desktop.get_value("Performance", "mobile_budget_version", 0)) == 0,
+		"desktop is not marked migrated"
+	)
+	var fresh: ConfigFile = ConfigFile.new()
+	_check(
+		MobileRenderBudget.apply(fresh, true) == MobileRenderBudget.MOBILE_MAX_FPS,
+		"fresh mobile install is capped"
+	)
+	_check(
+		int(fresh.get_value("Graphics", "max_fps", 0)) == MobileRenderBudget.MOBILE_MAX_FPS,
+		"mobile cap is written"
+	)
+	_check(MobileRenderBudget.apply(fresh, true) == -1, "budget is applied exactly once")
+	fresh.set_value("Graphics", "max_fps", 30)
+	_check(MobileRenderBudget.apply(fresh, true) == -1, "player cap survives a relaunch")
+	var custom: ConfigFile = ConfigFile.new()
+	custom.set_value("Graphics", "max_fps", 120)
+	custom.set_value("Performance", "mobile_budget_version", 0)
+	_check(MobileRenderBudget.apply(custom, true) == 120, "explicit pre-migration cap survives")
+	_check(int(custom.get_value("Graphics", "max_fps", 0)) == 120, "explicit cap is not rewritten")
+	var unlimited: ConfigFile = ConfigFile.new()
+	unlimited.set_value("Graphics", "max_fps", 0)
+	unlimited.set_value("Performance", "mobile_budget_version", 0)
+	_check(MobileRenderBudget.apply(unlimited, true) == 60, "unlimited is the only rewritten value")
 
 
 func _test_timing_requests() -> void:

@@ -62,6 +62,16 @@ public:
 		for (size_t index : selected) emit(index);
 	}
 
+	// Membership test for the *current* selection, O(1). Callers use it to skip
+	// work whose result can never reach the screen: a spinning record outside
+	// the selected cell range still advances its transform (rotation is
+	// accumulated, never absolute), but it must not mark the renderer's
+	// command stream dirty. A range change rebuilds every route anyway, so the
+	// accumulated transform is emitted as soon as the record becomes visible.
+	bool contains(size_t index) const {
+		return valid && index < marks.size() && marks[index] == generation;
+	}
+
 	template <typename Sections, typename Emit>
 	void for_each(const Sections &sections, size_t record_count, const DecorationRange &range, Emit emit) {
 		if (!(valid && marks.size() == record_count && range == last_range)) {

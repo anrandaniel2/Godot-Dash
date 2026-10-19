@@ -110,7 +110,7 @@ def safety() -> None:
     for path in ("src/static/FramePacingPolicy.gd", "src/static/RenderTimingRequests.gd",
                  "src/refcounted/Selection.gd", "src/BlurBackBuffer.gd",
                  "src/static/NativeDownloadPolicy.gd", "src/static/WindowsUpdatePolicy.gd",
-                 "src/static/DisplayPacingState.gd"):
+                 "src/static/DisplayPacingState.gd", "src/static/MobileRenderBudget.gd"):
         shutil.copy2(ROOT / path, project)
     imported = run([EDITOR, "--headless", "--path", project, "--editor", "--import"], "safety-import")
     check_log(imported, "safety-import")

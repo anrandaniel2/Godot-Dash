@@ -294,8 +294,13 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 	var bridge := NativeTriggerBridge.current
 	if bridge != null:
 		var render_stats: Dictionary = bridge.render_stats()
+		# `anim_skip` / `cull_skip` are cumulative counters added for the mobile
+		# diagnostic: they only move when the visibility gates in
+		# NativeDecorationRenderer suppress a command rebuild or a worker-pool
+		# cull job. A device logcat can therefore prove the gates fire without a
+		# profiler. Older libraries simply report 0.
 		print(
-			"RENDERDIAG t=%.0f x=%.0f canvases=%d owners=%d records=%d submitted=%d draws=%d empty=%d culled=%d"
+			"RENDERDIAG t=%.0f x=%.0f canvases=%d owners=%d records=%d submitted=%d draws=%d empty=%d culled=%d anim_skip=%d cull_skip=%d"
 			% [
 				_beamdiag_seconds,
 				camera_x,
@@ -306,6 +311,8 @@ func _print_beam_diagnostics_live(delta: float) -> void:
 				int(render_stats.get("canvas_draw_commands", 0)),
 				int(render_stats.get("empty_canvases", 0)),
 				int(render_stats.get("culled_canvases", 0)),
+				int(render_stats.get("animation_rebuilds_skipped", 0)),
+				int(render_stats.get("cull_jobs_skipped", 0)),
 			]
 		)
 

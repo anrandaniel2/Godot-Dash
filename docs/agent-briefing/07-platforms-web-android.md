@@ -157,6 +157,24 @@ Runtime constraints on Android that show up in code:
   memory may shrink, and package size can grow. No measured FPS/export-size win yet.
 - `driver/threads/thread_model = 0` (Safe): the experimental Separate model stalled texture
   uploads at startup on at least one device (Samsung Xclipse 540).
+- **Mobile frame budget** (`src/static/MobileRenderBudget.gd`): a fresh install caps
+  `Graphics/max_fps` at 60 **once** (`Performance/mobile_budget_version`), and only rewrites the
+  value that means "unlimited". The migration runs after `FramePacingPolicy.load_cap` so it cannot
+  fight the legacy desktop migrations; an explicit cap (including one the player selects later)
+  always survives. Desktop and web never enter this path. Rationale: VSync alone lets a 90/120 Hz
+  phone render that many frames of an HDR canvas with glow, which is the sustained thermal load,
+  not something any single frame shows. Physics stays at 240 Hz.
+- **Mobile renderer gates** (2026-10-19): `NativeDecorationRenderer` only re-emits a batch's
+  commands when a *selected* record changed (off-screen spin no longer rebuilds thousands of
+  static sprites), and `capture_cull_job` compares the prospective cell range before posting a
+  WorkerThreadPool group. `render_stats()` exposes `animation_rebuilds_skipped` and
+  `cull_jobs_skipped`; `RENDERDIAG` (`src/Level.gd`) prints them as `anim_skip` / `cull_skip`.
+  No pixel, order, transform or timing change is intended — see
+  `reports/mobile-performance-diagnostic-2026-10-19.md` for the device protocol.
+- `Graphics/render_scale` is applied at startup by `Config.apply_render_scale()` (before
+  2026-10-19 a saved value only took effect after touching the slider). It is a
+  `Window.content_scale_factor` canvas transform, **not** a lower-resolution framebuffer, so it is
+  not a fill-rate control on Android.
 - Memory diagnostics (`GameScene._print_process_memory`, `[gdash-mem]`) exist because the app was
   killed by lmkd on large levels.
 

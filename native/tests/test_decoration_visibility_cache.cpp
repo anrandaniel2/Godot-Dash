@@ -115,6 +115,52 @@ static void test_worker_preselection() {
 	require(selection.build_count() == builds, "worker cache hit avoids rebuilding selection");
 }
 
+// The animation gate asks "is this record in the current selection?" once per
+// spinning record per frame. It must be a strict subset of what
+// for_each_selected emits: a false negative would leave an on-screen spinner's
+// accumulated rotation unsubmitted until the camera crosses a cell boundary.
+static void test_membership() {
+	DecorationSections source;
+	source[-2][0] = {11, 12};
+	source[0][0] = {13, 13, 101};
+	source[2][1] = {14};
+	gdash::CompactDecorationSections sections;
+	sections.build(std::move(source));
+	gdash::DecorationVisibilityCache<> cache;
+	require(!cache.contains(11), "empty cache selects nothing");
+	cache.prepare(sections, 110, DecorationRange{-2, 0, 0, 0});
+	std::set<size_t> emitted;
+	cache.for_each_selected([&](size_t id) { emitted.insert(id); });
+	require(cache.contains(11) && cache.contains(12) && cache.contains(13) && cache.contains(101),
+		"selected records report membership");
+	require(!cache.contains(14), "record outside the range is not a member");
+	require(!cache.contains(110), "out-of-range index is never a member");
+	require(emitted.size() == 4, "deduplicated emission count");
+	for (size_t id : {11, 12, 13, 101}) {
+		require(emitted.count(id) == 1, "membership matches emission");
+		require(cache.contains(id), "every emitted record is a member");
+	}
+	// A new range replaces the selection: stale IDs must stop reporting true.
+	cache.prepare(sections, 110, DecorationRange{2, 2, 1, 1});
+	require(cache.contains(14), "new range selects its own records");
+	require(!cache.contains(11) && !cache.contains(13), "old selection is not retained");
+	// invalidate() (index rebuild with unchanged count) must clear membership.
+	cache.invalidate();
+	require(!cache.contains(14), "invalidate clears membership");
+	cache.prepare(sections, 110, DecorationRange{2, 2, 1, 1});
+	require(cache.contains(14), "reprepare restores membership");
+	// Generation wraparound (uint8_t stamps) must not resurrect old IDs.
+	gdash::DecorationVisibilityCache<uint8_t> wrapping;
+	for (int i = 0; i < 600; ++i) {
+		DecorationRange range{-2, 0, 0, 0};
+		wrapping.prepare(sections, 110, range);
+		require(wrapping.contains(11) && !wrapping.contains(14), "wrapped stamp stays exact");
+		DecorationRange other{2, 2, 1, 1};
+		wrapping.prepare(sections, 110, other);
+		require(wrapping.contains(14) && !wrapping.contains(11), "wrapped range switch stays exact");
+	}
+}
+
 static void test_dirty() {
 	bool dirty = false;
 	double value = 1.0;
@@ -222,6 +268,7 @@ static void benchmark() {
 int main(int argc, char **argv) {
 	test_parity();
 	test_worker_preselection();
+	test_membership();
 	test_dirty();
 	test_neutral_hsv();
 	if (argc > 1 && std::string(argv[1]) == "--benchmark") benchmark();
