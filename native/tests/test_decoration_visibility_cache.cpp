@@ -8,6 +8,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <thread>
 
 using gdash::DecorationRange;
 using gdash::DecorationSections;
@@ -91,6 +92,27 @@ static void test_parity() {
 	color = 9;
 	cache.for_each(sections, 1, all, [&](size_t) { drawn = color; });
 	require(drawn == 9 && cache.build_count() == builds, "warm redraw uses live content");
+}
+
+static void test_worker_preselection() {
+	DecorationSections source;
+	source[-1][0] = {5, 2, 5};
+	source[0][0] = {9, 2};
+	source[1][0] = {4};
+	const DecorationRange range{-1, 0, 0, 0};
+	const auto expected = oracle(source, range);
+	gdash::CompactDecorationSections sections;
+	sections.build(std::move(source));
+	gdash::DecorationVisibilityCache<> selection;
+	std::thread worker([&] { selection.prepare(sections, 10, range); });
+	worker.join();
+	std::vector<size_t> actual;
+	selection.for_each_selected([&](size_t id) { actual.push_back(id); });
+	require(actual == expected, "worker-prepared visible order and dedup match oracle");
+	const uint64_t builds = selection.build_count();
+	std::thread cache_hit([&] { selection.prepare(sections, 10, range); });
+	cache_hit.join();
+	require(selection.build_count() == builds, "worker cache hit avoids rebuilding selection");
 }
 
 static void test_dirty() {
@@ -199,6 +221,7 @@ static void benchmark() {
 
 int main(int argc, char **argv) {
 	test_parity();
+	test_worker_preselection();
 	test_dirty();
 	test_neutral_hsv();
 	if (argc > 1 && std::string(argv[1]) == "--benchmark") benchmark();

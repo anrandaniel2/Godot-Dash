@@ -17,8 +17,9 @@ namespace gdash {
 // Call invalidate() whenever the section index is rebuilt, even at the same
 // record count. Preserve the existing column/row/first-occurrence order exactly;
 // sorting this list by record ID would change translucent sprite compositing.
-// Like the renderer, this is owned/used on the main thread, not the cull worker.
-// Stamp is parameterized so tests exercise wraparound cheaply with uint8_t.
+// One worker prepares each cache; the main thread reads it only after its
+// WorkerThreadPool group completes. Stamp is parameterized so tests exercise
+// wraparound cheaply with uint8_t.
 template <typename Stamp = uint32_t>
 class DecorationVisibilityCache {
 	static_assert(std::is_unsigned<Stamp>::value, "Generation stamps must be unsigned");
@@ -32,12 +33,13 @@ class DecorationVisibilityCache {
 public:
 	void invalidate() { valid = false; }
 
-	template <typename Sections, typename Emit>
-	void for_each(const Sections &sections, size_t record_count, const DecorationRange &range, Emit emit) {
-		if (valid && marks.size() == record_count && range == last_range) {
-			for (size_t index : selected) emit(index);
-			return;
-		}
+	bool matches(size_t record_count, const DecorationRange &range) const {
+		return valid && marks.size() == record_count && range == last_range;
+	}
+
+	template <typename Sections>
+	void prepare(const Sections &sections, size_t record_count, const DecorationRange &range) {
+		if (valid && marks.size() == record_count && range == last_range) return;
 		valid = false;
 		selected.clear();
 		if (marks.size() != record_count) marks.assign(record_count, 0);
@@ -47,14 +49,42 @@ public:
 		}
 		++builds;
 		for_each_decoration_candidate(sections, range, [&](size_t index) {
-			if (marks[index] == generation) return;
+			if (index >= record_count || marks[index] == generation) return;
 			marks[index] = generation;
 			selected.push_back(index);
-			// Fuse building and emission on a miss: no second draw pass.
-			emit(index);
 		});
 		last_range = range;
 		valid = true;
+	}
+
+	template <typename Emit>
+	void for_each_selected(Emit emit) const {
+		for (size_t index : selected) emit(index);
+	}
+
+	template <typename Sections, typename Emit>
+	void for_each(const Sections &sections, size_t record_count, const DecorationRange &range, Emit emit) {
+		if (!(valid && marks.size() == record_count && range == last_range)) {
+			valid = false;
+			selected.clear();
+			if (marks.size() != record_count) marks.assign(record_count, 0);
+			if (++generation == 0) {
+				std::fill(marks.begin(), marks.end(), 0);
+				generation = 1;
+			}
+			++builds;
+			for_each_decoration_candidate(sections, range, [&](size_t index) {
+				if (index >= record_count || marks[index] == generation) return;
+				marks[index] = generation;
+				selected.push_back(index);
+				// Fuse building and emission on a miss: no second draw pass.
+				emit(index);
+			});
+			last_range = range;
+			valid = true;
+			return;
+		}
+		for_each_selected(emit);
 	}
 
 	uint64_t build_count() const { return builds; }

@@ -60,6 +60,7 @@
 #include <cmath>
 #include <limits>
 #include <deque>
+#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -7928,6 +7929,13 @@ struct DecorationCullJob {
 	int64_t last = -1;
 	int64_t top = 0;
 	int64_t bottom = -1;
+	// Immutable cell index and per-renderer selection scratch outlive a scene
+	// object if it is freed while this worker group is in flight.
+	std::shared_ptr<const gdash::CompactDecorationSections> sections;
+	std::shared_ptr<gdash::DecorationVisibilityCache<>> previous_selection;
+	std::shared_ptr<gdash::DecorationVisibilityCache<>> selection;
+	size_t record_count = 0;
+	bool has_records = false;
 };
 static std::vector<DecorationCullJob> decoration_cull_jobs;
 // The in-flight worker-pool cull group; file scope so teardown can drain it
@@ -7936,8 +7944,9 @@ static int64_t decoration_cull_active_group = -1;
 
 // WorkerThreadPool invokes one element per renderer and automatically spreads
 // the group across the engine's worker pool (not a hard-coded two-thread cap).
-// Jobs contain only copied transforms/numbers: workers never touch SceneTree,
-// ObjectDB, textures, RIDs, or RenderingServer.
+// Jobs hold copied transforms plus shared immutable cell indexes and private
+// selection snapshots. Workers never touch SceneTree, ObjectDB, textures, RIDs,
+// or RenderingServer.
 class NativeDecorationCullWorker : public RefCounted {
 	GDCLASS(NativeDecorationCullWorker, RefCounted)
 protected:
@@ -7959,12 +7968,23 @@ public:
 		job.last = static_cast<int64_t>(std::floor(local_view.get_end().x / job.cell_size));
 		job.top = static_cast<int64_t>(std::floor(local_view.position.y / job.cell_size));
 		job.bottom = static_cast<int64_t>(std::floor(local_view.get_end().y / job.cell_size));
+		if (job.sections && job.selection) {
+			const gdash::DecorationRange range{ job.first, job.last, job.top, job.bottom };
+			job.has_records = job.sections->has_records(range);
+			// Keep the main thread's active selection immutable while another
+			// worker group is in flight. Reuse it on a cache hit; build into a
+			// fresh snapshot only when the visible cell range actually changes.
+			if (!job.selection->matches(job.record_count, range)) {
+				job.selection = std::make_shared<gdash::DecorationVisibilityCache<>>();
+				job.selection->prepare(*job.sections, job.record_count, range);
+			}
+		}
 	}
 };
 
 // Decoration renderers register in a native global list. NativeLevelRuntime
 // snapshots thread-unsafe scene transforms on the main thread, then delegates
-// all spatial range math to WorkerThreadPool.
+// view-range calculation and visible-record selection to WorkerThreadPool.
 static void decoration_coordinator_enter();
 static void decoration_coordinator_exit();
 static void update_registered_decoration_renderers(double delta);
@@ -10760,8 +10780,10 @@ class NativeDecorationRenderer : public RefCounted {
 	bool reuse_spin_rotation = false;
 	// The candidate order changes only with the spatial index or cell range,
 	// not with the color/blend/spin changes that dirty the draw commands.
-	gdash::DecorationVisibilityCache<> visible_records;
-	gdash::CompactDecorationSections sections;
+	std::shared_ptr<gdash::DecorationVisibilityCache<>> visible_records =
+			std::make_shared<gdash::DecorationVisibilityCache<>>();
+	std::shared_ptr<gdash::CompactDecorationSections> sections =
+			std::make_shared<gdash::CompactDecorationSections>();
 	bool cull = true;
 	double bucket_width = 256.0;
 	double cull_margin = 0.0;
@@ -10834,7 +10856,7 @@ class NativeDecorationRenderer : public RefCounted {
 	}
 
 	bool selected_range_has_records() const {
-		return sections.has_records({first_bucket, last_bucket, first_row, last_row});
+		return sections->has_records({first_bucket, last_bucket, first_row, last_row});
 	}
 
 	Transform2D get_draw_transform(int64_t index) const {
@@ -10912,10 +10934,10 @@ class NativeDecorationRenderer : public RefCounted {
 		};
 		if (!cull) {
 			for (size_t index = 0; index < records.size(); ++index) draw_record(index);
-		} else {
-			visible_records.for_each(sections, records.size(),
-					{ first_bucket, last_bucket, first_row, last_row },
-				draw_record);
+		} else if (visible_records) {
+			// The worker pool has already selected the visible record IDs for
+			// this cell range. Main thread work here is only ordered draw submission.
+			visible_records->for_each_selected(draw_record);
 		}
 		refresh_draw_stats();
 	}
@@ -11058,7 +11080,9 @@ public:
 		records = std::move(p_records);
 		route_drawn_items = {}; route_draw_commands = {}; route_transform_commands = {};
 		mark_all_routes_dirty();
-		spinning_indices.clear(); sections.clear(); visible_records.invalidate();
+		spinning_indices.clear();
+		sections = std::make_shared<gdash::CompactDecorationSections>();
+		visible_records = std::make_shared<gdash::DecorationVisibilityCache<>>();
 		gdash::DecorationSections section_builder;
 		SpinRunProfile spin_profile;
 		bucket_width = width > 0.0 ? width : 256.0;
@@ -11095,7 +11119,7 @@ public:
 		else animated_decoration_renderers.insert(this);
 		// Retain packed columns, not thousands of map nodes/small row vectors.
 		// Consume each builder column as it is copied to limit open-time peaks.
-		sections.build(std::move(section_builder));
+		sections->build(std::move(section_builder));
 		reuse_spin_rotation = spin_profile.use_cache();
 		cull = enable_culling; cull_margin = std::max(0.0, margin);
 		view_initialized = false; has_last_cull_snapshot = false; range_has_records = !cull;
@@ -11211,6 +11235,10 @@ public:
 		job.screen_size = screen_size;
 		job.radius = cull_margin;
 		job.cell_size = bucket_width;
+		job.sections = sections;
+		job.previous_selection = visible_records;
+		job.selection = visible_records;
+		job.record_count = records.size();
 		return true;
 	}
 
@@ -11219,12 +11247,20 @@ public:
 		if (!cull) return;
 		RenderingServer *server = RenderingServer::get_singleton();
 		if (!server || !canvas_item.is_valid()) return;
+		// Reconfiguration can replace the immutable cell index while a worker is
+		// finishing. Never apply a stale selection to the new record set.
+		if (job.sections != sections || job.previous_selection != visible_records || !job.selection) {
+			update_camera_range();
+			return;
+		}
+		// The selection cache is replaced only after its worker group has joined.
+		visible_records = job.selection;
 		if (view_initialized && job.first == first_bucket && job.last == last_bucket &&
 				job.top == first_row && job.bottom == last_row && job.screen_size == last_viewport_size) return;
 		first_bucket = job.first; last_bucket = job.last;
 		first_row = job.top; last_row = job.bottom;
 		last_viewport_size = job.screen_size; view_initialized = true;
-		range_has_records = selected_range_has_records();
+		range_has_records = job.has_records;
 		server->canvas_item_set_visible(canvas_item, range_has_records);
 		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
 		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
@@ -11254,6 +11290,9 @@ public:
 		first_bucket = first; last_bucket = last; first_row = top; last_row = bottom;
 		last_viewport_size = screen_size; view_initialized = true;
 		range_has_records = selected_range_has_records();
+		visible_records = std::make_shared<gdash::DecorationVisibilityCache<>>();
+		visible_records->prepare(
+				*sections, records.size(), { first_bucket, last_bucket, first_row, last_row });
 		server->canvas_item_set_visible(canvas_item, range_has_records);
 		if (canvas_item_plain.is_valid()) server->canvas_item_set_visible(canvas_item_plain, range_has_records);
 		if (canvas_item_add.is_valid()) server->canvas_item_set_visible(canvas_item_add, range_has_records);
@@ -11261,7 +11300,16 @@ public:
 		rebuild_commands();
 	}
 
-	void set_visible_buckets(int64_t first, int64_t last) { first_bucket = first; last_bucket = last; has_last_cull_snapshot = false; range_has_records = selected_range_has_records(); mark_all_routes_dirty(); rebuild_commands(); }
+	void set_visible_buckets(int64_t first, int64_t last) {
+		first_bucket = first; last_bucket = last;
+		has_last_cull_snapshot = false;
+		range_has_records = selected_range_has_records();
+		visible_records = std::make_shared<gdash::DecorationVisibilityCache<>>();
+		visible_records->prepare(
+				*sections, records.size(), { first_bucket, last_bucket, first_row, last_row });
+		mark_all_routes_dirty();
+		rebuild_commands();
+	}
 	// Flips the given records between normal and additive blending when a
 	// colour trigger toggles their channel (key 17). Idempotent: the batch's
 	// GDScript side caches the last state per channel.
@@ -11341,7 +11389,9 @@ public:
 	}
 	int64_t draw_commands_last_rebuild() const { return last_draw_commands; }
 	int64_t transform_commands_last_rebuild() const { return last_transform_commands; }
-	int64_t selection_rebuild_count() const { return static_cast<int64_t>(visible_records.build_count()); }
+	int64_t selection_rebuild_count() const {
+		return visible_records ? static_cast<int64_t>(visible_records->build_count()) : 0;
+	}
 	bool is_spatially_culled() const { return cull && !range_has_records; }
 };
 
