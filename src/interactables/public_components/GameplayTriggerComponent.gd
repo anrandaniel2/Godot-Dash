@@ -100,6 +100,31 @@ static var _adv_rand_coeff: Dictionary[Node2D, Vector2] = {}
 static var _collision_states: Dictionary[int, bool] = {}
 ## Pair key -> [block a, block b] for every collision trigger in the level.
 static var _collision_pairs: Dictionary[int, PackedInt32Array] = {}
+## Retained scratch dictionaries for _step_adv_follow: the old code allocated
+## three fresh typed Dictionaries and an Array every tick while any advanced
+## follow was active; clear() keeps their buckets between ticks.
+static var _adv_scratch_exclusive: Dictionary[Node2D, bool] = {}
+static var _adv_scratch_touched: Dictionary[Node2D, bool] = {}
+static var _adv_scratch_mode12: Dictionary[Node2D, bool] = {}
+static var _adv_scratch_mode3_rotations: Array[Array] = []
+## Group snapshot for the collision-block scan. get_nodes_in_group copies the
+## member array; the old code paid that copy per physics tick for as long as
+## any collision pair existed, native-handled levels included. Blocks only
+## join or leave the group at spawn/toggle boundaries, so a short refresh
+## interval keeps the pair evaluation fresh at a fraction of the cost.
+static var _collision_blocks_cache: Array[Node] = []
+static var _collision_blocks_refresh_tick: int = -1 << 30
+const COLLISION_BLOCKS_REFRESH_TICKS: int = 30
+## Single driver for the per-tick static work (timers, follows, collision
+## checks, level time). Previously every component received a 240 Hz
+## _physics_process dispatch and a static frame guard made all but the first
+## return immediately; with hundreds of trigger objects that guard still cost
+## one engine dispatch each. The SceneTree.physics_frame connection ignores
+## the parent Interactable's process_mode, so group toggles disabling one
+## trigger cannot stall the shared clocks, and the pause check keeps the old
+## pausable-processing behaviour.
+static var _instances: Array[GameplayTriggerComponent] = []
+static var _driver: GameplayTriggerComponent = null
 
 @export var kind: Kind = Kind.ITEM_EDIT
 @export var properties: Dictionary[String, String] = {}
@@ -122,6 +147,12 @@ static func reset_state() -> void:
 	_adv_velocities.clear()
 	_adv_ref_motion.clear()
 	_collision_states.clear()
+	_adv_scratch_exclusive.clear()
+	_adv_scratch_touched.clear()
+	_adv_scratch_mode12.clear()
+	_adv_scratch_mode3_rotations.clear()
+	_collision_blocks_cache.clear()
+	_collision_blocks_refresh_tick = -1 << 30
 
 
 func _ready() -> void:
@@ -131,6 +162,40 @@ func _ready() -> void:
 	if kind == Kind.COLLISION or kind == Kind.INSTANT_COLLISION:
 		var key: int = _collision_key()
 		_collision_pairs[key] = GDItemMath.collision_pair_sides(key)
+	_instances.append(self)
+	if _driver == null or not is_instance_valid(_driver):
+		_become_driver()
+
+
+func _exit_tree() -> void:
+	_instances.erase(self)
+	if _driver == self:
+		_cease_driver()
+		_driver = null
+		for candidate: GameplayTriggerComponent in _instances:
+			if is_instance_valid(candidate):
+				candidate._become_driver()
+				break
+
+
+func _become_driver() -> void:
+	# Engine.get_main_loop() rather than get_tree(): _exit_tree re-election
+	# can run while the previous driver is mid-removal, and is_inside_tree()
+	# is not dependable inside that callback.
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return
+	_driver = self
+	if not tree.physics_frame.is_connected(_on_driver_physics_frame):
+		tree.physics_frame.connect(_on_driver_physics_frame)
+
+
+func _cease_driver() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return
+	if tree.physics_frame.is_connected(_on_driver_physics_frame):
+		tree.physics_frame.disconnect(_on_driver_physics_frame)
 
 
 func _collision_key() -> int:
@@ -169,6 +234,8 @@ static func notify_event(player: Player, event_id: int, slot: int, material: int
 
 
 static func _step_follow_player_y(delta: float) -> void:
+	if _follow_player_y.is_empty():
+		return
 	var tree := Engine.get_main_loop() as SceneTree
 	for group: String in _follow_player_y.keys():
 		var follow: Dictionary = _follow_player_y[group]
@@ -318,14 +385,20 @@ func _stop_triggers(mode: int) -> void:
 ## Twin of the native step_adv_follow (gd_docs advanced_follow.md).
 static func _step_adv_follow(delta: float) -> void:
 	var ticks: float = delta * ADV_TICK_HZ
-	_sample_adv_refs(ticks)
+	if not _adv_speed_ref_groups.is_empty():
+		_sample_adv_refs(ticks)
 	if _adv_follows.is_empty():
 		return
 	var tree := Engine.get_main_loop() as SceneTree
-	var exclusive: Dictionary[Node2D, bool] = {}
-	var touched: Dictionary[Node2D, bool] = {}
-	var mode12: Dictionary[Node2D, bool] = {}
-	var mode3_rotations: Array[Array] = []
+	# Retained scratch containers (cleared, not reallocated, each tick).
+	var exclusive: Dictionary[Node2D, bool] = _adv_scratch_exclusive
+	var touched: Dictionary[Node2D, bool] = _adv_scratch_touched
+	var mode12: Dictionary[Node2D, bool] = _adv_scratch_mode12
+	var mode3_rotations: Array[Array] = _adv_scratch_mode3_rotations
+	exclusive.clear()
+	touched.clear()
+	mode12.clear()
+	mode3_rotations.clear()
 	for follow: Dictionary in _adv_follows:
 		var trigger: GameplayTriggerComponent = follow["trigger"]
 		if not is_instance_valid(trigger) or follow.get("paused", false):
@@ -356,8 +429,11 @@ static func _step_adv_follow(delta: float) -> void:
 			var params: Dictionary = trigger.properties
 			var start := Vector2.ZERO
 			if start_used:
-				params = trigger.properties.duplicate()
-				params["300"] = "0"
+				var params_no_start: Dictionary = follow["params_no_start"]
+				if params_no_start.is_empty():
+					params_no_start.merge(trigger.properties, true)
+					params_no_start["300"] = "0"
+				params = params_no_start
 			else:
 				start = trigger._adv_heading_velocity(target, trigger._f("300") + coeff.x * trigger._f("301"), trigger._f("563") + coeff.y * trigger._f("564"))
 			start_used = true
@@ -436,30 +512,67 @@ static func _evaluate_pair(a: int, b: int, blocks: Array[Node]) -> bool:
 	return false
 
 
+## Collision-block group snapshot, refreshed on a short fixed interval (and
+## forced fresh whenever a baseline is seeded). A spawned or toggled block is
+## noticed within COLLISION_BLOCKS_REFRESH_TICKS ticks.
+static func _collision_blocks(force_refresh: bool = false) -> Array[Node]:
+	var frame: int = Engine.get_physics_frames()
+	if force_refresh or frame - _collision_blocks_refresh_tick >= COLLISION_BLOCKS_REFRESH_TICKS:
+		_collision_blocks_refresh_tick = frame
+		var tree := Engine.get_main_loop() as SceneTree
+		_collision_blocks_cache = tree.get_nodes_in_group(COLLISION_BLOCK_GROUP)
+	return _collision_blocks_cache
+
+
 ## Every tick after movement; armed Collision triggers fire on the change
-## they watch (gd_docs collision_trigger.md).
+## they watch (gd_docs collision_trigger.md). Only pairs with an armed
+## trigger are evaluated now: native-handled levels still populate
+## _collision_pairs at import, and the old per-tick evaluation of every pair
+## was pure waste there (and a get_nodes_in_group copy per tick besides).
 static func _check_collisions() -> void:
-	if _collision_pairs.is_empty():
+	if _armed_collisions.is_empty():
 		return
-	var tree := Engine.get_main_loop() as SceneTree
-	var blocks: Array[Node] = tree.get_nodes_in_group(COLLISION_BLOCK_GROUP)
-	for key: int in _collision_pairs:
-		var pair: PackedInt32Array = _collision_pairs[key]
-		var now: bool = _evaluate_pair(pair[0], pair[1], blocks)
-		var before: bool = _collision_states.get(key, false)
-		_collision_states[key] = now
-		if now == before:
+	var blocks: Array[Node] = _collision_blocks()
+	# Overlap state is per pair key: evaluate each distinct key once and
+	# memoize whether it changed, so several triggers sharing a pair each
+	# see the same transition exactly like the old key-major loop did.
+	var changed_keys: Dictionary[int, bool] = {}
+	var armed_count: int = _armed_collisions.size()
+	for i: int in armed_count:
+		var trigger: GameplayTriggerComponent = _armed_collisions[i]
+		if not is_instance_valid(trigger):
 			continue
-		for trigger: GameplayTriggerComponent in _armed_collisions.duplicate():
-			if is_instance_valid(trigger) and trigger._collision_key() == key and now != trigger._b("93"):
-				trigger._toggle_spawn(LevelManager.player)
+		var key: int = trigger._collision_key()
+		var changed: bool
+		if changed_keys.has(key):
+			changed = changed_keys[key]
+		else:
+			var pair_value: Variant = _collision_pairs.get(key)
+			var now := false
+			if pair_value != null and (pair_value as PackedInt32Array).size() >= 2:
+				var pair: PackedInt32Array = pair_value
+				now = _evaluate_pair(pair[0], pair[1], blocks)
+			var before: bool = _collision_states.get(key, false)
+			_collision_states[key] = now
+			changed = now != before
+			changed_keys[key] = changed
+		if changed and trigger._b("93") != bool(_collision_states[key]):
+			trigger._toggle_spawn(LevelManager.player)
 
 
-func _physics_process(delta: float) -> void:
+## The driver's per-tick entry point, replacing the old per-instance
+## _physics_process + static frame guard. Runs the same work once per
+## physics frame regardless of which component hosts the connection.
+func _on_driver_physics_frame() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.paused:
+		return
 	var frame: int = Engine.get_physics_frames()
 	if frame == _last_timer_frame:
 		return
 	_last_timer_frame = frame
+	# Same fixed step the engine passes to _physics_process.
+	var delta: float = get_physics_process_delta_time()
 	_level_time += delta
 	_advance_timers(delta)
 	_step_follow_player_y(delta)
@@ -468,6 +581,12 @@ func _physics_process(delta: float) -> void:
 
 
 static func _advance_timers(delta: float) -> void:
+	if timers.is_empty():
+		return
+	# Timer-event indices to erase once the loop finishes: erasing in place
+	# would shift the remaining indices. The old code iterated a duplicate of
+	# timer_events per running timer per tick instead.
+	var spent_event_indices := PackedInt32Array()
 	for timer_id: int in timers.keys():
 		var timer: Dictionary = timers[timer_id]
 		if not timer.get("running", false):
@@ -481,15 +600,23 @@ static func _advance_timers(delta: float) -> void:
 			after = stop
 			stopped = true
 		timer["value"] = after
-		for ev: Dictionary in timer_events.duplicate():
-			var time: float = ev["time"]
-			if ev["timer"] == timer_id and ((before < time and after >= time) or (before > time and after <= time)):
-				_spawn(ev["group"], ev["player"])
-				if not ev["multi"]:
-					timer_events.erase(ev)
+		if not timer_events.is_empty():
+			# Snapshot size: events appended by _spawn during this pass (a
+			# Timer Event interaction) must not be evaluated this tick, the
+			# same way the old duplicate() iteration skipped them.
+			var event_count: int = timer_events.size()
+			for ev_index: int in event_count:
+				var ev: Dictionary = timer_events[ev_index]
+				var time: float = ev["time"]
+				if ev["timer"] == timer_id and ((before < time and after >= time) or (before > time and after <= time)):
+					_spawn(ev["group"], ev["player"])
+					if not ev["multi"]:
+						spent_event_indices.append(ev_index)
 		if stopped:
 			timer["running"] = false
 			_spawn(timer["target"], timer["player"])
+	for i: int in range(spent_event_indices.size() - 1, -1, -1):
+		timer_events.remove_at(spent_event_indices[i])
 
 
 static func _spawn(group: String, player: Player) -> void:
@@ -604,8 +731,27 @@ func _on_interacted(player: Player = null) -> void:
 		Kind.COLLISION:
 			if not _armed_collisions.has(self):
 				_armed_collisions.append(self)
+				# Baseline seed: _check_collisions only evaluates pairs with
+				# an armed trigger now, so the transition it first compares
+				# against must be the overlap state at arm time (the old code
+				# got this from its continuous per-tick evaluation).
+				var key := _collision_key()
+				if not _collision_states.has(key):
+					var pair_value: Variant = _collision_pairs.get(key)
+					if pair_value != null and (pair_value as PackedInt32Array).size() >= 2:
+						var pair: PackedInt32Array = pair_value
+						_collision_states[key] = _evaluate_pair(pair[0], pair[1], _collision_blocks(true))
 		Kind.INSTANT_COLLISION:
-			if _collision_states.get(_collision_key(), false):
+			# Evaluate the pair on demand at activation (gd_docs: instant
+			# collision triggers check the state when they fire) instead of
+			# reading a possibly stale per-tick snapshot.
+			var instant_key := _collision_key()
+			var instant_now := false
+			var instant_value: Variant = _collision_pairs.get(instant_key)
+			if instant_value != null and (instant_value as PackedInt32Array).size() >= 2:
+				var instant_pair: PackedInt32Array = instant_value
+				instant_now = _evaluate_pair(instant_pair[0], instant_pair[1], _collision_blocks(true))
+			if instant_now:
 				_spawn(properties.get("51", ""), player)
 			else:
 				_spawn(properties.get("71", ""), player)
@@ -621,7 +767,12 @@ func _on_interacted(player: Player = null) -> void:
 		Kind.ADV_FOLLOW:
 			_adv_order += 1
 			var adv_history: Array[Vector3] = []
-			_adv_follows.append({ "trigger": self, "order": _adv_order, "start": _level_time, "player": player, "history": adv_history })
+			# params_no_start is lazily filled by _step_adv_follow with a copy
+			# of this trigger's properties and key 300 zeroed ("only one
+			# object per Target GID can be affected by StartSpeed"). Caching
+			# it per activation avoids re-duplicating the dictionary for every
+			# extra target on every one of the 240 ticks the follow runs.
+			_adv_follows.append({ "trigger": self, "order": _adv_order, "start": _level_time, "player": player, "history": adv_history, "params_no_start": { } })
 			_adv_follows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 				var pa: int = (a["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(a["trigger"]) else 0
 				var pb: int = (b["trigger"] as GameplayTriggerComponent)._i("365") if is_instance_valid(b["trigger"]) else 0

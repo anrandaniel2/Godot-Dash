@@ -236,12 +236,16 @@ func _process(_delta: float) -> void:
 ## (colored)? recolors stuck near zero means the triggers never fire; recolors
 ## climbing while the beams stay white points past the channel table, at the
 ## batch recolour path. Grep "BEAMDIAG live".
+## Opt-in: the pass resolves every colour channel and walks every registered
+## native canvas (render_stats) before formatting two long lines, which was a
+## visible hitch every 5 seconds on mobile for a print nobody reads. Enable
+## Debug -> Draw debug overlays to capture it.
 var _beamdiag_seconds: float = 0.0
 var _beamdiag_last_print: float = -5.0
 
 
 func _print_beam_diagnostics_live(delta: float) -> void:
-	if Editor.in_editor or not LevelManager.level_playing:
+	if Editor.in_editor or not LevelManager.level_playing or not Config.draw_debug_overlays:
 		_beamdiag_seconds = 0.0
 		_beamdiag_last_print = -5.0
 		return
@@ -985,7 +989,8 @@ func _get_practice_data() -> Dictionary:
 ## Restores player practice state (velocity, replay position, elapsed time)
 ## recorded at a checkpoint.
 func _apply_practice_data(practice_data: Dictionary) -> void:
-	practice_data.replay.data = practice_data.replay.data.slice(0, practice_data.physics_tick)
+	# Flat replay buffer (two bytes per tick): cut at exactly 2 * tick bytes.
+	practice_data.replay.data = practice_data.replay.data.slice(0, practice_data.physics_tick * 2)
 	var player: Player = LevelManager.player
 	# HACK: Force `is_on_floor` to return false so the velocity can be applied.
 	player.set_collisions_enabled(false)

@@ -12,6 +12,15 @@ This tool does that work once, offline:
 * every frame the game can draw (the ones ``object_frames.json`` refers to,
   or everything with ``--all``) is copied out of its sheet, un-rotated, and
   packed into as few 4096x4096 pages as it takes;
+* each frame's edge texels are duplicated 1px into the packing gutter
+  (``--extrude``, on by default, ``--no-extrude`` to disable): sampling at a
+  frame border then returns exactly the edge texel, which is what
+  ``clip_uv``-clipped rect drawing produces. The runtime decoration renderer
+  uses that guarantee to submit one triangle array per batch instead of one
+  command per sprite (see ``NativeDecorationRenderer`` and
+  ``GDSpriteSheet.packed_atlas_extruded``). Without ``"extruded"`` in
+  ``gd_objects_atlas.json`` the renderer stays on the per-sprite rect path,
+  so old atlases keep rendering identically;
 * ``gd_objects_atlas.json`` records, per frame, the page and rectangle it
   landed in plus its trim offset and untrimmed size, i.e. exactly what the
   plists carried, in a shape ``GDSpriteSheet.gd`` can load in one pass;
@@ -360,11 +369,43 @@ def pack(frames: list[SourceFrame], page_size: int) -> tuple[list[Placement], li
 # --- output -------------------------------------------------------------------
 
 
+def extrude_crop(crop: Image.Image) -> Image.Image:
+    """Duplicate the frame's edge texels 1px outward.
+
+    The packed pages keep a 2px transparent gutter around every frame (the
+    packing inset). Filling the inner 1px of that gutter with the frame's own
+    edge texels means sampling exactly at a frame border - what unclipped UVs
+    do - returns the edge texel, which is bit-identical to what
+    ``canvas_item_add_texture_rect_region``'s ``clip_uv`` half-texel clamp
+    produces. That lets the runtime decoration renderer submit one
+    ``canvas_item_add_triangle_array`` per batch with plain region UVs.
+
+    Frame rectangles are unchanged: the extrusion lives entirely in the
+    gutter, so every consumer of ``gd_objects_atlas.json`` keeps its regions.
+    """
+    width, height = crop.size
+    if width <= 0 or height <= 0:
+        return crop
+    big = Image.new("RGBA", (width + 2, height + 2))
+    big.paste(crop, (1, 1))
+    # Edges (corners below fill the four 1x1 gaps).
+    big.paste(crop.crop((0, 0, width, 1)), (1, 0))  # top row
+    big.paste(crop.crop((0, height - 1, width, height)), (1, height + 1))  # bottom row
+    big.paste(crop.crop((0, 0, 1, height)), (0, 1))  # left column
+    big.paste(crop.crop((width - 1, 0, width, height)), (width + 1, 1))  # right column
+    # Corners.
+    big.paste(crop.crop((0, 0, 1, 1)), (0, 0))
+    big.paste(crop.crop((width - 1, 0, width, 1)), (width + 1, 0))
+    big.paste(crop.crop((0, height - 1, 1, height)), (0, height + 1))
+    big.paste(crop.crop((width - 1, height - 1, width, height)), (width + 1, height + 1))
+    return big
+
+
 def number(value: float) -> int | float:
     return int(value) if float(value).is_integer() else round(float(value), 3)
 
 
-def build(source_dir: Path, out_dir: Path, frames_json: Path, pack_all: bool, page_size: int) -> None:
+def build(source_dir: Path, out_dir: Path, frames_json: Path, pack_all: bool, page_size: int, extrude: bool) -> None:
     sheets = collect_frames(source_dir)
     if not sheets:
         sys.exit(f"no cocos2d sheets found in {source_dir}")
@@ -402,7 +443,12 @@ def build(source_dir: Path, out_dir: Path, frames_json: Path, pack_all: bool, pa
         else:
             crop = source.crop((frame.x, frame.y, frame.x + frame.width, frame.y + frame.height))
         assert crop.size == (frame.width, frame.height), frame.name
-        pages[placement.page].paste(crop, (placement.x, placement.y))
+        if extrude:
+            # The extruded border lands in the packing gutter, never inside
+            # the frame rectangle the JSON records.
+            pages[placement.page].paste(extrude_crop(crop), (placement.x - 1, placement.y - 1))
+        else:
+            pages[placement.page].paste(crop, (placement.x, placement.y))
 
     page_files: list[str] = []
     for index, page in enumerate(pages):
@@ -449,6 +495,11 @@ def build(source_dir: Path, out_dir: Path, frames_json: Path, pack_all: bool, pa
         "_count": len(table),
         "page_size": page_size,
         "padding": PADDING,
+        # 1 = every frame's edge texels are duplicated into the packing
+        # gutter (extrude_crop). NativeDecorationRenderer submits triangle
+        # arrays only when this is 1; anything else keeps the clipped-rect
+        # per-sprite path.
+        "extruded": 1 if extrude else 0,
         "pages": page_files,
         "sheets": sheet_names,
         "frames": table,
@@ -467,10 +518,15 @@ def main() -> None:
     parser.add_argument("--frames-json", type=Path, default=DEFAULT_FRAMES_JSON, help="object_frames.json, selects the frames to pack")
     parser.add_argument("--all", action="store_true", help="pack every frame, not just the ones objects use")
     parser.add_argument("--page-size", type=int, default=PAGE_SIZE)
+    parser.add_argument(
+        "--no-extrude",
+        action="store_true",
+        help="skip the 1px duplicated frame borders; the runtime then keeps the per-sprite clipped-rect renderer",
+    )
     args = parser.parse_args()
     if not args.source_dir.is_dir():
         sys.exit(f"source directory not found: {args.source_dir}")
-    build(args.source_dir, args.out_dir, args.frames_json, args.all, args.page_size)
+    build(args.source_dir, args.out_dir, args.frames_json, args.all, args.page_size, not args.no_extrude)
 
 
 if __name__ == "__main__":

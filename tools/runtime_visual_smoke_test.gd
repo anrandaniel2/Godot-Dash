@@ -29,6 +29,12 @@ var _renderer_reference_owner: Node2D
 var _renderer_reference_rid: RID
 var _renderer_texture: Texture2D
 var _renderer_pixel_parity_checked := false
+# Triangle-array parity fixtures (extruded synthetic page, arrays=true).
+var _array_viewport: SubViewport
+var _array_canvas: Object
+var _array_reference_rid: RID
+var _array_texture: Texture2D
+var _array_pixel_parity_checked := false
 
 
 ## Stand-in for Level's colour properties during the native effect-engine
@@ -754,6 +760,7 @@ func _ready() -> void:
 		)
 	if OS.get_environment("GDASH_REQUIRE_NATIVE") == "1":
 		_setup_native_renderer_parity_smoke()
+		_setup_native_renderer_array_parity()
 
 
 func _setup_native_renderer_parity_smoke() -> void:
@@ -829,6 +836,98 @@ func _setup_native_renderer_parity_smoke() -> void:
 		)
 
 
+## Triangle-array parity gate: the extruded-atlas rendering path
+## (NativeDecorationRenderer with arrays=true, reached in game only when
+## tools/build_godot_atlas.py wrote "extruded": 1) against clipped
+## texture-rect references. The page below reproduces the packer layout —
+## two 8x8 frames, 2px gutter, edge texels duplicated 1px into the gutter —
+## so unclamped border sampling must return exactly the edge texel, matching
+## clip_uv. Per-texel gradients make any UV flip or offset fail loudly.
+func _setup_native_renderer_array_parity() -> void:
+	_array_viewport = SubViewport.new()
+	_array_viewport.size = Vector2i(256, 128)
+	_array_viewport.disable_3d = true
+	_array_viewport.transparent_bg = true
+	_array_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_array_viewport)
+	var array_owner := Node2D.new()
+	array_owner.position = Vector2(16, 16)
+	array_owner.material = load("res://resources/FadeEnterEffect.tres")
+	_array_viewport.add_child(array_owner)
+	var array_reference_owner := Node2D.new()
+	array_reference_owner.position = Vector2(144, 16)
+	array_reference_owner.material = array_owner.material
+	_array_viewport.add_child(array_reference_owner)
+
+	# 20x10 "page": frame A at (1,1,8,8), frame B at (11,1,8,8), the 2px
+	# gutter at x in [9,11), page margins elsewhere — extruded by clamping
+	# every sample to its frame's edge texel, exactly like extrude_crop().
+	var page := Image.create(20, 10, false, Image.FORMAT_RGBA8)
+	var texel_a := func(x: int, y: int) -> Color:
+		return Color(0.1 + 0.08 * x, 0.15 + 0.07 * y, 0.9 - 0.05 * x, 1.0)
+	var texel_b := func(x: int, y: int) -> Color:
+		return Color(0.7 - 0.05 * x, 0.25 + 0.06 * y, 0.1 + 0.04 * x, 1.0)
+	for y in page.get_height():
+		for x in page.get_width():
+			var color: Color
+			if x < 10:
+				color = texel_a.call(clampi(x, 1, 8), clampi(y, 1, 8))
+			else:
+				color = texel_b.call(clampi(x, 11, 18), clampi(y, 1, 8))
+			page.set_pixel(x, y, color)
+	_array_texture = ImageTexture.create_from_image(page)
+	var regions: Array[Rect2] = [Rect2(1, 1, 8, 8), Rect2(11, 1, 8, 8), Rect2(1, 1, 8, 8)]
+	var transforms: Array[Transform2D] = [
+		Transform2D(Vector2(1.2, 0.25), Vector2(-0.1, 0.8), Vector2(32, 28)),
+		Transform2D(Vector2(-0.9, 0.1), Vector2(0.2, 0.8), Vector2(40, 30)),
+		Transform2D(0.1, Vector2(35, 36)),
+	]
+	var colors := PackedColorArray(
+		[Color(1.0, 0.6, 0.4, 0.72), Color(0.5, 1.0, 0.6, 0.61), Color(0.6, 0.7, 1.0, 0.83)]
+	)
+	var textures: Array[Texture2D] = [_array_texture, _array_texture, _array_texture]
+	var array_canvas: Object = ClassDB.instantiate(&"NativeDecorationRenderer")
+	assert(array_canvas != null, "native smoke: decoration renderer is unavailable")
+	_array_canvas = array_canvas
+	_array_canvas.call(
+		&"configure",
+		array_owner,
+		textures,
+		regions,
+		transforms,
+		colors,
+		PackedFloat32Array([0.0, 0.0, 0.0]),
+		PackedFloat32Array([1.0, 1.0, 1.0]),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		true,
+		256.0,
+		0.0,
+		true
+	)
+	assert(
+		bool(_array_canvas.call(&"uses_triangle_arrays")),
+		"native smoke: renderer did not keep the triangle-array flag"
+	)
+	_array_canvas.call(&"update_camera_range")
+
+	_array_reference_rid = RenderingServer.canvas_item_create()
+	RenderingServer.canvas_item_set_parent(_array_reference_rid, array_reference_owner.get_canvas_item())
+	RenderingServer.canvas_item_set_use_parent_material(_array_reference_rid, true)
+	for index in transforms.size():
+		RenderingServer.canvas_item_add_set_transform(_array_reference_rid, transforms[index])
+		RenderingServer.canvas_item_add_texture_rect_region(
+			_array_reference_rid,
+			Rect2(-regions[index].size * 0.5, regions[index].size),
+			_array_texture.get_rid(),
+			regions[index],
+			colors[index],
+			false,
+			true
+		)
+
+
 func _check_native_renderer_pixel_parity() -> bool:
 	# Compare the retained native CanvasItem path with direct texture rectangles.
 	var server_image := _renderer_viewport.get_texture().get_image()
@@ -838,6 +937,17 @@ func _check_native_renderer_pixel_parity() -> bool:
 	if not _compare_native_renderer_image(server_image, "RenderingServer"):
 		return false
 	return true
+
+
+func _check_native_renderer_array_parity() -> bool:
+	# The triangle-array path against clipped texture rects on an extruded
+	# page. 1/255-per-component tolerance, whole 96x96 neighborhood, exactly
+	# like the rect-path gate above.
+	var array_image := _array_viewport.get_texture().get_image()
+	if array_image == null or array_image.is_empty():
+		push_error("native smoke: triangle-array parity viewport capture failed")
+		return false
+	return _compare_native_renderer_image(array_image, "TriangleArrays")
 
 
 func _compare_native_renderer_image(parity_image: Image, backend_name: String) -> bool:
@@ -926,6 +1036,18 @@ func _process(_delta: float) -> void:
 		RenderingServer.free_rid(_renderer_reference_rid)
 		_renderer_reference_rid = RID()
 		_renderer_parity_canvas = null
+	if _array_canvas != null and not _array_pixel_parity_checked:
+		_array_pixel_parity_checked = true
+		if not await _check_native_renderer_array_parity():
+			_array_viewport.get_texture().get_image().save_png(
+				"user://native_renderer_array_parity_failure.png"
+			)
+			push_error("native smoke: triangle-array renderer differs from clipped-rect reference")
+			get_tree().quit(1)
+			return
+		RenderingServer.free_rid(_array_reference_rid)
+		_array_reference_rid = RID()
+		_array_canvas = null
 	if _native_canvas != null:
 		var drawn := int(_native_canvas.call(&"last_drawn_count"))
 		var total := int(_native_canvas.call(&"item_count"))

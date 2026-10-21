@@ -54,7 +54,18 @@ its packed builder/renderer. Do not mistake the contract below for verified fall
 | `NativeDecorationRenderer` | retained-RID sprite renderer: `configure`, `set_item_transform`, `set_item_color`, `get_item_*`, `sort_decoration_indices`, `render_stats`, `queue_redraw`, `item_count`, `last_drawn_count`, `draw_commands_last_rebuild`; submits ordered clipped texture-rectangle commands |
 | `NativeMonsterTimeline` | batched per-frame monster clocks; `configure`, `advance`, `size`; metadata cached per definition, mirrors public Monster state, returns only changed sprite-frame indices |
 | `NativeDecorationCullWorker` | worker-thread culling coordinator (enter/exit, frame updates, stats) |
+| `NativeSpriteTick` | C++ twin of `Player._update_sprites_rotation` plus the swing/robot flame ticks: `bind_player(player, dash_material)` resolves the icon/collider/flame nodes once, `tick(params)` performs one 240 Hz sprite-rotation tick from a 26-float packed array (same seam as `compute_player_velocity_packed`), `tick_swing_fire`/`tick_robot_fire` run the 240 Hz flame animations, `reset` clears the native visual accumulators; the GDScript functions stay as the fallback and UFO-particle spawning stays in GDScript via the returned bit flags |
 | `GdashNative` | entry point: `build_string`, `version`, `add` (self-check used by `GameScene._probe_native_core`), plus the parsing/CORS/audio helpers used by `NativeCore` |
+
+`import_online_level_packed` now also returns a `level_bounds` dictionary
+(`max_object_x`, `max_object_y`, `level_length`, `max_gameplay_y`) computed in
+its single pass — a mirror of `gd_scan_level_extents`' chunk-ordering rules
+(first chunk skipped unconditionally, a chunk counts iff it carries key 2,
+duplicate keys last-wins) — so `GMDConverter` no longer re-tokenizes the whole
+level string through `level_bounds`. `level_bounds` itself is unchanged for
+non-packed callers. `is_audio_stream` structurally validates Ogg/RIFF/ID3/
+MPEG-sync/FLAC and no longer accepts any body ≥ 16 KiB as audio; the parity
+tests live in `native/tests/test_online_parser.cpp`.
 
 Bound method names observed in `gdash_native.cpp` include: `activate_touch`, `advance`,
 `advance_animation`, `advance_player`, `apply`, `apply_channel_color`, `apply_gravity_portal`,
@@ -82,10 +93,10 @@ Bound method names observed in `gdash_native.cpp` include: `activate_touch`, `ad
 | `ColorChannelWatcher.gd` | `NativeColorChannelIndex` (`_refresh_native`) |
 | `LevelPhysics.gd` | shared-physics shape commits (`commit_collision_shapes`, `reenable_collision_shapes`, `extract_object_geometry`, `classify_collision_flags`) |
 | `NativeTriggerBridge.gd` | `NativeLevelRuntime` + `NativeTriggerRuntime` for generic 2.2 triggers |
-| `Player.gd` | `compute_player_velocity_packed` (via `_physics_params`) |
+| `Player.gd` | `compute_player_velocity_packed` (via `_physics_params`); `NativeSpriteTick` (`bind_player`/`tick`/`reset`) replaces `_update_sprites_rotation` per tick when present, with the GDScript function as fallback |
 | `GDDecorationLoader` / `DecorationBatch.gd` | `NativeDecorationRenderer`, cull worker, sorting |
 | `NativeCore.gd` | `GdashNative` helpers (parsing, CORS, audio sniffing) |
-| `RobTopLevels.gd` | `parse_online_level`, `resolve_proxy_url`, `is_cors_error` |
+| `RobTopLevels.gd` | `parse_online_level`, `resolve_proxy_url`, `is_cors_error`, `import_online_level_packed` (`level_bounds` result included) |
 | `GameScene.gd` | probe + toast reporting whether native loaded |
 
 ## 4. Constants shared with GDScript
@@ -287,20 +298,36 @@ The indexed `canvas_item_add_triangle_array` aggregation experiment was reverted
 Android Mobile pixel-parity gate found 11 mismatched pixels in 9,216 (`max_delta=0.219608` at
 `(54,55)`). The candidate emitted atlas UVs without the `clip_uv` semantics used by
 `canvas_item_add_texture_rect_region`: Godot clamps fragment UVs half a texel inside the
-source region. This made region-edge sampling visibly different. The active
-`NativeDecorationRenderer::rebuild_commands` therefore retains ordered, clipped
-texture-rectangle submissions per sprite, with the original draw order, blend routing,
-transforms, pulse/tint, UI layout and spin behavior. It does not claim reduced RenderingServer
-command counts or draw calls.
+source region. This made region-edge sampling visibly different.
 
-`tools/renderer_cache_selftest.gd` checks sprite retention, ordered rect submissions and
-blend routing; `tools/runtime_visual_smoke_test.gd` compares the active native renderer against
-a direct RenderingServer texture-rect reference. The prior triangle-array benchmark and
-parity report are historical only; see
-`reports/decoration-triangle-batching-2026-10-15.md` and
-`reports/decoration-node-and-draw-call-review-2026-10-15.md`. A future aggregation must
-reproduce clip-UV behavior and pass the Android Mobile pixel gate before it can replace this
-path. No whole-game frame-time, GPU, or device FPS improvement is established.
+**Second attempt, conditionally active (2026-10-21)**: the root cause is now fixed at the
+asset level. `tools/build_godot_atlas.py` extrudes every frame — its edge texels are
+duplicated 1px into the existing 2px packing gutter, frame rectangles unchanged — and
+records `"extruded": 1` in `gd_objects_atlas.json`. With that guarantee, *unclamped*
+sampling at a region border returns exactly the edge texel, which is what the clipped rect
+produces, so `NativeDecorationRenderer` can submit one triangle array per blend-route
+texture run instead of one rect command per sprite. The path is data-driven and off by
+default: `GDSpriteSheet.packed_atlas_extruded` (set from the JSON) is passed through both
+build funnels (`configure`'s trailing `arrays` argument, `DEFVAL(false)`, and
+`NativePackedDecorationBuilder.configure_renderer`'s), so old or fallback atlases keep the
+clipped-rect path bit-for-bit. Activation requires regenerating the atlas
+(`python3 tools/build_godot_atlas.py`).
+
+Order, blend routes, per-record tint/pulse (vertex colors), UI pivot alignment and culling
+selection are preserved exactly; only the command count changes (one submission per
+contiguous same-texture run per route instead of per record). `render_stats()` reports
+`triangle_array_canvases`. Two gates pin it: `tools/runtime_visual_smoke_test.gd`'s new
+`TriangleArrays` parity section compares an extruded synthetic page drawn through the
+array path against clipped-rect references at the gate's 1/255 tolerance (per-texel
+gradients make UV flips/offsets fail loudly), and once the real atlas is regenerated the
+existing `RenderingServer` parity gate re-validates the in-game path. The counter-based
+`renderer_cache_selftest` keeps exercising the rect path (it configures without `arrays`).
+
+The prior triangle-array benchmark and parity report remain historical for the *unfixed*
+variant; see `reports/decoration-triangle-batching-2026-10-15.md` and
+`reports/decoration-node-and-draw-call-review-2026-10-15.md`. No whole-game frame-time, GPU,
+or device FPS improvement is established until the regenerated atlas and a device run are
+measured.
 
 ## 14. Static frustum edge-band traversal
 

@@ -399,6 +399,10 @@ func _build_native_canvas(native: Object) -> void:
 			# group-addressable batches common in Thinking Space II.
 			base_alphas, hsv_data, spins, spin_pivots,
 			not items.is_empty(), BUCKET_WIDTH, CULL_MARGIN,
+			# Triangle-array submission only on an extruded atlas: the
+			# duplicated frame borders make unclamped UVs match the clipped
+			# rect path exactly (see tools/build_godot_atlas.py).
+			GDSpriteSheet.packed_atlas_extruded,
 	)
 
 

@@ -143,7 +143,7 @@ func _test_golden_document() -> void:
 	if not loaded.ok:
 		print("GDR_SELFTEST_DETAIL ", loaded.error)
 		return
-	check("golden replay round-trips its data", _data_equals(loaded.replay.data, _golden_data()))
+	check("golden replay round-trips its data", loaded.replay.data == _golden_data())
 	check("golden replay keeps author", loaded.replay.author == "Tester")
 	check("golden replay keeps level name", loaded.replay.level_name == "Test Level")
 	check("golden replay keeps platformer flag", loaded.replay.platformer)
@@ -154,22 +154,24 @@ func _test_replay_roundtrip_classic() -> void:
 	replay.author = "Classic"
 	replay.level_name = "Classic Level"
 	replay.platformer = false
-	replay.data = []
+	replay.data = PackedByteArray()
 	for tick in 100:
 		# Classic recordings carry a constant direction column that the GDR
 		# format cannot express (and must not: emitting it would mark the
 		# replay as platformer for the ecosystem tools); the round trip
 		# normalizes it away.
-		replay.data.append(PackedByteArray([1 if tick % 7 < 3 else 0, 2]))
+		replay.data.append(1 if tick % 7 < 3 else 0)
+		replay.data.append(2)
 	var loaded: Dictionary = GDRFormat.from_bytes(GDRFormat.to_bytes(replay))
 	check("classic replay round-trips", loaded.ok)
 	if not loaded.ok:
 		print("GDR_SELFTEST_DETAIL ", loaded.error)
 		return
-	var expected: Array[PackedByteArray] = []
+	var expected := PackedByteArray()
 	for tick in 100:
-		expected.append(PackedByteArray([1 if tick % 7 < 3 else 0, 1]))
-	check("classic replay data matches", _data_equals(loaded.replay.data, expected))
+		expected.append(1 if tick % 7 < 3 else 0)
+		expected.append(1)
+	check("classic replay data matches", loaded.replay.data == expected)
 	check("classic replay stays classic", not loaded.replay.platformer)
 	check("classic replay keeps author", loaded.replay.author == "Classic")
 
@@ -198,10 +200,11 @@ func _test_json_variant() -> void:
 	if not loaded.ok:
 		print("GDR_SELFTEST_DETAIL ", loaded.error)
 		return
-	var expected: Array[PackedByteArray] = []
+	var expected := PackedByteArray()
 	for tick in 120:
-		expected.append(PackedByteArray([1 if tick >= 10 and tick < 20 else 0, 1]))
-	check("JSON GDR replay data matches", _data_equals(loaded.replay.data, expected))
+		expected.append(1 if tick >= 10 and tick < 20 else 0)
+		expected.append(1)
+	check("JSON GDR replay data matches", loaded.replay.data == expected)
 	check("JSON GDR replay author matches", loaded.replay.author == "JsonBot")
 
 
@@ -222,11 +225,11 @@ func _test_framerate_resample() -> void:
 		return
 	# The engine's tick rate, not a fixed 240: the 240/s file standard is resampled onto it.
 	var scale: float = Engine.physics_ticks_per_second / 60.0
-	check("resampled replay length follows the engine tick rate", loaded.replay.data.size() == int(Engine.physics_ticks_per_second))
-	var data: Array[PackedByteArray] = loaded.replay.data
+	check("resampled replay length follows the engine tick rate", loaded.replay.tick_count() == int(Engine.physics_ticks_per_second))
+	var data: PackedByteArray = loaded.replay.data
 	var jump_ticks := 0
-	for tick: PackedByteArray in data:
-		if tick[0] == 1:
+	for i: int in range(0, data.size(), 2):
+		if data[i] == 1:
 			jump_ticks += 1
 	# Frames 30..44 become ticks round(30*scale)..round(45*scale)-1.
 	check("resampled jump window", jump_ticks == roundi(45 * scale) - roundi(30 * scale))
@@ -246,9 +249,9 @@ func _test_gdr2_binary() -> void:
 		return
 	var replay: Replay = result.replay
 	check("gdr2: metadata", replay.author == "a" and replay.level_id == 5 and replay.level_name == "L")
-	check("gdr2: length", replay.data.size() == 21)
+	check("gdr2: length", replay.tick_count() == 21)
 	check("gdr2: jump held from frame 10 to 19",
-			replay.data[9][0] == 0 and replay.data[10][0] == 1 and replay.data[19][0] == 1 and replay.data[20][0] == 0)
+			replay.data[9 * 2] == 0 and replay.data[10 * 2] == 1 and replay.data[19 * 2] == 1 and replay.data[20 * 2] == 0)
 
 
 func _test_gdr2_zero_p1_count() -> void:
@@ -261,7 +264,7 @@ func _test_gdr2_zero_p1_count() -> void:
 	check("gdr2 p1=0: parses", result.ok)
 	if result.ok:
 		var replay: Replay = result.replay
-		check("gdr2 p1=0: inputs kept as player 1", replay.data.size() == 21 and replay.data[10][0] == 1)
+		check("gdr2 p1=0: inputs kept as player 1", replay.tick_count() == 21 and replay.data[10 * 2] == 1)
 
 
 func _test_rejects_garbage() -> void:
@@ -300,8 +303,8 @@ func _golden_document() -> Dictionary:
 	}
 
 
-func _golden_data() -> Array[PackedByteArray]:
-	var data: Array[PackedByteArray] = []
+func _golden_data() -> PackedByteArray:
+	var data := PackedByteArray()
 	for tick in 61:
 		# Stored representation: jump state 0/1/2 (2 = wave descend, which
 		# wins over a held jump), direction + 1 (0 left, 1 none, 2 right).
@@ -317,17 +320,9 @@ func _golden_data() -> Array[PackedByteArray]:
 			direction = 2
 		elif tick >= 50 and tick <= 54:
 			direction = 0
-		data.append(PackedByteArray([jump_state, direction]))
+		data.append(jump_state)
+		data.append(direction)
 	return data
-
-
-func _data_equals(a: Array[PackedByteArray], b: Array[PackedByteArray]) -> bool:
-	if a.size() != b.size():
-		return false
-	for i in a.size():
-		if a[i] != b[i]:
-			return false
-	return true
 
 
 ## Marshalls has no hex decoder, so parse the spec fixtures by hand.

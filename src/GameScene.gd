@@ -312,6 +312,11 @@ var _gd_mg2_offset_pt: float = 0.0
 var _gd_mg_parallax: Parallax2D
 var _gd_mg_sprites: Array[Sprite2D] = []
 var _gd_ground_layers: Array[Sprite2D] = []
+## Tint channel per entry of the arrays above, captured when the art is built:
+## the per-frame loop used to read it back out of the metadata dictionary
+## several times a frame.
+var _gd_ground_layer_channels: Array[int] = []
+var _gd_mg_sprite_channels: Array[int] = []
 
 
 ## Shows the imported level's own background, ground and middleground (level
@@ -413,6 +418,7 @@ func _set_gd_ground(texture: Texture2D, texture_2: Texture2D) -> void:
 	for layer: Sprite2D in _gd_ground_layers:
 		layer.queue_free()
 	_gd_ground_layers.clear()
+	_gd_ground_layer_channels.clear()
 	var texel: float = texture.get_meta(&"texel_px")
 	var tile_px := texture.get_width() * texel
 	var span_px := tile_px * ceilf(GD_GROUND_SPAN_PX / tile_px)
@@ -450,9 +456,11 @@ func _set_gd_ground(texture: Texture2D, texture_2: Texture2D) -> void:
 				layer.use_parent_material = true
 				layer.self_modulate = Color(ground.self_modulate, 1.0)
 				layer.set_meta(&"tint", -1)
+				_gd_ground_layer_channels.append(-1)
 			else:
 				layer.z_index = 1
 				layer.set_meta(&"tint", 1009)
+				_gd_ground_layer_channels.append(1009)
 			ground.add_child(layer)
 			_gd_ground_layers.append(layer)
 
@@ -462,6 +470,7 @@ func _set_gd_middleground(texture: Texture2D, texture_2: Texture2D) -> void:
 	for sprite: Sprite2D in _gd_mg_sprites:
 		sprite.queue_free()
 	_gd_mg_sprites.clear()
+	_gd_mg_sprite_channels.clear()
 	if texture == null:
 		return
 	if _gd_mg_parallax == null:
@@ -491,6 +500,7 @@ func _set_gd_middleground(texture: Texture2D, texture_2: Texture2D) -> void:
 		sprite.set_meta(&"tint", 1013 + layer)
 		_gd_mg_parallax.add_child(sprite)
 		_gd_mg_sprites.append(sprite)
+		_gd_mg_sprite_channels.append(1013 + layer)
 
 
 func _process(_delta: float) -> void:
@@ -498,8 +508,9 @@ func _process(_delta: float) -> void:
 		set_process(false)
 		return
 	var bridge := NativeTriggerBridge.current
-	for layer: Sprite2D in _gd_ground_layers:
-		var channel: int = layer.get_meta(&"tint")
+	for i: int in _gd_ground_layers.size():
+		var layer: Sprite2D = _gd_ground_layers[i]
+		var channel: int = _gd_ground_layer_channels[i]
 		if channel < 0:
 			layer.self_modulate = Color((layer.get_parent() as Sprite2D).self_modulate, 1.0)
 		elif bridge != null:
@@ -515,7 +526,8 @@ func _process(_delta: float) -> void:
 	var px_per_point := GD_PX_PER_TEXEL * 2.0
 	var camera_gd := (FLOOR_Y - bottom_px) / px_per_point
 	var mg_gd := camera_gd * (1.0 - _gd_mg_speed.y) + _gd_mg_offset
-	for sprite: Sprite2D in _gd_mg_sprites:
+	for i: int in _gd_mg_sprites.size():
+		var sprite: Sprite2D = _gd_mg_sprites[i]
 		sprite.position.y = FLOOR_Y - mg_gd * px_per_point
 		if bridge != null:
-			sprite.self_modulate = bridge.live_channel_color(int(sprite.get_meta(&"tint")))
+			sprite.self_modulate = bridge.live_channel_color(_gd_mg_sprite_channels[i])

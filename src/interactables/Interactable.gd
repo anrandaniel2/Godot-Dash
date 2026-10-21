@@ -26,12 +26,20 @@ func register_public(component: Component) -> void:
 
 
 func has(component_type: Script) -> bool:
-	return components.any(func(component): return component and component.get_script() == component_type)
+	# Lambda-free scan: the old any(func...) allocated a Callable per call,
+	# and the player's dash path queries components every physics tick.
+	for component in components:
+		if component != null and component.get_script() == component_type:
+			return true
+	return false
 
 
 func query(component_type: Script) -> Component:
-	var component_idx := components.find_custom(func(component): return component and component.get_script() == component_type)
-	return components[component_idx] if component_idx >= 0 else null
+	# Lambda-free first-match scan (see has()).
+	for component in components:
+		if component != null and component.get_script() == component_type:
+			return component
+	return null
 
 
 func components_to_data(reason: Serialize.Reason) -> Dictionary[String, Dictionary]:

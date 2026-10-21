@@ -652,7 +652,13 @@ static func _import_level_string(level_string: String, level_name: String, repor
 	var color_channels: Array = _build_color_channels(channel_style, used_channels)
 
 	var is_platformer: bool = header.get(HeaderKey.PLATFORMER, "0") == "1"
-	var bounds: Dictionary = _level_bounds(level_string, header.get(HeaderKey.DYNAMIC_LEVEL_HEIGHT, "0") == "1")
+	# The packed C++ import computed the same bounds dictionary in its single
+	# pass (native "level_bounds" result); only fall back to a second
+	# full-string scan through level_bounds when it did not provide one
+	# (non-native builds, the non-packed dictionary parser, older binaries).
+	var bounds: Dictionary = native_import.get("level_bounds", {}) if native_packed else {}
+	if bounds.is_empty():
+		bounds = _level_bounds(level_string, header.get(HeaderKey.DYNAMIC_LEVEL_HEIGHT, "0") == "1")
 	# Classic levels end at GD's end portal; platformer levels end only by
 	# their own End trigger (GD shows no end wall there).
 	if not is_platformer:

@@ -7,6 +7,17 @@ enum VelocityModification {
 	OVERRIDE,
 }
 
+## Live Redirect teleports in the scene. Player._ensure_velocity_redirect
+## runs a ShapeCast along the whole velocity every physics tick to protect a
+## rebound/redirect hit from being cancelled by the floor; when a level has
+## neither a redirect teleport nor any ReboundComponent, that cast is
+## provably always false, so the player skips it entirely.
+static var redirect_count: int = 0
+## Guards the count against the await window in _ready: a component removed
+## before its parent finished initializing must not decrement a count it
+## never added.
+var _counted_as_redirect: bool = false
+
 @export var axis: Constants.Axis
 @export var velocity_modification: VelocityModification:
 	set(value):
@@ -42,8 +53,17 @@ func _ready() -> void:
 	await require([TargetObjectComponent])
 	if velocity_modification == VelocityModification.REDIRECT:
 		parent.collision_layer |= 1 << 10 # Velocity redirectors
+		if not _counted_as_redirect:
+			_counted_as_redirect = true
+			redirect_count += 1
 	parent.interacted.connect(teleport)
 	$"../TargetLink".visible = Editor.in_editor
+
+
+func _exit_tree() -> void:
+	if _counted_as_redirect:
+		_counted_as_redirect = false
+		redirect_count -= 1
 
 
 func _validate_property(property: Dictionary) -> void:

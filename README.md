@@ -53,7 +53,7 @@ Imported `.gmd` levels draw Geometry Dash's own artwork. The pipeline lives in `
 | Step | Command | Output |
 | --- | --- | --- |
 | 1. Object table | `python3 tools/build_object_frames.py --id-list tools/gd_object_id_list.txt` | `assets/textures/gd_atlas/object_frames.json` (object id → sprites, default z layer/order) |
-| 2. Godot atlas | `python3 tools/build_godot_atlas.py` | `assets/textures/gd_atlas/gd_objects_atlas_*.png` + `.json` — the cocos2d `-hd` sheets from `assets/textures/gd_atlas/source/` repacked into 4096² pages, rotated frames turned upright |
+| 2. Godot atlas | `python3 tools/build_godot_atlas.py` | `assets/textures/gd_atlas/gd_objects_atlas_*.png` + `.json` — the cocos2d `-hd` sheets from `assets/textures/gd_atlas/source/` repacked into 4096² pages, rotated frames turned upright, every frame's edge texels duplicated 1px into the packing gutter (`"extruded": 1` in the JSON). That gutter lets the native decoration renderer draw each batch as single triangle arrays with pixel-identical output; without it (or with `--no-extrude`) the renderer stays on per-sprite clipped rects |
 | 3. Object scenes | `python3 tools/build_gd_object_scenes.py` | `scenes/gd_objects/gd_<id>.tscn`, one scene per object type |
 
 Each `gd_<id>.tscn` has the object's sprites laid out under `Base` / `Detail`, an empty `Collision`
@@ -79,6 +79,13 @@ when testing Windows large levels.
 Per-frame GDScript is kept lean as well: the 240 Hz player loop resolves its scene nodes through cached
 references instead of `$Path` lookups, and idle interactable components (easings, rebounds, music-pulse
 scales, toggle sprites) only process while a tween is live or the player is within interaction range.
+Rebound orbs/pads and the gameplay-trigger clocks run from one shared `SceneTree.physics_frame` driver
+instead of one engine callback per placed object, and the per-tick sprite rotation moved behind the
+optional `NativeSpriteTick` extension class (the GDScript function remains the fallback). Online level
+downloads now parse on a worker thread, report real byte progress, reuse pooled `HTTPRequest` nodes,
+skip levels already saved locally, and compute the level bounds in the packed import's single pass
+instead of re-scanning the whole level string. See `reports/performance-online-2026-10-21.md` for the
+full change list, the parity tests and the verification limits.
 
 Steps 1–2 need Python 3 and Pillow (`pip install pillow`).
 

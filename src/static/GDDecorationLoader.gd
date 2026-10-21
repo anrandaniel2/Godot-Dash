@@ -270,7 +270,7 @@ static func _native_packed_batch(builder: Object, index: int) -> DecorationBatch
 	if renderer == null:
 		batch.free()
 		return null
-	builder.call(&"configure_renderer", index, renderer, batch, true, DecorationBatch.BUCKET_WIDTH, DecorationBatch.CULL_MARGIN)
+	builder.call(&"configure_renderer", index, renderer, batch, true, DecorationBatch.BUCKET_WIDTH, DecorationBatch.CULL_MARGIN, GDSpriteSheet.packed_atlas_extruded)
 	batch.adopt_native_canvas(renderer, info)
 	return batch
 

@@ -22,8 +22,22 @@ const GAME_VERSION := "22"
 const PC_BINARY_VERSION := "47"
 const MOBILE_BINARY_VERSION := "48"
 const PAGE_SIZE := 10
-const TRANSIENT_HTTP_STATUSES := [408, 425, 429, 500, 502, 503, 504]
+# Cloudflare origin statuses (520-526) join the transient set: the HTML error
+# sniffer already detects their error pages, but they were never retried.
+const TRANSIENT_HTTP_STATUSES := [408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 526]
 const NETWORK_ATTEMPTS := 3
+## Idle HTTPRequest nodes kept for reuse. Each request used to build, parent
+## and free a fresh node (own DNS + TCP + TLS handshake per call); a modest
+## pool recycles the node so keep-alive connections to a repeated host can
+## survive between the candidate/retry attempts.
+const REQUEST_POOL_SIZE := 6
+
+## Periodic byte counters for in-flight transfers, surfaced to the UI.
+## `id` is the level/song/SFX id the caller passed in.
+signal download_progress(id: int, downloaded_bytes: int, total_bytes: int)
+
+## Reusable HTTPRequest nodes (see REQUEST_POOL_SIZE).
+var _request_pool: Array[HTTPRequest] = []
 
 # ---------------------------------------------------------------------------
 # Browser (Web) transport
@@ -98,6 +112,70 @@ func _served_from_dev_server() -> bool:
 	if host == "localhost" or host == "127.0.0.1" or host == "[::1]" or host == "::1":
 		return true
 	return str(JavaScriptBridge.eval("window.location.protocol")).strip_edges() == "http:"
+
+
+# ---------------------------------------------------------------------------
+# Request pooling
+# ---------------------------------------------------------------------------
+
+func _acquire_request() -> HTTPRequest:
+	if not _request_pool.is_empty():
+		var pooled: HTTPRequest = _request_pool.pop_back()
+		if is_instance_valid(pooled):
+			pooled.cancel_request()
+			return pooled
+	var request := HTTPRequest.new()
+	request.use_threads = not OS.has_feature("web")
+	add_child(request)
+	return request
+
+
+func _release_request(request: HTTPRequest, on_completed: Callable) -> void:
+	if request == null or not is_instance_valid(request):
+		return
+	if on_completed.is_valid() and request.request_completed.is_connected(on_completed):
+		request.request_completed.disconnect(on_completed)
+	if _request_pool.size() < REQUEST_POOL_SIZE:
+		_request_pool.append(request)
+	else:
+		request.queue_free()
+
+
+func _emit_download_progress(id: int, request: HTTPRequest, last_reported: int) -> int:
+	var downloaded := request.get_downloaded_bytes()
+	if downloaded == last_reported:
+		return last_reported
+	download_progress.emit(id, downloaded, request.get_body_size())
+	return downloaded
+
+
+# ---------------------------------------------------------------------------
+# Level import
+# ---------------------------------------------------------------------------
+
+## Converts a downloaded level string to level data on a worker thread and
+## awaits the result. The conversion is pure data — dictionaries and packed
+## columns; scenes are instantiated later by LevelBuildJob — so it never
+## touches the scene tree, and the UI stays responsive while a 300k-object
+## level tokenizes (previously the whole parse froze the main thread with the
+## "Downloading…" label stuck long after the last byte had arrived).
+func import_level_string_threaded(level_string: String, level_name: String, report: GMDConverter.ImportReport) -> Dictionary:
+	# Resolve (and cache) the shared GdashNative instance on the main thread
+	# so the worker never races the one-time ClassDB lookup.
+	NativeCore.backend()
+	var thread := Thread.new()
+	var started := thread.start(GMDConverter.import_online_level_string.bind(level_string, level_name, report))
+	if started != OK:
+		# Thread unavailable: synchronous import, as before.
+		return GMDConverter.import_online_level_string(level_string, level_name, report)
+	while thread.is_alive():
+		await get_tree().process_frame
+	var result: Variant = thread.wait_to_finish()
+	# A crashing worker yields null; surface it as an error dictionary so the
+	# caller's default chains report a clean failure instead of a hard crash.
+	if result is Dictionary:
+		return result
+	return _error("Level %s could not be converted during import." % level_name)
 
 
 func search(query: String, page: int = 0, category: int = 1) -> Dictionary:
@@ -296,7 +374,7 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		"extras": "0",
 		"secret": COMMON_SECRET,
 	}
-	var response := await _post(DOWNLOAD_URL, fields)
+	var response := await _post(DOWNLOAD_URL, fields, level_id)
 	if not response.ok:
 		return response
 	var text: String = response.text
@@ -321,7 +399,9 @@ func _download_direct(level_id: int, summary: Dictionary = {}) -> Dictionary:
 
 	var level_name: String = values.get("2", summary.get("name", "Level %d" % level_id))
 	var report := GMDConverter.ImportReport.new()
-	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
+	var level_data: Dictionary = await import_level_string_threaded(level_string, level_name, report)
+	if not level_data.has("layers"):
+		return _error(str(level_data.get("error", "Level conversion failed.")))
 	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
 	print("[RobTop] native conversion: %s" % report.summary())
 	if not report.inert_trigger_ids.is_empty():
@@ -388,7 +468,7 @@ static func _archive_record_is_newer(candidate: Dictionary, current: Dictionary)
 func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 	var info_url := "https://history.geometrydash.eu/api/v1/level/%d/" % level_id
 	print("[RobTop] Level download via GDHistory: %s" % info_url)
-	var info_res := await _get_json(info_url)
+	var info_res := await _get_json(info_url, level_id)
 	if not info_res.ok:
 		return _error("Level %d not found in online archive (%s)" % [level_id, info_res.error])
 	var data: Dictionary = info_res.data if (info_res.data is Dictionary) else {}
@@ -436,7 +516,7 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		var candidate_version := int(candidate.get("level_version", 1))
 		var download_url := "https://history.geometrydash.eu/level/%d/%d/download/" % [level_id, candidate_id]
 		print("[RobTop] Fetching level archive: %s (record %d, ver %d)" % [download_url, candidate_id, candidate_version])
-		var text_res := await _get_text(download_url)
+		var text_res := await _get_text(download_url, level_id)
 		if not bool(text_res.get("ok", false)):
 			last_record_error = str(text_res.get("error", "archive request failed"))
 			continue
@@ -476,7 +556,9 @@ func _download_gdhistory(level_id: int, summary: Dictionary = {}) -> Dictionary:
 		level_name = str(data.get("cache_level_name", "Level %d" % level_id))
 
 	var report := GMDConverter.ImportReport.new()
-	var level_data := GMDConverter.import_online_level_string(level_string, level_name, report)
+	var level_data: Dictionary = await import_level_string_threaded(level_string, level_name, report)
+	if not level_data.has("layers"):
+		return _error(str(level_data.get("error", "Level conversion failed.")))
 	var imported_objects: Array = level_data.get("layers", [{}])[0].get("objects", [])
 	print("[RobTop] GDHistory conversion: %s" % report.summary())
 	if not report.inert_trigger_ids.is_empty():
@@ -560,9 +642,23 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 	# 2. Newgrounds direct download redirect
 	candidates.append("https://www.newgrounds.com/audio/download/%d" % song_id)
 
-	# 3. Fetch official RobTop song info via getGJSongInfo.php when the request
-	# can reach it: desktop/mobile directly, Web through a relay that can carry
-	# the POST. A browser on its own never can.
+	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
+
+	for cand in candidates:
+		var media_url := cand.strip_edges()
+		if media_url.begins_with("http://"):
+			media_url = "https://" + media_url.trim_prefix("http://")
+		if not media_url.begins_with("https://") and not media_url.begins_with("http://"):
+			continue
+		var downloaded := await _download_audio(media_url, final_path, song_id)
+		if downloaded.ok:
+			print("[RobTop] cached song %d: %s" % [song_id, file_name])
+			return {"ok": true, "file_name": file_name}
+
+	# 3. Only now pay the getGJSongInfo POST: RobTop's own percent-encoded
+	# media URL used to be fetched before every candidate attempt, adding a
+	# full round trip to the common mirror-hosted case. It stays the final
+	# fallback (and the only source for some Newgrounds-hosted songs).
 	if not OS.has_feature("web") or not web_relay().is_empty():
 		var song_fields := {
 			"gameVersion": "21",
@@ -574,27 +670,20 @@ func _download_custom_song(song_id: int, direct_url: String = "") -> Dictionary:
 			"songID": str(song_id),
 			"secret": COMMON_SECRET,
 		}
-		var info := await _post(SONG_INFO_URL, song_fields)
+		var info := await _post(SONG_INFO_URL, song_fields, song_id)
 		if not info.ok and bool(info.get("retryable", false)):
-			info = await _post(SONG_INFO_FALLBACK_URL, song_fields)
+			info = await _post(SONG_INFO_FALLBACK_URL, song_fields, song_id)
 		if info.ok and info.text != "-1" and info.text != "-2":
 			var song_values := _pairs(info.text, "~|~")
 			var robtop_url: String = song_values.get("10", "").uri_decode()
 			if not robtop_url.is_empty() and not candidates.has(robtop_url):
-				candidates.insert(0, robtop_url)
-
-	DirAccess.make_dir_recursive_absolute(Constants.SONG_DIR)
-
-	for cand in candidates:
-		var media_url := cand.strip_edges()
-		if media_url.begins_with("http://"):
-			media_url = "https://" + media_url.trim_prefix("http://")
-		if not media_url.begins_with("https://") and not media_url.begins_with("http://"):
-			continue
-		var downloaded := await _download_audio(media_url, final_path)
-		if downloaded.ok:
-			print("[RobTop] cached song %d: %s" % [song_id, file_name])
-			return {"ok": true, "file_name": file_name}
+				if robtop_url.begins_with("http://"):
+					robtop_url = "https://" + robtop_url.trim_prefix("http://")
+				if robtop_url.begins_with("https://"):
+					var downloaded := await _download_audio(robtop_url, final_path, song_id)
+					if downloaded.ok:
+						print("[RobTop] cached song %d: %s" % [song_id, file_name])
+						return {"ok": true, "file_name": file_name}
 
 	return _error("Music %d could not be downloaded." % song_id)
 
@@ -627,7 +716,7 @@ func download_sfx(sfx_id: int) -> Dictionary:
 	DirAccess.make_dir_recursive_absolute(Constants.SFX_DIR)
 
 	for cand in candidates:
-		var downloaded := await _download_audio(cand, final_path)
+		var downloaded := await _download_audio(cand, final_path, sfx_id)
 		if downloaded.ok:
 			print("[RobTop] cached SFX %d: %s" % [sfx_id, file_name])
 			return {"ok": true, "file_name": file_name, "path": final_path}
@@ -635,7 +724,7 @@ func download_sfx(sfx_id: int) -> Dictionary:
 	return _error("SFX %d could not be downloaded." % sfx_id)
 
 
-func _download_audio(url: String, destination: String) -> Dictionary:
+func _download_audio(url: String, destination: String, progress_id: int = 0) -> Dictionary:
 	if OS.has_feature("web"):
 		# The song hosts (the b-cdn mirrors and Newgrounds) also send no CORS
 		# headers, so a direct browser fetch can only produce a console CORS
@@ -643,11 +732,11 @@ func _download_audio(url: String, destination: String) -> Dictionary:
 		var relay := web_relay()
 		if relay.is_empty():
 			return _error("Audio downloads need a CORS relay in this browser build.")
-		return await _download_audio_once(_resolve_url(url, relay), destination)
-	var direct: Dictionary = await _download_audio_once(url, destination)
+		return await _download_audio_once(_resolve_url(url, relay), destination, progress_id)
+	var direct: Dictionary = await _download_audio_once(url, destination, progress_id)
 	var relay: String = web_relay()
 	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct):
-		return await _download_audio_once(_resolve_url(url, relay), destination)
+		return await _download_audio_once(_resolve_url(url, relay), destination, progress_id)
 	return direct
 
 
@@ -655,8 +744,8 @@ static func _resolve_url(endpoint: String, proxy_prefix: String = "") -> String:
 	return NativeCore.resolve_proxy_url(endpoint, proxy_prefix)
 
 
-func _get_json(url: String) -> Dictionary:
-	var response := await _get_text(url)
+func _get_json(url: String, progress_id: int = 0) -> Dictionary:
+	var response := await _get_text(url, progress_id)
 	if not response.ok:
 		return response
 	var text: String = response.text
@@ -667,18 +756,18 @@ func _get_json(url: String) -> Dictionary:
 	return {"ok": true, "data": json.data}
 
 
-func _get_text(url: String) -> Dictionary:
+func _get_text(url: String, progress_id: int = 0) -> Dictionary:
 	if OS.has_feature("web"):
 		# CORS-enabled front-ends (GDBrowser) are readable directly; every other
 		# host must go through the relay. history.geometrydash.eu answers with no
 		# Access-Control-Allow-Origin at all, so a direct browser GET is always
 		# rejected there - relay it, or don't try.
 		if WEB_CORS_HOSTS.has(_host_of(url)):
-			return await _get_text_once(url)
+			return await _get_text_once(url, progress_id)
 		var relay := web_relay()
 		if relay.is_empty():
 			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
-		var res := await _get_text_once(_resolve_url(url, relay))
+		var res := await _get_text_once(_resolve_url(url, relay), progress_id)
 		if res.ok and res.has("text"):
 			# Relays built on allorigins' "/get" style wrap the body in a JSON
 			# envelope; the raw form is the common case.
@@ -690,14 +779,14 @@ func _get_text(url: String) -> Dictionary:
 		return res
 	var direct: Dictionary = {}
 	for attempt: int in NETWORK_ATTEMPTS:
-		direct = await _get_text_once(url)
+		direct = await _get_text_once(url, progress_id)
 		if bool(direct.get("ok", false)) or not bool(direct.get("retryable", false)) or attempt + 1 >= NETWORK_ATTEMPTS:
 			break
 		print("[RobTop] transient GET failure; retry %d/%d" % [attempt + 1, NETWORK_ATTEMPTS - 1])
 		await _wait_before_network_retry(attempt)
 	var relay: String = web_relay()
 	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct):
-		return await _get_text_once(_resolve_url(url, relay))
+		return await _get_text_once(_resolve_url(url, relay), progress_id)
 	return direct
 
 
@@ -707,33 +796,33 @@ func _wait_before_network_retry(attempt: int) -> void:
 	await get_tree().create_timer(0.35 * pow(2.0, attempt)).timeout
 
 
-func _get_text_once(target_url: String) -> Dictionary:
+func _get_text_once(target_url: String, progress_id: int = 0) -> Dictionary:
 	print("[RobTop] GET %s" % target_url)
-	var request := HTTPRequest.new()
-	request.use_threads = not OS.has_feature("web")
+	var request := _acquire_request()
 	request.timeout = 15.0
 	request.body_size_limit = -1
-	add_child(request)
 	var completed: Array = []
-	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
+	var on_completed := func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
 		completed.assign([result, status, headers, bytes])
-	)
+	request.request_completed.connect(on_completed)
 	var headers := PackedStringArray()
 	if not OS.has_feature("web"):
 		headers.append("Accept: application/json, text/plain, */*")
 		headers.append("User-Agent: Godot-Dash/1")
 	var error := request.request(target_url, headers, HTTPClient.METHOD_GET)
 	if error != OK:
-		request.queue_free()
+		_release_request(request, on_completed)
 		return {"ok": false, "error": "Could not start GET request (error %d)" % error, "retryable": true}
 	var deadline := Time.get_ticks_msec() + 15_000
+	var reported_bytes := -1
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
+		reported_bytes = _emit_download_progress(progress_id, request, reported_bytes)
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
-		request.queue_free()
+		_release_request(request, on_completed)
 		return {"ok": false, "error": "Request timed out after 15 seconds", "retryable": true}
-	request.queue_free()
+	_release_request(request, on_completed)
 	var result: int = completed[0]
 	var status: int = completed[1]
 	var bytes: PackedByteArray = completed[3]
@@ -748,34 +837,36 @@ func _get_text_once(target_url: String) -> Dictionary:
 	return {"ok": true, "text": bytes.get_string_from_utf8().strip_edges()}
 
 
-func _download_audio_once(target_url: String, destination: String) -> Dictionary:
+func _download_audio_once(target_url: String, destination: String, progress_id: int = 0) -> Dictionary:
 	print("[RobTop] GET audio from %s" % target_url)
-	var request := HTTPRequest.new()
-	request.use_threads = not OS.has_feature("web")
+	var request := _acquire_request()
 	request.timeout = 30.0
 	request.max_redirects = 5
 	request.body_size_limit = MAX_SONG_BYTES
-	add_child(request)
 	var completed: Array = []
-	request.request_completed.connect(func(result: int, status: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	var on_completed := func(result: int, status: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 		completed.assign([result, status, body])
-	)
+	request.request_completed.connect(on_completed)
 	var headers := PackedStringArray()
 	if not OS.has_feature("web"):
 		headers.append("Accept: audio/*, */*")
 		headers.append("User-Agent: Godot-Dash/1")
 	var error := request.request(target_url, headers)
 	if error != OK:
-		request.queue_free()
+		_release_request(request, on_completed)
 		return _error("Could not start the audio download (error %d)." % error)
 	var deadline := Time.get_ticks_msec() + 30_000
+	var reported_bytes := -1
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
+		# The poll loop already exists for the deadline; reading the byte
+		# counters here turns it into a real progress report at no cost.
+		reported_bytes = _emit_download_progress(progress_id, request, reported_bytes)
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
-		request.queue_free()
+		_release_request(request, on_completed)
 		return {"ok": false, "error": "Audio download timed out after 30 seconds.", "retryable": true}
-	request.queue_free()
+	_release_request(request, on_completed)
 	var result := int(completed[0])
 	var status := int(completed[1])
 	var body: PackedByteArray = completed[2]
@@ -819,38 +910,48 @@ static func _platform_id() -> String:
 	return "3"
 
 
-func _post(url: String, fields: Dictionary) -> Dictionary:
+func _post(url: String, fields: Dictionary, progress_id: int = 0) -> Dictionary:
 	if OS.has_feature("web"):
 		# A browser POST to boomlings.com gets an Origin header it refuses and a
 		# response without CORS headers; the relay is the only way through.
+		# The same bounded retry/backoff the desktop path has: a single flaky
+		# relay response used to fail the whole request.
 		var relay := web_relay()
 		if relay.is_empty():
 			return _error(WEB_RELAY_REQUIRED, WEB_RELAY_HINT)
-		return await _post_once(url, fields, relay)
+		var web_res: Dictionary = {}
+		for attempt: int in NETWORK_ATTEMPTS:
+			web_res = await _post_once(url, fields, relay, progress_id)
+			if bool(web_res.get("ok", false)) or not bool(web_res.get("retryable", false)) or attempt + 1 >= NETWORK_ATTEMPTS:
+				break
+			print("[RobTop] transient relay POST failure; retry %d/%d" % [attempt + 1, NETWORK_ATTEMPTS - 1])
+			await _wait_before_network_retry(attempt)
+		return web_res
 	var direct: Dictionary = {}
 	for attempt: int in NETWORK_ATTEMPTS:
-		direct = await _post_once(url, fields, "")
+		direct = await _post_once(url, fields, "", progress_id)
 		if bool(direct.get("ok", false)) or not bool(direct.get("retryable", false)) or attempt + 1 >= NETWORK_ATTEMPTS:
 			break
 		print("[RobTop] transient POST failure; retry %d/%d" % [attempt + 1, NETWORK_ATTEMPTS - 1])
 		await _wait_before_network_retry(attempt)
 	var relay: String = web_relay()
 	if NativeDownloadPolicy.should_retry(url, relay, OS.has_feature("windows"), direct, fields):
-		return await _post_once(url, fields, relay)
+		return await _post_once(url, fields, relay, progress_id)
 	return direct
 
 
-func _post_once(url: String, fields: Dictionary, proxy_override: String = "") -> Dictionary:
+func _post_once(url: String, fields: Dictionary, proxy_override: String = "", progress_id: int = 0) -> Dictionary:
 	var target_url := _resolve_url(url, proxy_override)
 	print("[RobTop] POST %s" % target_url)
-	var request := HTTPRequest.new()
-	request.use_threads = not OS.has_feature("web")
+	var request := _acquire_request()
 	request.timeout = 15.0
-	add_child(request)
+	# Pooled nodes can carry a previous use's audio body cap; POSTs take the
+	# unlimited default like a fresh node would.
+	request.body_size_limit = -1
 	var completed: Array = []
-	request.request_completed.connect(func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
+	var on_completed := func(result: int, status: int, headers: PackedStringArray, bytes: PackedByteArray) -> void:
 		completed.assign([result, status, headers, bytes])
-	)
+	request.request_completed.connect(on_completed)
 	var body_parts := PackedStringArray()
 	for key: String in fields:
 		body_parts.append("%s=%s" % [key.uri_encode(), str(fields[key]).uri_encode()])
@@ -866,20 +967,22 @@ func _post_once(url: String, fields: Dictionary, proxy_override: String = "") ->
 			"&".join(body_parts),
 	)
 	if error != OK:
-		request.queue_free()
+		_release_request(request, on_completed)
 		push_warning("[RobTop] request could not start: error %d" % error)
 		return {"ok": false, "error": "Could not start the RobTop request (error %d)" % error, "retryable": true}
 
 	var deadline := Time.get_ticks_msec() + 15_000
+	var reported_bytes := -1
 	while completed.is_empty() and Time.get_ticks_msec() < deadline:
+		reported_bytes = _emit_download_progress(progress_id, request, reported_bytes)
 		await get_tree().process_frame
 	if completed.is_empty():
 		request.cancel_request()
-		request.queue_free()
+		_release_request(request, on_completed)
 		push_warning("[RobTop] timed out after 15 seconds: %s" % url)
 		return {"ok": false, "error": "RobTop did not respond within 15 seconds", "retryable": true}
 
-	request.queue_free()
+	_release_request(request, on_completed)
 	var result: int = completed[0]
 	var status: int = completed[1]
 	var bytes: PackedByteArray = completed[3]

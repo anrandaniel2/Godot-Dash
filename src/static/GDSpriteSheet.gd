@@ -40,6 +40,13 @@ const SHEET_NAMES: PackedStringArray = [
 
 const HD_SUFFIX: String = "-hd"
 
+## Mirrors the loaded packed atlas's [code]"extruded"[/code] flag. The two
+## native-canvas build funnels ([code]DecorationBatch._build_native_canvas[/code]
+## and [code]GDDecorationLoader[/code]'s packed builder call) pass this to the
+## renderer's [code]configure[/code]/[code]configure_renderer[/code] so only
+## extruded atlases activate triangle-array submission.
+static var packed_atlas_extruded: bool = false
+
 
 ## One frame of the atlas.
 class Frame:
@@ -69,6 +76,13 @@ class Sheet:
 	## [code]true[/code] when loaded from the packed atlas rather than the
 	## cocos2d sheets.
 	var packed: bool = false
+	## [code]true[/code] when the packed pages carry the 1px duplicated frame
+	## borders (tools/build_godot_atlas.py --extrude, recorded as
+	## [code]"extruded": 1[/code] in the JSON). Only then may the native
+	## decoration renderer submit triangle arrays without clip_uv: at a frame
+	## border, unclamped sampling returns exactly the edge texel, matching
+	## the clipped-rect path pixel for pixel.
+	var extruded: bool = false
 
 	func has_frame(frame_name: String) -> bool:
 		return frames.has(frame_name)
@@ -84,6 +98,11 @@ class Sheet:
 ## Loads the atlas: the packed pages when present, the cocos2d sheets otherwise.
 static func load_all() -> Sheet:
 	var sheet := Sheet.new()
+	# The cocos fallback frames sit directly beside their real neighbours, so
+	# triangle-array submission must never activate for them; every load
+	# attempt starts from the safe default until the packed JSON proves
+	# extrusion.
+	packed_atlas_extruded = false
 	if _load_packed(sheet):
 		return sheet
 	push_warning(
@@ -147,6 +166,8 @@ static func _load_packed(sheet: Sheet) -> bool:
 		frame.texture = texture
 		sheet.frames[frame_name] = frame
 	sheet.packed = true
+	sheet.extruded = int(parsed.get("extruded", 0)) != 0
+	packed_atlas_extruded = sheet.extruded
 	return true
 
 #endregion

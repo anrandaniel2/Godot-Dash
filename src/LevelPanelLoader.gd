@@ -315,8 +315,22 @@ func _download_online_level(summary: Dictionary, edit_after: bool, panel: LevelP
 	panel.play_button.disabled = true
 	panel.edit_button.disabled = true
 	var old_version := panel.version.text
+	# Already downloaded? The saved file is the same one the download would
+	# write, so re-downloading only repeated the whole network + parse
+	# pipeline (and re-fetched the song) for an identical result.
+	var cached_name := _find_cached_online_level(summary.id)
+	if not cached_name.is_empty():
+		online_busy = false
+		if edit_after:
+			_edit_level(cached_name, "")
+		else:
+			_play_level(cached_name, "")
+		return
 	panel.version.text = "Downloading…"
+	var progress_handler := _on_download_progress.bind(summary.id, panel)
+	online_client.download_progress.connect(progress_handler)
 	var response := await online_client.download(summary.id, summary)
+	online_client.download_progress.disconnect(progress_handler)
 	online_busy = false
 	if not is_instance_valid(panel):
 		return
@@ -342,6 +356,34 @@ func _download_online_level(summary: Dictionary, edit_after: bool, panel: LevelP
 		_edit_level(file_name, "")
 	else:
 		_play_level(file_name, "")
+
+
+## The saved file name for an already-downloaded level, or "" when absent.
+## Downloads are stored as "<name> [GD-<id>].bin"; the id suffix is the
+## stable key (the name part depends on the summary's display name).
+func _find_cached_online_level(level_id: int) -> String:
+	var dir := DirAccess.open(Constants.LEVEL_DIR)
+	if dir == null:
+		return ""
+	var suffix := " [GD-%d].%s" % [level_id, Constants.LEVEL_FILE_EXTENSION]
+	for file_name: String in dir.get_files():
+		if file_name.ends_with(suffix):
+			return file_name
+	return ""
+
+
+## Live byte counter for the downloading level: replaces the frozen
+## "Downloading…" label that used to hide a multi-megabyte transfer and the
+## multi-second parse behind it. Bound args (level_id, panel) precede the
+## signal's (id, downloaded_bytes, total_bytes).
+func _on_download_progress(level_id: int, panel: LevelPanel, id: int, downloaded_bytes: int, total_bytes: int) -> void:
+	if id != level_id or not is_instance_valid(panel):
+		return
+	if total_bytes > 0:
+		panel.version.text = "Downloading… %d%%" % int(float(downloaded_bytes) / float(total_bytes) * 100.0)
+		panel.version.tooltip_text = "%s / %s" % [String.humanize_size(downloaded_bytes), String.humanize_size(total_bytes)]
+	else:
+		panel.version.text = "Downloading… %s" % String.humanize_size(downloaded_bytes)
 
 
 func _show_transient_error(message: String) -> void:
