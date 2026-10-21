@@ -1,0 +1,119 @@
+name: Level runtime profile
+
+# Plays Amethyst in the real GameScene (tools/level_probe.gd with
+# GDASH_PROBE_PERF=1) and prints the frame-time breakdown and node census
+# from tools/perf_sampler.gd as PERF lines. Needs no local install: read the
+# results in the run summary or with `gh run view <id> --log`.
+on:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  # Amethyst (119550490), exported by the maintainer as .gmd2.
+  LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each row changes one setting, so the difference from baseline is
+          # what that setting costs. Software Vulkan: compare the rows, not
+          # the absolute milliseconds.
+          - name: baseline
+            disable: ""
+            settings: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot binary
+        uses: actions/cache@v4
+        id: cache-godot
+        with:
+          path: godot-bin
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot binary
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$GODOT_BIN_URL" -O godot.zip
+          mkdir -p godot-bin
+          unzip -q -o godot.zip -d godot-bin
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Cache scons build cache
+        uses: actions/cache@v4
+        with:
+          path: native/scons-cache
+          key: native-scons-profile-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**') }}
+          restore-keys: native-scons-profile-${{ env.GODOT_CPP_REF }}-
+
+      - name: Build gdash_native (Linux, release-like)
+        run: |
+          set -euo pipefail
+          pip3 install --break-system-packages -q scons
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          scons platform=linux target=template_debug arch=x86_64 api_version=4.7 lto=none -j4 > /tmp/scons.log 2>&1 || { tail -n 60 /tmp/scons.log; exit 1; }
+          ls -lh bin/linux/
+
+      - name: Download level
+        run: bash tools/fetch_level.sh "$LEVEL_URL" /tmp/level.gmd2
+
+      - name: Virtual display and software Vulkan (render timing needs a renderer)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers
+
+      - name: Import project resources
+        run: |
+          chmod +x "$GODOT_BIN"
+          "$GODOT_BIN" --headless --path . --import > import.log 2>&1 || true
+          grep -n "SCRIPT ERROR\|Parse Error" import.log | head -20 || true
+
+      - name: Profile Amethyst in the game scene
+        run: |
+          set +e
+          env GDASH_PROBE_LEVEL=/tmp/level.gmd2 GDASH_PROBE_GROUPS="" GDASH_PROBE_DENSE_FROM="" \
+            GDASH_PROBE_CHANNELS="" GDASH_PROBE_MACRO="" GDASH_PROBE_START_X="" GDASH_PROBE_START_Y="" \
+            GDASH_PROBE_MODE="" GDASH_PROBE_END_X="" GDASH_PROBE_PERF=1 GDASH_PROBE_PERF_FRAMES=1100 \
+            GDASH_PERF_DISABLE="${{ matrix.disable }}" GDASH_PROBE_SETTINGS="${{ matrix.settings }}" \
+            GDASH_PERF_TOGGLE="decor,glow,particles,blur,ground,background" \
+            timeout 1500s xvfb-run -a "$GODOT_BIN" --path . --audio-driver Dummy res://tools/level_probe.tscn > perf.log 2>&1
+          status=$?
+          { echo "PERF variant ${{ matrix.name }} settings=[${{ matrix.settings }}] disable=[${{ matrix.disable }}]"; grep -E "PERF|SCRIPT ERROR|Parse Error" perf.log | cut -c1-300; } > perf.txt
+          cat perf.txt
+          {
+            echo "## Amethyst runtime profile (exit $status)"
+            echo '```'
+            cat perf.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Annotations survive when logs and artifacts cannot be downloaded.
+          # A step keeps only 10 annotations, so pack the lines in chunks.
+          split -l 30 -d perf.txt perf_chunk_
+          for chunk in perf_chunk_*; do
+            echo "::notice::$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' "$chunk")"
+          done
+          grep -q "PERF census" perf.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-profile-${{ matrix.name }}
+          path: perf.txt
+          retention-days: 7

@@ -1,0 +1,64 @@
+name: Level scan
+
+# Downloads a Geometry Dash level on the runner, scans it with
+# tools/gd_level_scan.py and surfaces the report as annotations. The level
+# string is never committed or uploaded.
+on:
+  workflow_dispatch:
+
+env:
+  # OuterSpace (27732941), shared by the maintainer over WeTransfer.
+  OUTER_URL: "https://we.tl/t-0EaFKTxEJmVOkv4i"
+  # Amethyst (119550490), exported by the maintainer as .gmd2.
+  LEVEL_URL: "https://www.dropbox.com/scl/fi/3s9q0aalv0gluzswgubah/Amethyst.gmd2?rlkey=j8qi88gc0futnycz80j1fa8cb&dl=1"
+  FOCUS_FROM: "0.9"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download levels
+        run: |
+          bash tools/fetch_level.sh "$LEVEL_URL" level.txt
+          bash tools/fetch_level.sh "$OUTER_URL" outer.txt
+      - name: Scan
+        run: |
+          {
+            echo "##### OUTERSPACE #####"
+            python3 tools/gd_level_scan.py outer.txt --focus-from 0.999 --speeds 2> outer_err.txt \
+              || echo "::warning title=outer scan failed::$(tail -c 900 outer_err.txt | tr '\n' ' ')"
+            echo "##### AMETHYST #####"
+            python3 tools/gd_level_scan.py level.txt --focus-x 31800:35300
+          } > report.txt 2> err.txt || {
+            echo "::warning title=scan failed::err=$(tail -c 800 err.txt | tr '\n' ' ')"
+            exit 1
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-report
+          path: report.txt
+          retention-days: 1
+
+  # Annotations are cut at ~4 KB and capped at 10 per type per step, so each
+  # matrix job surfaces 50 slices of 3900 characters.
+  report:
+    needs: scan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: scan-report
+      - name: Slices 0
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+0);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 1
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+10);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 2
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+20);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 3
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+30);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"
+      - name: Slices 4
+        run: python3 -c "t=open('report.txt').read();base=(${{ matrix.part }}*50+40);[print('::notice title=s%04d::'%k+t[k*3900:(k+1)*3900].replace('%','%25').replace('\r','').replace('\n','%0A')) for k in range(base,base+10) if t[k*3900:(k+1)*3900]]"

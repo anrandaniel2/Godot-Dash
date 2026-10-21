@@ -1,0 +1,133 @@
+name: Level memory profile
+
+# Manual-only profile: measures memory and time for opening one huge
+# downloaded level (ORBIT by MindCap, 310k objects) under a real Godot.
+on:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_BIN_URL: https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+  GODOT_BIN: godot-bin/Godot_v4.7.2-stable_linux.x86_64
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+  LEVEL_ID: "133175713"
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot binary
+        uses: actions/cache@v4
+        id: cache-godot
+        with:
+          path: godot-bin
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot binary
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$GODOT_BIN_URL" -O godot.zip
+          mkdir -p godot-bin
+          unzip -q -o godot.zip -d godot-bin
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Cache scons build cache
+        uses: actions/cache@v4
+        with:
+          path: native/scons-cache
+          key: native-scons-profile-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**') }}
+          restore-keys: native-scons-profile-${{ env.GODOT_CPP_REF }}-
+
+      - name: Build gdash_native (Linux, release-like)
+        run: |
+          set -euo pipefail
+          pip3 install --break-system-packages -q scons
+          export SCONS_CACHE="$(pwd)/native/scons-cache"
+          cd native
+          scons platform=linux target=template_debug arch=x86_64 api_version=4.7 lto=none -j4 > /tmp/scons.log 2>&1 || { tail -n 60 /tmp/scons.log; exit 1; }
+          ls -lh bin/linux/
+
+      - name: Download level from GDHistory
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.parse
+          lid = int(os.environ["LEVEL_ID"])
+          UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"}
+          RELAY = "https://gddash.anrandaniel2.workers.dev/?url="
+          def get(url, data=None, headers=UA):
+              # GDHistory and RobTop answer 403 to GitHub runner IPs; go through
+              # the project's own relay, as the web build does.
+              last = None
+              for target in (url, RELAY + urllib.parse.quote(url, safe="")):
+                  try:
+                      req = urllib.request.Request(target, data=data, headers=headers)
+                      return urllib.request.urlopen(req, timeout=180).read()
+                  except Exception as e:
+                      last = e
+                      print("failed", target[:90], repr(e))
+              raise last
+          errors = []
+          try:
+              info = json.loads(get(f"https://history.geometrydash.eu/api/v1/level/{lid}/"))
+              recs = [r for r in info.get("records", []) if r.get("level_string_available") and not r.get("is_invalid")]
+              recs.sort(key=lambda r: (r.get("record_type") == "download", r.get("level_version") or 0, r["id"]))
+              url = f"https://history.geometrydash.eu/level/{lid}/{recs[-1]['id']}/download/"
+              data = get(url)
+              print("GDHistory", url, len(data))
+          except Exception as e:
+              errors.append(f"GDHistory: {e!r}")
+              try:
+                  body = urllib.parse.urlencode({"levelID": lid, "secret": "Wmfd2893gb7", "gameVersion": 22, "binaryVersion": 42}).encode()
+                  data = get("http://www.boomlings.com/database/downloadGJLevel22.php", body, {"User-Agent": ""})
+                  print("RobTop", len(data), data[:40])
+                  if len(data) < 100:
+                      raise RuntimeError(f"short response {data!r}")
+                  # Reduce to the GDHistory-like "k4" form the profiler extracts.
+                  fields = data.decode().split("#")[0].split(":")
+                  pairs = dict(zip(fields[0::2], fields[1::2]))
+                  data = ("k4 ~~" + pairs["4"] + "~~").encode()
+              except Exception as e2:
+                  errors.append(f"RobTop: {e2!r}")
+                  for m in errors:
+                      print(f"::error::{m}")
+                  sys.exit(1)
+          open("/tmp/level.gmd", "wb").write(data)
+          PY
+
+      - name: Import project resources
+        run: |
+          chmod +x "$GODOT_BIN"
+          "$GODOT_BIN" --headless --path . --import > import.log 2>&1 || true
+          grep -n "SCRIPT ERROR\|Parse Error" import.log | head -20 || true
+
+      - name: Profile level open
+        run: |
+          set +e
+          /usr/bin/time -v env GDASH_PROFILE_LEVEL=/tmp/level.gmd timeout 1500s \
+            "$GODOT_BIN" --headless --path . --audio-driver Dummy \
+            res://tools/level_memory_profile.tscn > profile.log 2> time.log
+          status=$?
+          grep -E "LEVEL_PROFILE|SCRIPT ERROR|ERROR" profile.log | head -80
+          grep -E "Maximum resident|Elapsed" time.log
+          {
+            echo "## Level memory profile (exit $status)"
+            echo '```'
+            grep -E "LEVEL_PROFILE" profile.log
+            grep -E "Maximum resident|Elapsed" time.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Annotations survive when raw logs cannot be downloaded.
+          # One notice for every line: a step keeps only 10 annotations.
+          echo "::notice::$( { grep -E "LEVEL_PROFILE" profile.log | head -30; grep -E 'Maximum resident' time.log; } | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
+          grep -q "LEVEL_PROFILE done" profile.log

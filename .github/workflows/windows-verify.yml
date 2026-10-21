@@ -1,0 +1,89 @@
+name: Windows Validation (manual)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/native/scons-cache
+      GDASH_FAST_BUILD: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run static build-policy tests
+        run: |
+          python -m unittest discover -s tools -p test_windows_export.py
+          python -m unittest discover -s tools -p test_production_build.py
+
+      - name: Cache Godot editor and templates outside the project
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/godot-windows
+          key: godot-windows-${{ env.GODOT_VERSION }}-rapier-v0.36.0-v1
+
+      - name: Install matching Windows editor and templates
+        run: python tools/windows_ci.py install
+
+      - name: Verify frame policy, profiling ownership and selection parity
+        run: python tools/windows_ci.py safety
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Cache native compilation
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: native/scons-cache
+          key: native-windows-verify-x64-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**', 'native/SConstruct', 'native/build_profile.json', '.github/workflows/windows-verify.yml', 'tools/windows_ci.py') }}
+          restore-keys: native-windows-x64-${{ env.GODOT_CPP_REF }}-
+
+      - name: Install build tools
+        run: python -m pip install scons pillow
+
+      - name: Run native parity and benchmark suites
+        run: python tools/windows_ci.py build
+
+      - name: Save native compilation cache
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/scons-cache
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Run runtime, renderer and export checks
+        run: python tools/windows_ci.py export
+
+      - name: Verify installer upgrade and user-data preservation
+        run: python tools/windows_ci.py installer
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-${{ github.sha }}
+          path: export/windows-logs/*.log
+          if-no-files-found: warn

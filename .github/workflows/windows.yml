@@ -1,0 +1,116 @@
+name: Build Windows Forward+
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, "arena/**"]
+
+concurrency:
+  group: windows-forward-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_CPP_REF: 6cceaf6a5f8b0d78ac5d71c139fd7fabba43b918
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/native/scons-cache
+      GDASH_FAST_BUILD: "1"
+    steps:
+      # The LFS ICO is unavailable on the mirror. Generate it from the tracked
+      # PNG in the build workspace instead of blocking checkout on LFS.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Godot editor and templates outside the project
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/godot-windows
+          key: godot-windows-${{ env.GODOT_VERSION }}-rapier-v0.36.0-v1
+
+      - name: Install matching Windows editor and templates
+        run: python tools/windows_ci.py install
+
+      - name: Checkout pinned godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ env.GODOT_CPP_REF }}
+          path: native/godot-cpp
+          fetch-depth: 1
+
+      - name: Cache native compilation
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: native/scons-cache
+          key: native-windows-x64-${{ env.GODOT_CPP_REF }}-${{ hashFiles('native/src/**', 'native/SConstruct', 'native/build_profile.json', '.github/workflows/windows.yml', 'tools/windows_ci.py') }}
+          restore-keys: native-windows-x64-${{ env.GODOT_CPP_REF }}-
+
+      - name: Install build tools
+        run: python -m pip install scons pillow
+
+      - name: Build Windows x86-64 native extension
+        run: python tools/windows_ci.py build
+
+      - name: Save native compilation before package export
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: native/scons-cache
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Import and export Forward+ package
+        run: python tools/windows_ci.py export
+
+      - name: Build Windows installer
+        run: python tools/windows_ci.py installer
+
+      - name: Upload Windows installer and portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-dash-windows-x86_64-${{ github.sha }}
+          path: |
+            export/godot-dash-windows-x86_64.zip
+            export/GodotDashSetup-x86_64.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Refresh the rolling Windows release for this branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $channel = "windows-$($env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-')"
+          $notes = "Build: $env:GITHUB_RUN_NUMBER`nCommit: $env:GITHUB_SHA`nWindows x86-64, Godot 4.7.2, Forward+. Use GodotDashSetup-x86_64.exe for in-place updates. User data stays in %APPDATA%/godot-dash. The ZIP contains the RenderingServer CanvasItem renderer. This fast push build skips runtime/parity/benchmark and install-upgrade tests; run the Windows Validation (manual) workflow for those checks. GPU/VSync/flicker require device verification. Run: $url"
+          gh release view $channel *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $channel export/godot-dash-windows-x86_64.zip export/GodotDashSetup-x86_64.exe --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Windows channel upload failed' }
+            gh release edit $channel --notes $notes
+            if ($LASTEXITCODE -ne 0) { throw 'Windows channel notes failed' }
+            gh api -X PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$channel" -f "sha=$env:GITHUB_SHA" -F force=true
+          } else {
+            gh release create $channel export/godot-dash-windows-x86_64.zip export/GodotDashSetup-x86_64.exe --target $env:GITHUB_SHA --title "Godot Dash Windows ($env:GITHUB_REF_NAME)" --notes $notes --prerelease
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Windows update channel publication failed' }
+
+      - name: Upload diagnostic logs even after failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-diagnostics-${{ github.sha }}
+          path: export/windows-logs/*.log
+          if-no-files-found: warn
