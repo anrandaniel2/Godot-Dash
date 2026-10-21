@@ -112,8 +112,12 @@ static var _adv_scratch_mode3_rotations: Array[Array] = []
 ## any collision pair existed, native-handled levels included. Blocks only
 ## join or leave the group at spawn/toggle boundaries, so a short refresh
 ## interval keeps the pair evaluation fresh at a fraction of the cost.
+## GDScript rejects negative literal shift operands (`-1 << 30` is a parse
+## error), so the "far in the past" frame stamp is spelled as the plain
+## integer that expression produces.
+const COLLISION_BLOCKS_STALE_FRAME: int = -1073741824
 static var _collision_blocks_cache: Array[Node] = []
-static var _collision_blocks_refresh_tick: int = -1 << 30
+static var _collision_blocks_refresh_tick: int = COLLISION_BLOCKS_STALE_FRAME
 const COLLISION_BLOCKS_REFRESH_TICKS: int = 30
 ## Single driver for the per-tick static work (timers, follows, collision
 ## checks, level time). Previously every component received a 240 Hz
@@ -152,7 +156,7 @@ static func reset_state() -> void:
 	_adv_scratch_mode12.clear()
 	_adv_scratch_mode3_rotations.clear()
 	_collision_blocks_cache.clear()
-	_collision_blocks_refresh_tick = -1 << 30
+	_collision_blocks_refresh_tick = COLLISION_BLOCKS_STALE_FRAME
 
 
 func _ready() -> void:
