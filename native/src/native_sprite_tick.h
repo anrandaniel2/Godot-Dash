@@ -195,7 +195,9 @@ class NativeSpriteTick : public RefCounted {
 	}
 
 	Node2D *resolve_node2d(Node *root, const char *path) {
-		Node *node = root->get_node(NodePath(String(path)));
+		// get_node_or_null + NodePath(const char*) is the exact call shape the
+		// rest of this TU uses; MSVC rejects the get_node(String) overload set.
+		Node *node = root->get_node_or_null(NodePath(path));
 		return Object::cast_to<Node2D>(node);
 	}
 

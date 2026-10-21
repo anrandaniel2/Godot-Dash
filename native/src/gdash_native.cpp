@@ -10961,7 +10961,10 @@ class NativeDecorationRenderer : public RefCounted {
 		}
 		static const PackedInt32Array k_empty_int32;
 		static const PackedFloat32Array k_empty_float32;
+		// The canvas-item RID is the first parameter; count -1 covers the
+		// whole index array.
 		server->canvas_item_add_triangle_array(
+				target,
 				array_indices[slot], array_points[slot], array_colors[slot], array_uvs[slot],
 				k_empty_int32, k_empty_float32, array_texture[slot], -1);
 		++route_draw_commands[slot];
