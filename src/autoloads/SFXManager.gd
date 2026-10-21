@@ -110,10 +110,7 @@ func _download_sfx_async(sfx_id: int) -> void:
 	if _downloading_ids.has(sfx_id):
 		return
 	_downloading_ids[sfx_id] = true
-	var client := RobTopLevels.new()
-	add_child(client)
-	var res := await client.download_sfx(sfx_id)
-	client.queue_free()
+	var res := await _sfx_download_client().download_sfx(sfx_id)
 	_downloading_ids.erase(sfx_id)
 	if res.ok:
 		get_sfx_stream(res.get("path", Constants.SFX_DIR + "sfx_%d.ogg" % sfx_id))
@@ -123,15 +120,26 @@ func _download_and_play_sfx(sfx_id: int, volume: float, pitch: float, bus: Strin
 	if _downloading_ids.has(sfx_id):
 		return
 	_downloading_ids[sfx_id] = true
-	var client := RobTopLevels.new()
-	add_child(client)
-	var res := await client.download_sfx(sfx_id)
-	client.queue_free()
+	var res := await _sfx_download_client().download_sfx(sfx_id)
 	_downloading_ids.erase(sfx_id)
 	if res.ok:
 		var stream := get_sfx_stream(res.get("path", Constants.SFX_DIR + "sfx_%d.ogg" % sfx_id))
 		if stream != null:
 			_play_stream(stream, bus, volume, pitch)
+
+
+## One shared download client for every SFX. Each download used to build and
+## free a whole RobTopLevels node (plus its HTTPRequest children); a level
+## with dozens of SFX ids churned all of that per sound while the persistent
+## client recycles its pooled request nodes instead.
+var _sfx_client: RobTopLevels
+
+
+func _sfx_download_client() -> RobTopLevels:
+	if _sfx_client == null or not is_instance_valid(_sfx_client):
+		_sfx_client = RobTopLevels.new()
+		add_child(_sfx_client)
+	return _sfx_client
 
 
 func _play_stream(stream: AudioStream, bus: StringName, volume: float, pitch: float) -> void:
@@ -299,7 +307,14 @@ func _process(delta: float) -> void:
 	if _voices.is_empty():
 		set_process(false)
 		return
-	for voice: SfxVoice in _voices.duplicate():
+	# Backwards index walk: the invalid-player branch and _remove_voice only
+	# remove the voice currently being visited, so erasing never shifts an
+	# entry that has not been processed yet — no per-frame duplicate()
+	# allocation while any SFX voice is live. The range is evaluated once,
+	# so voices started during this frame are handled next frame, exactly
+	# like the old duplicate() iteration did.
+	for i: int in range(_voices.size() - 1, -1, -1):
+		var voice: SfxVoice = _voices[i]
 		if not is_instance_valid(voice.player):
 			_voices.erase(voice)
 			continue

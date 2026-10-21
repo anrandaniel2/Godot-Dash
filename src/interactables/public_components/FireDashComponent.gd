@@ -13,10 +13,15 @@ var initial_direction: int
 var offset: Vector2
 
 var _tween: Tween
+## Cached once in _ready: get_velocity() runs every physics tick while a dash
+## is active, and each parent.query(EasingComponent) scanned the component
+## list and allocated a Callable to do it.
+var _easing: EasingComponent
 
 
 func _ready() -> void:
 	await require([EasingComponent])
+	_easing = parent.query(EasingComponent)
 	parent.interacted.connect(start)
 
 
@@ -28,7 +33,7 @@ func _get_property_default_value(property: String) -> Variant:
 
 
 func start(player: Player) -> void:
-	var easing: EasingComponent = parent.query(EasingComponent)
+	var easing: EasingComponent = _easing if _easing != null else parent.query(EasingComponent)
 	if easing.get_duration() > 0.0:
 		if snap & Constants.AxisBitflag.X:
 			offset.x = player.global_position.x - parent.global_position.x
@@ -64,7 +69,7 @@ func start(player: Player) -> void:
 
 
 func get_velocity(player: Player) -> Vector2:
-	var easing: EasingComponent = parent.query(EasingComponent)
+	var easing: EasingComponent = _easing if _easing != null else parent.query(EasingComponent)
 	return _path.get_velocity(player, self) - offset * easing.get_weight_derivative(player)
 
 

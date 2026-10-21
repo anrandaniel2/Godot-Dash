@@ -81,6 +81,7 @@
 #include "frustum_transition_ranges.h"
 #include "neutral_hsv.h"
 #include "native_monster_timeline.h"
+#include "native_sprite_tick.h"
 #include "gd_physics_constants.h"
 
 namespace godot {
@@ -9127,6 +9128,17 @@ public:
 			col_group_offsets.push_back(static_cast<int32_t>(col_group_ids.size()));
 		};
 
+		// Single-pass level extents, mirroring gd_scan_level_extents so
+		// GMDConverter can use result["level_bounds"] instead of a second
+		// full-string scan through level_bounds(). Ordering twin: the first
+		// chunk is skipped unconditionally (before any emptiness check),
+		// every later chunk counts when it carries a key-2 token, values are
+		// raw (unstripped) like strtod on the scanner's tokens, and PropList's
+		// last-value-wins duplicate handling matches the scanner's overwrite.
+		bool extents_first_chunk = true;
+		double extents_max_x = 0.0, extents_max_y = 0.0;
+		int64_t extents_objects = 0;
+
 		const int64_t length = level_string.length();
 		int64_t start = 0;
 		while (start <= length) {
@@ -9134,9 +9146,21 @@ public:
 			if (end < 0) end = length;
 			const String chunk = level_string.substr(start, end - start);
 			start = end + 1;
+			const bool extents_is_first_chunk = extents_first_chunk;
+			extents_first_chunk = false;
 			if (chunk.strip_edges().is_empty()) continue;
 			int64_t chunk_odd = 0;
 			parse_pairs_list(chunk, p, &chunk_odd, &duplicate_keys, &empty_keys);
+			if (!extents_is_first_chunk) {
+				if (const String *extent_x = p.get(2)) {
+					const double scan_x = extent_x->to_float();
+					if (extents_objects == 0 || scan_x > extents_max_x) extents_max_x = scan_x;
+					const String *extent_y = p.get(3);
+					const double scan_y = extent_y ? extent_y->to_float() : 0.0;
+					if (extents_objects == 0 || scan_y > extents_max_y) extents_max_y = scan_y;
+					++extents_objects;
+				}
+			}
 			if (!have_header) {
 				have_header = true;
 				if (chunk_is_header(p)) {
@@ -9201,6 +9225,18 @@ public:
 		result["min_x"] = std::isfinite(min_x) ? min_x : 0.0;
 		result["max_x"] = std::isfinite(max_x) ? max_x : 0.0;
 		result["sfx_ids"] = to_packed<int32_t, PackedInt32Array>(sfx_ids);
+		// Same dictionary level_bounds() would return, computed from the
+		// extents already gathered in the chunk loop above so the converter
+		// never re-tokenizes the whole multi-megabyte string a second time.
+		{
+			Dictionary bounds;
+			const bool dynamic_height = String(header.get("kA37", String("0"))) == "1";
+			bounds["max_object_x"] = extents_max_x;
+			bounds["max_object_y"] = extents_max_y;
+			bounds["level_length"] = gd_level_length(extents_max_x);
+			bounds["max_gameplay_y"] = gd_max_gameplay_y(dynamic_height, extents_max_y);
+			result["level_bounds"] = bounds;
+		}
 		return result;
 	}
 
@@ -9711,30 +9747,50 @@ public:
 		if (bytes.size() < 32) return false;
 		const uint8_t *ptr = bytes.ptr();
 		const int64_t head_len = std::min((int64_t)128, (int64_t)bytes.size());
-		String head;
-		for (int64_t i = 0; i < head_len; ++i) {
-			char c = static_cast<char>(ptr[i]);
-			if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
-			head += String::chr(c);
+		// Text-error sniff on raw bytes (case-insensitive prefixes), no
+		// per-character String assembly.
+		static const struct { const char *text; int64_t len; } text_prefixes[] = {
+			{"<!doctype", 9}, {"<html", 5}, {"<?xml", 5}, {"{", 1}, {"error", 5},
+		};
+		for (const auto &prefix : text_prefixes) {
+			if (head_len < prefix.len) continue;
+			bool matched = true;
+			for (int64_t i = 0; i < prefix.len; ++i) {
+				char c = static_cast<char>(ptr[i]);
+				if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+				if (c != prefix.text[i]) { matched = false; break; }
+			}
+			if (matched) return false;
 		}
-		if (head.begins_with("<!doctype") || head.begins_with("<html") || head.begins_with("<?xml") ||
-				head.begins_with("{") || head.begins_with("error")) {
-			return false;
+		// FLAC.
+		if (ptr[0] == 0x66 && ptr[1] == 0x4c && ptr[2] == 0x61 && ptr[3] == 0x43) {
+			return true;
 		}
+		// Ogg: page magic plus version 0.
 		if (extension == "ogg" || (ptr[0] == 0x4f && ptr[1] == 0x67 && ptr[2] == 0x67 && ptr[3] == 0x53)) {
-			return true;
+			return ptr[0] == 0x4f && ptr[1] == 0x67 && ptr[2] == 0x67 && ptr[3] == 0x53 && ptr[4] == 0x00;
 		}
+		// RIFF/WAVE: "RIFF" at 0 and "WAVE" at 8.
 		if (extension == "wav" || (ptr[0] == 0x52 && ptr[1] == 0x49 && ptr[2] == 0x46 && ptr[3] == 0x46)) {
-			return true;
+			return bytes.size() >= 12 && ptr[8] == 0x57 && ptr[9] == 0x41 && ptr[10] == 0x56 && ptr[11] == 0x45;
 		}
+		// ID3v2 tag: validate the syncsafe size so a text body that happens
+		// to start with "ID3" cannot pass.
 		if (ptr[0] == 0x49 && ptr[1] == 0x44 && ptr[2] == 0x33) {
-			return true;
+			if (bytes.size() < 10) return false;
+			const uint32_t tag_size = (static_cast<uint32_t>(ptr[6] & 0x7f) << 21)
+					| (static_cast<uint32_t>(ptr[7] & 0x7f) << 14)
+					| (static_cast<uint32_t>(ptr[8] & 0x7f) << 7)
+					| static_cast<uint32_t>(ptr[9] & 0x7f);
+			return tag_size >= 10 && static_cast<uint64_t>(tag_size) + 10 <= static_cast<uint64_t>(bytes.size());
 		}
+		// Raw MPEG audio frame sync: 11 set bits, non-reserved version and
+		// layer bits. The previous "any body >= 16 KiB is audio" fallback
+		// accepted CDN error pages; it is gone.
 		if (ptr[0] == 0xff && (ptr[1] & 0xe0) == 0xe0) {
-			return true;
-		}
-		if (bytes.size() >= 16384) {
-			return true;
+			const uint8_t version_bits = static_cast<uint8_t>((ptr[1] >> 3) & 0x03);
+			const uint8_t layer_bits = static_cast<uint8_t>((ptr[1] >> 1) & 0x03);
+			return version_bits != 0x01 && layer_bits != 0x00;
 		}
 		return false;
 	}
@@ -10819,6 +10875,20 @@ class NativeDecorationRenderer : public RefCounted {
 	// a pulsing batch re-emits only its visible records per changed tick.
 	Color pulse_color = Color(1, 1, 1, 1);
 	float pulse_weight = 0.0f;
+	// Triangle-array submission (configure's "arrays" flag, set by
+	// DecorationBatch when the atlas carries the 1px extruded gutter —
+	// see tools/build_godot_atlas.py). One canvas_item_add_triangle_array
+	// per blend-route texture run replaces one clipped rect command per
+	// sprite: the same ordered quads, colors and UVs, a fraction of the
+	// command count. Per-route scratch buffers are retained between
+	// rebuilds so pulsing/spinning batches reuse their capacity.
+	bool use_arrays = false;
+	std::array<PackedInt32Array, 3> array_indices = {};
+	std::array<PackedVector2Array, 3> array_points = {};
+	std::array<PackedColorArray, 3> array_colors = {};
+	std::array<PackedVector2Array, 3> array_uvs = {};
+	std::array<RID, 3> array_texture = { RID(), RID(), RID() };
+	std::array<bool, 3> array_texture_set = {};
 
 	CanvasItem *owner() const {
 		return Object::cast_to<CanvasItem>(ObjectDB::get_instance(ObjectID(owner_id)));
@@ -10866,6 +10936,41 @@ class NativeDecorationRenderer : public RefCounted {
 		return result;
 	}
 
+	// Emits one triangle array for a route's accumulated quads. Triangle
+	// indices preserve append order, so the batch's draw order is exactly
+	// the rect path's; one call per contiguous same-texture run keeps
+	// multi-page batches correct.
+	void reset_route_array(uint8_t slot) {
+		array_indices[slot].clear();
+		array_points[slot].clear();
+		array_colors[slot].clear();
+		array_uvs[slot].clear();
+		array_texture[slot] = RID();
+		array_texture_set[slot] = false;
+	}
+
+	void flush_route_array(uint8_t slot, const RID &target) {
+		if (array_points[slot].size() == 0) {
+			reset_route_array(slot);
+			return;
+		}
+		RenderingServer *server = RenderingServer::get_singleton();
+		if (!server || !target.is_valid()) {
+			reset_route_array(slot);
+			return;
+		}
+		static const PackedInt32Array k_empty_int32;
+		static const PackedFloat32Array k_empty_float32;
+		// The canvas-item RID is the first parameter; count -1 covers the
+		// whole index array.
+		server->canvas_item_add_triangle_array(
+				target,
+				array_indices[slot], array_points[slot], array_colors[slot], array_uvs[slot],
+				k_empty_int32, k_empty_float32, array_texture[slot], -1);
+		++route_draw_commands[slot];
+		reset_route_array(slot);
+	}
+
 	void rebuild_commands() {
 		if (!commands_dirty || (cull && !view_initialized)) return;
 		RenderingServer *server = RenderingServer::get_singleton();
@@ -10890,6 +10995,71 @@ class NativeDecorationRenderer : public RefCounted {
 		}
 		refresh_draw_stats();
 		if (!range_has_records && cull) return;
+
+		if (use_arrays) {
+			// Triangle-array path: per blend route, accumulate the visible
+			// records' quads in order and submit one command per contiguous
+			// same-texture run. The atlas extrusion (the only way this flag
+			// turns on) makes the unclamped border UVs sample exactly the
+			// edge texel, identical to the rect path's clip_uv, so only the
+			// command count differs.
+			auto draw_record_array = [&](size_t index) {
+				const Record &record = records[index];
+				const uint8_t slot = route_slot_for_record(record);
+				if ((rebuild_mask & (1u << slot)) == 0) return;
+				const RID &target = targets[slot];
+				if (!array_texture_set[slot] || array_texture[slot] != record.texture_rid) {
+					flush_route_array(slot, target);
+					array_texture[slot] = record.texture_rid;
+					array_texture_set[slot] = true;
+				}
+				const Transform2D transform = ui_layout_active ? get_draw_transform(index) : record.transform;
+				const Color color = pulse_weight > 0.0f
+						? pulse_record_color(record.color, pulse_color, pulse_weight)
+						: record.color;
+				const Vector2 half = record.region.size * (real_t)0.5;
+				const real_t u0 = record.region.position.x;
+				const real_t v0 = record.region.position.y;
+				const real_t u1 = u0 + record.region.size.x;
+				const real_t v1 = v0 + record.region.size.y;
+				PackedVector2Array &points = array_points[slot];
+				const int32_t base = static_cast<int32_t>(points.size());
+				// Same centered destination rect and region UVs the rect
+				// command uses, transformed per vertex.
+				points.push_back(transform.xform(Vector2(-half.x, -half.y)));
+				points.push_back(transform.xform(Vector2(half.x, -half.y)));
+				points.push_back(transform.xform(Vector2(half.x, half.y)));
+				points.push_back(transform.xform(Vector2(-half.x, half.y)));
+				array_uvs[slot].push_back(Vector2(u0, v0));
+				array_uvs[slot].push_back(Vector2(u1, v0));
+				array_uvs[slot].push_back(Vector2(u1, v1));
+				array_uvs[slot].push_back(Vector2(u0, v1));
+				array_colors[slot].push_back(color);
+				array_colors[slot].push_back(color);
+				array_colors[slot].push_back(color);
+				array_colors[slot].push_back(color);
+				PackedInt32Array &indices = array_indices[slot];
+				indices.push_back(base);
+				indices.push_back(base + 1);
+				indices.push_back(base + 2);
+				indices.push_back(base);
+				indices.push_back(base + 2);
+				indices.push_back(base + 3);
+				++route_drawn_items[slot];
+			};
+			if (!cull) {
+				for (size_t index = 0; index < records.size(); ++index) draw_record_array(index);
+			} else if (visible_records) {
+				// The worker pool has already selected the visible record IDs
+				// for this cell range; order within a route is preserved.
+				visible_records->for_each_selected(draw_record_array);
+			}
+			for (uint8_t slot = 0; slot < targets.size(); ++slot) {
+				flush_route_array(slot, targets[slot]);
+			}
+			refresh_draw_stats();
+			return;
+		}
 
 		// A CanvasItem's transform command applies to following draw commands on
 		// that RID. Composite artwork often has adjacent base/detail sprites with
@@ -10944,7 +11114,7 @@ class NativeDecorationRenderer : public RefCounted {
 
 protected:
 	static void _bind_methods() {
-		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin"), &NativeDecorationRenderer::configure);
+		ClassDB::bind_method(D_METHOD("configure", "owner", "textures", "regions", "transforms", "colors", "origins", "base_alphas", "hsv_data", "spins", "spin_pivots", "enable_culling", "width", "margin", "arrays"), &NativeDecorationRenderer::configure, DEFVAL(false));
 		ClassDB::bind_method(D_METHOD("apply_ui_layout", "layout"), &NativeDecorationRenderer::apply_ui_layout);
 		ClassDB::bind_method(D_METHOD("clear_ui_layout"), &NativeDecorationRenderer::clear_ui_layout);
 		ClassDB::bind_method(D_METHOD("get_draw_transform", "index"), &NativeDecorationRenderer::get_draw_transform);
@@ -10968,6 +11138,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("transform_commands_last_rebuild"), &NativeDecorationRenderer::transform_commands_last_rebuild);
 		ClassDB::bind_method(D_METHOD("selection_rebuild_count"), &NativeDecorationRenderer::selection_rebuild_count);
 		ClassDB::bind_method(D_METHOD("has_pending_redraw"), &NativeDecorationRenderer::has_pending_redraw);
+		ClassDB::bind_method(D_METHOD("uses_triangle_arrays"), &NativeDecorationRenderer::uses_triangle_arrays);
 		ClassDB::bind_method(D_METHOD("flush_commands"), &NativeDecorationRenderer::flush_commands);
 	}
 
@@ -11042,8 +11213,9 @@ public:
 			const PackedColorArray &colors, const PackedFloat32Array &origins,
 			const PackedFloat32Array &base_alphas, const PackedFloat32Array &hsv_data,
 			const PackedFloat32Array &spins, const PackedFloat32Array &spin_pivots,
-			bool enable_culling, double width, double margin) {
+			bool enable_culling, double width, double margin, bool p_use_arrays) {
 		attach_owner(p_owner);
+		use_arrays = p_use_arrays;
 		const int64_t count = std::min({textures.size(), regions.size(), transforms.size(), colors.size(), origins.size(), base_alphas.size()});
 		const Color *color_data = colors.ptr();
 		const float *alpha_data = base_alphas.ptr();
@@ -11383,6 +11555,7 @@ public:
 	int64_t last_drawn_count() const { return last_drawn_items; }
 	uint64_t owner_instance_id() const { return owner_id; }
 	bool has_pending_redraw() const { return commands_dirty; }
+	bool uses_triangle_arrays() const { return use_arrays; }
 	int64_t command_rebuild_count() const { return command_rebuilds; }
 	int64_t route_rebuild_count(int64_t route) const {
 		return route >= 0 && route < static_cast<int64_t>(route_rebuilds.size()) ? route_rebuilds[route] : -1;
@@ -11481,7 +11654,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("batch_count"), &NativePackedDecorationBuilder::batch_count);
 		ClassDB::bind_method(D_METHOD("sprite_count"), &NativePackedDecorationBuilder::sprite_count);
 		ClassDB::bind_method(D_METHOD("batch_info", "index"), &NativePackedDecorationBuilder::batch_info);
-		ClassDB::bind_method(D_METHOD("configure_renderer", "index", "renderer", "owner", "enable_culling", "width", "margin"), &NativePackedDecorationBuilder::configure_renderer);
+		ClassDB::bind_method(D_METHOD("configure_renderer", "index", "renderer", "owner", "enable_culling", "width", "margin", "arrays"), &NativePackedDecorationBuilder::configure_renderer, DEFVAL(false));
 		ClassDB::bind_method(D_METHOD("get_fallback_rows"), &NativePackedDecorationBuilder::get_fallback_rows);
 		ClassDB::bind_method(D_METHOD("unique_ids", "table"), &NativePackedDecorationBuilder::unique_ids);
 	}
@@ -11766,7 +11939,7 @@ public:
 
 	// Moves batch `index`'s records into `renderer`; the batch's sprites are
 	// released here, so each is held once.
-	bool configure_renderer(int64_t index, Object *renderer, Object *owner, bool enable_culling, double width, double margin) {
+	bool configure_renderer(int64_t index, Object *renderer, Object *owner, bool enable_culling, double width, double margin, bool p_use_arrays) {
 		NativeDecorationRenderer *target = Object::cast_to<NativeDecorationRenderer>(renderer);
 		if (!target || index < 0 || index >= static_cast<int64_t>(batches.size())) return false;
 		Batch &batch = batches[static_cast<size_t>(index)];
@@ -11780,6 +11953,7 @@ public:
 		}
 		std::vector<Sprite>().swap(batch.sprites);
 		target->attach_owner(owner);
+		target->use_arrays = p_use_arrays;
 		target->index_records(std::move(built), enable_culling, width, margin);
 		return true;
 	}
@@ -11885,6 +12059,7 @@ static Dictionary registered_decoration_stats() {
 	int64_t transform_commands = 0;
 	int64_t empty_canvases = 0;
 	int64_t culled_canvases = 0;
+	int64_t array_canvases = 0;
 	std::unordered_set<uint64_t> batch_owners;
 	for (NativeDecorationRenderer *canvas : registered_decoration_renderers) {
 		if (!canvas) continue;
@@ -11893,11 +12068,13 @@ static Dictionary registered_decoration_stats() {
 		submitted += canvas->last_drawn_count();
 		draw_commands += canvas->draw_commands_last_rebuild();
 		transform_commands += canvas->transform_commands_last_rebuild();
+		if (canvas->uses_triangle_arrays()) ++array_canvases;
 		if (canvas->owner_instance_id() != 0) batch_owners.insert(canvas->owner_instance_id());
 		if (canvas->last_drawn_count() == 0) ++empty_canvases;
 		if (canvas->is_spatially_culled()) ++culled_canvases;
 	}
 	stats["canvases"] = static_cast<int64_t>(registered_decoration_renderers.size());
+	stats["triangle_array_canvases"] = array_canvases;
 	stats["batch_owner_nodes"] = static_cast<int64_t>(batch_owners.size());
 	stats["canvas_draw_commands"] = draw_commands;
 	stats["canvas_transform_commands"] = transform_commands;
@@ -11925,6 +12102,7 @@ void gdash_native_initialize(godot::ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(godot::NativePackedDecorationBuilder);
 		GDREGISTER_CLASS(godot::NativeColorChannelIndex);
 		GDREGISTER_CLASS(godot::NativeMonsterTimeline);
+		GDREGISTER_CLASS(godot::NativeSpriteTick);
 	}
 }
 void gdash_native_terminate(godot::ModuleInitializationLevel) {}

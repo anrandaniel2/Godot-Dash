@@ -151,21 +151,37 @@ func _migrate_legacy_replays() -> void:
 ## Old recordings stored the jump state (-1 for the wave descend) and the
 ## direction (-1/0/1) as raw PackedByteArray elements, which are unsigned
 ## bytes: the negatives wrapped to 255 and could never be read back (the
-## wave descend and platformer-left inputs were lost in playback). Shift
-## them into the range the current representation uses.
+## wave descend and platformer-left inputs were lost in playback). The
+## current representation is one flat PackedByteArray (two bytes per tick,
+## see Replay), so the migration rewrites the whole buffer with the values
+## shifted into the range the current encoding uses.
 func _normalize_legacy_replay(legacy: Replay) -> void:
-	for tick in legacy.data.size():
-		var state: int = legacy.data[tick][0]
+	var legacy_data: Variant = legacy.data
+	if legacy_data is PackedByteArray:
+		# Already the current flat layout; nothing wrapped to 255 remains.
+		return
+	if legacy_data is not Array:
+		return
+	var flat := PackedByteArray()
+	for tick: int in legacy_data.size():
+		var entry: Variant = legacy_data[tick]
+		if entry is not PackedByteArray or (entry as PackedByteArray).size() < 2:
+			# Malformed legacy entry: leave the recording untouched so it
+			# is not half-converted into a corrupt .gdr.
+			return
+		var state: int = (entry as PackedByteArray)[0]
 		if state == 255:
 			state = 2
-		var direction: int = legacy.data[tick][1]
+		var direction: int = (entry as PackedByteArray)[1]
 		if direction == 255:
 			direction = 0
 		elif direction == 0:
 			direction = 1
 		else:
 			direction = 2
-		legacy.data[tick] = PackedByteArray([state, direction])
+		flat.append(state)
+		flat.append(direction)
+	legacy.data = flat
 
 
 func _open_importer() -> void:

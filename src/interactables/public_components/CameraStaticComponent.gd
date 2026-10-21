@@ -41,6 +41,9 @@ func _ready() -> void:
 	# A restart rebuilds the attempt from scratch: no static may keep pinning
 	# the camera to a target the fresh attempt hasn't reached yet.
 	LevelManager.level_started.connect(_remove_tracking)
+	# Idle statics do not need the 240 Hz callback at all; processing is
+	# enabled only while this component actually tracks a target.
+	set_physics_process(false)
 
 
 func _get_property_default_value(property: String) -> Variant:
@@ -139,6 +142,7 @@ func _on_easing_progressed(player: Player, _weight_delta: float) -> void:
 func _begin_tracking() -> void:
 	_stop_all_tracking()
 	_tracking = true
+	set_physics_process(true)
 	add_to_group(TRACKING_GROUP)
 
 
@@ -150,6 +154,7 @@ func _stop_all_tracking() -> void:
 
 func _remove_tracking() -> void:
 	_tracking = false
+	set_physics_process(false)
 	if is_in_group(TRACKING_GROUP):
 		remove_from_group(TRACKING_GROUP)
 

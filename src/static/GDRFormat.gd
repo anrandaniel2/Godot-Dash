@@ -70,7 +70,7 @@ static func to_bytes(replay: Replay) -> PackedByteArray:
 	if not wave_down_events.is_empty():
 		document["dashExt"] = {"waveDown": wave_down_events}
 	document["description"] = replay.description
-	document["duration"] = float(replay.data.size()) / physics_framerate()
+	document["duration"] = float(replay.tick_count()) / physics_framerate()
 	document["framerate"] = physics_framerate()
 	document["gameVersion"] = GAME_VERSION
 	document["inputs"] = inputs
@@ -249,7 +249,7 @@ static func _collect_input_edges(replay: Replay, inputs: Array, wave_down_events
 	var jump_held := false
 	var wave_down := false
 	var direction := 0
-	for tick: int in replay.data.size():
+	for tick: int in replay.tick_count():
 		var tick_jump := replay.pressing_jump(tick)
 		var tick_wave_down := replay.pressing_down(tick)
 		if tick_jump != jump_held:
@@ -355,7 +355,8 @@ static func _replay_from_document(document: Dictionary) -> Dictionary:
 	replay.description = str(document.get("description", ""))
 	replay.platformer = _as_bool(document.get("platformer", has_directional_input))
 
-	var data: Array[PackedByteArray] = []
+	# Flat two-bytes-per-tick buffer (see Replay): jump state, direction + 1.
+	var data := PackedByteArray()
 	var jump := false
 	var wave_down := false
 	var left := false
@@ -364,10 +365,8 @@ static func _replay_from_document(document: Dictionary) -> Dictionary:
 	for event: Dictionary in events:
 		var tick := maxi(int(round(float(event.frame) * scale)), cursor)
 		while cursor < tick:
-			data.append(PackedByteArray([
-				_jump_state(jump, wave_down),
-				_direction(left, right) + 1 if replay.platformer else 1,
-			]))
+			data.append(_jump_state(jump, wave_down))
+			data.append(_direction(left, right) + 1 if replay.platformer else 1)
 			cursor += 1
 		if event.wave:
 			wave_down = event.down
@@ -379,10 +378,8 @@ static func _replay_from_document(document: Dictionary) -> Dictionary:
 			right = event.down
 		# Unknown buttons from foreign files are ignored.
 	while cursor < total_ticks:
-		data.append(PackedByteArray([
-			_jump_state(jump, wave_down),
-			_direction(left, right) + 1 if replay.platformer else 1,
-		]))
+		data.append(_jump_state(jump, wave_down))
+		data.append(_direction(left, right) + 1 if replay.platformer else 1)
 		cursor += 1
 	replay.data = data
 	return {"ok": true, "replay": replay}

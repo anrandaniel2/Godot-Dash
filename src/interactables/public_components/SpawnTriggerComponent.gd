@@ -23,6 +23,13 @@ enum LoopState {
 @export_storage var _current_loop: int = 1
 @export_storage var _interacted_with_player: Player
 
+## SpawnedTrigger -> resolved node (or null, once proven unresolvable).
+## An invalid path used to retry LevelManager.get_node_or_null at the frame
+## rate for the rest of the timer because a missing node never marked the
+## trigger done; paths are fixed at import time and start() already reports
+## the invalid ones, so the first result settles the lookup.
+var _resolved_cache: Dictionary[SpawnedTrigger, Node] = {}
+
 
 func _ready() -> void:
 	parent.interacted.connect(start)
@@ -43,12 +50,23 @@ func _process(delta: float) -> void:
 	var elapsed_time: float = _timer.wait_time - _timer.time_left
 	for trigger in spawned_triggers:
 		if elapsed_time >= trigger.time - delta and trigger.loop_idx < _current_loop:
-			var trigger_node := LevelManager.current_level.get_node_or_null(trigger.path)
+			var trigger_node := _resolve_trigger_node(trigger)
 			if trigger_node == null:
 				continue
 			trigger_node.interacted.emit(_interacted_with_player)
 			trigger.loop_idx = _current_loop
 			print_debug(trigger)
+
+
+func _resolve_trigger_node(trigger: SpawnedTrigger) -> Node:
+	if _resolved_cache.has(trigger):
+		var cached: Node = _resolved_cache[trigger]
+		if cached == null or is_instance_valid(cached):
+			return cached
+	var level := LevelManager.current_level
+	var node := level.get_node_or_null(trigger.path) if level != null else null
+	_resolved_cache[trigger] = node
+	return node
 
 
 func _get_property_default_value(property: String) -> Variant:

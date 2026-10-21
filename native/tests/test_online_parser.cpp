@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -383,30 +384,41 @@ int main() {
 
 	auto is_audio_stream_test = [](const std::vector<uint8_t> &bytes, const std::string &ext = "") -> bool {
 		if (bytes.size() < 32) return false;
-		std::string head;
+		const uint8_t *ptr = bytes.data();
 		size_t head_len = std::min((size_t)128, bytes.size());
-		for (size_t i = 0; i < head_len; ++i) {
-			char c = (char)bytes[i];
-			if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
-			head += c;
+		static const struct { const char *text; size_t len; } text_prefixes[] = {
+			{"<!doctype", 9}, {"<html", 5}, {"<?xml", 5}, {"{", 1}, {"error", 5},
+		};
+		for (const auto &prefix : text_prefixes) {
+			if (head_len < prefix.len) continue;
+			bool matched = true;
+			for (size_t i = 0; i < prefix.len; ++i) {
+				char c = (char)ptr[i];
+				if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+				if (c != prefix.text[i]) { matched = false; break; }
+			}
+			if (matched) return false;
 		}
-		if (head.rfind("<!doctype", 0) == 0 || head.rfind("<html", 0) == 0 || head.rfind("<?xml", 0) == 0 ||
-				head.rfind("{", 0) == 0 || head.rfind("error", 0) == 0) {
-			return false;
+		if (ptr[0] == 0x66 && ptr[1] == 0x4c && ptr[2] == 0x61 && ptr[3] == 0x43) {
+			return true; // "fLaC"
 		}
-		if (ext == "ogg" || (bytes[0] == 0x4f && bytes[1] == 0x67 && bytes[2] == 0x67 && bytes[3] == 0x53)) {
-			return true;
+		if (ext == "ogg" || (ptr[0] == 0x4f && ptr[1] == 0x67 && ptr[2] == 0x67 && ptr[3] == 0x53)) {
+			return ptr[0] == 0x4f && ptr[1] == 0x67 && ptr[2] == 0x67 && ptr[3] == 0x53 && ptr[4] == 0x00;
 		}
-		if (ext == "wav" || (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46)) {
-			return true;
+		if (ext == "wav" || (ptr[0] == 0x52 && ptr[1] == 0x49 && ptr[2] == 0x46 && ptr[3] == 0x46)) {
+			return bytes.size() >= 12 && ptr[8] == 0x57 && ptr[9] == 0x41 && ptr[10] == 0x56 && ptr[11] == 0x45;
 		}
-		if (bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) {
-			return true;
+		if (ptr[0] == 0x49 && ptr[1] == 0x44 && ptr[2] == 0x33) {
+			if (bytes.size() < 10) return false;
+			uint32_t tag_size = (uint32_t)(ptr[6] & 0x7f) << 21 | (uint32_t)(ptr[7] & 0x7f) << 14
+					| (uint32_t)(ptr[8] & 0x7f) << 7 | (uint32_t)(ptr[9] & 0x7f);
+			return tag_size >= 10 && (uint64_t)tag_size + 10 <= (uint64_t)bytes.size();
 		}
-		if (bytes[0] == 0xff && (bytes[1] & 0xe0) == 0xe0) {
-			return true;
+		if (ptr[0] == 0xff && (ptr[1] & 0xe0) == 0xe0) {
+			uint8_t version_bits = (ptr[1] >> 3) & 0x03;
+			uint8_t layer_bits = (ptr[1] >> 1) & 0x03;
+			return version_bits != 0x01 && layer_bits != 0x00;
 		}
-		if (bytes.size() >= 16384) return true;
 		return false;
 	};
 
@@ -414,13 +426,48 @@ int main() {
 	ogg_buf[0] = 0x4f; ogg_buf[1] = 0x67; ogg_buf[2] = 0x67; ogg_buf[3] = 0x53; // "OggS"
 	check_true("Audio check: OGG header detected", is_audio_stream_test(ogg_buf));
 
-	std::vector<uint8_t> mp3_buf(64, 0);
+	std::vector<uint8_t> ogg_bad_version(64, 0);
+	ogg_bad_version[0] = 0x4f; ogg_bad_version[1] = 0x67; ogg_bad_version[2] = 0x67; ogg_bad_version[3] = 0x53;
+	ogg_bad_version[4] = 0x01;
+	check_true("Audio check: OGG with nonzero version rejected", !is_audio_stream_test(ogg_bad_version));
+
+	std::vector<uint8_t> not_ogg(64, 0);
+	check_true("Audio check: extension ogg without OggS magic rejected", !is_audio_stream_test(not_ogg, "ogg"));
+
+	std::vector<uint8_t> mp3_buf(128, 0);
 	mp3_buf[0] = 0x49; mp3_buf[1] = 0x44; mp3_buf[2] = 0x33; // "ID3"
-	check_true("Audio check: MP3 ID3 header detected", is_audio_stream_test(mp3_buf));
+	mp3_buf[9] = 0x40; // syncsafe tag size 64 -> 64 + 10 <= 128
+	check_true("Audio check: MP3 ID3 header with sane tag size detected", is_audio_stream_test(mp3_buf));
+
+	std::vector<uint8_t> mp3_bad_size(128, 0);
+	mp3_bad_size[0] = 0x49; mp3_bad_size[1] = 0x44; mp3_bad_size[2] = 0x33;
+	mp3_bad_size[6] = 0x7f; mp3_bad_size[7] = 0x7f; mp3_bad_size[8] = 0x7f; mp3_bad_size[9] = 0x7f;
+	check_true("Audio check: ID3 with tag size beyond body rejected", !is_audio_stream_test(mp3_bad_size));
 
 	std::vector<uint8_t> mp3_sync_buf(64, 0);
-	mp3_sync_buf[0] = 0xff; mp3_sync_buf[1] = 0xfb; // MPEG sync frame
+	mp3_sync_buf[0] = 0xff; mp3_sync_buf[1] = 0xfb; // MPEG sync frame, version 3, layer 2
 	check_true("Audio check: MP3 frame sync detected", is_audio_stream_test(mp3_sync_buf));
+
+	std::vector<uint8_t> mp3_reserved_layer(64, 0);
+	mp3_reserved_layer[0] = 0xff; mp3_reserved_layer[1] = 0xe1; // layer bits 00 = reserved
+	check_true("Audio check: MPEG sync with reserved layer rejected", !is_audio_stream_test(mp3_reserved_layer));
+
+	std::vector<uint8_t> mp3_reserved_version(64, 0);
+	mp3_reserved_version[0] = 0xff; mp3_reserved_version[1] = 0xed; // version bits 01 = reserved
+	check_true("Audio check: MPEG sync with reserved version rejected", !is_audio_stream_test(mp3_reserved_version));
+
+	std::vector<uint8_t> flac_buf(64, 0);
+	flac_buf[0] = 0x66; flac_buf[1] = 0x4c; flac_buf[2] = 0x61; flac_buf[3] = 0x43; // "fLaC"
+	check_true("Audio check: FLAC header detected", is_audio_stream_test(flac_buf));
+
+	std::vector<uint8_t> wav_buf(64, 0);
+	wav_buf[0] = 0x52; wav_buf[1] = 0x49; wav_buf[2] = 0x46; wav_buf[3] = 0x46; // "RIFF"
+	wav_buf[8] = 0x57; wav_buf[9] = 0x41; wav_buf[10] = 0x56; wav_buf[11] = 0x45; // "WAVE"
+	check_true("Audio check: RIFF/WAVE header detected", is_audio_stream_test(wav_buf));
+
+	std::vector<uint8_t> riff_not_wave(64, 0);
+	riff_not_wave[0] = 0x52; riff_not_wave[1] = 0x49; riff_not_wave[2] = 0x46; riff_not_wave[3] = 0x46;
+	check_true("Audio check: RIFF without WAVE rejected", !is_audio_stream_test(riff_not_wave));
 
 	std::string html_str = "<html><head><title>404 Not Found</title></head><body>404</body></html>";
 	std::vector<uint8_t> html_buf(html_str.begin(), html_str.end());
@@ -429,6 +476,154 @@ int main() {
 
 	std::vector<uint8_t> small_buf(16, 0);
 	check_true("Audio check: Small buffer (<32 bytes) rejected", !is_audio_stream_test(small_buf));
+
+	// The old check accepted any body >= 16 KiB; a large CDN error page must
+	// now be rejected because it has no audio magic at all.
+	std::vector<uint8_t> big_garbage(64 * 1024, 0x41); // 'A' fill: not a text prefix, not audio
+	check_true("Audio check: large non-audio body rejected (no 16 KiB fallback)", !is_audio_stream_test(big_garbage));
+
+	// Extents parity: the packed importer's in-loop extents mirror
+	// gd_scan_level_extents. Model both scanners standalone and assert they
+	// agree on the ordering rules: the first chunk is skipped
+	// unconditionally, a chunk only counts when it carries a key-2 token,
+	// duplicate keys resolve last-wins, and key-3 defaults to 0.
+	auto scan_pairs = [](const std::string &chunk, std::unordered_map<std::string, std::string> &out) {
+		bool expecting_key = true;
+		std::string key;
+		size_t start = 0;
+		for (size_t cursor = 0; cursor <= chunk.size(); ++cursor) {
+			if (cursor < chunk.size() && chunk[cursor] != ',') continue;
+			std::string token = chunk.substr(start, cursor - start);
+			start = cursor + 1;
+			if (expecting_key) {
+				// strip_edges() on the key, as parse_pairs_list does
+				size_t b = token.find_first_not_of(" \t\r\n");
+				size_t e = token.find_last_not_of(" \t\r\n");
+				key = b == std::string::npos ? std::string() : token.substr(b, e - b + 1);
+				expecting_key = false;
+			} else {
+				if (!key.empty()) out[key] = token; // last wins
+				expecting_key = true;
+			}
+		}
+	};
+	auto gd_scan_extents = [&scan_pairs](const std::string &level) {
+		double max_x = 0.0, max_y = 0.0;
+		int64_t objects = 0;
+		bool header = true;
+		size_t start = 0;
+		while (start <= level.size()) {
+			size_t end = level.find(';', start);
+			if (end == std::string::npos) end = level.size();
+			std::string chunk = level.substr(start, end - start);
+			start = end + 1;
+			if (header) { header = false; continue; }
+			if (chunk.empty()) continue;
+			// token walk identical to gd_scan_level_extents
+			bool have_x = false;
+			double x = 0.0, y = 0.0;
+			std::string key;
+			size_t cursor = 0;
+			bool is_key = true;
+			while (cursor <= chunk.size()) {
+				size_t comma = chunk.find(',', cursor);
+				if (comma == std::string::npos) comma = chunk.size();
+				std::string token = chunk.substr(cursor, comma - cursor);
+				cursor = comma + 1;
+				if (is_key) {
+					key = token;
+				} else if (key == "2" || key == "3") {
+					double value = strtod(token.c_str(), nullptr);
+					if (key == "2") { x = value; have_x = true; } else { y = value; }
+				}
+				is_key = !is_key;
+			}
+			if (!have_x) continue;
+			if (objects == 0 || x > max_x) max_x = x;
+			if (objects == 0 || y > max_y) max_y = y;
+			++objects;
+		}
+		return std::pair<double, double>(max_x, max_y);
+	};
+	auto packed_extents = [&scan_pairs](const std::string &level) {
+		double max_x = 0.0, max_y = 0.0;
+		int64_t objects = 0;
+		bool first_chunk = true;
+		size_t start = 0;
+		while (start <= level.size()) {
+			size_t end = level.find(';', start);
+			if (end == std::string::npos) end = level.size();
+			std::string chunk = level.substr(start, end - start);
+			start = end + 1;
+			bool is_first = first_chunk;
+			first_chunk = false;
+			auto is_blank = [](const std::string &text) {
+				return text.find_first_not_of(" \t\r\n") == std::string::npos;
+			};
+			if (is_blank(chunk)) continue;
+			std::unordered_map<std::string, std::string> pairs;
+			scan_pairs(chunk, pairs);
+			if (is_first) continue;
+			auto it = pairs.find("2");
+			if (it == pairs.end()) continue;
+			double x = strtod(it->second.c_str(), nullptr);
+			if (objects == 0 || x > max_x) max_x = x;
+			auto iy = pairs.find("3");
+			double y = iy == pairs.end() ? 0.0 : strtod(iy->second.c_str(), nullptr);
+			if (objects == 0 || y > max_y) max_y = y;
+			++objects;
+		}
+		return std::pair<double, double>(max_x, max_y);
+	};
+	{
+		auto a = gd_scan_extents("kS38,;1,1,2,10,3,20;2,2,3,50;1,1,2,900");
+		auto b = packed_extents("kS38,;1,1,2,10,3,20;2,2,3,50;1,1,2,900");
+		check_true("Extents parity: plain objects agree",
+				a.first == b.first && a.second == b.second);
+		check_true("Extents parity: max picked over objects", a.first == 900.0 && a.second == 50.0);
+	}
+	{
+		// First chunk is an object (headerless level): both scanners skip it.
+		auto a = gd_scan_extents("1,1,2,5000,3,6000;1,1,2,10,3,20");
+		auto b = packed_extents("1,1,2,5000,3,6000;1,1,2,10,3,20");
+		check_true("Extents parity: headerless level skips first chunk",
+				a.first == b.first && a.second == b.second);
+		check_true("Extents parity: headerless values come from later chunks",
+				a.first == 10.0 && a.second == 20.0);
+	}
+	{
+		// Empty first chunk: gd_scan flips its header flag on it, so the
+		// header chunk itself is scanned (no key 2 -> not counted).
+		auto a = gd_scan_extents(";kS38,;1,1,2,10,3,20");
+		auto b = packed_extents(";kS38,;1,1,2,10,3,20");
+		check_true("Extents parity: empty first chunk agrees",
+				a.first == b.first && a.second == b.second);
+	}
+	{
+		// Duplicate keys: last value wins in both.
+		auto a = gd_scan_extents("kS38,;1,1,2,10,2,900,3,20,3,70");
+		auto b = packed_extents("kS38,;1,1,2,10,2,900,3,20,3,70");
+		check_true("Extents parity: duplicate keys last-wins agrees",
+				a.first == b.first && a.second == b.second);
+		check_true("Extents parity: duplicate max", a.first == 900.0 && a.second == 70.0);
+	}
+	{
+		// Chunk without key 2 (y only) counts in neither.
+		auto a = gd_scan_extents("kS38,;1,1,3,900;1,1,2,10,3,20");
+		auto b = packed_extents("kS38,;1,1,3,900;1,1,2,10,3,20");
+		check_true("Extents parity: key-2-less chunk ignored",
+				a.first == b.first && a.second == b.second);
+		check_true("Extents parity: y-only chunk does not set max_y", a.second == 20.0);
+	}
+	{
+		// Negative coordinates: the first counted chunk sets both maxima
+		// unconditionally, exactly like gd_scan.
+		auto a = gd_scan_extents("kS38,;1,1,2,-500,3,-300;1,1,2,10,3,20");
+		auto b = packed_extents("kS38,;1,1,2,-500,3,-300;1,1,2,10,3,20");
+		check_true("Extents parity: negative first chunk agrees",
+				a.first == b.first && a.second == b.second);
+		check_true("Extents parity: negatives then positives", a.first == 10.0 && a.second == 20.0);
+	}
 
 	if (failures == 0) {
 		std::printf("\nALL ONLINE PARSER STANDALONE TESTS PASSED (0 failures)\n");

@@ -261,6 +261,30 @@ var _just_spawned: bool = false
 @onready var _debug_trail: Line2D = $DebugTrail
 
 var _physics_params: PackedFloat64Array = PackedFloat64Array()
+## NativeSpriteTick (C++ twin of _update_sprites_rotation) when the extension
+## provides it; the GDScript function stays as the fallback and is never run
+## while this is bound. One packed call per physics tick replaces ~60 script
+## statements and ~20 node writes at 240 Hz.
+var _sprite_tick: Object = null
+var _sprite_tick_params: PackedFloat64Array = PackedFloat64Array()
+## Cached GdashNative instance: the per-tick collision classifier runs
+## through this at 240 Hz, and NativeCore.backend()'s static call adds up.
+var _native: Object = null
+## Reused kill-overlap query: contact kills build it once per attempt now
+## instead of allocating a PhysicsShapeQueryParameters2D per hitbox.
+var _kill_query: PhysicsShapeQueryParameters2D = null
+var _kill_solid_hitboxes: Array[CollisionShape2D] = []
+var _kill_hazard_hitboxes: Array[CollisionShape2D] = []
+## Constant per-player sprite groups, built once in _ready. The swing/robot
+## fire loops used to allocate these arrays on every one of the 240 physics
+## ticks they run for.
+var _swing_fire_boosts: Array[Sprite2D] = []
+var _robot_fire_sprites: Array[Sprite2D] = []
+var _robot_fire_particles: Array[GPUParticles2D] = []
+## Ball grounded look factor as a plain member: the sprite rotation tick
+## used to read and write it through the metadata dictionary 240 times a
+## second.
+var _ball_grounded_look_factor: float = 0.0
 ## A press taken by a Claim Touch toggle block (3643) until its release.
 var _jump_claimed: bool = false
 ## Enable / Disable Trail triggers (32 / 33): an afterimage of the primary
@@ -273,13 +297,33 @@ const GHOST_INTERVAL: float = 0.05
 const GHOST_OPACITY: float = 200.0 / 255.0
 const GHOST_FADE: float = 0.4
 const GHOST_SCALE: float = 0.6
+## At GHOST_INTERVAL spacing with GHOST_FADE lifetime, at most 8 afterimages
+## are ever alive; 12 pool slots cover restarts and hitches without churn.
+const GHOST_POOL_SIZE: int = 12
 static var _ghost_additive: CanvasItemMaterial
 var ghost_trail: bool = false
 var _ghost_timer: float = 0.0
+var _ghost_pool: Array[Dictionary] = []
+var _ghost_walk_stack: Array[Node] = []
 
 
 func _ready() -> void:
 	_physics_params.resize(31)
+	_native = NativeCore.backend()
+	if Config.use_native_core and ClassDB.class_exists(&"NativeSpriteTick"):
+		var sprite_tick: Object = ClassDB.instantiate(&"NativeSpriteTick")
+		if sprite_tick != null and bool(sprite_tick.call(&"bind_player", self, $DashParticles.process_material)):
+			_sprite_tick = sprite_tick
+			_sprite_tick_params.resize(26)
+	_kill_query = PhysicsShapeQueryParameters2D.new()
+	_kill_solid_hitboxes.assign([$KillColliderSolid/KillColliderSolidHitbox])
+	_kill_hazard_hitboxes.assign([
+		$KillColliderRectangularHazard/KillColliderRectangularHazardHitbox,
+		$KillColliderCircularHazard/KillColliderCircularHazardHitbox,
+	])
+	_swing_fire_boosts.assign([_swing_fire_top, _swing_fire_middle, _swing_fire_bottom])
+	_robot_fire_sprites.assign([_robot_fire_back, _robot_fire_front])
+	_robot_fire_particles.assign([_robot_fire_back_particles, _robot_fire_front_particles])
 	refresh_textures()
 	set_meta(Constants.HSV_WATCHER_META, $"HSVWatcher")
 	platform_on_leave = PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_UPWARD_VELOCITY if not LevelManager.platformer else PlatformOnLeave.PLATFORM_ON_LEAVE_ADD_VELOCITY
@@ -318,9 +362,11 @@ func _physics_process(delta: float) -> void:
 
 	if not in_replay:
 		var replay_jump_state: int = int(InputUtils.is_action_pressed(&"jump")) if not InputUtils.is_action_pressed(&"platformer_wave_down") else 2
-		# A PackedByteArray element is an unsigned byte, so both values are
-		# stored shifted into range (jump state 0/1/2, direction + 1).
-		replay.data.append(PackedByteArray([replay_jump_state, get_direction() + 1]))
+		# A stored byte is unsigned, so both values are shifted into range
+		# (jump state 0/1/2, direction + 1). The flat buffer appends two
+		# bytes into one growing allocation instead of allocating a fresh
+		# 2-byte PackedByteArray (plus its Array element) every tick.
+		replay.record_tick(replay_jump_state, get_direction())
 
 	velocity = _compute_velocity(delta, velocity, get_direction(), jump_state, _ground_collider.shape is CircleShape2D)
 
@@ -360,7 +406,13 @@ func _physics_process(delta: float) -> void:
 	_emit_gd_events(jump_state)
 
 	# Sprite updates
-	_update_sprites_rotation(delta, jump_state)
+	_fire_sprite_time += delta
+	if _sprite_tick != null:
+		if int(_sprite_tick.call(&"tick", _pack_sprite_tick_params(delta, jump_state))) & 1:
+			var ufo_particle := UFO_PARTICLE.instantiate()
+			_icon_ufo_particles_origin.add_child(ufo_particle)
+	else:
+		_update_sprites_rotation(delta, jump_state)
 	_ground_particles.emitting = is_on_floor() and not is_zero_approx(velocity.rotated(-gameplay_rotation).x) and not dash_control
 	if is_on_floor() and not dash_control or displayed_gamemode == Gamemode.WAVE:
 		_trail.add_points = false
@@ -378,10 +430,16 @@ func _physics_process(delta: float) -> void:
 		Gamemode.SPIDER:
 			_update_spider_state_machine(jump_state)
 		Gamemode.ROBOT:
-			_update_robot_fire(delta, jump_state)
+			if _sprite_tick != null:
+				_sprite_tick.call(&"tick_robot_fire", delta, jump_state, displayed_gamemode, _fire_sprite_time)
+			else:
+				_update_robot_fire(delta, jump_state)
 			_update_robot_state_machine(jump_state)
 		Gamemode.SWING:
-			_update_swing_fire(delta)
+			if _sprite_tick != null:
+				_sprite_tick.call(&"tick_swing_fire", delta, gravity_flip, displayed_gamemode, _fire_sprite_time)
+			else:
+				_update_swing_fire(delta)
 	_update_wave_trail(delta)
 
 	if not is_on_floor():
@@ -513,6 +571,8 @@ func reset() -> void:
 	floor_angle_history.clear()
 	floor_angle_average = 0.0
 	sprite_floor_angle = 0.0
+	if _sprite_tick != null:
+		_sprite_tick.call(&"reset")
 	allow_ceiling_hit_count = 0
 	allow_wave_slide_count = 0
 	no_auto_checkpoints_count = 0
@@ -536,8 +596,14 @@ func reset() -> void:
 	$Icon/Spider/SpiderAnimation.play(&"RESET")
 	$Icon/Robot/RobotAnimation.play(&"RESET")
 	robot_animation_tree.active = false
-	_update_swing_fire(20)
-	_update_robot_fire(20, -1)
+	# The oversized delta settles the flames to their reset pose in one tick
+	# (1 - exp(-240) == 1); route through the native twin when bound.
+	if _sprite_tick != null:
+		_sprite_tick.call(&"tick_swing_fire", 20.0, gravity_flip, displayed_gamemode, _fire_sprite_time)
+		_sprite_tick.call(&"tick_robot_fire", 20.0, -1, displayed_gamemode, _fire_sprite_time)
+	else:
+		_update_swing_fire(20)
+		_update_robot_fire(20, -1)
 	update_player_scale(false)
 	_set_particles_visibility.call_deferred()
 	if not Editor.in_editor:
@@ -662,7 +728,25 @@ func _should_process() -> bool:
 func _handle_collision(collision: KinematicCollision2D, is_refine_iteration: bool) -> void:
 	if not collision:
 		return
-	var flags: int = NativeCore.backend().call(&"classify_collision_flags", collision.get_angle(up_direction), floor_max_angle)
+	var native: Object = _native
+	if native == null:
+		native = NativeCore.backend()
+		_native = native
+	var collision_angle: float = collision.get_angle(up_direction)
+	var flags: int
+	if native != null:
+		flags = native.call(&"classify_collision_flags", collision_angle, floor_max_angle)
+	else:
+		# GDScript twin of GdashNative::classify_collision_flags so a
+		# native-free build classifies collisions instead of erroring.
+		if collision_angle <= deg_to_rad(10.0):
+			flags = 1
+		elif collision_angle >= deg_to_rad(180.0 - 10.0):
+			flags = 2
+		elif collision_angle > floor_max_angle and collision_angle < PI - floor_max_angle:
+			flags = 4
+		else:
+			flags = 8
 	var is_floor: bool = bool(flags & 1)
 	var is_ceiling: bool = bool(flags & 2)
 	var is_wall: bool = bool(flags & 4)
@@ -756,7 +840,7 @@ func _jump_just_pressed_now() -> bool:
 
 
 func _is_playing_back_replay() -> bool:
-	return in_replay and replay.data.size() > replay_physics_tick
+	return in_replay and replay.tick_count() > replay_physics_tick
 
 
 func reset_replay() -> void:
@@ -793,7 +877,23 @@ func _get_floor_angle_signed(last_slide: bool, jump_state: int) -> float:
 	if len(floor_angle_history) > 10:
 		floor_angle_history.pop_front()
 	floor_angle_history.append(floor_angle)
-	floor_angle_average = ArrayUtils.transform(floor_angle_history, ArrayUtils.Transformation.MEAN)
+	# Inline twin of ArrayUtils.transform(history, MEAN): a value only
+	# contributes once (first occurrence wins), matching the old
+	# to_set() + reduce pipeline without its per-tick array and lambda
+	# allocations at 240 Hz.
+	var angle_sum: float = 0.0
+	var angle_count: int = 0
+	for i: int in floor_angle_history.size():
+		var value: float = floor_angle_history[i]
+		var seen := false
+		for j: int in i:
+			if floor_angle_history[j] == value:
+				seen = true
+				break
+		if not seen:
+			angle_sum += value
+			angle_count += 1
+	floor_angle_average = angle_sum / angle_count if angle_count > 0 else 0.0
 	floor_angle_average = snappedf(floor_angle_average, 0.01)
 	if is_equal_approx(abs(floor_angle), 90.0):
 		return 0.0
@@ -873,9 +973,17 @@ func _get_jump_state() -> int:
 	if _click_buffer_state == ClickBufferState.BUFFERING and (is_on_floor() or is_on_ceiling()):
 		_click_buffer_state = ClickBufferState.NOT_HOLDING
 
-	var hovered_control: Control = get_viewport().gui_get_hovered_control()
-	if hovered_control and hovered_control is not EditorViewport:
-		return -1 if not (LevelManager.platformer and internal_gamemode == Gamemode.WAVE) else 0
+	# The hovered-control check walks the viewport's GUI; it only influences
+	# the result when some press is active (every gamemode's non-neutral
+	# state requires one, the platformer wave's down input counts, and a
+	# click-buffered ball/spider landing can still convert a stale press
+	# with the button itself no longer held). Skipping the query on the
+	# remaining ticks keeps behaviour identical while removing a GUI tree
+	# walk from the common idle tick.
+	if is_jump_pressed or is_jump_just_pressed or is_down_pressed or _click_buffer_state == ClickBufferState.BUFFERING:
+		var hovered_control: Control = get_viewport().gui_get_hovered_control()
+		if hovered_control and hovered_control is not EditorViewport:
+			return -1 if not (LevelManager.platformer and internal_gamemode == Gamemode.WAVE) else 0
 	return jump_state
 
 
@@ -1048,7 +1156,11 @@ func _apply_gravity_portal_launch(local_velocity: Vector2, jump_state: int) -> V
 
 
 func _handle_velocity_interactable(local_velocity: Vector2, interactable: Interactable, direction: int) -> Vector2:
-	for component in interactable.components.filter(ArrayUtils.flatten):
+	# Plain loop over the component list: this used to build a filtered copy
+	# (new Array + Callable) on every tick while a pad was held.
+	for component in interactable.components:
+		if component == null:
+			continue
 		var is_rebound: bool = component is ReboundComponent and (not is_on_floor() or _deferred_velocity_redirect)
 		if (
 				internal_gamemode != Gamemode.WAVE
@@ -1105,6 +1217,13 @@ func _handle_velocity_interactable(local_velocity: Vector2, interactable: Intera
 
 ## Ensure velocity redirection can happen and the vertical velocity isn't reset by hitting the floor.
 func _ensure_velocity_redirect(delta: float, new_velocity: Vector2) -> bool:
+	# The cast can only report true through a ReboundComponent (airborne) or
+	# a REDIRECT TeleportComponent; with neither present in the level it is
+	# provably false every tick, so the full shape query along the velocity
+	# is skipped. Both registries are level-build stable: interactables are
+	# never created at runtime.
+	if not ReboundComponent.any_registered() and TeleportComponent.redirect_count == 0:
+		return false
 	var redirect_cast: ShapeCast2D = _ensure_velocity_redirect_cast
 	redirect_cast.shape = _ground_collider.shape
 	redirect_cast.target_position = new_velocity * delta * ENSURE_VELOCITY_REDIRECT_SAFE_MARGIN
@@ -1120,8 +1239,59 @@ func _ensure_velocity_redirect(delta: float, new_velocity: Vector2) -> bool:
 	return false
 
 
+## Packs one tick's inputs for NativeSpriteTick (the C++ twin of
+## _update_sprites_rotation). Everything the native tick needs is either
+## player state (already computed this tick) or a cheap property read; the
+## expensive parts (replay-aware input, floor-angle history, the dash
+## velocity angle) stay in GDScript and arrive as plain floats.
+func _pack_sprite_tick_params(delta: float, jump_state: int) -> PackedFloat64Array:
+	var params := _sprite_tick_params
+	params[0] = delta
+	params[1] = velocity.x
+	params[2] = velocity.y
+	params[3] = gameplay_rotation
+	params[4] = gravity_flip
+	params[5] = gravity_multiplier
+	params[6] = speed_multiplier
+	params[7] = speed.x
+	params[8] = jump_state
+	var dash_angle := 0.0
+	if dash_control:
+		dash_angle = dash_control.get_velocity(self).angle()
+	params[9] = float(dash_control.initial_direction if dash_control else horizontal_direction)
+	params[10] = float(get_direction())
+	var slope_collider := _ground_collider.shape is CircleShape2D
+	var floor_angle_signed := 0.0
+	var floor_normal_nonzero := false
+	var last_collision_valid := false
+	var last_collision_normal := Vector2.ZERO
+	if slope_collider:
+		floor_angle_signed = _get_floor_angle_signed(false, jump_state)
+		floor_normal_nonzero = get_floor_normal() != Vector2.ZERO
+		if not floor_normal_nonzero and last_collision != null:
+			last_collision_valid = true
+			last_collision_normal = last_collision.get_normal()
+	params[11] = 1.0 if slope_collider else 0.0
+	params[12] = floor_angle_signed
+	params[13] = 1.0 if floor_normal_nonzero else 0.0
+	params[14] = 1.0 if last_collision_valid else 0.0
+	params[15] = last_collision_normal.x
+	params[16] = last_collision_normal.y
+	params[17] = 1.0 if dash_control else 0.0
+	params[18] = dash_angle
+	params[19] = 1.0 if _snap_sprite_rotation else 0.0
+	params[20] = displayed_gamemode
+	params[21] = 1.0 if is_on_floor() else 0.0
+	params[22] = 1.0 if is_on_ceiling() else 0.0
+	params[23] = up_direction.x
+	params[24] = up_direction.y
+	params[25] = gameplay_rotation_degrees
+	return params
+
+
 func _update_sprites_rotation(delta: float, jump_state: int):
-	_fire_sprite_time += delta
+	# GDScript fallback for the NativeSpriteTick twin. The shared fire clock
+	# is advanced by _physics_process for both paths.
 	var local_velocity: Vector2 = velocity.rotated(-gameplay_rotation)
 	var velocity_angle: float = atan2(local_velocity.y, abs(local_velocity.x)) + gameplay_rotation
 	var corrected_direction: int = horizontal_direction if not dash_control else dash_control.initial_direction
@@ -1187,12 +1357,12 @@ func _update_sprites_rotation(delta: float, jump_state: int):
 		else:
 			rotation_delta *= 1.5
 		_icon_ball.rotation_degrees += rotation_delta
-	var ball_grounded_look_factor = _icon_ball.get_meta(&"ball_grounded_look_factor", 0.0)
+	var ball_grounded_look_factor = _ball_grounded_look_factor
 	if (abs(velocity.rotated(-gameplay_rotation).x) / speed_multiplier) < speed.x * 0.5:
 		ball_grounded_look_factor = lerpf(ball_grounded_look_factor, 1.0, 10 * delta)
 	else:
 		ball_grounded_look_factor = lerpf(ball_grounded_look_factor, 0.0, 10 * delta)
-	_icon_ball.set_meta(&"ball_grounded_look_factor", ball_grounded_look_factor)
+	_ball_grounded_look_factor = ball_grounded_look_factor
 	var ball_rotation_in_air: float = Math.polar_polygon_normalized(_icon_ball.rotation + deg_to_rad(72.0 / 2.0), 5, 2.0)
 	_icon_ball.position = Vector2(0.0, lerpf(0.0, lerpf(0, 10, ball_rotation_in_air), ball_grounded_look_factor)).rotated(gameplay_rotation)
 	#endregion
@@ -1297,8 +1467,7 @@ func _update_swing_fire(delta: float) -> void:
 		_swing_fire_middle_particles.interp_to_end = 1.0
 		_swing_fire_bottom_particles.interp_to_end = 1.0
 	else:
-		var fire_boosts: Array[Sprite2D]
-		fire_boosts.assign([_swing_fire_top, _swing_fire_middle, _swing_fire_bottom])
+		var fire_boosts: Array[Sprite2D] = _swing_fire_boosts
 		for i: int in fire_boosts.size():
 			var fire_boost: Sprite2D = fire_boosts[i]
 			fire_boost.scale.x = remap(sin(PI * (_fire_sprite_time + float(i) / fire_boosts.size()) * 10), -1.0, 1.0, 0.95, 1.05) * 0.6
@@ -1319,10 +1488,8 @@ func _update_swing_fire(delta: float) -> void:
 
 
 func _update_robot_fire(delta: float, jump_state: int) -> void:
-	var fire_sprites: Array[Sprite2D]
-	var fire_particles: Array[GPUParticles2D]
-	fire_sprites.assign([_robot_fire_back, _robot_fire_front])
-	fire_particles.assign([_robot_fire_back_particles, _robot_fire_front_particles])
+	var fire_sprites: Array[Sprite2D] = _robot_fire_sprites
+	var fire_particles: Array[GPUParticles2D] = _robot_fire_particles
 
 	for i: int in fire_sprites.size():
 		var fire_sprite: Sprite2D = fire_sprites[i]
@@ -1546,14 +1713,14 @@ var _pending_contact_kills: Array[Dictionary] = []
 
 func _on_kill_collider_solid_body_entered(body: Node2D) -> void:
 	if _can_die_on_contact():
-		_pending_contact_kills.append({"source": body, "hitboxes": [$KillColliderSolid/KillColliderSolidHitbox]})
+		_pending_contact_kills.append({"source": body, "hitboxes": _kill_solid_hitboxes})
 
 
 func _on_kill_collider_hazard_area_entered(area: Area2D) -> void:
 	if _can_die_on_contact():
 		_pending_contact_kills.append({
 			"source": area,
-			"hitboxes": [$KillColliderRectangularHazard/KillColliderRectangularHazardHitbox, $KillColliderCircularHazard/KillColliderCircularHazardHitbox],
+			"hitboxes": _kill_hazard_hitboxes,
 		})
 
 
@@ -1590,9 +1757,14 @@ func _resolve_contact_kills() -> void:
 ## True when a kill collider's hitbox still overlaps `source` at the cube's current position.
 func _kill_collider_overlaps(hitboxes: Array, source: Node2D) -> bool:
 	var space := get_world_2d().direct_space_state
+	# One query object per player, retargeted per hitbox: the resolved shape
+	# and mask are identical every attempt, so only the transform changes.
+	var query := _kill_query
+	if query == null:
+		query = PhysicsShapeQueryParameters2D.new()
+		_kill_query = query
 	for hitbox: CollisionShape2D in hitboxes:
 		var kill_area := hitbox.get_parent() as Area2D
-		var query := PhysicsShapeQueryParameters2D.new()
 		query.shape = hitbox.shape
 		query.transform = hitbox.global_transform
 		query.collision_mask = kill_area.collision_mask
@@ -1632,24 +1804,41 @@ func set_ghost_trail(enabled: bool) -> void:
 	_ghost_timer = 0.0
 
 
-## One afterimage: copies of the icon's visible sprites at their current
-## global transforms, faded out and freed.
+## One afterimage: recycled copies of the icon's visible sprites at their
+## current global transforms. Every snapshot used to allocate a fresh Node2D
+## plus one Sprite2D per icon part every 0.05 s (and free them 0.4 s later);
+## the pool recycles both, so a running ghost trail performs no steady-state
+## allocation at all.
 func _spawn_ghost() -> void:
 	var host: Node = get_parent()
 	if host == null:
 		return
-	var ghost := Node2D.new()
-	ghost.top_level = true
-	ghost.z_index = z_index - 1
 	var tint: Color = Config.primary_color
-	ghost.modulate = Color(tint.r, tint.g, tint.b, GHOST_OPACITY)
 	var additive: bool = tint.r > 0.0 or tint.g > 0.0 or tint.b > 0.0
 	if additive and _ghost_additive == null:
 		_ghost_additive = CanvasItemMaterial.new()
 		_ghost_additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	var centre: Vector2 = _icon.global_position
+	var entry: Dictionary = _ghost_pool.pop_back() if not _ghost_pool.is_empty() else {}
+	var ghost: Node2D
+	var sprites: Array[Sprite2D]
+	if entry.is_empty():
+		ghost = Node2D.new()
+		ghost.top_level = true
+		host.add_child(ghost)
+		sprites = []
+	else:
+		ghost = entry["node"]
+		sprites = entry["sprites"]
+	ghost.z_index = z_index - 1
+	ghost.modulate = Color(tint.r, tint.g, tint.b, GHOST_OPACITY)
 	ghost.position = centre
-	var stack: Array[Node] = [_icon]
+	ghost.scale = Vector2.ONE
+	ghost.visible = true
+	var used := 0
+	var stack: Array[Node] = _ghost_walk_stack
+	stack.clear()
+	stack.append(_icon)
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
 		var item := node as CanvasItem
@@ -1657,7 +1846,14 @@ func _spawn_ghost() -> void:
 			continue
 		var sprite := node as Sprite2D
 		if sprite != null and sprite.texture != null:
-			var copy := Sprite2D.new()
+			var copy: Sprite2D
+			if used < sprites.size():
+				copy = sprites[used]
+				copy.visible = true
+			else:
+				copy = Sprite2D.new()
+				ghost.add_child(copy)
+				sprites.append(copy)
 			copy.texture = sprite.texture
 			copy.centered = sprite.centered
 			copy.offset = sprite.offset
@@ -1670,14 +1866,33 @@ func _spawn_ghost() -> void:
 			copy.frame = sprite.frame
 			copy.material = _ghost_additive if additive else null
 			copy.transform = Transform2D(0.0, -centre) * sprite.global_transform
-			ghost.add_child(copy)
+			used += 1
 		stack.append_array(node.get_children())
-	if ghost.get_child_count() == 0:
-		ghost.free()
+	for i: int in range(used, sprites.size()):
+		sprites[i].visible = false
+	if used == 0:
+		_release_ghost(entry, ghost, sprites)
 		return
-	host.add_child(ghost)
 	ghost.add_to_group(_ghost_group())
 	var tween: Tween = ghost.create_tween().set_parallel()
 	tween.tween_property(ghost, ^"modulate:a", 0.0, GHOST_FADE)
 	tween.tween_property(ghost, ^"scale", Vector2(GHOST_SCALE, GHOST_SCALE), GHOST_FADE)
-	tween.chain().tween_callback(ghost.queue_free)
+	tween.chain().tween_callback(_release_ghost.bind(entry, ghost, sprites))
+
+
+## Returns a faded-out afterimage's nodes to the pool (or frees them when the
+## pool is full). Tween callback: the ghost is never in the pool twice.
+func _release_ghost(entry: Dictionary, ghost: Node2D, sprites: Array[Sprite2D]) -> void:
+	if ghost == null or not is_instance_valid(ghost):
+		return
+	if ghost.is_in_group(_ghost_group()):
+		ghost.remove_from_group(_ghost_group())
+	ghost.visible = false
+	if _ghost_pool.size() < GHOST_POOL_SIZE:
+		entry["node"] = ghost
+		entry["sprites"] = sprites
+		_ghost_pool.append(entry)
+	else:
+		for sprite: Sprite2D in sprites:
+			sprite.queue_free()
+		ghost.queue_free()
